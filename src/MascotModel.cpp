@@ -466,6 +466,10 @@ namespace MikuMikuDesktopPerch
         {
             bool blink=true,breath=true,lookAt=true;
             int blinkMorph=-1;
+            std::array<int,6> mouthMorphs{-1,-1,-1,-1,-1,-1};   // あ い う え お ん
+            std::array<float,6> mouth{};
+            bool mouthActive=false;
+            float talkAmount=0;           // eases in and out so the mouth does not snap
             int upperBody=-1,leftShoulder=-1,rightShoulder=-1;
             int neck=-1,head=-1,eyes=-1;
             double clock=0;
@@ -491,6 +495,8 @@ namespace MikuMikuDesktopPerch
         void ResolveProceduralTargets()
         {
             proc.blinkMorph=FindMorph({L"まばたき",L"瞬き",L"blink",L"Blink"});
+            proc.mouthMorphs={FindMorph({L"あ",L"ア"}),FindMorph({L"い",L"イ"}),FindMorph({L"う",L"ウ"}),
+                              FindMorph({L"え",L"エ"}),FindMorph({L"お",L"オ"}),FindMorph({L"ん",L"ン"})};
             proc.upperBody=FindBone({L"上半身2",L"上半身"});
             proc.leftShoulder=FindBone({L"左肩"});
             proc.rightShoulder=FindBone({L"右肩"});
@@ -558,6 +564,16 @@ namespace MikuMikuDesktopPerch
                 auto& v=pose.morphKeys[proc.blinkMorph].value;
                 v=std::max(v,blink);
             }
+            // Speaking: the lip-sync's mouth shapes, over whatever the face already shows.
+            proc.talkAmount=std::clamp(proc.talkAmount+static_cast<float>(dt/0.12)*(proc.mouthActive?1.0f:-1.0f),0.0f,1.0f);
+            if(proc.talkAmount>0)
+                for(size_t i=0;i<proc.mouthMorphs.size();++i)
+                {
+                    const int morph=proc.mouthMorphs[i];
+                    if(morph<0||static_cast<size_t>(morph)>=pose.morphKeys.size())continue;
+                    auto& v=pose.morphKeys[morph].value;
+                    v=std::max(v,proc.mouth[i]*proc.talkAmount);
+                }
             if(proc.breath)
             {
                 // About 15 breaths per minute: a slight chest lift and shoulder rise.
@@ -1052,6 +1068,14 @@ namespace MikuMikuDesktopPerch
         impl->frameAcceleration={std::clamp(ax,-limit,limit),std::clamp(ay,-limit,limit)};
         impl->ApplyFrameAcceleration();
     }
+
+    void MascotModel::SetMouth(const std::array<float,6>& weights,bool active)
+    {
+        if(active)impl->proc.mouth=weights;
+        impl->proc.mouthActive=active;
+    }
+
+    std::wstring MascotModel::ModelName() const {return impl->pmx?impl->pmx->name:std::wstring();}
 
     void MascotModel::SetProcedural(bool blink,bool breath,bool lookAt)
     {

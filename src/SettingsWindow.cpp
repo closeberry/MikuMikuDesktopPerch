@@ -1,4 +1,5 @@
 #include "SettingsWindow.hpp"
+#include "LocalChat.hpp"
 #include <shobjidl.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -20,12 +21,16 @@ namespace MikuMikuDesktopPerch
         {
             IdAuto=1001,IdWindowMode,IdPhysics,IdBlink,IdBreath,IdLookAt,
             IdScale,IdEdge,IdTopmost,IdStartup,
-            IdFps,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse
+            IdFps,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse,
+            IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
+            IdPersonaText,IdPersonaReset
         };
+        constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
 
         struct State
         {
             HWND window=nullptr;
+            HWND persona=nullptr;   // the persona dialog, while open
             HFONT font=nullptr;
             SettingsChoice choice;
             std::function<void(const SettingsChoice&)> onApply;
@@ -34,13 +39,15 @@ namespace MikuMikuDesktopPerch
 
         int Px(int logical){return MulDiv(logical,state.dpi,96);}
 
-        HWND Add(const wchar_t* cls,const wchar_t* text,DWORD style,int x,int y,int w,int h,int id=0)
+        HWND AddTo(HWND parent,const wchar_t* cls,const wchar_t* text,DWORD style,int x,int y,int w,int h,int id=0)
         {
-            HWND c=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|style,Px(x),Px(y),Px(w),Px(h),state.window,
+            HWND c=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|style,Px(x),Px(y),Px(w),Px(h),parent,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);
             SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(state.font),TRUE);
             return c;
         }
+        HWND Add(const wchar_t* cls,const wchar_t* text,DWORD style,int x,int y,int w,int h,int id=0)
+        {return AddTo(state.window,cls,text,style,x,y,w,h,id);}
 
         void Check(int id,bool on){CheckDlgButton(state.window,id,on?BST_CHECKED:BST_UNCHECKED);}
         bool Checked(int id){return IsDlgButtonChecked(state.window,id)==BST_CHECKED;}
@@ -91,6 +98,18 @@ namespace MikuMikuDesktopPerch
             CheckBox(IdTopmost,L"最前面に表示",28,y+78,200,s.topmost);
             CheckBox(IdStartup,L"Windowsの起動時に起動",28,y+100,300,state.choice.startWithWindows);
             y+=138;
+            Group(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",y,142);
+            Label(L"接続先",28,y+22,130);
+            Add(L"EDIT",s.chatEndpoint.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+22,266,24,IdChatEndpoint);
+            Label(L"モデル",28,y+52,130);
+            Add(L"COMBOBOX",L"",CBS_DROPDOWN|CBS_AUTOHSCROLL|WS_VSCROLL|WS_TABSTOP,170,y+52,190,240,IdChatModel);
+            SetDlgItemTextW(state.window,IdChatModel,s.chatModel.c_str());
+            Add(L"BUTTON",L"一覧を取得",BS_PUSHBUTTON|WS_TABSTOP,366,y+51,70,26,IdChatList);
+            Label(L"あなたの呼び名",28,y+82,130);
+            Add(L"EDIT",s.userName.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+82,190,24,IdUserName);
+            SendDlgItemMessageW(state.window,IdUserName,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"例: たろう"));
+            Add(L"BUTTON",L"人物設定...",BS_PUSHBUTTON|WS_TABSTOP,170,y+110,110,26,IdPersona);
+            y+=152;
             Group(L"詳細（変更すると再起動します）",y,166);
             Label(L"描画のfps",28,y+22,130);
             Combo(IdFps,170,y+22,120);
@@ -137,6 +156,114 @@ namespace MikuMikuDesktopPerch
             }
         }
 
+        void ListChatModels()
+        {
+            wchar_t endpoint[512]{},model[256]{};
+            GetDlgItemTextW(state.window,IdChatEndpoint,endpoint,512);
+            GetDlgItemTextW(state.window,IdChatModel,model,256);
+            SetCursor(LoadCursorW(nullptr,IDC_WAIT));
+            std::vector<std::wstring> models;
+            const std::wstring error=ListModels(endpoint,models);
+            SetCursor(LoadCursorW(nullptr,IDC_ARROW));
+            if(!error.empty()){MessageBoxW(state.window,error.c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);return;}
+            HWND combo=GetDlgItem(state.window,IdChatModel);
+            SendMessageW(combo,CB_RESETCONTENT,0,0);
+            for(const auto& m:models)SendMessageW(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(m.c_str()));
+            SetWindowTextW(combo,model[0]?model:models.front().c_str());
+            SendMessageW(combo,CB_SHOWDROPDOWN,TRUE,0);
+        }
+
+        // The persona dialog: a small window over the settings window, which is disabled
+        // meanwhile. OK keeps the edits in state.choice.character (saved with the settings).
+        void ClosePersona()
+        {
+            if(!state.persona)return;
+            EnableWindow(state.window,TRUE);
+            DestroyWindow(state.persona);
+            state.persona=nullptr;
+            SetForegroundWindow(state.window);
+        }
+
+        LRESULT CALLBACK PersonaProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
+        {
+            switch(message)
+            {
+            case WM_COMMAND:
+                switch(LOWORD(wParam))
+                {
+                case IDOK:
+                {
+                    std::wstring name(256,L'\0'),text(4096,L'\0');
+                    name.resize(static_cast<size_t>(GetDlgItemTextW(hwnd,IdPersonaName,name.data(),256)));
+                    text.resize(static_cast<size_t>(GetDlgItemTextW(hwnd,IdPersonaText,text.data(),4096)));
+                    for(size_t r;(r=text.find(L'\r'))!=std::wstring::npos;)text.erase(r,1);
+                    state.choice.character.name=name;
+                    state.choice.character.persona=text.empty()?CharacterProfile::DefaultPersona():text;
+                    ClosePersona();
+                    return 0;
+                }
+                case IDCANCEL:
+                    ClosePersona();
+                    return 0;
+                case IdPersonaReset:
+                {
+                    std::wstring text=CharacterProfile::DefaultPersona();
+                    for(size_t n=0;(n=text.find(L'\n',n))!=std::wstring::npos;n+=2)text.insert(n,1,L'\r');
+                    SetDlgItemTextW(hwnd,IdPersonaText,text.c_str());
+                    return 0;
+                }
+                }
+                break;
+            case WM_CLOSE:
+                ClosePersona();
+                return 0;
+            }
+            return DefWindowProcW(hwnd,message,wParam,lParam);
+        }
+
+        void OpenPersona()
+        {
+            if(state.persona){SetForegroundWindow(state.persona);return;}
+            static bool registered=false;
+            const HINSTANCE instance=GetModuleHandleW(nullptr);
+            if(!registered)
+            {
+                WNDCLASSEXW wc{sizeof(wc)};
+                wc.lpfnWndProc=PersonaProc;
+                wc.hInstance=instance;
+                wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+                wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
+                wc.lpszClassName=PersonaClass;
+                if(!RegisterClassExW(&wc))return;
+                registered=true;
+            }
+            const DWORD style=WS_CAPTION|WS_SYSMENU;
+            const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
+            RECT frame{0,0,Px(460),Px(330)};
+            AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
+            RECT owner{};
+            GetWindowRect(state.window,&owner);
+            state.persona=CreateWindowExW(exStyle,PersonaClass,L"人物設定（このモデル）",style,owner.left+Px(20),owner.top+Px(60),
+                                          frame.right-frame.left,frame.bottom-frame.top,state.window,nullptr,instance,nullptr);
+            if(!state.persona)return;
+            const HWND p=state.persona;
+            AddTo(p,L"STATIC",L"名前",SS_LEFT,16,19,80,20);
+            AddTo(p,L"EDIT",state.choice.character.name.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,100,16,344,24,IdPersonaName);
+            AddTo(p,L"STATIC",L"性格や話し方を自由に書いてください。返事が吹き出しに収まる短い話し言葉になるよう、アプリが指示を足します。",
+                  SS_LEFT,16,50,428,40);
+            std::wstring text=state.choice.character.persona;
+            for(size_t n=0;(n=text.find(L'\n',n))!=std::wstring::npos;n+=2)text.insert(n,1,L'\r');
+            HWND editor=AddTo(p,L"EDIT",text.c_str(),ES_MULTILINE|ES_WANTRETURN|ES_AUTOVSCROLL|WS_VSCROLL|WS_BORDER|WS_TABSTOP,16,92,428,180,IdPersonaText);
+            SendMessageW(editor,EM_SETLIMITTEXT,4000,0);
+            AddTo(p,L"BUTTON",L"既定に戻す",BS_PUSHBUTTON|WS_TABSTOP,16,286,100,28,IdPersonaReset);
+            AddTo(p,L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,272,286,82,28,IDOK);
+            AddTo(p,L"BUTTON",L"キャンセル",BS_PUSHBUTTON|WS_TABSTOP,362,286,82,28,IDCANCEL);
+            EnableWindow(state.window,FALSE);
+            ShowWindow(p,SW_SHOWNORMAL);
+            SetForegroundWindow(p);
+            SetFocus(GetDlgItem(p,IdPersonaName));
+        }
+
         SettingsChoice Read()
         {
             SettingsChoice c=state.choice;
@@ -158,6 +285,18 @@ namespace MikuMikuDesktopPerch
             wchar_t toon[MAX_PATH]{};
             GetDlgItemTextW(state.window,IdToonDir,toon,MAX_PATH);
             s.toonDir=toon;
+            wchar_t endpoint[512]{},model[256]{};
+            GetDlgItemTextW(state.window,IdChatEndpoint,endpoint,512);
+            GetDlgItemTextW(state.window,IdChatModel,model,256);
+            auto trim=[](std::wstring t){
+                const size_t a=t.find_first_not_of(L" \t"),b=t.find_last_not_of(L" \t");
+                return a==std::wstring::npos?std::wstring():t.substr(a,b-a+1);
+            };
+            s.chatEndpoint=trim(endpoint);
+            s.chatModel=trim(model);
+            wchar_t user[128]{};
+            GetDlgItemTextW(state.window,IdUserName,user,128);
+            s.userName=trim(user);
             return c;
         }
 
@@ -171,6 +310,12 @@ namespace MikuMikuDesktopPerch
                 case IDOK:
                 {
                     const SettingsChoice chosen=Read();
+                    if(const auto problem=CheckLocalEndpoint(chosen.settings.chatEndpoint);!chosen.settings.chatEndpoint.empty()&&!problem.empty())
+                    {
+                        MessageBoxW(hwnd,problem.c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
+                        SetFocus(GetDlgItem(hwnd,IdChatEndpoint));
+                        return 0;
+                    }
                     auto apply=state.onApply;
                     DestroyWindow(hwnd);
                     if(apply)apply(chosen);
@@ -182,12 +327,19 @@ namespace MikuMikuDesktopPerch
                 case IdToonBrowse:
                     BrowseToonDir();
                     return 0;
+                case IdChatList:
+                    ListChatModels();
+                    return 0;
+                case IdPersona:
+                    OpenPersona();
+                    return 0;
                 }
                 break;
             case WM_CLOSE:
                 DestroyWindow(hwnd);
                 return 0;
             case WM_DESTROY:
+                if(state.persona){DestroyWindow(state.persona);state.persona=nullptr;}
                 state.window=nullptr;
                 if(state.font){DeleteObject(state.font);state.font=nullptr;}
                 state.onApply=nullptr;
@@ -227,10 +379,10 @@ namespace MikuMikuDesktopPerch
         SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,state.dpi);
         state.font=CreateFontIndirectW(&metrics.lfMessageFont);
 
-        // Client 460 x 520 logical pixels, centred on the screen the cursor is on.
+        // Client 460 x 672 logical pixels, centred on the screen the cursor is on.
         const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-        RECT frame{0,0,Px(460),Px(520)};
+        RECT frame{0,0,Px(460),Px(672)};
         AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
         POINT cursor{};
         GetCursorPos(&cursor);
@@ -249,5 +401,5 @@ namespace MikuMikuDesktopPerch
         SetFocus(GetDlgItem(state.window,IdAuto));
     }
 
-    HWND SettingsWindowHandle(){return state.window;}
+    HWND SettingsWindowHandle(){return state.persona?state.persona:state.window;}
 }

@@ -32,9 +32,26 @@ namespace MikuMikuDesktopPerch
         bool lookAtMouse=true;
         bool autoBehavior=true;     // walk around on its own
         bool windowMode=false;      // go to the active window, sit or hang there
+        // Talking: a local LLM server's OpenAI-compatible endpoint (Ollama's by default) and the
+        // model it should use (empty until chosen).
+        std::wstring chatEndpoint=L"http://127.0.0.1:11434/v1";
+        std::wstring chatModel;
+        std::wstring userName;      // what the mascot calls the user (empty: no name)
 
         static std::wstring DefaultPath();
         void Load(const std::wstring& path);
         void Save(const std::wstring& path) const;
+    };
+
+    // Who the mascot is when talking, kept per model (a model is its own character) in
+    // %LOCALAPPDATA%\MikuMikuDesktopPerch\characters, not in the shared settings file.
+    struct CharacterProfile
+    {
+        std::wstring name;      // what it is called (empty: the model's name)
+        std::wstring persona;   // personality and way of speaking, written by the user
+        static std::wstring DefaultPersona();
+        // modelName (the name inside the PMX) is the name until one is written.
+        static CharacterProfile Load(const std::wstring& modelPath,const std::wstring& modelName);
+        bool Save(const std::wstring& modelPath) const;
     };
 }

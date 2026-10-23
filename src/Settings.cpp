@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
+#include <cwctype>
 
 namespace MikuMikuDesktopPerch
 {
@@ -94,6 +95,9 @@ namespace MikuMikuDesktopPerch
         lookAtMouse=ReadInt(path,L"LookAtMouse",lookAtMouse?1:0)!=0;
         autoBehavior=ReadInt(path,L"AutoBehavior",autoBehavior?1:0)!=0;
         windowMode=ReadInt(path,L"WindowMode",windowMode?1:0)!=0;
+        chatEndpoint=ReadString(path,L"ChatEndpoint",chatEndpoint);
+        chatModel=ReadString(path,L"ChatModel",chatModel);
+        userName=ReadString(path,L"UserName",userName);
         edgeScale=std::clamp(static_cast<float>(_wtof(ReadString(path,L"EdgeScale",std::to_wstring(edgeScale)).c_str())),0.0f,10.0f);
     }
 
@@ -127,8 +131,92 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"LookAtMouse",lookAtMouse?L"1":L"0");
         WriteString(path,L"AutoBehavior",autoBehavior?L"1":L"0");
         WriteString(path,L"WindowMode",windowMode?L"1":L"0");
+        WriteString(path,L"ChatEndpoint",chatEndpoint);
+        WriteString(path,L"ChatModel",chatModel);
+        WriteString(path,L"UserName",userName);
         wchar_t edge[32]{};
         swprintf_s(edge,L"%.2f",edgeScale);
         WriteString(path,L"EdgeScale",edge);
+    }
+
+    namespace
+    {
+        // characters\<model file name>-<hash of its full path>.ini: two copies of a model in
+        // different folders are different characters, and the file name says which model it is.
+        std::wstring CharacterFile(const std::wstring& modelPath,bool create)
+        {
+            wchar_t base[MAX_PATH]{};
+            if(!GetEnvironmentVariableW(L"LOCALAPPDATA",base,MAX_PATH))return {};
+            std::wstring key=modelPath;
+            std::transform(key.begin(),key.end(),key.begin(),[](wchar_t c){return static_cast<wchar_t>(std::towlower(c));});
+            unsigned long long hash=1469598103934665603ull;
+            for(const wchar_t c:key){hash^=static_cast<unsigned long long>(c);hash*=1099511628211ull;}
+            wchar_t hex[20]{};
+            swprintf_s(hex,L"%016llx",hash);
+            const std::filesystem::path folder=std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"characters";
+            if(create){std::error_code ec;std::filesystem::create_directories(folder,ec);}
+            return (folder/(std::filesystem::path(modelPath).stem().wstring()+L"-"+hex+L".ini")).wstring();
+        }
+
+        // One ini line holds the whole persona: line breaks and backslashes are escaped.
+        std::wstring Escape(const std::wstring& text)
+        {
+            std::wstring out;
+            for(const wchar_t c:text)
+            {
+                if(c==L'\\')out+=L"\\\\";
+                else if(c==L'\n')out+=L"\\n";
+                else if(c!=L'\r')out+=c;
+            }
+            return out;
+        }
+
+        std::wstring Unescape(const std::wstring& text)
+        {
+            std::wstring out;
+            for(size_t i=0;i<text.size();++i)
+            {
+                if(text[i]==L'\\'&&i+1<text.size()){out+=text[i+1]==L'n'?L'\n':text[i+1];++i;}
+                else out+=text[i];
+            }
+            return out;
+        }
+    }
+
+    std::wstring CharacterProfile::DefaultPersona()
+    {
+        return L"デスクトップの上で暮らしている小さなマスコットとして、話しかけてくれた人とおしゃべりします。\n"
+               L"明るく親しみやすい話し言葉で、相手のことを気にかけます。\n"
+               L"一人称は「わたし」。";
+    }
+
+    CharacterProfile CharacterProfile::Load(const std::wstring& modelPath,const std::wstring& modelName)
+    {
+        CharacterProfile profile;
+        const std::wstring file=CharacterFile(modelPath,false);
+        if(!file.empty()&&std::filesystem::exists(file))
+        {
+            profile.name=ReadString(file,L"Name",{});
+            profile.persona=Unescape(ReadString(file,L"Persona",{}));
+        }
+        if(profile.name.empty())profile.name=modelName.empty()?std::filesystem::path(modelPath).stem().wstring():modelName;
+        if(profile.persona.empty())profile.persona=DefaultPersona();
+        return profile;
+    }
+
+    bool CharacterProfile::Save(const std::wstring& modelPath) const
+    {
+        const std::wstring file=CharacterFile(modelPath,true);
+        if(file.empty())return false;
+        if(!std::filesystem::exists(file))
+        {
+            // UTF-16 with a BOM, so the profile APIs keep Japanese text intact.
+            std::ofstream out(std::filesystem::path(file),std::ios::binary);
+            const unsigned char bom[2]={0xFF,0xFE};
+            out.write(reinterpret_cast<const char*>(bom),2);
+        }
+        WriteString(file,L"Name",name);
+        WriteString(file,L"Persona",Escape(persona));
+        return true;
     }
 }

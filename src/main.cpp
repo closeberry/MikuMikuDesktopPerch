@@ -1,7 +1,10 @@
 #define NOMINMAX
+#include "ChatWindows.hpp"
+#include "LocalChat.hpp"
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
 #include "Settings.hpp"
+#include "Speech.hpp"
 #include "SettingsWindow.hpp"
 #include "Surfaces.hpp"
 #include <windows.h>
@@ -19,6 +22,7 @@
 #include <cstdarg>
 #include <cwctype>
 #include <optional>
+#include <string_view>
 
 using namespace MikuMikuDesktopPerch;
 
@@ -27,7 +31,7 @@ namespace
     constexpr wchar_t WindowClass[]=L"MikuMikuDesktopPerchWindow";
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
-                      IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit};
+                      IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk};
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
     constexpr float Gravity=98.0f;          // world units/s², the same as the physics world
@@ -88,6 +92,21 @@ namespace
         bool pressed=false;           // left button down, not yet a grab
         POINT pressCursor{},dragOffset{};
         int wheelDelta=0;                           // mouse wheel travel not yet turned into a size step
+
+        // Talking through a local LLM: the conversation so far (the last few turns), the reply
+        // streaming in (raw, as received) and the request it belongs to.
+        std::unique_ptr<LocalChat> chat;
+        SpeechBubble bubble;
+        ChatInput chatInput;
+        CharacterProfile character;
+        std::vector<ChatMessage> conversation;
+        std::wstring reply;
+        size_t replyShown=0;      // characters of the cleaned reply already in the bubble
+        Speech speech;            // the reply's syllables on a timeline, for the mouth
+        // A click waits a double-click's time: a double-click opens the chat instead.
+        std::optional<POINT> pendingClick;
+        double pendingClickAt=0;
+        int chatRequest=0;
         DirectX::XMFLOAT2 carryVelocity{},carryAcceleration{};   // window motion, px/s and px/s²
         double previousWindowX=0,previousWindowY=0;
         double fallSpeed=0;           // px/s, downward
@@ -959,6 +978,8 @@ namespace
     {
         // Things used often stay here; switches and display options are in the settings window.
         HMENU menu=CreatePopupMenu();
+        AppendMenuW(menu,MF_STRING,IdTalk,L"話しかける...");
+        AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         AppendMenuW(menu,MF_STRING,IdOpenModel,L"モデルを開く...");
         HMENU motions=CreatePopupMenu();
         AppendMenuW(motions,MF_STRING,IdOpenMotion,L"モーションを開く...");
@@ -1035,6 +1056,15 @@ namespace
             if(!app.behindSurface)SetWindowPos(app.hwnd,current.topmost?HWND_TOPMOST:HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
         }
         current.edgeScale=s.edgeScale;
+        current.chatEndpoint=s.chatEndpoint;
+        if(s.chatModel!=current.chatModel){current.chatModel=s.chatModel;app.conversation.clear();}
+        if(choice.character.name!=app.character.name||choice.character.persona!=app.character.persona)
+        {
+            // A new character starts a new conversation.
+            app.character=choice.character;
+            app.conversation.clear();
+            if(!app.character.Save(current.modelPath))ShowMessage(L"人物設定を保存できませんでした。",MB_ICONERROR);
+        }
         if(choice.startWithWindows!=StartupRegistered()&&!SetStartup(choice.startWithWindows))
             ShowMessage(L"スタートアップの設定を変更できませんでした。",MB_ICONERROR);
         const bool restart=s.fps!=current.fps||s.msaa!=current.msaa||s.maxTextureSize!=current.maxTextureSize||
@@ -1053,10 +1083,172 @@ namespace
         }
     }
 
+    // The reply without what reasoning models think aloud (<think>...</think>), holding back a
+    // tail that may be the start of such a tag.
+    std::wstring CleanReply(const std::wstring& raw)
+    {
+        std::wstring out;
+        size_t at=0;
+        for(;;)
+        {
+            const size_t open=raw.find(L"<think>",at);
+            if(open==std::wstring::npos){out+=raw.substr(at);break;}
+            out+=raw.substr(at,open-at);
+            const size_t close=raw.find(L"</think>",open);
+            if(close==std::wstring::npos)return out;   // still thinking
+            at=close+8;
+        }
+        for(size_t keep=std::min<size_t>(out.size(),7);keep>0;--keep)
+            if(std::wstring_view(L"<think>").substr(0,keep)==std::wstring_view(out).substr(out.size()-keep)){out.resize(out.size()-keep);break;}
+        // Emoji: the bubble's font cannot draw them (they come out as boxes), and models add
+        // them however they are asked not to. Pictographs, dingbats, their variation selectors
+        // and joiners go.
+        // (♪ and ★ ☆ stay: the Japanese fonts have them.) A pair split across two pieces waits.
+        if(!out.empty()&&IS_HIGH_SURROGATE(out.back()))out.pop_back();
+        std::wstring plain;
+        for(size_t i=0;i<out.size();++i)
+        {
+            unsigned code=out[i];
+            size_t units=1;
+            if(IS_HIGH_SURROGATE(out[i])&&i+1<out.size()&&IS_LOW_SURROGATE(out[i+1]))
+            {
+                code=0x10000+((code-0xD800)<<10)+(out[i+1]-0xDC00);
+                units=2;
+            }
+            const bool kept=code==0x266A||code==0x266B||code==0x2605||code==0x2606;
+            const bool emoji=!kept&&((code>=0x1F000&&code<=0x1FAFF)||(code>=0x2600&&code<=0x27BF)||(code>=0x2B00&&code<=0x2BFF)||
+                             code==0xFE0F||code==0x200D||code==0x20E3||(code>=0xE0020&&code<=0xE007F));
+            if(!emoji)plain.append(out,i,units);
+            i+=units-1;
+        }
+        return plain;
+    }
+
+    // Say something to the mascot: the reply streams into the bubble over her head.
+    void Talk(const std::wstring& text)
+    {
+        if(app.settings.chatModel.empty())
+        {
+            app.bubble.ShowNotice(L"設定の「会話」で、使うモデルを選んでください（Ollama などを起動してから「一覧を取得」）。");
+            return;
+        }
+        if(const auto problem=CheckLocalEndpoint(app.settings.chatEndpoint);!problem.empty())
+        {
+            app.bubble.ShowNotice(problem);
+            return;
+        }
+        if(!app.chat)app.chat=std::make_unique<LocalChat>(app.hwnd);
+        // The last six exchanges are enough for a chat at the desk.
+        app.conversation.push_back({L"user",text});
+        while(app.conversation.size()>12)app.conversation.erase(app.conversation.begin());
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        static constexpr const wchar_t* Days[]={L"日",L"月",L"火",L"水",L"木",L"金",L"土"};
+        wchar_t clock[64]{};
+        swprintf_s(clock,L"%d年%d月%d日（%s）%d時%02d分",now.wYear,now.wMonth,now.wDay,Days[now.wDayOfWeek%7],now.wHour,now.wMinute);
+        const std::wstring& user=app.settings.userName;
+        const std::wstring partner=user.empty()
+            ?L"話し相手の名前は分からないので、名前では呼ばないでください（「◯◯さん」のような書き方もしないでください）。\n"
+            :L"話し相手（あなたに話しかけている人）の名前は「"+user+L"」です。\n";
+        std::vector<ChatMessage> messages;
+        messages.push_back({L"system",
+            L"あなたは「"+app.character.name+L"」です。\n"+app.character.persona+L"\n\n"+partner+
+            L"いまは"+clock+L"です。\n"
+            L"あなたの返事は、デスクトップの上にいるあなたの頭上の吹き出しに表示されます。"
+            L"1〜3文くらいの短い話し言葉で答えてください。Markdown、箇条書き、絵文字、顔文字は使わないでください。"});
+        messages.insert(messages.end(),app.conversation.begin(),app.conversation.end());
+        app.reply.clear();
+        app.replyShown=0;
+        app.speech.Reset();
+        app.chatRequest=app.chat->Start(app.settings.chatEndpoint,app.settings.chatModel,std::move(messages));
+        app.bubble.Begin(app.character.name);
+        Trace(L"%.1f talk: request %d",app.clock,app.chatRequest);
+    }
+
+    void OpenChatInput()
+    {
+        // Just above the feet, over the legs, so it is close to her without hiding the face.
+        const RECT r=FrameRect();
+        const POINT ground=GroundPointOnScreen();
+        app.chatInput.Open(app.hwnd,{(r.left+r.right)/2,ground.y-static_cast<LONG>(ModelHeightPixels()*0.12)},Talk);
+    }
+
+    void OnChatText(std::wstring* text,int id)
+    {
+        std::unique_ptr<std::wstring> owned(text);
+        if(id!=app.chatRequest)return;
+        app.reply+=*owned;
+        const std::wstring clean=CleanReply(app.reply);
+        if(clean.size()>app.replyShown)
+        {
+            app.bubble.Append(clean.substr(app.replyShown));
+            app.speech.Add(clean.substr(app.replyShown));
+            app.replyShown=clean.size();
+        }
+    }
+
+    void OnChatDone(std::wstring* error,int id)
+    {
+        std::unique_ptr<std::wstring> owned(error);
+        if(id!=app.chatRequest)return;
+        Trace(L"%.1f talk: request %d done %s",app.clock,id,owned->c_str());
+        if(!owned->empty())
+        {
+            // Not answered: forget the question too, and say why.
+            if(!app.conversation.empty()&&app.conversation.back().role==L"user")app.conversation.pop_back();
+            app.speech.Reset();
+            app.bubble.ShowNotice(*owned);
+            return;
+        }
+        std::wstring clean=CleanReply(app.reply+L"\n");
+        while(!clean.empty()&&std::iswspace(clean.back()))clean.pop_back();
+        const size_t start=clean.find_first_not_of(L" \t\r\n");
+        clean=start==std::wstring::npos?std::wstring():clean.substr(start);
+        // The last piece held back (a possible tag start) is shown and said now.
+        if(const std::wstring all=CleanReply(app.reply+L"\n");all.size()>app.replyShown)
+        {
+            const std::wstring rest=all.substr(app.replyShown);
+            app.bubble.Append(rest);
+            app.speech.Add(rest);
+            app.replyShown=all.size();
+        }
+        app.speech.Finish();
+        if(!clean.empty())app.conversation.push_back({L"assistant",clean});
+        else if(!app.conversation.empty()&&app.conversation.back().role==L"user")app.conversation.pop_back();
+        app.bubble.Finish();
+    }
+
+    // Per frame: the bubble follows the head (its tail points at the top of the head) and the
+    // mouth moves while the text is being revealed.
+    void UpdateChatBubble(double dt)
+    {
+        if(!app.bubble.Visible())
+        {
+            if(app.speech.Active())app.speech.Reset();
+            app.model.SetMouth({},false);
+            return;
+        }
+        app.speech.Tick(dt);
+        if(app.speech.Active())app.bubble.SetReveal(app.speech.RevealedChars());
+        const RECT r=FrameRect();
+        const double unit=ModelHeightPixels();
+        POINT anchor{(r.left+r.right)/2,r.top};
+        if(std::array<float,3> head{};app.model.HeadPosition(head))
+        {
+            const POINT h=app.renderer.Project(head);
+            anchor={r.left+h.x,r.top+h.y-static_cast<LONG>(unit*0.13)};
+        }
+        app.bubble.Tick(dt,anchor,static_cast<int>(unit*0.08),WorkAreaOfWindow(),app.paused);
+        app.model.SetMouth(app.speech.Mouth(),app.speech.Speaking()&&!app.paused);
+    }
+
     void OnCommand(UINT id)
     {
         switch(id)
         {
+        case IdTalk:
+            OpenChatInput();
+            break;
         case IdOpenModel:
         {
             auto path=OpenFileDialog(app.hwnd,L"PMX モデル (*.pmx)\0*.pmx\0",app.settings.modelPath);
@@ -1159,7 +1351,7 @@ namespace
             }
             break;
         case IdSettings:
-            ShowSettingsWindow(app.hwnd,{app.settings,StartupRegistered()},ApplySettings);
+            ShowSettingsWindow(app.hwnd,{app.settings,StartupRegistered(),app.character},ApplySettings);
             break;
         case IdExit:
             DestroyWindow(app.hwnd);
@@ -1222,10 +1414,19 @@ namespace
             }
             if(app.pressed||message==WM_LBUTTONUP)
             {
-                if(app.pressed&&message==WM_LBUTTONUP&&app.place!=Place::Held)OnClick(app.pressCursor);
+                if(app.pressed&&message==WM_LBUTTONUP&&app.place!=Place::Held)
+                {
+                    app.pendingClick=app.pressCursor;
+                    app.pendingClickAt=app.clock+GetDoubleClickTime()/1000.0;
+                }
                 app.pressed=false;
                 if(GetCapture()==hwnd)ReleaseCapture();
             }
+            return 0;
+        case WM_LBUTTONDBLCLK:
+            // Double-click: talk to her (the first click's reaction is called off).
+            app.pendingClick.reset();
+            OpenChatInput();
             return 0;
         case WM_MOUSEACTIVATE:
             // Hanging behind a window: a click must not raise the mascot over it.
@@ -1254,7 +1455,14 @@ namespace
             ShowMenu(p);
             return 0;
         }
+        case LocalChat::TextMessage:
+            OnChatText(reinterpret_cast<std::wstring*>(wParam),static_cast<int>(lParam));
+            return 0;
+        case LocalChat::DoneMessage:
+            OnChatDone(reinterpret_cast<std::wstring*>(wParam),static_cast<int>(lParam));
+            return 0;
         case TrayMessage:
+            if(LOWORD(lParam)==WM_LBUTTONDBLCLK)OpenChatInput();
             if(LOWORD(lParam)==WM_RBUTTONUP||LOWORD(lParam)==WM_CONTEXTMENU)
             {
                 POINT p{};
@@ -1266,6 +1474,9 @@ namespace
             OnCommand(LOWORD(wParam));
             return 0;
         case WM_DESTROY:
+            app.chat.reset();
+            app.chatInput.Close();
+            app.bubble.Hide();
             SaveWindowPosition();
             Shell_NotifyIconW(NIM_DELETE,&app.tray);
             PostQuitMessage(0);
@@ -1396,6 +1607,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
 
+    // Diagnostics: --reading <text> <out.txt> writes the hiragana reading the lip-sync uses.
+    {
+        int argc=0;
+        LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+        const bool reading=argc>=4&&std::wstring(argv[1])==L"--reading";
+        const std::wstring text=reading?argv[2]:L"",outPath=reading?argv[3]:L"";
+        LocalFree(argv);
+        if(reading)
+        {
+            if(FILE* out=nullptr;_wfopen_s(&out,outPath.c_str(),L"w, ccs=UTF-8")==0&&out)
+            {
+                fwprintf(out,L"%s\n",HiraganaReading(text).c_str());
+                fclose(out);
+            }
+            CoUninitialize();
+            return 0;
+        }
+    }
+
     // Diagnostics: --check-list <in.txt> <out.tsv> runs the humanoid / T-stance checks on
     // every PMX path listed (UTF-8, one per line) without opening a window.
     {
@@ -1505,6 +1735,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
 
     WNDCLASSEXW wc{sizeof(wc)};
     wc.lpfnWndProc=WindowProc;
+    wc.style=CS_DBLCLKS;   // a double-click on her opens the chat
     wc.hInstance=instance;
     wc.hCursor=LoadCursorW(nullptr,IDC_HAND);
     // res/MikuMikuDesktopPerch.rc: icon 1, at the sizes the shell asks for.
@@ -1558,6 +1789,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.tray.hIcon=wc.hIconSm?wc.hIconSm:wc.hIcon;
     wcscpy_s(app.tray.szTip,L"MikuMikuDesktopPerch");
     Shell_NotifyIconW(NIM_ADD,&app.tray);
+    app.bubble.Create(app.hwnd);
+    app.character=CharacterProfile::Load(app.settings.modelPath,app.model.ModelName());
 
     ShowWindow(app.hwnd,SW_SHOWNOACTIVATE);
     // Event-driven: called on the message loop whenever another window takes the foreground.
@@ -1680,6 +1913,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(reached)StopGroundActivity();
             }
             UpdateAutoBehavior();
+            if(app.pendingClick&&app.clock>=app.pendingClickAt)
+            {
+                OnClick(*app.pendingClick);
+                app.pendingClick.reset();
+            }
             if(app.diagnosticClick&&app.clock>1.5)
             {
                 const bool reacted=app.model.React(app.diagnosticClick==1);
@@ -1736,6 +1974,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         }
         UpdateSparks(dt);
         PlaceFrame();
+        UpdateChatBubble(dt);
         app.renderer.Render(app.model,app.settings.edgeScale);
         if(!snapshotPath.empty()&&--snapshotFrames<=0)
         {

@@ -93,6 +93,11 @@ namespace MikuMikuDesktopPerch
 
         // Procedural motion layered on top of the VMD (each can be toggled independently).
         void SetProcedural(bool blink,bool breath,bool lookAt);
+        // Mouth shapes while a reply is "spoken": weights for the あ い う え お ん morphs
+        // (those the model has), over whatever the face already shows. active=false lets go.
+        void SetMouth(const std::array<float,6>& weights,bool active);
+        // The model's name as written in the PMX file.
+        std::wstring ModelName() const;
         // Desired look direction in radians: yaw > 0 turns toward screen right, pitch > 0 looks up.
         // active=false lets the head ease back to the motion's own pose.
         void SetLookTarget(float yaw,float pitch,bool active);
