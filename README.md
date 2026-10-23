@@ -167,6 +167,12 @@ MikuMikuDesktopPerch.exe --check-list <list.txt> <out.tsv>
 - `src/MascotRenderer.*`：D3D12の描画。GPUスキニング（BDEF1/2/4、SDEF。QDEFはBDEF4として扱います）、MMD標準に近いトゥーン・スフィア・輪郭線
 - `src/TextureLoader.*`：WIC（bmp/png/jpgなど）とTGAの読み込み、CPUでのミップマップ生成
 
+## 作者・連絡先
+
+- closeberry（とじる）
+- X：[@icecls](https://x.com/icecls)
+- 不具合の報告や要望は [GitHub の Issues](https://github.com/closeberry/MikuMikuDesktopPerch/issues) へどうぞ。セキュリティ上の問題は Issues ではなく、[Security](https://github.com/closeberry/MikuMikuDesktopPerch/security) の「Report a vulnerability」から非公開で知らせてください
+
 ## ライセンス
 
 このソフトウェアは MIT License で公開しています（[LICENSE](LICENSE)）。借用しているコードのライセンスは `licenses/` にあります。exeを配布するときは、`LICENSE` と `licenses/` フォルダを同梱してください。
