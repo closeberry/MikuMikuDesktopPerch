@@ -5,7 +5,7 @@
 #include <fstream>
 #include <algorithm>
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     namespace
     {
@@ -31,7 +31,13 @@ namespace DesktopMascot
     {
         wchar_t exe[MAX_PATH]{};
         GetModuleFileNameW(nullptr,exe,MAX_PATH);
-        return (std::filesystem::path(exe).parent_path()/L"DesktopMascot.ini").wstring();
+        const std::filesystem::path dir=std::filesystem::path(exe).parent_path();
+        const std::filesystem::path path=dir/L"MikuMikuDesktopPerch.ini";
+        // Settings saved under the app's former name (DesktopMascot) carry over once.
+        std::error_code ignored;
+        if(!std::filesystem::exists(path,ignored)&&std::filesystem::exists(dir/L"DesktopMascot.ini",ignored))
+            std::filesystem::rename(dir/L"DesktopMascot.ini",path,ignored);
+        return path.wstring();
     }
 
     void Settings::Load(const std::wstring& path)

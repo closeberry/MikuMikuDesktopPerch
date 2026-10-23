@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     // D3D12 renderer that draws one PMX model into a premultiplied-alpha
     // DirectComposition swap chain, so the window is per-pixel transparent.

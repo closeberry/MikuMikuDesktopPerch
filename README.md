@@ -1,17 +1,17 @@
-# DesktopMascot
+# MikuMikuDesktopPerch
 
 デスクトップ上にMMDモデル（PMX）を透過表示し、VMDモーションをループ再生する常駐マスコットです。
 Win32 + Direct3D 12 + DirectComposition で動作し、モデルが描かれていない部分のクリックは下のウィンドウに抜けます。
 
 ## ビルド
 
-Visual Studio 18（C++20、v143ツールセット）で `DesktopMascot.vcxproj` をビルドします。
+Visual Studio 18（C++20、v143ツールセット）で `MikuMikuDesktopPerch.vcxproj` をビルドします。
 
 ```powershell
-& "G:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" DesktopMascot.vcxproj /p:Configuration=Release /p:Platform=x64
+& "G:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" MikuMikuDesktopPerch.vcxproj /p:Configuration=Release /p:Platform=x64
 ```
 
-出力先は `bin\<Configuration>\DesktopMascot.exe` です。シェーダー（`shaders\*.hlsl`）はビルド時にFXCでコンパイルされ、exeに埋め込まれます。
+出力先は `bin\<Configuration>\MikuMikuDesktopPerch.exe` です。シェーダー（`shaders\*.hlsl`）はビルド時にFXCでコンパイルされ、exeに埋め込まれます。
 
 ## 操作
 
@@ -50,7 +50,9 @@ VMDを使わず、プログラムで生成する動きです。作法は [docs/M
 - つまんで離したとき、真下に前面のウィンドウがあれば、その上端に着地します
 - 全画面アプリ（ゲームやプレゼンテーション）の実行中は、自動で非表示になり描画も止まります
 
-## 設定（exeと同じフォルダの `DesktopMascot.ini`、UTF-16）
+## 設定（exeと同じフォルダの `MikuMikuDesktopPerch.ini`、UTF-16）
+
+以前の名前（DesktopMascot）で保存された `DesktopMascot.ini` が同じフォルダにあれば、最初の起動で `MikuMikuDesktopPerch.ini` に名前を変えて引き継ぎます。
 
 | キー | 既定値 | 内容 |
 |---|---|---|
@@ -82,15 +84,15 @@ VMDを使わず、プログラムで生成する動きです。作法は [docs/M
 ## 診断用オプション
 
 ```
-DesktopMascot.exe --snapshot out.png [frames]
+MikuMikuDesktopPerch.exe --snapshot out.png [frames]
 ```
 
 指定したフレーム数（既定は60）を描画したあと、最後のフレームを `out.png`（premultiplied BGRA）に保存して終了します。
 `--look <x> <y>` を付けると、視線追従用のカーソル位置をクライアント座標で固定できます。
-`--model <pmx>` で別のモデルを、`--scale <percent>` で大きさを指定できます。`--rest-pose sit|hang` でウィンドウ上の休憩ポーズを固定でき、`--walk <px>` で起動3秒後にその距離だけ歩かせられ（右が正）、環境変数 `DESKTOPMASCOT_LOG` にファイル名を設定すると行動の判断過程を書き出します。`--activity walk|run|jump|sit|lie|hang|grab|fall` を付けると、その生成モーションを固定したまま撮影し、`--view-yaw <度>` でカメラを回り込ませて横から撮れます。診断用の起動では設定ファイル（ini）を書き換えず、同じ場所に `out.png.txt`（腕の角度、補正量、ウィンドウサイズ、エラー内容）を書き出します。
+`--model <pmx>` で別のモデルを、`--scale <percent>` で大きさを指定できます。`--rest-pose sit|hang` でウィンドウ上の休憩ポーズを固定でき、`--walk <px>` で起動3秒後にその距離だけ歩かせられ（右が正）、環境変数 `MIKUMIKUDESKTOPPERCH_LOG` にファイル名を設定すると行動の判断過程を書き出します。`--activity walk|run|jump|sit|lie|hang|grab|fall` を付けると、その生成モーションを固定したまま撮影し、`--view-yaw <度>` でカメラを回り込ませて横から撮れます。診断用の起動では設定ファイル（ini）を書き換えず、同じ場所に `out.png.txt`（腕の角度、補正量、ウィンドウサイズ、エラー内容）を書き出します。
 
 ```
-DesktopMascot.exe --check-list <list.txt> <out.tsv>
+MikuMikuDesktopPerch.exe --check-list <list.txt> <out.tsv>
 ```
 
 `list.txt`（UTF-8、1行に1つのPMXパス）に並べたモデルを、ウィンドウを開かずに順に読み込みます。人型の判定とTスタンスの判定の結果を、`out.tsv` に書き出します。

@@ -8,7 +8,7 @@
 #include <cwctype>
 #include <filesystem>
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     using Microsoft::WRL::ComPtr;
 

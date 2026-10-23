@@ -15,7 +15,7 @@
     <PreferredToolArchitecture Condition="'$(PreferredToolArchitecture)'==''">x64</PreferredToolArchitecture>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{6f3c2a51-8d0e-4b7a-9e44-2c1d5b7a9e10}</ProjectGuid>
-    <RootNamespace>DesktopMascot</RootNamespace>
+    <RootNamespace>MikuMikuDesktopPerch</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

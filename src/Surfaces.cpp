@@ -6,7 +6,7 @@
 #include <iterator>
 #pragma comment(lib,"dwmapi.lib")
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     bool VisibleFrame(HWND window,RECT& frame)
     {

@@ -1,9 +1,9 @@
 #pragma once
 #include <string>
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
-    // DesktopMascot.ini next to the executable (UTF-16LE so Japanese paths survive).
+    // MikuMikuDesktopPerch.ini next to the executable (UTF-16LE so Japanese paths survive).
     struct Settings
     {
         std::wstring modelPath;

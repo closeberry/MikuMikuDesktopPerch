@@ -12,7 +12,7 @@
 
 import PMXLoader;
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     namespace
     {

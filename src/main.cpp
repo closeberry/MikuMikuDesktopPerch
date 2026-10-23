@@ -19,11 +19,11 @@
 #include <cwctype>
 #include <optional>
 
-using namespace DesktopMascot;
+using namespace MikuMikuDesktopPerch;
 
 namespace
 {
-    constexpr wchar_t WindowClass[]=L"DesktopMascotWindow";
+    constexpr wchar_t WindowClass[]=L"MikuMikuDesktopPerchWindow";
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdPhysics,IdBlink,IdBreath,IdLookAt,IdTopmost,IdExit,
                       IdAuto,IdWalkLeft,IdWalkRight,IdWindowMode,
@@ -126,10 +126,10 @@ namespace
 
     void SaveWindowPosition();
 
-    // Behaviour trace for diagnosis: written only when DESKTOPMASCOT_LOG names a file.
+    // Behaviour trace for diagnosis: written only when MIKUMIKUDESKTOPPERCH_LOG names a file.
     void Trace(const wchar_t* format,...)
     {
-        static const std::wstring path=[]{wchar_t p[MAX_PATH]{};return GetEnvironmentVariableW(L"DESKTOPMASCOT_LOG",p,MAX_PATH)?std::wstring(p):std::wstring();}();
+        static const std::wstring path=[]{wchar_t p[MAX_PATH]{};return GetEnvironmentVariableW(L"MIKUMIKUDESKTOPPERCH_LOG",p,MAX_PATH)?std::wstring(p):std::wstring();}();
         if(path.empty())return;
         wchar_t text[512]{};
         va_list args;
@@ -337,7 +337,7 @@ namespace
     {
         if(!ApplyFrame(percent,app.extent))
         {
-            MessageBoxW(app.hwnd,L"ウィンドウの大きさを変更できませんでした。",L"DesktopMascot",MB_ICONERROR);
+            MessageBoxW(app.hwnd,L"ウィンドウの大きさを変更できませんでした。",L"MikuMikuDesktopPerch",MB_ICONERROR);
             return;
         }
         app.settings.scale=percent;
@@ -847,7 +847,7 @@ namespace
                 std::wstring error;
                 if(!probe.Load(path,{},false,app.settings.physicsFps,error))
                 {
-                    MessageBoxW(app.hwnd,error.c_str(),L"DesktopMascot",MB_ICONWARNING);
+                    MessageBoxW(app.hwnd,error.c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
                     break;
                 }
             }
@@ -866,7 +866,7 @@ namespace
             if(!app.model.Load(app.settings.modelPath,path,app.settings.physics,app.settings.physicsFps,error)||
                !app.renderer.LoadModel(app.model,app.settings.toonDir,static_cast<unsigned>(app.settings.maxTextureSize),error))
             {
-                MessageBoxW(app.hwnd,error.c_str(),L"DesktopMascot",MB_ICONERROR);
+                MessageBoxW(app.hwnd,error.c_str(),L"MikuMikuDesktopPerch",MB_ICONERROR);
                 break;
             }
             ApplyProceduralSettings();
@@ -1060,7 +1060,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX);
     }
 
-    // Diagnostics: DesktopMascot.exe --snapshot <out.png> [frames] renders, saves one frame and exits.
+    // Diagnostics: MikuMikuDesktopPerch.exe --snapshot <out.png> [frames] renders, saves one frame and exits.
     // --look <x> <y> pins the look-at cursor to that client-area point (for snapshot checks).
     std::wstring snapshotPath;
     int snapshotFrames=60;
@@ -1155,7 +1155,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         // Diagnostic runs must not overwrite the user's settings.
         wchar_t temp[MAX_PATH]{};
         GetTempPathW(MAX_PATH,temp);
-        app.settingsPath=std::wstring(temp)+L"DesktopMascot_snapshot.ini";
+        app.settingsPath=std::wstring(temp)+L"MikuMikuDesktopPerch_snapshot.ini";
         if(!snapshotModel.empty())app.settings.modelPath=snapshotModel;
         app.settings.x=app.settings.y=-1;
     }
@@ -1177,7 +1177,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {fwprintf(info,L"error=%s\n",error.c_str());fclose(info);}
             return 2;
         }
-        MessageBoxW(nullptr,error.c_str(),L"DesktopMascot",MB_ICONERROR);
+        MessageBoxW(nullptr,error.c_str(),L"MikuMikuDesktopPerch",MB_ICONERROR);
         app.settings.modelPath.clear();
     }
     app.settings.Save(app.settingsPath);
@@ -1208,7 +1208,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     const DWORD exStyle=WS_EX_NOREDIRECTIONBITMAP|WS_EX_LAYERED|WS_EX_TOOLWINDOW|(app.settings.topmost?WS_EX_TOPMOST:0);
     app.stage=WorkAreaAt({x+width/2,y+height/2});
     const RECT& st=app.stage;
-    app.hwnd=CreateWindowExW(exStyle,WindowClass,L"DesktopMascot",WS_POPUP,st.left,st.top,st.right-st.left,st.bottom-st.top,nullptr,nullptr,instance,nullptr);
+    app.hwnd=CreateWindowExW(exStyle,WindowClass,L"MikuMikuDesktopPerch",WS_POPUP,st.left,st.top,st.right-st.left,st.bottom-st.top,nullptr,nullptr,instance,nullptr);
     if(!app.hwnd)return 1;
     // Alpha 254, not 255: Chromium-based apps treat an opaque window covering theirs as occluding
     // and stop painting; a not-quite-opaque layered window is ignored (and looks the same).
@@ -1217,7 +1217,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     if(!app.renderer.Initialize(app.hwnd,width,height,app.settings.msaa,error)||
        !app.renderer.LoadModel(app.model,app.settings.toonDir,static_cast<unsigned>(app.settings.maxTextureSize),error))
     {
-        MessageBoxW(nullptr,error.c_str(),L"DesktopMascot",MB_ICONERROR);
+        MessageBoxW(nullptr,error.c_str(),L"MikuMikuDesktopPerch",MB_ICONERROR);
         DestroyWindow(app.hwnd);
         return 1;
     }
@@ -1242,7 +1242,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.tray.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP;
     app.tray.uCallbackMessage=TrayMessage;
     app.tray.hIcon=wc.hIcon;
-    wcscpy_s(app.tray.szTip,L"DesktopMascot");
+    wcscpy_s(app.tray.szTip,L"MikuMikuDesktopPerch");
     Shell_NotifyIconW(NIM_ADD,&app.tray);
 
     ShowWindow(app.hwnd,SW_SHOWNOACTIVATE);

@@ -11,7 +11,7 @@
 
 import PMXLoader;
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     class GeneratedMotion
     {

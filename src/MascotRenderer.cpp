@@ -12,7 +12,7 @@
 #include "ParticleVS.h"
 #include "ParticlePS.h"
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     using Microsoft::WRL::ComPtr;
     using namespace DirectX;

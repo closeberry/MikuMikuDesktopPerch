@@ -4,7 +4,7 @@
 #include <cmath>
 #include <string>
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     using namespace DirectX;
 

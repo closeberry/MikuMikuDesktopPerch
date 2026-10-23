@@ -1,7 +1,7 @@
 #pragma once
 #include <windows.h>
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     // Visible frame of a top-level window (DWM extended frame bounds: no drop shadow).
     bool VisibleFrame(HWND window,RECT& frame);

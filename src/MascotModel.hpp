@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     // What the generated motion layer is doing. Idle plays the VMD (plus procedural layers).
     // Sit, Lie and Hang rest on an edge at world y=0 (a window's top edge).

@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace DesktopMascot
+namespace MikuMikuDesktopPerch
 {
     // Straight-alpha RGBA8 image with a full CPU-generated mip chain.
     struct ImageRgba8
