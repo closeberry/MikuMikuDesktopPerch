@@ -74,7 +74,11 @@ namespace
         POINT lastCursor{LONG_MIN,LONG_MIN};
         double cursorIdle=0;
 
-        // Window placement in screen pixels, kept in doubles so slow walking accumulates.
+        // The window is a fixed transparent stage over the work area (stage). The drawn frame
+        // ("window" below: windowX/Y, windowSize) moves inside it as a composition offset;
+        // moving the real window could never be in step with the frame drawn for it.
+        RECT stage{};
+        // Frame placement in screen pixels, kept in doubles so slow walking accumulates.
         double windowX=0,windowY=0;
         SIZE windowSize{};
         float pixelsPerUnit=40;   // screen pixels per world unit at the model's depth
@@ -111,6 +115,7 @@ namespace
         bool behindSurface=false;     // hanging: the window sits just behind the surface window
         double hangEndedAt=-1;
         Activity forcedRestPose=Activity::Idle;   // --rest-pose sit|hang (diagnostics)
+        int diagnosticWalk=0;                     // --walk <px>: walk that far 3 s after start
 
         // Ground behaviour.
         double walkTargetX=0;         // screen x for the window centre
@@ -215,7 +220,6 @@ namespace
         app.dragOffset.x+=static_cast<LONG>(std::lround(app.windowX-x));
         app.dragOffset.y+=static_cast<LONG>(std::lround(app.windowY-y));
         app.windowX=x;app.windowY=y;
-        SetWindowPos(app.hwnd,nullptr,static_cast<int>(std::lround(x)),static_cast<int>(std::lround(y)),size.cx,size.cy,SWP_NOZORDER|SWP_NOACTIVATE);
         return true;
     }
 
@@ -290,10 +294,40 @@ namespace
     double GroundedWindowY(){return WindowYForLine(SurfaceLine());}
     double FeetLine(){return app.windowY+app.renderer.Project(GroundAnchor()).y;}
 
+    // Takes effect with the next frame drawn (see PlaceFrame).
     void MoveWindowTo(double x,double y)
     {
         app.windowX=x;app.windowY=y;
-        SetWindowPos(app.hwnd,nullptr,static_cast<int>(std::lround(x)),static_cast<int>(std::lround(y)),0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+    }
+
+    POINT WindowPixel(){return {static_cast<LONG>(std::lround(app.windowX)),static_cast<LONG>(std::lround(app.windowY))};}
+
+    // Screen rectangle of the drawn frame.
+    RECT FrameRect()
+    {
+        const POINT p=WindowPixel();
+        return {p.x,p.y,p.x+app.windowSize.cx,p.y+app.windowSize.cy};
+    }
+
+    // The stage covers the work area of the monitor under the frame's centre: not the whole
+    // monitor, which would make the taskbar treat it as a full-screen window. Crossing to
+    // another monitor moves the stage (the only window move left).
+    void UpdateStage()
+    {
+        const RECT frame=FrameRect();
+        const RECT work=WorkAreaAt({(frame.left+frame.right)/2,(frame.top+frame.bottom)/2});
+        if(EqualRect(&work,&app.stage))return;
+        app.stage=work;
+        SetWindowPos(app.hwnd,nullptr,work.left,work.top,work.right-work.left,work.bottom-work.top,SWP_NOZORDER|SWP_NOACTIVATE);
+    }
+
+    // Before each frame: where it goes in the stage, plus the fraction of a pixel rounded off.
+    void PlaceFrame()
+    {
+        UpdateStage();
+        const POINT p=WindowPixel();
+        app.renderer.SetVisualOffset(p.x-app.stage.left,p.y-app.stage.top);
+        app.renderer.SetPixelOffset(static_cast<float>(app.windowX-p.x),static_cast<float>(app.windowY-p.y));
     }
 
     double ModelHeightPixels(){return ModelFrameOf().top*app.pixelsPerUnit;}
@@ -905,6 +939,15 @@ namespace
             return 0;
         }
         case WM_MOUSEMOVE:
+            // The stage is large: let clicks through at once when the cursor leaves the frame,
+            // without waiting for the next alpha sample.
+            if(!app.pressed&&app.place!=Place::Held)
+            {
+                POINT cursor{};
+                GetCursorPos(&cursor);
+                const RECT frame=FrameRect();
+                if(!PtInRect(&frame,cursor))SetClickThrough(true);
+            }
             if(app.pressed||app.place==Place::Held)
             {
                 POINT cursor{};
@@ -1048,6 +1091,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 snapshotActivity=argv[++i];
             }
+            else if(arg==L"--walk"&&i+1<argc)
+            {
+                app.diagnosticWalk=_wtoi(argv[++i]);
+            }
             else if(arg==L"--rest-pose"&&i+1<argc)
             {
                 const std::wstring pose=argv[++i];
@@ -1159,9 +1206,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     // NOREDIRECTIONBITMAP + DirectComposition gives per-pixel alpha;
     // LAYERED is only there so WS_EX_TRANSPARENT can pass clicks through.
     const DWORD exStyle=WS_EX_NOREDIRECTIONBITMAP|WS_EX_LAYERED|WS_EX_TOOLWINDOW|(app.settings.topmost?WS_EX_TOPMOST:0);
-    app.hwnd=CreateWindowExW(exStyle,WindowClass,L"DesktopMascot",WS_POPUP,x,y,width,height,nullptr,nullptr,instance,nullptr);
+    app.stage=WorkAreaAt({x+width/2,y+height/2});
+    const RECT& st=app.stage;
+    app.hwnd=CreateWindowExW(exStyle,WindowClass,L"DesktopMascot",WS_POPUP,st.left,st.top,st.right-st.left,st.bottom-st.top,nullptr,nullptr,instance,nullptr);
     if(!app.hwnd)return 1;
-    SetLayeredWindowAttributes(app.hwnd,0,255,LWA_ALPHA);
+    // Alpha 254, not 255: Chromium-based apps treat an opaque window covering theirs as occluding
+    // and stop painting; a not-quite-opaque layered window is ignored (and looks the same).
+    SetLayeredWindowAttributes(app.hwnd,0,254,LWA_ALPHA);
 
     if(!app.renderer.Initialize(app.hwnd,width,height,app.settings.msaa,error)||
        !app.renderer.LoadModel(app.model,app.settings.toonDir,static_cast<unsigned>(app.settings.maxTextureSize),error))
@@ -1314,17 +1365,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(reached)StopGroundActivity();
             }
             UpdateAutoBehavior();
+            if(app.diagnosticWalk&&app.clock>3.0)
+            {
+                StartWalk(CenterX()+app.diagnosticWalk);
+                app.diagnosticWalk=0;
+            }
         }
 
         // Click-through wherever the mascot is not drawn.
         POINT cursor{};
-        RECT r{};
         GetCursorPos(&cursor);
-        GetWindowRect(app.hwnd,&r);
-        if(app.place!=Place::Held&&PtInRect(&r,cursor))
+        const RECT r=FrameRect();
+        if(app.place!=Place::Held)
         {
-            const int alpha=app.renderer.AlphaAt({cursor.x-r.left,cursor.y-r.top});
-            SetClickThrough(alpha>=0&&alpha<16);
+            if(PtInRect(&r,cursor))
+            {
+                const int alpha=app.renderer.AlphaAt({cursor.x-r.left,cursor.y-r.top});
+                SetClickThrough(alpha>=0&&alpha<16);
+            }
+            else SetClickThrough(true);
         }
         if(!forcedActivity)
         {
@@ -1352,6 +1411,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             lastPhysicsResets=resets;
         }
         UpdateSparks(dt);
+        PlaceFrame();
         app.renderer.Render(app.model,app.settings.edgeScale);
         if(!snapshotPath.empty()&&--snapshotFrames<=0)
         {
@@ -1359,10 +1419,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(FILE* info=nullptr;_wfopen_s(&info,(snapshotPath+L".txt").c_str(),L"w, ccs=UTF-8")==0&&info)
             {
                 const auto rest=app.model.ArmRestAngles(),fix=app.model.ArmCorrections();
-                RECT wr{};
-                GetWindowRect(app.hwnd,&wr);
                 fwprintf(info,L"model=%s\narmRest L=%.1f R=%.1f\narmCorrection L=%.1f R=%.1f\nwindow=%dx%d\n",
-                         app.settings.modelPath.c_str(),rest[0],rest[1],fix[0],fix[1],wr.right-wr.left,wr.bottom-wr.top);
+                         app.settings.modelPath.c_str(),rest[0],rest[1],fix[0],fix[1],app.windowSize.cx,app.windowSize.cy);
                 fwprintf(info,L"%s",app.model.DescribeRig().c_str());
                 fclose(info);
             }

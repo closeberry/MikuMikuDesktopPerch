@@ -37,6 +37,12 @@ namespace DesktopMascot
         // Display-only transform of the drawn model (identity normally); Project ignores it.
         void SetModelTransform(DirectX::FXMMATRIX world);
         void SetParticles(const std::vector<Particle>& list);
+        // Shift the drawn frame by a fraction of a pixel (the window can only sit on whole
+        // pixels); Project ignores it.
+        void SetPixelOffset(float dx,float dy){pixelOffset={dx,dy};}
+        // Where the frame sits inside the window, in whole pixels. Applied together with the next
+        // Present, so the frame and its position change in the same composition.
+        void SetVisualOffset(int x,int y);
         // World position to client-area pixels (y down).
         POINT Project(const std::array<float,3>& world) const;
         void Render(const MascotModel& model,float edgeScale);
@@ -116,6 +122,8 @@ namespace DesktopMascot
         DirectX::XMFLOAT4X4 view{},projection{};
         DirectX::XMFLOAT4X4 modelWorld{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
         std::vector<Particle> particles;
+        DirectX::XMFLOAT2 pixelOffset{};
+        POINT visualOffset{},appliedVisualOffset{};
         int lastAlpha=-1;
         UINT lastRenderedIndex=0;
     };

@@ -524,6 +524,8 @@ namespace DesktopMascot
         XMStoreFloat4x4(&projection,XMMatrixPerspectiveFovLH(fovY,static_cast<float>(width)/height,1.0f,1000.0f));
     }
 
+    void MascotRenderer::SetVisualOffset(int x,int y){visualOffset={x,y};}
+
     void MascotRenderer::SetModelTransform(FXMMATRIX world){XMStoreFloat4x4(&modelWorld,world);}
 
     void MascotRenderer::SetParticles(const std::vector<Particle>& list)
@@ -566,7 +568,9 @@ namespace DesktopMascot
 
         // Constants.
         SceneConstants scene{};
-        const XMMATRIX v=XMLoadFloat4x4(&view),p=XMLoadFloat4x4(&projection),w=XMLoadFloat4x4(&modelWorld);
+        const XMMATRIX v=XMLoadFloat4x4(&view),w=XMLoadFloat4x4(&modelWorld);
+        // Sub-pixel shift applied after projection (in clip space, scaled by w).
+        const XMMATRIX p=XMLoadFloat4x4(&projection)*XMMatrixTranslation(2*pixelOffset.x/width,-2*pixelOffset.y/height,0);
         XMStoreFloat4x4(&scene.viewProj,XMMatrixTranspose(w*v*p));
         XMStoreFloat4x4(&scene.view,XMMatrixTranspose(w*v));
         XMStoreFloat4x4(&scene.particleViewProj,XMMatrixTranspose(v*p));
@@ -710,7 +714,17 @@ namespace DesktopMascot
         f.fenceValue=nextFenceValue++;
         queue->Signal(fence.Get(),f.fenceValue);
         lastRenderedIndex=index;
+        // The frame's position in the window is a composition property: set it in the same
+        // composition transaction as this frame, so the two never show apart.
+        const bool moved=visualOffset.x!=appliedVisualOffset.x||visualOffset.y!=appliedVisualOffset.y;
+        if(moved)
+        {
+            compositionVisual->SetOffsetX(static_cast<float>(visualOffset.x));
+            compositionVisual->SetOffsetY(static_cast<float>(visualOffset.y));
+            appliedVisualOffset=visualOffset;
+        }
         swapChain->Present(1,0);
+        if(moved)composition->Commit();
     }
 
     bool MascotRenderer::SaveLastFrame(const std::wstring& path)
