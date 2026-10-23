@@ -1,5 +1,6 @@
 #pragma once
-// Procedurally generated whole-body motion (walk, sit, grabbed, fall, landing).
+// Procedurally generated whole-body motion (standing idle, gestures, click reactions, walk,
+// run, jump, sit, hang, grabbed, fall, landing).
 // Follows docs/MotionRules.md: 全ての親 is never touched, センター only moves in X/Z (walking
 // travel), vertical body movement uses グルーブ only, body turns use 上半身/下半身, ひじ rotates
 // about its local Y only, 手首 is never rotated, and twist is handed to 腕捩 by DistributeTwist.

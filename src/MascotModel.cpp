@@ -149,6 +149,27 @@ namespace MikuMikuDesktopPerch
         struct ResetFrom {int bone;DirectX::XMFLOAT4 rotation;DirectX::XMFLOAT3 position;};
         std::vector<ResetFrom> resetFrom;
         double resetBlend=-1;   // seconds into the ease, -1 when not resetting
+        double floorWait=0;     // seconds the floor has waited for the bodies to come up
+        bool floorOnReset=false;   // the pending reset is for the floor: turn it on after
+
+        // Bottom of the lowest simulated (dynamic) rigid body, in model units.
+        float LowestBodyY() const
+        {
+            float lowest=1e30f;
+            auto* world=physics?physics->World():nullptr;
+            if(!world)return lowest;
+            const auto& objects=world->getCollisionObjectArray();
+            for(int i=0;i<objects.size();++i)
+            {
+                const auto* body=btRigidBody::upcast(objects[i]);
+                if(!body||body->isStaticOrKinematicObject())continue;
+                btVector3 lo,hi;
+                body->getAabb(lo,hi);
+                // The box includes the collision margin: a body resting on the floor is not under it.
+                lowest=std::min(lowest,static_cast<float>(lo.y()+body->getCollisionShape()->getMargin()));
+            }
+            return lowest;
+        }
 
         void BeginPhysicsReset()
         {
@@ -1054,15 +1075,36 @@ namespace MikuMikuDesktopPerch
         if(m.physics)
         {
             // The physics floor sits at y=0, the edge the mascot rests on. While hanging below
-            // the edge, hair and skirt must be free to fall past it.
-            const bool floor=m.motion.CurrentActivity()!=Activity::Hang;
-            if(floor!=m.physics->GroundEnable())m.physics->GroundEnable(floor);
+            // the edge, hair and skirt must be free to fall past it; while sitting on it, the
+            // skirt and anything else below the hips would be squeezed against it and thrash.
+            // Back on her feet, the floor returns once no simulated body is below it (turning
+            // it on under one would throw it up); if one stays down, a smooth reset lifts it.
+            const Activity a=m.motion.CurrentActivity();
+            const bool floor=a!=Activity::Hang&&a!=Activity::Sit;
+            if(!floor)
+            {
+                if(m.physics->GroundEnable())m.physics->GroundEnable(false);
+                m.floorWait=0;
+            }
+            else if(!m.physics->GroundEnable())
+            {
+                if(m.LowestBodyY()>=-0.02f){m.physics->GroundEnable(true);m.floorWait=0;}
+                else if((m.floorWait+=dt)>=1.5&&m.resetBlend<0&&!m.floorOnReset)
+                {
+                    m.resetPhysicsPending=true;
+                    m.floorOnReset=true;
+                    m.floorWait=0;
+                }
+            }
             if(m.resetBlend>=ResetBlendSeconds)
             {
                 // The bones are back in their animated place: put the bodies there with no
                 // momentum, and simulate again from this frame.
                 m.physics->Reset();
                 m.resetBlend=-1;
+                // The bodies now sit on the animated pose, out of the way of the floor.
+                if(m.floorOnReset&&floor)m.physics->GroundEnable(true);
+                m.floorOnReset=false;
                 m.resetFrom.clear();
                 ++m.physicsResets;
             }
