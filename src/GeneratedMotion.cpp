@@ -19,11 +19,19 @@ namespace MikuMikuDesktopPerch
             float stance;     // share of the cycle a foot is planted (< 0.5 gives a flight phase)
             float stride;     // foot travel per stance
             float lift,bobBase,bob,lean,armSwing,elbow,hipTwist,chestTwist;
+            float heel,toeOff;   // foot pitch at heel strike (toes up) and at push-off (heel up)
+            float heelRise;      // share of the stance after which the heel comes up
+            float kick,kickAt;   // swing: the foot tips on to this pitch (toes down) by kickAt, then turns for the landing
+            float swingDelay;    // share of the swing the foot stays back (kicking up) before it comes forward
+            float back;          // the stance sits this share of the stride behind the hip
+            float liftSkew;      // < 1 brings the swing foot's highest point earlier (a kick back)
+            float lowAt;         // where in the cycle the body is lowest (a little after contact)
             float easeSeconds;
-            bool flight;      // body highest in flight (running) instead of at mid-stance
         };
-        constexpr Gait WalkGait{1.0,0.6f,0.36f,0.10f,0.015f,0.025f,4.0f*Deg,14.0f*Deg,18.0f*Deg,4.0f*Deg,3.0f*Deg,0.35f,false};
-        constexpr Gait RunGait{0.64,0.38f,0.50f,0.20f,0.05f,0.05f,12.0f*Deg,34.0f*Deg,80.0f*Deg,7.0f*Deg,5.0f*Deg,0.22f,true};
+        constexpr Gait WalkGait{1.07,0.625f,0.5f,0.08f,0.003f,0.031f,5.0f*Deg,15.0f*Deg,8.0f*Deg,5.0f*Deg,5.0f*Deg,
+                                20.0f*Deg,30.0f*Deg,0.8f,30.0f*Deg,0.5f,0.0f,0.04f,1.0f,0.125f,0.35f};
+        constexpr Gait RunGait{0.667,0.4f,0.9f,0.45f,0.03f,0.055f,15.0f*Deg,35.0f*Deg,90.0f*Deg,5.0f*Deg,12.0f*Deg,
+                               20.0f*Deg,50.0f*Deg,0.62f,85.0f*Deg,0.25f,0.2f,0.055f,0.55f,0.15f,0.22f};
 
         // Walking and running are in profile so planted feet never slide in depth; the chest
         // and neck turn back toward the viewer a little.
@@ -200,6 +208,23 @@ namespace MikuMikuDesktopPerch
                 rig.gripReach=XMVectorGetX(XMVector3Length(XMVectorSubtract(restPos(wrist),restPos(rig.elbow[side]))))+palmLength+0.4f*fingerLength;
         }
         if(legs>0)rig.legLength=std::max(legLength/legs,0.1f);
+        for(int side=0;side<2;++side)
+        {
+            const std::wstring s=side==0?L"左":L"右";
+            const int toe=Find(pmx,{s+L"つま先ＩＫ",s+L"つま先IK",s+L"つま先"});
+            const XMFLOAT3& ankle=rig.ankleRest[side];
+            if(toe>=0)
+            {
+                const XMVECTOR tip=restPos(toe);
+                rig.toeAhead[side]=std::clamp(ankle.z-XMVectorGetZ(tip),0.02f*rig.legLength,0.3f*rig.legLength);   // the front is -Z
+                rig.toeBelow[side]=std::clamp(ankle.y-XMVectorGetY(tip),0.0f,0.3f*rig.legLength);
+            }
+            else
+            {
+                rig.toeAhead[side]=0.13f*rig.legLength;
+                rig.toeBelow[side]=std::max(0.0f,ankle.y);
+            }
+        }
         if(rig.lowerBody>=0)XMStoreFloat3(&rig.lowerPivot,restPos(rig.lowerBody));
         for(int i=0;i<static_cast<int>(pmx.morphs.size());++i)
         {
@@ -719,30 +744,76 @@ namespace MikuMikuDesktopPerch
             const float a=walkAmount,p=Frac(walkPhase),c=std::cos(XM_2PI*p);
             const float stride=g.stride*L*a,lift=g.lift*L*a;
             const XMVECTOR forward=XMVector3TransformNormal(XMVectorSet(0,0,-1,0),XMMatrixRotationY(yaw));
-            for(int side=0;side<2;++side)
-            {
-                const float ph=Frac(p+side*0.5);
-                float u,h=0;
-                if(ph<g.stance)u=stride*(0.5f-ph/g.stance);
+            // Where a foot is at its phase ph: how far forward of its rest place, how high, and
+            // how it is tilted.
+            auto place=[&](int side,float ph,float& u,float& h,float& pitch){
+                // The foot rolls heel to toe: it lands on the heel with the toes up and is flat
+                // almost at once, stays flat until the other foot is about to land, then the heel
+                // rises and it pushes off from the toes. It swings through toes down, and the toes
+                // come up again for the next landing.
+                u=0;h=0;pitch=0;
+                if(ph<g.stance)
+                {
+                    const float s=ph/g.stance;
+                    u=stride*(0.5f-g.back-s);
+                    pitch=g.heel*(1-Smooth(s/0.1f))-g.toeOff*Smooth((s-g.heelRise)/(1-g.heelRise));
+                }
                 else
                 {
                     const float s=(ph-g.stance)/(1.0f-g.stance);
-                    u=stride*(Smooth(s)-0.5f);
-                    h=lift*std::sin(XM_PI*s);
+                    const float t=std::clamp((s-g.swingDelay)/(1-g.swingDelay),0.0f,1.0f);
+                    u=stride*(0.5f*(t+Smooth(t))-0.5f-g.back);
+                    // Up and down without a jolt (no speed at either end), highest early on.
+                    const float arc=std::sin(XM_PI*std::pow(s,g.liftSkew));
+                    h=lift*arc*arc;
+                    // Toes down (further for a run's kick back), then the toes come up for the landing.
+                    const float turn=Smooth((s-g.kickAt)/(1-g.kickAt));
+                    pitch=-(g.toeOff+(g.kick-g.toeOff)*Smooth(s/g.kickAt))*(1-turn)+g.heel*turn;
                 }
-                footKey(side,standingFoot(side,u,h),0,yaw);
+                pitch*=a;
+                // Heel up: the foot turns about the toe tip, so the ankle rises (and comes a
+                // little forward) instead of the toes sinking into the ground. Toes up: about
+                // the heel, which is close under the ankle.
+                const float d=rig.toeAhead[side],hA=rig.toeBelow[side];
+                if(pitch<0)
+                {
+                    const float th=-pitch;
+                    u+=d-d*std::cos(th)+hA*std::sin(th);
+                    h+=d*std::sin(th)+hA*std::cos(th)-hA;
+                }
+                else if(pitch>0)
+                {
+                    const float e=0.25f*d;
+                    u+=e*std::cos(pitch)-hA*std::sin(pitch)-e;
+                    h+=std::max(0.0f,e*std::sin(pitch)+hA*std::cos(pitch)-hA);
+                }
+            };
+            for(int side=0;side<2;++side)
+            {
+                float u,h,pitch;
+                place(side,Frac(p+side*0.5),u,h,pitch);
+                footKey(side,standingFoot(side,u,h),pitch,yaw);
             }
             // センター travels with the planted foot: stance feet move back at exactly this speed.
             const float speed=g.stride*L/(g.stance*static_cast<float>(g.cycle));
             rootOffset+=speed*a*XMVectorGetX(forward)*static_cast<float>(dt);
             const float chest=yaw*(WalkChestYaw/WalkYaw);
-            // Walking is lowest at double support; running is lowest at mid-stance, highest in flight.
-            const float bobPhase=g.flight?p-g.stance*0.5f:p;
-            KeyOf(keys,rig.groove).position={0,-g.bobBase*L-g.bob*L*a*(0.5f+0.5f*std::cos(2*XM_2PI*bobPhase)),0};
+            // The hips ride a smooth wave, two dips a cycle. Walking is lowest a little after
+            // contact (the weight comes onto the front leg) and highest as the other foot comes
+            // through; running is lowest at mid-stance, highest in flight.
+            auto wave=[&](float q){return 0.5f+0.5f*std::cos(2*XM_2PI*(q-g.lowAt));};
+            const float depth=g.bob*L*a;
+            KeyOf(keys,rig.groove).position={0,-(g.bobBase*L*a+depth*wave(p)),0};
             SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw+g.hipTwist*a*c,0));
             SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(-g.lean*a,0,0),XMQuaternionRotationRollPitchYaw(0,chest-g.chestTwist*a*c,0)));
-            SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(g.lean*0.5f*a,-yaw*(WalkNeckYaw/WalkYaw),0));
-            limbs(-g.armSwing*a*c,g.armSwing*a*c,g.elbow);
+            // The neck turns back against the chest's twist so the head stays steady.
+            SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(g.lean*0.5f*a,-yaw*(WalkNeckYaw/WalkYaw)+0.9f*g.chestTwist*a*c,0));
+            // Arms swing against the legs, a touch behind them, the elbow bending a little more
+            // as the arm comes forward.
+            const float lag=std::cos(XM_2PI*(p-0.03f));
+            const float swing0=-g.armSwing*a*lag,swing1=g.armSwing*a*lag;
+            arms(swing0,swing1,rig.armLower[0],rig.armLower[1],
+                 g.elbow+0.3f*std::max(0.0f,swing0),g.elbow+0.3f*std::max(0.0f,swing1));
         };
 
         switch(activity)

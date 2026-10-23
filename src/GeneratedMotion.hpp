@@ -81,6 +81,9 @@ namespace MikuMikuDesktopPerch
             // 手首 and 手捩 are never written: the layer leaves the wrist to the VMD.
             std::array<int,2> arm{-1,-1},elbow{-1,-1},armTwist{-1,-1};
             std::array<DirectX::XMFLOAT3,2> ankleRest{},hipRest{};
+            // The toe tip relative to the ankle at rest: how far forward and how far down it
+            // is (the foot rolls over it when the heel comes up).
+            std::array<float,2> toeAhead{},toeBelow{};
             std::array<DirectX::XMFLOAT3,2> armSwingAxis{},elbowBendAxis{};   // +angle moves the limb forward
             std::array<DirectX::XMFLOAT3,2> elbowTwistAxis{},armTwistAxis{};  // local X of ひじ, axis of 腕捩
             std::array<float,2> armLower{};    // roll that brings the rest-pose arm down to hang naturally
