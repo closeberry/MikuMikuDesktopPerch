@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cwctype>
+#include <fstream>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -193,7 +194,8 @@ namespace
     {
         if(!app.settings.voice){app.speech.SetVoice(nullptr);app.voice.reset();return;}
         if(!app.voice)app.voice=std::make_unique<VoiceEngine>(app.hwnd);
-        app.speech.SetVoice([](const std::wstring& text){return app.voice->Speak(app.settings.voiceEndpoint,app.settings.voiceSpeaker,text);});
+        app.speech.SetVoice([](const std::wstring& text){
+            return app.voice->Speak({app.settings.voiceDirect,app.settings.voiceEndpoint,app.settings.voiceFolder},app.settings.voiceSpeaker,text);});
     }
 
     void ApplyProceduralSettings()
@@ -1117,6 +1119,8 @@ namespace
         current.chatMemory=s.chatMemory;
         current.voiceSpeaker=s.voiceSpeaker;
         current.voiceName=s.voiceName;
+        current.voiceDirect=s.voiceDirect;
+        current.voiceFolder=s.voiceFolder;
         if(s.voice!=current.voice){current.voice=s.voice;ApplyVoiceSettings();}
         if(!current.chatMemory)app.unmemorized.clear();
         if(choice.character.name!=app.character.name||choice.character.persona!=app.character.persona)
@@ -1976,6 +1980,21 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     {
         int argc=0;
         LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+        // --voice-test <VOICEVOX folder> <style id> <out.wav>: say a line with VOICEVOX's files
+        // directly (no engine), writing the sound or the error (to out.wav.txt).
+        if(argc>=5&&std::wstring(argv[1])==L"--voice-test")
+        {
+            std::string wav;
+            const std::wstring error=SynthesizeVoice({true,{},argv[2]},_wtoi(argv[3]),L"こんにちは。今日もいっしょに、がんばろうね。",wav);
+            if(error.empty()){std::ofstream out(std::filesystem::path(argv[4]),std::ios::binary);out.write(wav.data(),static_cast<std::streamsize>(wav.size()));}
+            const std::wstring report=error.empty()?L"ok "+std::to_wstring(wav.size())+L" bytes":error;
+            const int n=WideCharToMultiByte(CP_UTF8,0,report.c_str(),static_cast<int>(report.size()),nullptr,0,nullptr,nullptr);
+            std::string text(static_cast<size_t>(n),'\0');
+            WideCharToMultiByte(CP_UTF8,0,report.c_str(),static_cast<int>(report.size()),text.data(),n,nullptr,nullptr);
+            std::ofstream(std::filesystem::path(std::wstring(argv[4])+L".txt"),std::ios::binary)<<text;
+            LocalFree(argv);
+            return 0;
+        }
         const bool reading=argc>=4&&std::wstring(argv[1])==L"--reading";
         const std::wstring text=reading?argv[2]:L"",outPath=reading?argv[3]:L"";
         LocalFree(argv);

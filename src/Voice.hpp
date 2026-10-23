@@ -20,16 +20,26 @@ namespace MikuMikuDesktopPerch
         std::vector<std::pair<double,std::wstring>> morae;
     };
 
-    // The voices the engine offers ("character（style）", style id), waiting a few seconds
-    // at most. Returns an explanation on failure (empty on success).
-    std::wstring ListVoices(const std::wstring& endpoint,std::vector<std::pair<std::wstring,int>>& voices);
+    // Where speech comes from: a VOICEVOX-compatible engine on this computer (endpoint), or
+    // VOICEVOX's own files used directly (direct, the VOICEVOX folder), without its engine.
+    struct VoiceSource
+    {
+        bool direct=false;
+        std::wstring endpoint;
+        std::wstring folder;
+    };
+
+    // The voices offered ("character（style）", style id), waiting a few seconds at most.
+    // Returns an explanation on failure (empty on success).
+    std::wstring ListVoices(const VoiceSource& source,std::vector<std::pair<std::wstring,int>>& voices);
 
     // Say text in a voice right away (waiting for it): the WAV file. Returns an explanation
     // on failure (empty on success).
-    std::wstring SynthesizeVoice(const std::wstring& endpoint,int speaker,const std::wstring& text,std::string& wav);
+    std::wstring SynthesizeVoice(const VoiceSource& source,int speaker,const std::wstring& text,std::string& wav);
 
-    // Speech through a VOICEVOX-compatible engine (VOICEVOX, AivisSpeech, ...) on this computer
-    // (POST /audio_query, then /synthesis). Phrases are made one at a time, in the order asked.
+    // Speech in the background, from a VOICEVOX-compatible engine (VOICEVOX, AivisSpeech, ...)
+    // on this computer (POST /audio_query, then /synthesis) or from VOICEVOX's files directly.
+    // Phrases are made one at a time, in the order asked.
     class VoiceEngine
     {
     public:
@@ -43,11 +53,11 @@ namespace MikuMikuDesktopPerch
         VoiceEngine& operator=(const VoiceEngine&)=delete;
 
         // Queue a phrase; returns its request id.
-        int Speak(const std::wstring& endpoint,int speaker,const std::wstring& text);
+        int Speak(const VoiceSource& source,int speaker,const std::wstring& text);
         void CancelAll();   // phrases not yet made are dropped (results still on the way are ignored by id)
 
     private:
-        struct Job {int id;std::wstring endpoint;int speaker;std::wstring text;};
+        struct Job {int id;VoiceSource source;int speaker;std::wstring text;};
         void Run();
 
         HWND notify;

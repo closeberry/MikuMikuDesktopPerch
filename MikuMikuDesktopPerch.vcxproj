@@ -88,6 +88,7 @@
     <ClCompile Include="src\ChatWindows.cpp" />
     <ClCompile Include="src\LocalChat.cpp" />
     <ClCompile Include="src\Voice.cpp" />
+    <ClCompile Include="src\VoicevoxCore.cpp" />
     <ClCompile Include="src\Memory.cpp" />
     <ClCompile Include="src\Speech.cpp" />
     <ClCompile Include="src\MascotModel.cpp" />
@@ -108,6 +109,7 @@
     <ClInclude Include="src\LocalChat.hpp" />
     <ClInclude Include="src\HttpJson.hpp" />
     <ClInclude Include="src\Voice.hpp" />
+    <ClInclude Include="src\VoicevoxCore.hpp" />
     <ClInclude Include="src\Memory.hpp" />
     <ClInclude Include="src\Speech.hpp" />
     <ClInclude Include="src\third_party\LipSyncCore.hpp" />

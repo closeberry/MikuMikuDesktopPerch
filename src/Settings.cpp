@@ -107,6 +107,8 @@ namespace MikuMikuDesktopPerch
         chatInitiative=ReadInt(path,L"ChatInitiative",chatInitiative?1:0)!=0;
         voice=ReadInt(path,L"Voice",voice?1:0)!=0;
         voiceEndpoint=ReadString(path,L"VoiceEndpoint",voiceEndpoint);
+        voiceDirect=ReadInt(path,L"VoiceDirect",voiceDirect?1:0)!=0;
+        voiceFolder=ReadString(path,L"VoiceFolder",voiceFolder);
         voiceSpeaker=ReadInt(path,L"VoiceSpeaker",voiceSpeaker);
         voiceName=ReadString(path,L"VoiceName",voiceName);
         lastGreeting=ReadString(path,L"LastGreeting",lastGreeting);
@@ -155,6 +157,8 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"ChatInitiative",chatInitiative?L"1":L"0");
         WriteString(path,L"Voice",voice?L"1":L"0");
         WriteString(path,L"VoiceEndpoint",voiceEndpoint);
+        WriteString(path,L"VoiceDirect",voiceDirect?L"1":L"0");
+        WriteString(path,L"VoiceFolder",voiceFolder);
         WriteString(path,L"VoiceSpeaker",std::to_wstring(voiceSpeaker));
         WriteString(path,L"VoiceName",voiceName);
         WriteString(path,L"LastGreeting",lastGreeting);

@@ -562,6 +562,10 @@ namespace MikuMikuDesktopPerch
             std::array<std::vector<std::pair<int,float>>,7> expressionMorphs;
             Expression expression=Expression::Neutral;
             std::vector<std::pair<int,float>> face;
+            // Every morph that closes the eyes (blink, smiling eyes, winks, ...) with how far it
+            // closes them at full weight. What this layer adds to one is capped so that, with the
+            // others the motion, a gesture or this layer already show, the eyes are at most shut.
+            std::vector<std::pair<int,float>> eyeMorphs;
             int upperBody=-1,leftShoulder=-1,rightShoulder=-1;
             int neck=-1,head=-1,eyes=-1;
             double clock=0;
@@ -587,6 +591,14 @@ namespace MikuMikuDesktopPerch
         void ResolveProceduralTargets()
         {
             proc.blinkMorph=FindMorph({L"まばたき",L"瞬き",L"blink",L"Blink"});
+            proc.eyeMorphs.clear();
+            for(const auto& [name,closes]:std::initializer_list<std::pair<const wchar_t*,float>>{
+                    {L"まばたき",1},{L"瞬き",1},{L"blink",1},{L"Blink",1},{L"笑い",1},{L"にっこり",1},{L"なごみ",1},{L"はぅ",1},
+                    {L"目閉じ",1},{L"ウィンク",1},{L"ウインク",1},{L"ウィンク２",1},{L"ウィンク右",1},{L"ウィンク２右",1},{L"ｳｨﾝｸ２右",1},
+                    {L"じと目",0.5f},{L"ジト目",0.5f}})
+                if(const int morph=FindMorph({name});morph>=0&&
+                   std::none_of(proc.eyeMorphs.begin(),proc.eyeMorphs.end(),[&](const auto& e){return e.first==morph;}))
+                    proc.eyeMorphs.push_back({morph,closes});
             proc.mouthMorphs={FindMorph({L"あ",L"ア"}),FindMorph({L"い",L"イ"}),FindMorph({L"う",L"ウ"}),
                               FindMorph({L"え",L"エ"}),FindMorph({L"お",L"オ"}),FindMorph({L"ん",L"ン"})};
             {
@@ -665,6 +677,19 @@ namespace MikuMikuDesktopPerch
             }
         }
 
+        // How far morph may still close the eyes, given every other eye-closing morph's weight now.
+        float EyeRoom(const PMX::Pose& pose,int morph) const
+        {
+            float closed=0;
+            for(const auto& [e,closes]:proc.eyeMorphs)
+                if(e!=morph&&static_cast<size_t>(e)<pose.morphKeys.size())closed+=closes*pose.morphKeys[e].value;
+            return std::clamp(1.0f-closed,0.0f,1.0f);
+        }
+        bool IsEyeMorph(int morph) const
+        {
+            return std::any_of(proc.eyeMorphs.begin(),proc.eyeMorphs.end(),[&](const auto& e){return e.first==morph;});
+        }
+
         void ApplyProcedural(PMX::Pose& pose,double dt)
         {
             // No blinking over a posed face: the morphs would add up and over-deform it.
@@ -674,7 +699,7 @@ namespace MikuMikuDesktopPerch
             if(proc.blink&&proc.blinkMorph>=0&&static_cast<size_t>(proc.blinkMorph)<pose.morphKeys.size())
             {
                 auto& v=pose.morphKeys[proc.blinkMorph].value;
-                v=std::max(v,blink);
+                v=std::max(v,std::min(blink,EyeRoom(pose,proc.blinkMorph)));
             }
             // Speaking: the lip-sync's mouth shapes, over whatever the face already shows.
             proc.talkAmount=std::clamp(proc.talkAmount+static_cast<float>(dt/0.12)*(proc.mouthActive?1.0f:-1.0f),0.0f,1.0f);
@@ -698,7 +723,7 @@ namespace MikuMikuDesktopPerch
                     if(weight>0&&static_cast<size_t>(morph)<pose.morphKeys.size())
                     {
                         auto& v=pose.morphKeys[morph].value;
-                        v=std::max(v,weight);
+                        v=std::max(v,IsEyeMorph(morph)?std::min(weight,EyeRoom(pose,morph)):weight);
                     }
                 }
             }
@@ -710,7 +735,7 @@ namespace MikuMikuDesktopPerch
                 if(proc.blinkMorph>=0&&static_cast<size_t>(proc.blinkMorph)<pose.morphKeys.size())
                 {
                     auto& v=pose.morphKeys[proc.blinkMorph].value;
-                    v=std::max(v,d);
+                    v=std::max(v,std::min(d,EyeRoom(pose,proc.blinkMorph)));
                 }
                 // A slow sway, and every so often the head drops further and comes back up.
                 const double t=proc.clock;

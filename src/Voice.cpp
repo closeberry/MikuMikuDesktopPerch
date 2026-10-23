@@ -2,6 +2,7 @@
 #include "Voice.hpp"
 #include "HttpJson.hpp"
 #include "LocalChat.hpp"
+#include "VoicevoxCore.hpp"
 #include <cstdlib>
 
 #pragma comment(lib,"winhttp.lib")
@@ -78,8 +79,11 @@ namespace MikuMikuDesktopPerch
         {
             const Json* phrases=query.Member("accent_phrases");
             if(!phrases||phrases->type!=Json::Type::Array)return false;
-            const double speed=std::max(0.1,Number(query.Member("speedScale"))>0?Number(query.Member("speedScale")):1.0);
-            double t=Number(query.Member("prePhonemeLength"));
+            // The engine writes the settings in camelCase, VOICEVOX CORE in snake_case.
+            auto setting=[&](const char* camel,const char* snake){const Json* j=query.Member(camel);return Number(j?j:query.Member(snake));};
+            const double scale=setting("speedScale","speed_scale");
+            const double speed=std::max(0.1,scale>0?scale:1.0);
+            double t=setting("prePhonemeLength","pre_phoneme_length");
             auto mora=[&](const Json& m,bool pause){
                 t+=Number(m.Member("consonant_length"));
                 const Json* text=m.Member("text");
@@ -92,17 +96,39 @@ namespace MikuMikuDesktopPerch
                     for(const auto& m:moras->items)mora(m,false);
                 if(const Json* pause=phrase.Member("pause_mora");pause&&pause->type==Json::Type::Object)mora(*pause,true);
             }
-            t+=Number(query.Member("postPhonemeLength"));
+            t+=setting("postPhonemeLength","post_phoneme_length");
             clip.seconds=t/speed;
             return true;
         }
     }
 
-    std::wstring ListVoices(const std::wstring& endpoint,std::vector<std::pair<std::wstring,int>>& voices)
+    namespace
     {
+        // An audio query, then its sound, from whichever source.
+        std::wstring Query(const VoiceSource& source,const std::wstring& text,int speaker,std::string& query)
+        {
+            if(source.direct)return VoicevoxCore::AudioQuery(source.folder,text,speaker,query);
+            std::wstring error;
+            Request(source.endpoint,L"POST",L"/audio_query?text="+Escape(text)+L"&speaker="+std::to_wstring(speaker),{},15000,query,error);
+            return error;
+        }
+
+        std::wstring Sound(const VoiceSource& source,const std::string& query,int speaker,std::string& wav)
+        {
+            std::wstring error;
+            if(source.direct)error=VoicevoxCore::Synthesis(source.folder,query,speaker,wav);
+            else Request(source.endpoint,L"POST",L"/synthesis?speaker="+std::to_wstring(speaker),query,30000,wav,error);
+            if(error.empty()&&(wav.size()<=44||wav.compare(0,4,"RIFF")!=0))error=L"音声の作成に失敗しました。";
+            return error;
+        }
+    }
+
+    std::wstring ListVoices(const VoiceSource& source,std::vector<std::pair<std::wstring,int>>& voices)
+    {
+        if(source.direct)return VoicevoxCore::Voices(source.folder,voices);
         std::string body;
         std::wstring error;
-        if(!Request(endpoint,L"GET",L"/speakers",{},5000,body,error))return error;
+        if(!Request(source.endpoint,L"GET",L"/speakers",{},5000,body,error))return error;
         Json j;
         if(!JsonParser(body).Parse(j)||j.type!=Json::Type::Array)return L"音声エンジンの返事を読めませんでした。";
         for(const auto& speaker:j.items)
@@ -123,15 +149,11 @@ namespace MikuMikuDesktopPerch
         return {};
     }
 
-    std::wstring SynthesizeVoice(const std::wstring& endpoint,int speaker,const std::wstring& text,std::string& wav)
+    std::wstring SynthesizeVoice(const VoiceSource& source,int speaker,const std::wstring& text,std::string& wav)
     {
-        const std::wstring voice=L"speaker="+std::to_wstring(speaker);
         std::string query;
-        std::wstring error;
-        if(!Request(endpoint,L"POST",L"/audio_query?text="+Escape(text)+L"&"+voice,{},15000,query,error))return error;
-        if(!Request(endpoint,L"POST",L"/synthesis?"+voice,query,30000,wav,error))return error;
-        if(wav.size()<=44||wav.compare(0,4,"RIFF")!=0)return L"音声エンジンの返事を読めませんでした。";
-        return {};
+        if(auto error=Query(source,text,speaker,query);!error.empty())return error;
+        return Sound(source,query,speaker,wav);
     }
 
     VoiceEngine::VoiceEngine(HWND notify):notify(notify)
@@ -150,11 +172,11 @@ namespace MikuMikuDesktopPerch
         worker.join();
     }
 
-    int VoiceEngine::Speak(const std::wstring& endpoint,int speaker,const std::wstring& text)
+    int VoiceEngine::Speak(const VoiceSource& source,int speaker,const std::wstring& text)
     {
         std::lock_guard lock(mutex);
         const int id=nextId++;
-        jobs.push_back({id,endpoint,speaker,text});
+        jobs.push_back({id,source,speaker,text});
         wake.notify_all();
         return id;
     }
@@ -179,13 +201,10 @@ namespace MikuMikuDesktopPerch
             }
             auto clip=std::make_unique<VoiceClip>();
             std::string query,wav;
-            std::wstring error;
-            const std::wstring speaker=L"speaker="+std::to_wstring(job.speaker);
             Json parsed;
-            const bool ok=Request(job.endpoint,L"POST",L"/audio_query?text="+Escape(job.text)+L"&"+speaker,{},15000,query,error)&&
+            const bool ok=Query(job.source,job.text,job.speaker,query).empty()&&
                           JsonParser(query).Parse(parsed)&&Timeline(parsed,*clip)&&
-                          Request(job.endpoint,L"POST",L"/synthesis?"+speaker,query,30000,wav,error)&&
-                          wav.size()>44&&wav.compare(0,4,"RIFF")==0;
+                          Sound(job.source,query,job.speaker,wav).empty();
             if(ok)clip->wav=std::move(wav);
             VoiceClip* result=ok?clip.release():nullptr;
             if(!PostMessageW(notify,DoneMessage,reinterpret_cast<WPARAM>(result),job.id))delete result;

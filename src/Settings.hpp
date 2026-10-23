@@ -48,6 +48,8 @@ namespace MikuMikuDesktopPerch
         bool chatInitiative=true;   // greet, welcome back and now and then say something first
         // Speaking aloud through a VOICEVOX-compatible engine on this computer, in one of its voices.
         bool voice=false;
+        bool voiceDirect=false;     // VOICEVOX's files used directly (voiceFolder), not its engine
+        std::wstring voiceFolder;   // where VOICEVOX is installed
         std::wstring voiceEndpoint=L"http://127.0.0.1:50021";
         int voiceSpeaker=3;
         std::wstring voiceName;     // the voice's name as the engine gave it (for the settings window)

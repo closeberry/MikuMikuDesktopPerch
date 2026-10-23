@@ -28,7 +28,7 @@ namespace MikuMikuDesktopPerch
             IdScale,IdEdge,IdTopmost,IdStartup,
             IdFps,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
-            IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdSunAzimuth,IdSunElevation,
+            IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
@@ -99,6 +99,8 @@ namespace MikuMikuDesktopPerch
 
         void Combo(int id,int x,int y,int w){Add(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,x,y,w,240,id);}
 
+        void UpdateVoiceMode();
+
         void Build()
         {
             const Settings& s=state.choice.settings;
@@ -123,7 +125,7 @@ namespace MikuMikuDesktopPerch
             Slider(IdSunAzimuth,170,y+126,130,-180,180,s.lightAzimuth);
             Slider(IdSunElevation,306,y+126,130,5,90,s.lightElevation);
             y+=166;
-            Group(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",y,196);
+            Group(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",y,224);
             Label(L"接続先",28,y+22,130);
             Add(L"EDIT",s.chatEndpoint.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+22,266,24,IdChatEndpoint);
             Label(L"モデル",28,y+52,130);
@@ -149,7 +151,13 @@ namespace MikuMikuDesktopPerch
             }
             Add(L"BUTTON",L"試聴",BS_PUSHBUTTON|WS_TABSTOP,304,y+163,56,26,IdVoiceSample);
             Add(L"BUTTON",L"一覧を取得",BS_PUSHBUTTON|WS_TABSTOP,366,y+163,70,26,IdVoiceFetch);
-            y+=206;
+            Combo(IdVoiceMode,46,y+192,120);
+            FillCombo(IdVoiceMode,{{L"エンジンを使う",0},{L"ファイルを直接使う",1}},s.voiceDirect?1:0,L"");
+            Add(L"EDIT",s.voiceFolder.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+192,190,24,IdVoiceFolder);
+            SendDlgItemMessageW(state.window,IdVoiceFolder,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"VOICEVOXのフォルダ"));
+            Add(L"BUTTON",L"参照...",BS_PUSHBUTTON|WS_TABSTOP,366,y+191,70,26,IdVoiceBrowse);
+            UpdateVoiceMode();
+            y+=234;
             Group(L"詳細（変更すると再起動します）",y,166);
             Label(L"描画のfps",28,y+22,130);
             Combo(IdFps,170,y+22,120);
@@ -196,6 +204,40 @@ namespace MikuMikuDesktopPerch
             }
         }
 
+        // Where the voice comes from, as the window shows it now (engine or files).
+        VoiceSource CurrentVoiceSource()
+        {
+            wchar_t folder[MAX_PATH]{};
+            GetDlgItemTextW(state.window,IdVoiceFolder,folder,MAX_PATH);
+            return {ComboValue(IdVoiceMode,0)==1,state.choice.settings.voiceEndpoint,folder};
+        }
+
+        // The folder only matters when VOICEVOX's files are used directly.
+        void UpdateVoiceMode()
+        {
+            const bool direct=ComboValue(IdVoiceMode,0)==1;
+            EnableWindow(GetDlgItem(state.window,IdVoiceFolder),direct);
+            EnableWindow(GetDlgItem(state.window,IdVoiceBrowse),direct);
+        }
+
+        void BrowseVoiceFolder()
+        {
+            Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+            if(FAILED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog))))return;
+            DWORD options=0;
+            dialog->GetOptions(&options);
+            dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM);
+            dialog->SetTitle(L"VOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）");
+            if(FAILED(dialog->Show(state.window)))return;
+            Microsoft::WRL::ComPtr<IShellItem> item;
+            PWSTR path=nullptr;
+            if(SUCCEEDED(dialog->GetResult(&item))&&SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH,&path)))
+            {
+                SetDlgItemTextW(state.window,IdVoiceFolder,path);
+                CoTaskMemFree(path);
+            }
+        }
+
         // The chosen voice says a short line.
         void PlayVoiceSample()
         {
@@ -203,7 +245,7 @@ namespace MikuMikuDesktopPerch
             SetCursor(LoadCursorW(nullptr,IDC_WAIT));
             PlaySoundW(nullptr,nullptr,0);
             std::string wav;
-            const std::wstring error=SynthesizeVoice(state.choice.settings.voiceEndpoint,speaker,L"こんにちは。今日もいっしょに、がんばろうね。",wav);
+            const std::wstring error=SynthesizeVoice(CurrentVoiceSource(),speaker,L"こんにちは。今日もいっしょに、がんばろうね。",wav);
             SetCursor(LoadCursorW(nullptr,IDC_ARROW));
             if(!error.empty())
             {
@@ -219,11 +261,13 @@ namespace MikuMikuDesktopPerch
         {
             SetCursor(LoadCursorW(nullptr,IDC_WAIT));
             std::vector<std::pair<std::wstring,int>> voices;
-            const std::wstring error=ListVoices(state.choice.settings.voiceEndpoint,voices);
+            const std::wstring error=ListVoices(CurrentVoiceSource(),voices);
             SetCursor(LoadCursorW(nullptr,IDC_ARROW));
             if(!error.empty())
             {
-                MessageBoxW(state.window,(error+L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。").c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
+                const wchar_t* hint=CurrentVoiceSource().direct?L"\n\nVOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）を指定してください。"
+                                                              :L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。";
+                MessageBoxW(state.window,(error+hint).c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
                 return;
             }
             HWND list=GetDlgItem(state.window,IdVoiceList);
@@ -540,6 +584,11 @@ namespace MikuMikuDesktopPerch
             s.chatMemory=Checked(IdChatMemory);
             s.chatInitiative=Checked(IdChatInitiative);
             s.voice=Checked(IdVoice);
+            {
+                const VoiceSource source=CurrentVoiceSource();
+                s.voiceDirect=source.direct;
+                s.voiceFolder=source.folder;
+            }
             s.voiceSpeaker=ComboValue(IdVoiceList,s.voiceSpeaker);
             {
                 HWND list=GetDlgItem(state.window,IdVoiceList);
@@ -592,6 +641,12 @@ namespace MikuMikuDesktopPerch
                     return 0;
                 case IdVoiceSample:
                     PlayVoiceSample();
+                    return 0;
+                case IdVoiceMode:
+                    if(HIWORD(wParam)==CBN_SELCHANGE)UpdateVoiceMode();
+                    return 0;
+                case IdVoiceBrowse:
+                    BrowseVoiceFolder();
                     return 0;
                 case IdPersona:
                     OpenPersona();
@@ -656,10 +711,10 @@ namespace MikuMikuDesktopPerch
         SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,state.dpi);
         state.font=CreateFontIndirectW(&metrics.lfMessageFont);
 
-        // Client 460 x 754 logical pixels, centred on the screen the cursor is on.
+        // Client 460 x 782 logical pixels, centred on the screen the cursor is on.
         const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-        RECT frame{0,0,Px(460),Px(754)};
+        RECT frame{0,0,Px(460),Px(782)};
         AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
         POINT cursor{};
         GetCursorPos(&cursor);
