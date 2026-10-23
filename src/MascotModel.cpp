@@ -341,6 +341,63 @@ namespace MikuMikuDesktopPerch
             return true;
         }
 
+        // Walking and running in place (instead of the generated gait), sampled like idle motions.
+        std::array<std::vector<Clip>,2> gaitClips;
+        PMX::Pose gaitPose;
+        double gaitFrame=0;
+        Activity gaitLastActivity=Activity::Idle;
+
+        // The motion's ground speed: how fast a planted foot IK target slides back, over the
+        // frames where a foot is at its lowest (units per second, 30 fps).
+        float GaitSpeed(Clip& clip)
+        {
+            const int last=std::max(clip.vmd->lastFrame,0);
+            const int ik[2]={FindBone({L"左足ＩＫ",L"左足IK"}),FindBone({L"右足ＩＫ",L"右足IK"})};
+            if(last<8||ik[0]<0||ik[1]<0)return 0;
+            std::vector<std::array<float,4>> feet;   // y, z of each foot per frame
+            PMX::Pose sample;
+            for(int f=0;f<=last;++f)
+            {
+                clip.sampler->HiPose(sample,static_cast<float>(f),false,false);
+                const auto& l=sample.boneKeys[ik[0]].position;
+                const auto& r=sample.boneKeys[ik[1]].position;
+                feet.push_back({l.y,l.z,r.y,r.z});
+            }
+            double travel=0;
+            int frames=0;
+            for(int side=0;side<2;++side)
+            {
+                float low=1e9f;
+                for(const auto& f:feet)low=std::min(low,f[side*2]);
+                for(size_t f=1;f<feet.size();++f)
+                    if(feet[f][side*2]<=low+0.05f&&feet[f-1][side*2]<=low+0.05f)
+                    {
+                        travel+=feet[f][side*2+1]-feet[f-1][side*2+1];
+                        ++frames;
+                    }
+            }
+            // Planted feet slide back (+Z) while walking forward (-Z).
+            return frames>=6?static_cast<float>(std::abs(travel)/frames*30.0):0.0f;
+        }
+
+        void SampleGait(PMX::Pose& pose,double dt)
+        {
+            const Activity a=motion.CurrentActivity();
+            const int which=a==Activity::Walk?0:a==Activity::Run?1:-1;
+            if(which<0||gaitClips[which].empty()){gaitLastActivity=a;return;}
+            if(a!=gaitLastActivity)gaitFrame=0;
+            gaitLastActivity=a;
+            auto& clip=gaitClips[which].front();
+            const double last=static_cast<double>(std::max(clip.vmd->lastFrame,1));
+            gaitFrame=std::fmod(gaitFrame+dt*30.0,last);
+            clip.sampler->HiPose(gaitPose,static_cast<float>(gaitFrame),false,false);
+            for(size_t i=0;i<pose.boneKeys.size()&&i<gaitPose.boneKeys.size();++i)
+            {
+                pose.boneKeys[i].rotation=gaitPose.boneKeys[i].rotation;
+                pose.boneKeys[i].position=gaitPose.boneKeys[i].position;
+            }
+        }
+
         // Click motions: one at random per click while standing (instead of a built-in reaction).
         std::vector<Clip> clickClips;
         int lastClick=-1;
@@ -497,6 +554,14 @@ namespace MikuMikuDesktopPerch
             std::array<float,6> mouth{};
             bool mouthActive=false;
             float talkAmount=0;           // eases in and out so the mouth does not snap
+            float nod=0;                  // the head dips a little with each syllable
+            bool dozing=false;
+            float doze=0;                 // 0 awake .. 1 asleep
+            // Feelings: the morphs each one sets (and how far), the one shown, and every
+            // morph any of them uses with its current, eased weight.
+            std::array<std::vector<std::pair<int,float>>,7> expressionMorphs;
+            Expression expression=Expression::Neutral;
+            std::vector<std::pair<int,float>> face;
             int upperBody=-1,leftShoulder=-1,rightShoulder=-1;
             int neck=-1,head=-1,eyes=-1;
             double clock=0;
@@ -524,6 +589,26 @@ namespace MikuMikuDesktopPerch
             proc.blinkMorph=FindMorph({L"まばたき",L"瞬き",L"blink",L"Blink"});
             proc.mouthMorphs={FindMorph({L"あ",L"ア"}),FindMorph({L"い",L"イ"}),FindMorph({L"う",L"ウ"}),
                               FindMorph({L"え",L"エ"}),FindMorph({L"お",L"オ"}),FindMorph({L"ん",L"ン"})};
+            {
+                using E=Expression;
+                struct Part {E e;std::initializer_list<const wchar_t*> names;float weight;};
+                const Part parts[]={
+                    {E::Smile,{L"笑い"},0.7f},{E::Smile,{L"にこり",L"にっこり"},0.5f},
+                    {E::Surprise,{L"びっくり",L"驚き"},0.7f},{E::Surprise,{L"上"},0.6f},
+                    {E::Troubled,{L"困る",L"困り"},0.8f},
+                    {E::Angry,{L"怒り"},0.7f},{E::Angry,{L"ジト目",L"じと目"},0.3f},
+                    {E::Sad,{L"困る",L"困り"},0.6f},{E::Sad,{L"悲しい",L"悲しみ"},0.5f},
+                    {E::Shy,{L"照れ"},0.8f},{E::Shy,{L"にこり",L"にっこり"},0.4f},{E::Shy,{L"笑い"},0.3f}};
+                for(auto& list:proc.expressionMorphs)list.clear();
+                proc.face.clear();
+                for(const auto& p:parts)
+                {
+                    const int morph=FindMorph(p.names);
+                    if(morph<0)continue;
+                    proc.expressionMorphs[static_cast<size_t>(p.e)].push_back({morph,p.weight});
+                    if(std::none_of(proc.face.begin(),proc.face.end(),[&](const auto& f){return f.first==morph;}))proc.face.push_back({morph,0.0f});
+                }
+            }
             proc.upperBody=FindBone({L"上半身2",L"上半身"});
             proc.leftShoulder=FindBone({L"左肩"});
             proc.rightShoulder=FindBone({L"右肩"});
@@ -583,7 +668,7 @@ namespace MikuMikuDesktopPerch
         void ApplyProcedural(PMX::Pose& pose,double dt)
         {
             // No blinking over a posed face: the morphs would add up and over-deform it.
-            const bool facePosed=motion.FaceBusy()||shotActive;
+            const bool facePosed=motion.FaceBusy()||shotActive||proc.expression!=Expression::Neutral||proc.doze>0;
             proc.blinkGate=std::clamp(proc.blinkGate+static_cast<float>(dt/0.12)*(facePosed?-1.0f:1.0f),0.0f,1.0f);
             const float blink=BlinkWeight(dt)*proc.blinkGate;
             if(proc.blink&&proc.blinkMorph>=0&&static_cast<size_t>(proc.blinkMorph)<pose.morphKeys.size())
@@ -601,6 +686,48 @@ namespace MikuMikuDesktopPerch
                     auto& v=pose.morphKeys[morph].value;
                     v=std::max(v,proc.mouth[i]*proc.talkAmount);
                 }
+            // The feeling, eased in and out (a quarter of a second), over the face.
+            {
+                const auto& target=proc.expressionMorphs[static_cast<size_t>(proc.expression)];
+                const float step=static_cast<float>(dt/0.25);
+                for(auto& [morph,weight]:proc.face)
+                {
+                    float want=0;
+                    for(const auto& [m,w]:target)if(m==morph)want=std::max(want,w);
+                    weight+=std::clamp(want-weight,-step,step);
+                    if(weight>0&&static_cast<size_t>(morph)<pose.morphKeys.size())
+                    {
+                        auto& v=pose.morphKeys[morph].value;
+                        v=std::max(v,weight);
+                    }
+                }
+            }
+            // Dozing: eyes shut, the head down and nodding now and then, the chest sunk a little.
+            proc.doze=std::clamp(proc.doze+static_cast<float>(dt/(proc.dozing?3.0:0.5))*(proc.dozing?1.0f:-1.0f),0.0f,1.0f);
+            if(proc.doze>0)
+            {
+                const float d=proc.doze*proc.doze*(3-2*proc.doze);
+                if(proc.blinkMorph>=0&&static_cast<size_t>(proc.blinkMorph)<pose.morphKeys.size())
+                {
+                    auto& v=pose.morphKeys[proc.blinkMorph].value;
+                    v=std::max(v,d);
+                }
+                // A slow sway, and every so often the head drops further and comes back up.
+                const double t=proc.clock;
+                const float nodOff=static_cast<float>(std::pow(std::max(0.0,std::sin(t*DirectX::XM_2PI/7.0)),8.0));
+                const float sway=static_cast<float>(std::sin(t*DirectX::XM_2PI/5.0));
+                AddRotation(pose,proc.neck,DirectX::XMConvertToRadians(-12.0f-6.0f*nodOff)*d,0,DirectX::XMConvertToRadians(2.0f)*sway*d);
+                AddRotation(pose,proc.head,DirectX::XMConvertToRadians(-8.0f-6.0f*nodOff)*d,0,DirectX::XMConvertToRadians(3.0f)*sway*d);
+                AddRotation(pose,proc.upperBody,DirectX::XMConvertToRadians(-3.0f)*d,0,0);
+            }
+            // Speaking, the head dips a little with the open syllables.
+            {
+                float open=0;
+                for(const float m:proc.mouth)open+=m;
+                open=std::min(1.0f,open)*proc.talkAmount;
+                proc.nod+=(open-proc.nod)*static_cast<float>(1.0-std::exp(-dt/0.09));
+                if(proc.nod>1e-3f)AddRotation(pose,proc.head,DirectX::XMConvertToRadians(-2.5f)*proc.nod,0,0);
+            }
             if(proc.breath)
             {
                 // About 15 breaths per minute: a slight chest lift and shoulder rise.
@@ -769,6 +896,27 @@ namespace MikuMikuDesktopPerch
         if(m.shotActive&&m.shotIsClick){m.shotActive=false;m.shotWeight=0;m.shotIsClick=false;}
         m.clickClips=std::move(clips);
         m.lastClick=-1;
+        return true;
+    }
+
+    bool MascotModel::SetGaitMotion(int which,const std::wstring& path,std::wstring& error)
+    {
+        auto& m=*impl;
+        if(which<0||which>1||!m.solver)return false;
+        std::vector<Impl::Clip> clips;
+        if(!path.empty())
+        {
+            if(!m.LoadClips({path},clips,which==0?L"歩くモーション":L"走るモーション",error))return false;
+            const float speed=m.GaitSpeed(clips.front());
+            if(speed<=0)
+            {
+                error=L"このモーションでは、足が地面について進む速さを測れませんでした（その場で足踏みする、ループの歩き・走りのモーションを選んでください）: "+path;
+                return false;
+            }
+            m.motion.SetClipSpeed(which,speed);
+        }
+        else m.motion.SetClipSpeed(which,0);
+        m.gaitClips[which]=std::move(clips);
         return true;
     }
 
@@ -1098,6 +1246,22 @@ namespace MikuMikuDesktopPerch
         impl->ApplyFrameAcceleration();
     }
 
+    void MascotModel::SetExpression(Expression expression,bool gesture)
+    {
+        auto& m=*impl;
+        if(expression==m.proc.expression)return;
+        m.proc.expression=expression;
+        if(!gesture||m.proc.Random01()>0.6f)return;
+        const wchar_t* name=expression==Expression::Smile?L"tilt":expression==Expression::Surprise?L"surprised":
+                            expression==Expression::Shy?L"cheeks":expression==Expression::Troubled?L"think":
+                            expression==Expression::Angry?L"hip":nullptr;
+        if(name&&!m.shotActive)m.motion.Emote(name);
+    }
+
+    void MascotModel::SetDozing(bool dozing){impl->proc.dozing=dozing;}
+    bool MascotModel::Emote(const std::wstring& name){return !impl->shotActive&&impl->motion.Emote(name);}
+    bool MascotModel::Dozing() const {return impl->proc.doze>0;}
+
     void MascotModel::SetMouth(const std::array<float,6>& weights,bool active)
     {
         if(active)impl->proc.mouth=weights;
@@ -1184,6 +1348,7 @@ namespace MikuMikuDesktopPerch
         m.resetPhysicsPending=false;
         m.solver->HiPose(m.solver->solvedPose,static_cast<float>(m.frame),false,m.continuous);
         m.SampleIdle(m.solver->solvedPose,dt);
+        m.SampleGait(m.solver->solvedPose,dt);
         m.motion.SetGeneratedIdle(m.idleClips.empty());
         m.motion.SetGesturesAllowed(!m.shotActive);
         m.motion.Apply(m.solver->solvedPose,dt);

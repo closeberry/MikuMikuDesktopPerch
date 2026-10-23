@@ -93,12 +93,23 @@ namespace MikuMikuDesktopPerch
         blink=ReadInt(path,L"Blink",blink?1:0)!=0;
         breath=ReadInt(path,L"Breath",breath?1:0)!=0;
         lookAtMouse=ReadInt(path,L"LookAtMouse",lookAtMouse?1:0)!=0;
+        selfShadow=ReadInt(path,L"SelfShadow",selfShadow?1:0)!=0;
+        lightAzimuth=std::clamp(ReadInt(path,L"LightAzimuth",lightAzimuth),-180,180);
+        lightElevation=std::clamp(ReadInt(path,L"LightElevation",lightElevation),5,90);
         autoBehavior=ReadInt(path,L"AutoBehavior",autoBehavior?1:0)!=0;
         windowMode=ReadInt(path,L"WindowMode",windowMode?1:0)!=0;
         chatEndpoint=ReadString(path,L"ChatEndpoint",chatEndpoint);
         chatModel=ReadString(path,L"ChatModel",chatModel);
         userName=ReadString(path,L"UserName",userName);
+        walkMotionPath=ReadString(path,L"WalkMotion",walkMotionPath);
+        runMotionPath=ReadString(path,L"RunMotion",runMotionPath);
         chatMemory=ReadInt(path,L"ChatMemory",chatMemory?1:0)!=0;
+        chatInitiative=ReadInt(path,L"ChatInitiative",chatInitiative?1:0)!=0;
+        voice=ReadInt(path,L"Voice",voice?1:0)!=0;
+        voiceEndpoint=ReadString(path,L"VoiceEndpoint",voiceEndpoint);
+        voiceSpeaker=ReadInt(path,L"VoiceSpeaker",voiceSpeaker);
+        voiceName=ReadString(path,L"VoiceName",voiceName);
+        lastGreeting=ReadString(path,L"LastGreeting",lastGreeting);
         edgeScale=std::clamp(static_cast<float>(_wtof(ReadString(path,L"EdgeScale",std::to_wstring(edgeScale)).c_str())),0.0f,10.0f);
     }
 
@@ -130,12 +141,23 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"Blink",blink?L"1":L"0");
         WriteString(path,L"Breath",breath?L"1":L"0");
         WriteString(path,L"LookAtMouse",lookAtMouse?L"1":L"0");
+        WriteString(path,L"SelfShadow",selfShadow?L"1":L"0");
+        WriteString(path,L"LightAzimuth",std::to_wstring(lightAzimuth));
+        WriteString(path,L"LightElevation",std::to_wstring(lightElevation));
         WriteString(path,L"AutoBehavior",autoBehavior?L"1":L"0");
         WriteString(path,L"WindowMode",windowMode?L"1":L"0");
         WriteString(path,L"ChatEndpoint",chatEndpoint);
         WriteString(path,L"ChatModel",chatModel);
         WriteString(path,L"UserName",userName);
+        WriteString(path,L"WalkMotion",walkMotionPath);
+        WriteString(path,L"RunMotion",runMotionPath);
         WriteString(path,L"ChatMemory",chatMemory?L"1":L"0");
+        WriteString(path,L"ChatInitiative",chatInitiative?L"1":L"0");
+        WriteString(path,L"Voice",voice?L"1":L"0");
+        WriteString(path,L"VoiceEndpoint",voiceEndpoint);
+        WriteString(path,L"VoiceSpeaker",std::to_wstring(voiceSpeaker));
+        WriteString(path,L"VoiceName",voiceName);
+        WriteString(path,L"LastGreeting",lastGreeting);
         wchar_t edge[32]{};
         swprintf_s(edge,L"%.2f",edgeScale);
         WriteString(path,L"EdgeScale",edge);

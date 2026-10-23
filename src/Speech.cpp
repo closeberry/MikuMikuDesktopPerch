@@ -4,6 +4,9 @@
 #include <oleauto.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <mmsystem.h>
+
+#pragma comment(lib,"winmm.lib")
 
 namespace MikuMikuDesktopPerch
 {
@@ -79,9 +82,17 @@ namespace MikuMikuDesktopPerch
         return Guess(text);
     }
 
+    Speech::~Speech()
+    {
+        if(!sounds.empty())PlaySoundW(nullptr,nullptr,0);
+    }
+
     void Speech::Reset()
     {
+        if(!sounds.empty())PlaySoundW(nullptr,nullptr,0);
+        auto keep=std::move(voice);
         *this=Speech();
+        voice=std::move(keep);
     }
 
     void Speech::Add(const std::wstring& text)
@@ -106,12 +117,54 @@ namespace MikuMikuDesktopPerch
 
     void Speech::Flush(const std::wstring& chunk)
     {
+        // With a voice the phrase waits for its sound (in order); a phrase with nothing to say
+        // (punctuation alone) goes straight on.
+        const bool sayable=std::any_of(chunk.begin(),chunk.end(),[](wchar_t c){return !IsPause(c)&&!std::iswspace(c);});
+        if(voice&&sayable)
+        {
+            waiting.push_back({voice(chunk),chunk,false,nullptr});
+            return;
+        }
+        if(!waiting.empty())waiting.push_back({0,chunk,true,nullptr});   // keeps its place behind the voiced ones
+        else Place(chunk,nullptr);
+    }
+
+    void Speech::Voiced(int id,VoiceClip* clip)
+    {
+        std::unique_ptr<VoiceClip> owned(clip);
+        auto it=std::find_if(waiting.begin(),waiting.end(),[&](const Waiting& w){return w.id==id&&!w.done;});
+        if(it==waiting.end())return;   // from a reply already reset
+        it->done=true;
+        it->clip=std::move(owned);
+        // Phrases are said in order: place those at the front that are ready.
+        while(!waiting.empty()&&waiting.front().done)
+        {
+            Place(waiting.front().text,waiting.front().clip.get());
+            waiting.erase(waiting.begin());
+        }
+    }
+
+    void Speech::Place(const std::wstring& chunk,VoiceClip* clip)
+    {
         using namespace MotionTraceEditor::LipSyncCore;
         // Speaking goes on from where it is: a phrase that arrives late starts now.
         nextFrame=std::max(nextFrame,static_cast<int>(clock*30.0)+1);
         Chunk c;
         c.chars=chunk.size();
         c.start=nextFrame/30.0;
+        if(clip)
+        {
+            // The syllables where the voice says them.
+            const int start=nextFrame;
+            for(const auto& [at,mora]:clip->morae)
+                if(IsRestText(mora)||IsSupportedLyricToken(mora))events.push_back({start+static_cast<int>(at*30.0+0.5),mora});
+            nextFrame=start+static_cast<int>(clip->seconds*30.0+0.999);
+            sounds.push_back({std::move(clip->wav),start/30.0,start/30.0+clip->seconds,false});
+            c.end=std::max(c.start+0.05,nextFrame/30.0);
+            chunks.push_back(c);
+            dirty=true;
+            return;
+        }
         // About 7.5 syllables a second; a comma pauses a little, a full stop longer.
         for(const auto& mora:SplitMorae(HiraganaReading(chunk)))
         {
@@ -134,6 +187,15 @@ namespace MikuMikuDesktopPerch
     {
         if(!Active())return;
         clock+=dt;
+        // A voiced phrase starts playing at its time (the one before it has ended by then).
+        for(auto& s:sounds)
+            if(!s.started&&clock>=s.start)
+            {
+                s.started=true;
+                PlaySoundW(reinterpret_cast<LPCWSTR>(s.wav.data()),nullptr,SND_MEMORY|SND_ASYNC|SND_NODEFAULT);
+            }
+        // Finished sounds can go (the one playing, and those after it, stay).
+        while(sounds.size()>1&&sounds.front().started&&sounds[1].started)sounds.erase(sounds.begin());
         if(!dirty)return;
         dirty=false;
         for(auto& curve:curves)curve.clear();
@@ -143,6 +205,7 @@ namespace MikuMikuDesktopPerch
 
     bool Speech::Speaking() const
     {
+        if(!waiting.empty())return true;
         if(events.empty())return !pending.empty();
         return clock*30.0<events.back().frame+8||!pending.empty();
     }

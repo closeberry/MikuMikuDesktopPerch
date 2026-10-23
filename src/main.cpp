@@ -2,6 +2,7 @@
 #include "ChatWindows.hpp"
 #include "LocalChat.hpp"
 #include "Memory.hpp"
+#include "Voice.hpp"
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
 #include "Settings.hpp"
@@ -33,7 +34,8 @@ namespace
     constexpr wchar_t WindowClass[]=L"MikuMikuDesktopPerchWindow";
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
-                      IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk};
+                      IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
+                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion};
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
     constexpr float Gravity=98.0f;          // world units/s², the same as the physics world
@@ -79,6 +81,7 @@ namespace
         bool restart=false;
         POINT lastCursor{LONG_MIN,LONG_MIN};
         double cursorIdle=0;
+        double lookAtViewerUntil=-1;   // while talking (and a moment after) she looks at the viewer
 
         // The window is a fixed transparent stage over the work area (stage). The drawn frame
         // ("window" below: windowX/Y, windowSize) moves inside it as a composition offset;
@@ -105,11 +108,20 @@ namespace
         // Long-term memory: notes about the user, picked out of finished exchanges by a second
         // request to the LLM once the conversation pauses.
         CharacterMemory memory;
+        std::unique_ptr<VoiceEngine> voice;   // while speaking aloud is on
         std::unique_ptr<LocalChat> memoryChat;
         std::vector<ChatMessage> unmemorized;   // exchanges not yet looked through for notes
         double lastReplyAt=0;
         int memoryRequest=0;
         std::wstring memoryReply;
+        // Speaking first: when the next word of her own is due, and whether the user is away.
+        double nextChatterAt=1500;
+        double awaySince=-1;
+        bool dozing=false;               // she has dozed off (the user has been away a while)
+        bool forcedDoze=false;           // diagnostics (--doze): asleep whatever the input
+        // The feeling the reply is said with (its tag), and when the face goes back to normal.
+        bool replyFeelingSet=false;
+        double feelingUntil=-1;
         std::wstring reply;
         size_t replyShown=0;      // characters of the cleaned reply already in the bubble
         Speech speech;            // the reply's syllables on a timeline, for the mouth
@@ -176,9 +188,19 @@ namespace
 
     int ShowMessage(const std::wstring& text,UINT type);
 
+    // Speaking aloud: each phrase of a reply goes to the voice engine (in the chosen voice).
+    void ApplyVoiceSettings()
+    {
+        if(!app.settings.voice){app.speech.SetVoice(nullptr);app.voice.reset();return;}
+        if(!app.voice)app.voice=std::make_unique<VoiceEngine>(app.hwnd);
+        app.speech.SetVoice([](const std::wstring& text){return app.voice->Speak(app.settings.voiceEndpoint,app.settings.voiceSpeaker,text);});
+    }
+
     void ApplyProceduralSettings()
     {
         app.model.SetProcedural(app.settings.blink,app.settings.breath,app.settings.lookAtMouse);
+        app.renderer.SetSelfShadow(app.settings.selfShadow);
+        app.renderer.SetLight(static_cast<float>(app.settings.lightAzimuth),static_cast<float>(app.settings.lightElevation));
     }
 
     // Rest-pose size and centre of the model; world y=0 is the ground.
@@ -851,20 +873,31 @@ namespace
         else app.cursorIdle+=dt;
         std::array<float,3> head{};
         const Activity a=app.model.CurrentActivity();
+        // Talking (waiting for the reply, saying it, or with the input box open), she looks at
+        // the viewer, who sits in front of the middle of the screen, instead of the cursor.
+        if((app.chat&&app.chat->Busy())||app.speech.Speaking()||app.bubble.Talking()||app.chatInput.IsOpen())
+            app.lookAtViewerUntil=app.clock+2.5;
+        const bool atViewer=app.clock<app.lookAtViewerUntil;
         // The opened motion leads the head itself while it plays.
-        if(!app.settings.lookAtMouse||a==Activity::Walk||a==Activity::Fall||app.model.MotionPlaying()||app.model.HeadBusy()||!app.model.HeadPosition(head))
+        if((!app.settings.lookAtMouse&&!atViewer)||app.model.Dozing()||a==Activity::Walk||a==Activity::Fall||app.model.MotionPlaying()||app.model.HeadBusy()||!app.model.HeadPosition(head))
         {
             app.model.SetLookTarget(0,0,false);
             return;
         }
         const POINT h=app.renderer.Project(head);
-        const float dx=static_cast<float>(cursor.x-(window.left+h.x));
-        const float dy=static_cast<float>(cursor.y-(window.top+h.y));
-        // Treat the viewer as sitting about one window height away from the screen.
-        const float distance=static_cast<float>(window.bottom-window.top);
+        MONITORINFO monitor{sizeof(monitor)};
+        GetMonitorInfoW(MonitorFromWindow(app.hwnd,MONITOR_DEFAULTTONEAREST),&monitor);
+        const RECT& screen=monitor.rcMonitor;
+        const POINT viewer{(screen.left+screen.right)/2,screen.top+(screen.bottom-screen.top)*2/5};
+        const POINT at=atViewer?viewer:cursor;
+        const float dx=static_cast<float>(at.x-(window.left+h.x));
+        const float dy=static_cast<float>(at.y-(window.top+h.y));
+        // Treat the viewer as sitting about one window height away from the screen (the
+        // face in front of the screen: about its width away).
+        const float distance=static_cast<float>(atViewer?(screen.right-screen.left)*0.8:window.bottom-window.top);
         const float yaw=std::clamp(std::atan2(dx,distance),DirectX::XMConvertToRadians(-40.0f),DirectX::XMConvertToRadians(40.0f));
         const float pitch=std::clamp(std::atan2(-dy,distance),DirectX::XMConvertToRadians(-20.0f),DirectX::XMConvertToRadians(25.0f));
-        app.model.SetLookTarget(yaw,pitch,app.cursorIdle<LookIdleSeconds);
+        app.model.SetLookTarget(yaw,pitch,atViewer||app.cursorIdle<LookIdleSeconds);
     }
 
     void SetClickThrough(bool enabled);
@@ -1010,6 +1043,11 @@ namespace
         AppendMenuW(motions,MF_STRING,IdOpenClickMotion,L"クリック時のモーションを開く...（複数選択可）");
         AppendMenuW(motions,MF_STRING|(clickCount==0?MF_GRAYED:0),IdCloseClickMotion,
                     clickCount>1?(L"クリック時のモーションを閉じる（"+std::to_wstring(clickCount)+L"件）").c_str():L"クリック時のモーションを閉じる");
+        AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
+        AppendMenuW(motions,MF_STRING|(app.settings.walkMotionPath.empty()?0:MF_CHECKED),IdOpenWalkMotion,L"歩くモーションを開く...");
+        AppendMenuW(motions,MF_STRING|(app.settings.runMotionPath.empty()?0:MF_CHECKED),IdOpenRunMotion,L"走るモーションを開く...");
+        AppendMenuW(motions,MF_STRING|(app.settings.walkMotionPath.empty()&&app.settings.runMotionPath.empty()?MF_GRAYED:0),IdCloseGaitMotion,
+                    L"歩く・走るモーションを閉じる");
         AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(motions),L"モーション");
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         const bool grounded=app.place==Place::Ground;
@@ -1064,6 +1102,9 @@ namespace
         current.blink=s.blink;
         current.breath=s.breath;
         current.lookAtMouse=s.lookAtMouse;
+        current.selfShadow=s.selfShadow;
+        current.lightAzimuth=s.lightAzimuth;
+        current.lightElevation=s.lightElevation;
         ApplyProceduralSettings();
         if(s.topmost!=current.topmost)
         {
@@ -1074,6 +1115,9 @@ namespace
         current.chatEndpoint=s.chatEndpoint;
         if(s.chatModel!=current.chatModel){current.chatModel=s.chatModel;app.conversation.clear();}
         current.chatMemory=s.chatMemory;
+        current.voiceSpeaker=s.voiceSpeaker;
+        current.voiceName=s.voiceName;
+        if(s.voice!=current.voice){current.voice=s.voice;ApplyVoiceSettings();}
         if(!current.chatMemory)app.unmemorized.clear();
         if(choice.character.name!=app.character.name||choice.character.persona!=app.character.persona)
         {
@@ -1117,6 +1161,26 @@ namespace
         }
         for(size_t keep=std::min<size_t>(out.size(),7);keep>0;--keep)
             if(std::wstring_view(L"<think>").substr(0,keep)==std::wstring_view(out).substr(out.size()-keep)){out.resize(out.size()-keep);break;}
+        // The feeling tag ([笑顔] and the like, in any of the brackets models use) is for the
+        // face, not the bubble. One not closed yet waits.
+        {
+            std::wstring kept;
+            for(size_t i=0;i<out.size();++i)
+            {
+                const wchar_t c=out[i];
+                const wchar_t closing=c==L'['?L']':c==L'［'?L'］':c==L'【'?L'】':0;
+                if(closing)
+                {
+                    const size_t end=out.find(closing,i+1);
+                    if(end!=std::wstring::npos&&end-i<=7){i=end;continue;}
+                    if(end==std::wstring::npos&&out.size()-i<=7)break;
+                }
+                kept+=c;
+            }
+            out=kept;
+            const size_t start=out.find_first_not_of(L" 　\t\r\n");
+            out.erase(0,start==std::wstring::npos?out.size():start);
+        }
         // Emoji: the bubble's font cannot draw them (they come out as boxes), and models add
         // them however they are asked not to. Pictographs, dingbats, their variation selectors
         // and joiners go.
@@ -1142,22 +1206,34 @@ namespace
     }
 
     // Say something to the mascot: the reply streams into the bubble over her head.
-    void Talk(const std::wstring& text)
+    // The LLM is set up and allowed (tell: say what is missing in the bubble).
+    bool ChatReady(bool tell)
     {
         if(app.settings.chatModel.empty())
         {
-            app.bubble.ShowNotice(L"設定の「会話」で、使うモデルを選んでください（Ollama などを起動してから「一覧を取得」）。");
-            return;
+            if(tell)app.bubble.ShowNotice(L"設定の「会話」で、使うモデルを選んでください（Ollama などを起動してから「一覧を取得」）。");
+            return false;
         }
         if(const auto problem=CheckLocalEndpoint(app.settings.chatEndpoint);!problem.empty())
         {
-            app.bubble.ShowNotice(problem);
-            return;
+            if(tell)app.bubble.ShowNotice(problem);
+            return false;
         }
         if(!app.chat)app.chat=std::make_unique<LocalChat>(app.hwnd);
+        return true;
+    }
+
+    // The feelings a reply may start with, as the tags the LLM is asked to write.
+    constexpr std::pair<const wchar_t*,Expression> Feelings[]={
+        {L"笑顔",Expression::Smile},{L"驚き",Expression::Surprise},{L"困り",Expression::Troubled},{L"怒り",Expression::Angry},
+        {L"悲しみ",Expression::Sad},{L"照れ",Expression::Shy},{L"普通",Expression::Neutral}};
+
+    // Ask for a reply to the conversation as it stands; query is what the memory is searched for.
+    void StartReply(const std::wstring& query)
+    {
         // The last six exchanges are enough for a chat at the desk.
-        app.conversation.push_back({L"user",text});
         while(app.conversation.size()>12)app.conversation.erase(app.conversation.begin());
+        const std::wstring& text=query;
         SYSTEMTIME now{};
         GetLocalTime(&now);
         static constexpr const wchar_t* Days[]={L"日",L"月",L"火",L"水",L"木",L"金",L"土"};
@@ -1176,14 +1252,126 @@ namespace
             L"あなたは「"+app.character.name+L"」です。\n"+app.character.persona+L"\n\n"+partner+remembered+
             L"いまは"+clock+L"です。\n"
             L"あなたの返事は、デスクトップの上にいるあなたの頭上の吹き出しに表示されます。"
-            L"1〜3文くらいの短い話し言葉で答えてください。Markdown、箇条書き、絵文字、顔文字は使わないでください。"});
+            L"1〜3文くらいの短い話し言葉で答えてください。Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
+            L"返事のいちばん最初に、そのときの気持ちを［笑顔］［驚き］［困り］［怒り］［悲しみ］［照れ］［普通］のどれか1つで書いてください（例：［笑顔］そうなんだ！）。"
+            L"この印は最初の1つだけで、ほかの所には書かないでください。\n"
+            L"話し相手の発言が（ ）で囲まれているときは、実際の発言ではなく状況の説明です。その状況に合わせて、あなたから話しかけてください。"});
         messages.insert(messages.end(),app.conversation.begin(),app.conversation.end());
         app.reply.clear();
         app.replyShown=0;
         app.speech.Reset();
+        app.replyFeelingSet=false;
+        if(app.voice)app.voice->CancelAll();   // what was left of the last reply is not said
         app.chatRequest=app.chat->Start(app.settings.chatEndpoint,app.settings.chatModel,std::move(messages));
         app.bubble.Begin(app.character.name);
         Trace(L"%.1f talk: request %d",app.clock,app.chatRequest);
+    }
+
+    void Talk(const std::wstring& text)
+    {
+        if(!ChatReady(true))return;
+        app.conversation.push_back({L"user",text});
+        StartReply(text);
+    }
+
+    // She speaks first: situation says why (it goes in as a stage direction in brackets).
+    void SpeakFirst(const std::wstring& situation)
+    {
+        if(!ChatReady(false))return;
+        Trace(L"%.1f speak first: %s",app.clock,situation.c_str());
+        app.conversation.push_back({L"user",L"（"+situation+L"）"});
+        StartReply(situation);
+    }
+
+    // Greetings for the time of day (once per part of the day, restarts included), a welcome
+    // back after a while away, and now and then a word of her own. Never over a reply, the
+    // input box, or while the user is away.
+    // Seconds since the last keyboard or mouse input anywhere.
+    double InputIdleSeconds()
+    {
+        LASTINPUTINFO input{sizeof(input)};
+        return GetLastInputInfo(&input)?(GetTickCount()-input.dwTime)/1000.0:0.0;
+    }
+
+    // With nobody at the computer for five minutes she dozes off where she is (standing,
+    // sitting or hanging, not in the middle of anything); any input wakes her, now and then
+    // with a yawn.
+    void UpdateDozing()
+    {
+        if(app.forcedDoze)return;
+        const Activity a=app.model.CurrentActivity();
+        const bool still=(a==Activity::Idle||a==Activity::Sit||a==Activity::Hang||a==Activity::Lie)&&app.travel==Travel::None&&
+                         !app.model.MotionPlaying()&&!(app.chat&&app.chat->Busy())&&!app.bubble.Visible()&&!app.chatInput.IsOpen();
+        const double idle=InputIdleSeconds();
+        if(!app.dozing&&still&&idle>=5*60)
+        {
+            app.dozing=true;
+            app.model.SetDozing(true);
+            Trace(L"%.1f doze off",app.clock);
+        }
+        else if(app.dozing&&(idle<2||!still))
+        {
+            app.dozing=false;
+            app.model.SetDozing(false);
+            if(idle<2&&a==Activity::Idle&&app.Random01()<0.5f)app.model.Emote(L"yawn");
+            Trace(L"%.1f wake up",app.clock);
+        }
+        if(app.dozing)app.nextDecision=std::max(app.nextDecision,app.clock+10);   // no wandering off asleep
+    }
+
+    void MaybeSpeakFirst()
+    {
+        if(!app.settings.chatInitiative||app.settings.chatModel.empty()||app.clock<8)return;
+        const double idle=InputIdleSeconds();
+        if(idle>=15*60&&app.awaySince<0)app.awaySince=app.clock-idle;
+        if((app.chat&&app.chat->Busy())||app.bubble.Visible()||app.chatInput.IsOpen()||app.speech.Speaking())return;
+        if(app.model.CurrentActivity()==Activity::Grabbed||app.travel!=Travel::None)return;
+        if(app.awaySince>=0&&idle<3)
+        {
+            const int minutes=static_cast<int>((app.clock-app.awaySince)/60);
+            app.awaySince=-1;
+            SpeakFirst(L"話し相手が"+std::to_wstring(minutes)+L"分ほど席を外していて、いまパソコンの前に戻ってきました。おかえりのひと言を");
+            app.nextChatterAt=std::max(app.nextChatterAt,app.clock+20*60);
+            return;
+        }
+        if(idle>90)return;
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        const int h=now.wHour;
+        const wchar_t* slot=h>=5&&h<10?L"morning":h>=11&&h<14?L"noon":h>=18&&h<22?L"evening":(h>=23||h<3)?L"late":nullptr;
+        if(slot)
+        {
+            wchar_t key[40]{};
+            swprintf_s(key,L"%04d-%02d-%02d %s",now.wYear,now.wMonth,now.wDay,slot);
+            if(app.settings.lastGreeting!=key)
+            {
+                app.settings.lastGreeting=key;
+                app.settings.Save(app.settingsPath);
+                const std::wstring s=slot;
+                SpeakFirst(s==L"morning"?L"朝です。話し相手がパソコンを使い始めました。朝のあいさつを":
+                           s==L"noon"?L"お昼どきです。お昼ごはんのことなどで、軽く声をかけて":
+                           s==L"evening"?L"夕方から夜の時間です。今日一日おつかれさまの気持ちで、ひと言":
+                                          L"夜遅い時間です。夜ふかしを気づかうひと言を");
+                app.nextChatterAt=std::max(app.nextChatterAt,app.clock+20*60);
+                return;
+            }
+        }
+        if(app.clock>=app.nextChatterAt)
+        {
+            app.nextChatterAt=app.clock+(30+app.Random01()*30)*60;
+            SpeakFirst(L"特に用事はないけれど、話し相手に何かひと言話しかけたくなりました。覚えていることや、いまの時間帯・季節にちなんだ話題で");
+        }
+    }
+
+    // The face keeps the reply's feeling while she speaks, and a few seconds after.
+    void UpdateFeeling()
+    {
+        if((app.chat&&app.chat->Busy())||app.speech.Speaking()||app.bubble.Talking()){app.feelingUntil=app.clock+3;return;}
+        if(app.feelingUntil>=0&&app.clock>=app.feelingUntil)
+        {
+            app.feelingUntil=-1;
+            app.model.SetExpression(Expression::Neutral,false);
+        }
     }
 
     void OpenChatInput()
@@ -1199,6 +1387,16 @@ namespace
         std::unique_ptr<std::wstring> owned(text);
         if(id!=app.chatRequest)return;
         app.reply+=*owned;
+        if(!app.replyFeelingSet)
+            for(const auto& [tag,feeling]:Feelings)
+                if(app.reply.find(tag)!=std::wstring::npos&&app.reply.find(tag)<16)
+                {
+                    app.replyFeelingSet=true;
+                    app.model.SetExpression(feeling,true);
+                    app.feelingUntil=-1;
+                    Trace(L"%.1f talk: feeling %s",app.clock,tag);
+                    break;
+                }
         const std::wstring clean=CleanReply(app.reply);
         if(clean.size()>app.replyShown)
         {
@@ -1236,7 +1434,8 @@ namespace
         app.speech.Finish();
         if(!clean.empty())
         {
-            if(app.settings.chatMemory&&!app.conversation.empty()&&app.conversation.back().role==L"user")
+            if(app.settings.chatMemory&&!app.conversation.empty()&&app.conversation.back().role==L"user"&&
+               app.conversation.back().content.rfind(L"（",0)!=0)
             {
                 app.unmemorized.push_back(app.conversation.back());
                 app.unmemorized.push_back({L"assistant",clean});
@@ -1388,6 +1587,29 @@ namespace
             if(app.model.MotionPlaying()){app.model.StopMotion();app.motionClosePending=true;}
             else {std::wstring error;app.model.SetMotion({},error);}
             break;
+        case IdOpenWalkMotion:
+        case IdOpenRunMotion:
+        {
+            // A walk or run in place (the kind moved by 全ての親) replaces the generated gait.
+            const int which=id==IdOpenWalkMotion?0:1;
+            std::wstring& setting=which==0?app.settings.walkMotionPath:app.settings.runMotionPath;
+            const auto path=OpenFileDialog(app.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",setting.empty()?app.settings.modelPath:setting);
+            if(path.empty())break;
+            if(std::wstring error;!app.model.SetGaitMotion(which,path,error)){ShowMessage(error,MB_ICONERROR);break;}
+            setting=path;
+            app.settings.Save(app.settingsPath);
+            break;
+        }
+        case IdCloseGaitMotion:
+        {
+            std::wstring error;
+            app.model.SetGaitMotion(0,{},error);
+            app.model.SetGaitMotion(1,{},error);
+            app.settings.walkMotionPath.clear();
+            app.settings.runMotionPath.clear();
+            app.settings.Save(app.settingsPath);
+            break;
+        }
         case IdOpenClickMotion:
         case IdCloseClickMotion:
         {
@@ -1446,7 +1668,8 @@ namespace
             }
             break;
         case IdSettings:
-            ShowSettingsWindow(app.hwnd,{app.settings,StartupRegistered(),app.character,&app.memory},ApplySettings);
+            ShowSettingsWindow(app.hwnd,{app.settings,StartupRegistered(),app.character,&app.memory},ApplySettings,
+                               [](int azimuth,int elevation){app.renderer.SetLight(static_cast<float>(azimuth),static_cast<float>(elevation));});
             break;
         case IdExit:
             DestroyWindow(app.hwnd);
@@ -1559,6 +1782,10 @@ namespace
             }
             OnChatText(reinterpret_cast<std::wstring*>(wParam),static_cast<int>(lParam));
             return 0;
+        case VoiceEngine::DoneMessage:
+            Trace(L"%.1f voice: %d %s",app.clock,static_cast<int>(lParam),wParam?L"made":L"failed");
+            app.speech.Voiced(static_cast<int>(lParam),reinterpret_cast<VoiceClip*>(wParam));
+            return 0;
         case LocalChat::DoneMessage:
             if(app.memoryRequest&&static_cast<int>(lParam)==app.memoryRequest)
             {
@@ -1582,8 +1809,17 @@ namespace
             OnCommand(LOWORD(wParam));
             return 0;
         case WM_DESTROY:
+            // What was said since the last notes are kept for the next start to look through.
+            if(app.settings.chatMemory)
+            {
+                std::vector<std::pair<bool,std::wstring>> pending;
+                for(const auto& m:app.unmemorized)pending.push_back({m.role==L"user",m.content});
+                SavePendingExchanges(app.settings.modelPath,pending);
+            }
             app.chat.reset();
             app.memoryChat.reset();
+            app.speech.SetVoice(nullptr);
+            app.voice.reset();
             app.chatInput.Close();
             app.bubble.Hide();
             SaveWindowPosition();
@@ -1653,6 +1889,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     int snapshotScale=0;          // --scale <percent>: resize through the menu path after start-up
     std::wstring snapshotActivity;   // --activity walk|sit|grab|fall: hold that generated activity
     std::wstring snapshotGesture;    // --gesture hip|wave|peace|...: hold that standing gesture
+    bool snapshotDoze=false;         // --doze: doze off from the start
+    std::array<std::wstring,2> snapshotGait;   // --walk-motion / --run-motion <vmd>: use that gait motion
     {
         int argc=0;
         LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
@@ -1700,6 +1938,24 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--view-yaw"&&i+1<argc)
             {
                 app.viewYaw=DirectX::XMConvertToRadians(static_cast<float>(_wtof(argv[++i])));
+            }
+            else if((arg==L"--walk-motion"||arg==L"--run-motion")&&i+1<argc)
+            {
+                snapshotGait[arg==L"--walk-motion"?0:1]=argv[++i];
+            }
+            else if(arg==L"--doze")
+            {
+                snapshotDoze=true;
+            }
+            else if(arg==L"--light"&&i+2<argc)
+            {
+                app.settings.lightAzimuth=_wtoi(argv[i+1]);
+                app.settings.lightElevation=_wtoi(argv[i+2]);
+                i+=2;
+            }
+            else if(arg==L"--self-shadow"&&i+1<argc)
+            {
+                app.settings.selfShadow=_wtoi(argv[++i])!=0;
             }
             else if(arg==L"--look"&&i+2<argc)
             {
@@ -1877,6 +2133,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     if(std::wstring motionError;!app.model.SetMotion(app.settings.motionPath,motionError))app.settings.motionPath.clear();
     std::erase_if(app.settings.clickMotionPaths,[](const std::wstring& p){return !std::filesystem::exists(p);});
     if(std::wstring clickError;!app.model.SetClickMotions(app.settings.clickMotionPaths,clickError))app.settings.clickMotionPaths.clear();
+    for(int which=0;which<2;++which)
+    {
+        std::wstring& path=which==0?app.settings.walkMotionPath:app.settings.runMotionPath;
+        if(std::wstring gaitError;!path.empty()&&(!std::filesystem::exists(path)||!app.model.SetGaitMotion(which,path,gaitError)))path.clear();
+    }
     std::optional<Activity> forcedActivity;   // --activity for snapshot checks
     if(snapshotActivity==L"walk")forcedActivity=Activity::Walk;
     else if(snapshotActivity==L"run")forcedActivity=Activity::Run;
@@ -1889,6 +2150,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     if(!snapshotPath.empty())app.settings.autoBehavior=false;
     if(forcedActivity)app.model.SetActivity(*forcedActivity,1);
     if(!snapshotGesture.empty())app.model.ForceGesture(snapshotGesture);
+    if(snapshotDoze){app.dozing=app.forcedDoze=true;app.model.SetDozing(true);}
+    for(int which=0;which<2;++which)
+        if(std::wstring gaitError;!snapshotGait[which].empty()&&!app.model.SetGaitMotion(which,snapshotGait[which],gaitError))
+            Trace(L"gait motion: %s",gaitError.c_str());
 
     app.tray.cbSize=sizeof(app.tray);
     app.tray.hWnd=app.hwnd;
@@ -1901,6 +2166,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.bubble.Create(app.hwnd);
     app.character=CharacterProfile::Load(app.settings.modelPath,app.model.ModelName());
     app.memory.Load(app.settings.modelPath);
+    for(const auto& [user,text]:TakePendingExchanges(app.settings.modelPath))
+        app.unmemorized.push_back({user?L"user":L"assistant",text});
+    ApplyVoiceSettings();
 
     ShowWindow(app.hwnd,SW_SHOWNOACTIVATE);
     // Event-driven: called on the message loop whenever another window takes the foreground.
@@ -2024,6 +2292,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             }
             UpdateAutoBehavior();
             MaybeMemorize();
+            UpdateDozing();
+            MaybeSpeakFirst();
+            UpdateFeeling();
             if(app.pendingClick&&app.clock>=app.pendingClickAt)
             {
                 OnClick(*app.pendingClick);

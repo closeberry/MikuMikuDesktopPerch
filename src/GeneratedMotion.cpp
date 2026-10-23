@@ -373,19 +373,40 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    bool GeneratedMotion::ForceGesture(const std::wstring& name)
+    namespace
     {
-        static const std::pair<const wchar_t*,Gesture> names[]={
+        using Gesture=GeneratedMotion::Gesture;
+        constexpr std::pair<const wchar_t*,Gesture> GestureNames[]={
             {L"hip",Gesture::HandOnHip},{L"wave",Gesture::Wave},{L"peace",Gesture::Peace},{L"behind",Gesture::HandsBehind},
             {L"palm",Gesture::LookAtPalm},{L"folded",Gesture::HandsFolded},{L"stretch",Gesture::Stretch},
             {L"look",Gesture::LookAround},{L"tilt",Gesture::HeadTilt},{L"stand",Gesture::Stand},
             {L"hair",Gesture::TuckHair},{L"yawn",Gesture::Yawn},{L"think",Gesture::Think},{L"hum",Gesture::Hum},
             {L"clap",Gesture::Clap},{L"far",Gesture::LookFar},{L"cheeks",Gesture::Cheeks},
             {L"pat",Gesture::PatHead},{L"surprised",Gesture::Surprised},{L"curious",Gesture::Curious},{L"shynod",Gesture::ShyNod}};
+    }
+
+    bool GeneratedMotion::Emote(const std::wstring& name)
+    {
+        if(reaction!=Gesture::None||overrides.empty()||activity!=Activity::Idle)return false;
+        for(const auto& [n,g]:GestureNames)
+            if(name==n)
+            {
+                reaction=g;
+                reactionSide=Random01()<0.5f?0:1;
+                reactionTime=0;
+                reactionLength=static_cast<int>(g)>GestureCount?2.5:std::min(3.5,static_cast<double>(GestureLengths(g)[0]));
+                reactionWeight=0;
+                return true;
+            }
+        return false;
+    }
+
+    bool GeneratedMotion::ForceGesture(const std::wstring& name)
+    {
         // name or name@seconds: hold the gesture, or freeze it that far into its timeline.
         const auto at=name.find(L'@');
         const std::wstring base=name.substr(0,at);
-        for(const auto& [n,g]:names)
+        for(const auto& [n,g]:GestureNames)
             if(base==n)
             {
                 gesture=g;gestureSide=0;gestureTime=0;gestureLength=1e9;frozenAt=-1;
@@ -1076,6 +1097,7 @@ namespace MikuMikuDesktopPerch
             walkAmount=0;
             yaw=0;
         }
+        else if(ClipGait())ClipGaitKeys(pose,target,dt);
         else
         {
             if(activity==Activity::Idle){walkAmount=0;yaw=0;}
@@ -1122,6 +1144,49 @@ namespace MikuMikuDesktopPerch
             if(static_cast<size_t>(morph)<pose.morphKeys.size())pose.morphKeys[morph].value=std::max(pose.morphKeys[morph].value,weight);
 
         AddRootOffset(pose);
+    }
+
+    // The user's walking (or running) motion, made in place facing the front, turned to the side
+    // the way the generated gait is: the foot IK targets swing round the vertical axis, 下半身
+    // turns with them and 上半身 a little less (the chest stays toward the viewer). センター's
+    // height goes to グルーブ (センター moves on the ground only), and the body travels at the
+    // motion's own ground speed so the planted foot stays put.
+    void GeneratedMotion::ClipGaitKeys(const PMX::Pose& pose,std::vector<Key>& keys,double dt)
+    {
+        activityTime+=dt;
+        const float follow=static_cast<float>(1.0-std::exp(-dt/0.18));
+        const float targetYaw=-direction*WalkYaw;
+        yaw+=(targetYaw-yaw)*follow;
+        const float turned=1.0f-std::min(1.0f,std::abs(targetYaw-yaw)/(40.0f*Deg));
+        walkAmount=Approach(walkAmount,turned,static_cast<float>(dt/0.3));
+        for(size_t i=0;i<overrides.size();++i)
+        {
+            const auto& k=pose.boneKeys[overrides[i]];
+            keys[i]={k.rotation,k.position};
+        }
+        const XMMATRIX turn=XMMatrixRotationY(yaw);
+        const XMVECTOR yawTurn=XMQuaternionRotationRollPitchYaw(0,yaw,0);
+        auto key=[&](int bone)->Key*{return bone>=0&&static_cast<size_t>(bone)<slot.size()&&slot[bone]>=0?&keys[slot[bone]]:nullptr;};
+        for(int side=0;side<2;++side)
+            if(Key* k=key(rig.legIK[side]))
+            {
+                const XMVECTOR rest=XMLoadFloat3(&rig.ankleRest[side]);
+                const XMVECTOR at=XMVector3Transform(XMVectorAdd(rest,XMLoadFloat3(&k->position)),turn);
+                XMStoreFloat3(&k->position,XMVectorSubtract(at,rest));
+                XMStoreFloat4(&k->rotation,Then(XMLoadFloat4(&k->rotation),yawTurn));
+            }
+        if(Key* k=key(rig.lowerBody))XMStoreFloat4(&k->rotation,Then(XMLoadFloat4(&k->rotation),yawTurn));
+        if(Key* k=key(rig.upperBody))XMStoreFloat4(&k->rotation,Then(XMLoadFloat4(&k->rotation),XMQuaternionRotationRollPitchYaw(0,yaw*(WalkChestYaw/WalkYaw),0)));
+        if(Key* k=key(rig.neck))XMStoreFloat4(&k->rotation,Then(XMLoadFloat4(&k->rotation),XMQuaternionRotationRollPitchYaw(0,-yaw*(WalkNeckYaw/WalkYaw),0)));
+        if(Key* k=key(rig.center))
+        {
+            const float height=k->position.y;
+            k->position.y=0;
+            XMStoreFloat3(&k->position,XMVector3Transform(XMLoadFloat3(&k->position),turn));
+            if(Key* g=key(rig.groove))g->position.y+=height;
+        }
+        const float speed=clipSpeed[activity==Activity::Run?1:0];
+        rootOffset+=speed*walkAmount*XMVectorGetX(XMVector3TransformNormal(XMVectorSet(0,0,-1,0),turn))*static_cast<float>(dt);
     }
 
     // Accumulated walking travel: センター carries the body, the foot IK targets (parented to

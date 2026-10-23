@@ -64,6 +64,40 @@ namespace MikuMikuDesktopPerch
         }
     }
 
+    void SavePendingExchanges(const std::wstring& modelPath,const std::vector<std::pair<bool,std::wstring>>& exchanges)
+    {
+        const std::wstring file=CharacterDataFile(modelPath,L".pending.txt",!exchanges.empty());
+        if(file.empty())return;
+        if(exchanges.empty()){DeleteFileW(file.c_str());return;}
+        std::string data;
+        for(const auto& [user,text]:exchanges)
+        {
+            std::wstring line=text;
+            for(auto& c:line)if(c==L'\t'||c==L'\r'||c==L'\n')c=L' ';
+            data+=(user?"U\t":"A\t")+ToUtf8(line)+"\n";
+        }
+        std::ofstream out(std::filesystem::path(file),std::ios::binary|std::ios::trunc);
+        out.write(data.data(),static_cast<std::streamsize>(data.size()));
+    }
+
+    std::vector<std::pair<bool,std::wstring>> TakePendingExchanges(const std::wstring& modelPath)
+    {
+        std::vector<std::pair<bool,std::wstring>> out;
+        const std::wstring file=CharacterDataFile(modelPath,L".pending.txt",false);
+        std::error_code ec;
+        if(file.empty()||!std::filesystem::is_regular_file(file,ec))return out;
+        if(std::filesystem::file_size(file,ec)<=MaxFileSize)
+        {
+            std::ifstream in(std::filesystem::path(file),std::ios::binary);
+            std::string line;
+            while(std::getline(in,line)&&out.size()<48)
+                if(line.size()>2&&(line[0]=='U'||line[0]=='A')&&line[1]=='\t')
+                    out.push_back({line[0]=='U',FromUtf8(line.substr(2))});
+        }
+        DeleteFileW(file.c_str());
+        return out;
+    }
+
     std::wstring TodayDate()
     {
         SYSTEMTIME now{};

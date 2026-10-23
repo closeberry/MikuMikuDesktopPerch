@@ -17,6 +17,13 @@ namespace MikuMikuDesktopPerch
     class GeneratedMotion
     {
     public:
+        // Stand is the plain standing pose, taken as one gesture among the others.
+        enum class Gesture {None,HandOnHip,Wave,Peace,HandsBehind,LookAtPalm,HandsFolded,Stretch,LookAround,HeadTilt,Stand,
+                            TuckHair,Yawn,Think,Hum,Clap,LookFar,Cheeks,
+                            // Click reactions only (never picked at random).
+                            PatHead,Surprised,Curious,ShyNod};
+        static constexpr int GestureCount=17;
+
         // T-stance correction of one side: keys are generated in the corrected (A-stance) frame.
         struct ArmRest
         {
@@ -56,6 +63,14 @@ namespace MikuMikuDesktopPerch
         bool React(bool head);
         bool Reacting() const {return reaction!=Gesture::None;}
         bool ForceGesture(const std::wstring& name);
+        // Play a gesture (by its ForceGesture name) once as a reaction, as when talking. False
+        // when it cannot now (not standing, or already reacting).
+        bool Emote(const std::wstring& name);
+        // A walking (0) or running (1) motion played in place by the model instead of the
+        // generated gait: its ground speed (units per second), 0 for the generated gait. The
+        // pose passed to Apply then holds the motion's frame, which is turned to the side here.
+        void SetClipSpeed(int which,float speed){clipSpeed[which]=speed;}
+        bool ClipGait() const {return (activity==Activity::Walk&&clipSpeed[0]>0)||(activity==Activity::Run&&clipSpeed[1]>0);}
         // Shift another pose (an opened motion blended over this layer's output) by the walking
         // travel, as Apply does to its own output.
         void AddRootOffset(PMX::Pose& pose) const;
@@ -106,12 +121,6 @@ namespace MikuMikuDesktopPerch
             int smileEyes=-1,smileMouth=-1,wink=-1,eyesClosed=-1,mouthOpen=-1;
         };
 
-        // Stand is the plain standing pose, taken as one gesture among the others.
-        enum class Gesture {None,HandOnHip,Wave,Peace,HandsBehind,LookAtPalm,HandsFolded,Stretch,LookAround,HeadTilt,Stand,
-                            TuckHair,Yawn,Think,Hum,Clap,LookFar,Cheeks,
-                            // Click reactions only (never picked at random).
-                            PatHead,Surprised,Curious,ShyNod};
-        static constexpr int GestureCount=17;
 
         void Generate(std::vector<Key>& keys,double dt);
         void DistributeTwist(std::vector<Key>& keys) const;
@@ -175,5 +184,7 @@ namespace MikuMikuDesktopPerch
         float reactionWeight=0;
         std::vector<std::pair<int,float>> reactionMorphs;
         std::uint32_t random=0x9E3779B9u;
+        std::array<float,2> clipSpeed{0,0};
+        void ClipGaitKeys(const PMX::Pose& pose,std::vector<Key>& keys,double dt);
     };
 }

@@ -15,6 +15,9 @@ namespace MikuMikuDesktopPerch
         // Played on a click while standing, one at random (empty: built-in reactions). Stored
         // like IdleMotion, as the ClickMotion line.
         std::vector<std::wstring> clickMotionPaths;
+        // Walking and running in place (looped, made to be moved by 全ての親) to use instead of
+        // the generated gait; empty: generated.
+        std::wstring walkMotionPath,runMotionPath;
         std::wstring toonDir;       // folder holding toon01.bmp..toon10.bmp (MMD's Data folder)
         static constexpr int MinScale=50,MaxScale=200;
         int windowHeight=300;       // logical pixels at 96 DPI, at 100% scale
@@ -26,6 +29,10 @@ namespace MikuMikuDesktopPerch
         int msaa=4;
         bool topmost=true;
         float edgeScale=1.0f;
+        bool selfShadow=true;       // the model shades itself from the light (MMD's self-shadow)
+        // Where the light (the sun) is, in degrees: around (0 in front of her, + to the
+        // viewer's right, ±180 behind) and up from the horizon. The default is MMD's light.
+        int lightAzimuth=45,lightElevation=55;
         int maxTextureSize=1024;   // larger textures are downscaled at load (0 = keep original)
         bool blink=true;
         bool breath=true;
@@ -38,6 +45,13 @@ namespace MikuMikuDesktopPerch
         std::wstring chatModel;
         std::wstring userName;      // what the mascot calls the user (empty: no name)
         bool chatMemory=true;       // remember things from conversations (per model, on this computer)
+        bool chatInitiative=true;   // greet, welcome back and now and then say something first
+        // Speaking aloud through a VOICEVOX-compatible engine on this computer, in one of its voices.
+        bool voice=false;
+        std::wstring voiceEndpoint=L"http://127.0.0.1:50021";
+        int voiceSpeaker=3;
+        std::wstring voiceName;     // the voice's name as the engine gave it (for the settings window)
+        std::wstring lastGreeting;  // the last time-of-day greeting (date and slot), so a restart does not repeat it
 
         static std::wstring DefaultPath();
         void Load(const std::wstring& path);

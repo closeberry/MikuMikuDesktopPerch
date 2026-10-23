@@ -13,4 +13,6 @@ cbuffer Scene : register(b0)
     float4x4 ParticleViewProj;   // plain camera, for effects drawn in world space
     float4 CameraRight;
     float4 CameraUp;
+    float4x4 LightViewProj; // model space to the self-shadow map
+    float4 ShadowInfo;      // x: self-shadow on, y: one shadow-map texel in UV
 };

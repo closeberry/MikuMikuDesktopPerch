@@ -36,6 +36,11 @@ namespace MikuMikuDesktopPerch
         // out of step with the frame's position, a smaller drawn area never does.
         bool Resize(unsigned width,unsigned height,std::wstring& error);
         void SetCamera(DirectX::FXMVECTOR eye,DirectX::FXMVECTOR target,float fovY);
+        // MMD's self-shadow: the model shades itself from the light (a shadow map pass).
+        void SetSelfShadow(bool on){selfShadow=on;}
+        // Where the light comes from, in degrees: around (0 in front, + to the viewer's
+        // right) and up from the horizon.
+        void SetLight(float azimuth,float elevation);
         // Display-only transform of the drawn model (identity normally); Project ignores it.
         void SetModelTransform(DirectX::FXMMATRIX world);
         void SetParticles(const std::vector<Particle>& list);
@@ -110,7 +115,12 @@ namespace MikuMikuDesktopPerch
         UINT rtvStride=0,srvStride=0;
 
         Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
-        Microsoft::WRL::ComPtr<ID3D12PipelineState> modelCullPso,modelDoubleSidedPso,edgePso,particlePso;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> modelCullPso,modelDoubleSidedPso,edgePso,particlePso,shadowPso;
+        // Self-shadow map (depth from the light), sampled by the model shader.
+        static constexpr UINT ShadowMapSize=2048;
+        Microsoft::WRL::ComPtr<ID3D12Resource> shadowMap;
+        bool selfShadow=true;
+        DirectX::XMFLOAT3 lightDir{-0.5f,-1.0f,0.5f};   // the way the light travels (MMD's default)
 
         // Upload batching for load-time resources.
         Microsoft::WRL::ComPtr<ID3D12CommandAllocator> uploadAllocator;
@@ -125,6 +135,8 @@ namespace MikuMikuDesktopPerch
         size_t sceneOffset=0,materialOffset=0,boneOffset=0,dynamicOffset=0,particleOffset=0,uploadSize=0;
 
         DirectX::XMFLOAT4X4 view{},projection{};
+        DirectX::XMFLOAT3 cameraEye{},cameraTarget{};
+        float cameraFovY=0.5f;
         DirectX::XMFLOAT4X4 modelWorld{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
         std::vector<Particle> particles;
         DirectX::XMFLOAT2 pixelOffset{};

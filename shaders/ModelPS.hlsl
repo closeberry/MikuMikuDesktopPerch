@@ -7,7 +7,20 @@ struct PSInput
     float3 viewNormal : TEXCOORD1;
     float3 worldPosition : TEXCOORD2;
     float2 uv : TEXCOORD0;
+    float4 shadowPosition : TEXCOORD3;
 };
+
+// 1 where the light reaches, 0 in the model's own shadow, softened over a few texels.
+float SelfShadow(float4 shadowPosition)
+{
+    float3 p = shadowPosition.xyz / shadowPosition.w;
+    float2 uv = p.xy * float2(0.5, -0.5) + 0.5;
+    float lit = 0;
+    [unroll] for (int y = -1; y <= 1; ++y)
+        [unroll] for (int x = -1; x <= 1; ++x)
+            lit += ShadowMap.SampleCmpLevelZero(ShadowSampler, uv + float2(x, y) * ShadowInfo.y, p.z);
+    return p.z > 1 ? 1 : lit / 9;   // beyond the map's far end: lit (the border is lit too)
+}
 
 float4 main(PSInput input) : SV_Target
 {
@@ -29,9 +42,24 @@ float4 main(PSInput input) : SV_Target
         else color.rgb += sphere.rgb;
         color.a *= sphere.a;
     }
-    if (UseToon)
+    float lambert = dot(n, toLight);
+    float lit = 1;
+    if (ShadowInfo.x > 0 && ReceiveShadow)
     {
-        float lambert = dot(n, toLight);
+        // MMD's self-shadow mode: shadowed parts (cast by the model, or turned away from the
+        // light, with a sharper edge than the plain toon ramp) take the toon's dark end, lit
+        // parts no toon at all. Without a toon both are the same colour, as in MMD, so only
+        // the highlight goes.
+        lit = SelfShadow(input.shadowPosition);
+        if (UseToon)
+        {
+            float3 dark = (ToonTexture.Sample(ClampSampler, float2(0, 1)) * ToonMul + ToonAdd).rgb;
+            lit = min(saturate(lambert * 3), lit);
+            color.rgb *= lerp(dark, 1, lit);
+        }
+    }
+    else if (UseToon)
+    {
         float4 toon = ToonTexture.Sample(ClampSampler, float2(0, 0.5 - lambert * 0.5)) * ToonMul + ToonAdd;
         color.rgb *= toon.rgb;
     }
@@ -39,7 +67,7 @@ float4 main(PSInput input) : SV_Target
     {
         float3 eyeDir = normalize(float3(View._13, View._23, View._33));
         float3 h = normalize(toLight - eyeDir);
-        color.rgb += Specular * LightColor * pow(max(0, dot(h, n)), Shininess);
+        color.rgb += Specular * LightColor * pow(max(0, dot(h, n)), Shininess) * lit;
     }
     color = saturate(color);
     clip(color.a - 1.0 / 255.0);

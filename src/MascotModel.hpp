@@ -10,6 +10,8 @@ namespace MikuMikuDesktopPerch
     // What the generated motion layer is doing. Idle plays the VMD (plus procedural layers).
     // Sit, Lie and Hang rest on an edge at world y=0 (a window's top edge).
     enum class Activity { Idle, Walk, Run, Jump, Sit, Lie, Hang, Grabbed, Fall };
+    // The feeling on the face while talking (made of the model's standard face morphs).
+    enum class Expression { Neutral, Smile, Surprise, Troubled, Angry, Sad, Shy };
 
     // A Jump starts with this long a crouch before the body leaves the ground.
     constexpr double JumpCrouchSeconds=0.22;
@@ -75,6 +77,10 @@ namespace MikuMikuDesktopPerch
         // sitting or hanging, a shy tilt of the head. False when it cannot react now (already
         // reacting, the opened motion playing, walking, held, ...).
         bool SetClickMotions(const std::vector<std::wstring>& paths,std::wstring& error);
+        // Walking (which 0) or running (1) in place, used instead of the generated gait (an
+        // empty path: back to the generated one). Fails for a motion whose feet never stay on
+        // the ground long enough to measure its speed.
+        bool SetGaitMotion(int which,const std::wstring& path,std::wstring& error);
         bool React(bool head);
         bool Reacting() const;
         // True between idle motions (or loops of one) and whenever there is none playing:
@@ -99,6 +105,15 @@ namespace MikuMikuDesktopPerch
         // Mouth shapes while a reply is "spoken": weights for the あ い う え お ん morphs
         // (those the model has), over whatever the face already shows. active=false lets go.
         void SetMouth(const std::array<float,6>& weights,bool active);
+        // Ease the face into a feeling (Neutral: back to the face the motion gives). gesture:
+        // now and then add a fitting gesture too, when standing.
+        void SetExpression(Expression expression,bool gesture);
+        // Dozing off: the eyes close and the head droops and nods, eased in over a few seconds;
+        // waking is quicker.
+        void SetDozing(bool dozing);
+        // Play a standing gesture once by name (as ForceGesture names them); false if not now.
+        bool Emote(const std::wstring& name);
+        bool Dozing() const;
         // The model's name as written in the PMX file.
         std::wstring ModelName() const;
         // Desired look direction in radians: yaw > 0 turns toward screen right, pitch > 0 looks up.

@@ -87,6 +87,7 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ChatWindows.cpp" />
     <ClCompile Include="src\LocalChat.cpp" />
+    <ClCompile Include="src\Voice.cpp" />
     <ClCompile Include="src\Memory.cpp" />
     <ClCompile Include="src\Speech.cpp" />
     <ClCompile Include="src\MascotModel.cpp" />
@@ -105,6 +106,8 @@
     <ClInclude Include="src\MascotModel.hpp" />
     <ClInclude Include="src\ChatWindows.hpp" />
     <ClInclude Include="src\LocalChat.hpp" />
+    <ClInclude Include="src\HttpJson.hpp" />
+    <ClInclude Include="src\Voice.hpp" />
     <ClInclude Include="src\Memory.hpp" />
     <ClInclude Include="src\Speech.hpp" />
     <ClInclude Include="src\third_party\LipSyncCore.hpp" />
@@ -121,6 +124,8 @@
     <None Include="shaders\Scene.hlsli" />
     <FxCompile Include="shaders\ModelVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
     <FxCompile Include="shaders\ModelPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
+    <FxCompile Include="shaders\ShadowVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
+    <FxCompile Include="shaders\ShadowPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
     <FxCompile Include="shaders\EdgeVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
     <FxCompile Include="shaders\EdgePS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
     <FxCompile Include="shaders\ParticleVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>

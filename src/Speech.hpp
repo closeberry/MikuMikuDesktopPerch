@@ -1,8 +1,11 @@
 #pragma once
 #include <array>
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 #include "LipSyncCore.hpp"
+#include "Voice.hpp"
 
 namespace MikuMikuDesktopPerch
 {
@@ -11,19 +14,27 @@ namespace MikuMikuDesktopPerch
     // becomes a guess of two syllables, which is enough to move a mouth.
     std::wstring HiraganaReading(const std::wstring& text);
 
-    // A reply spoken aloud, without sound: the text is read into syllables (morae) as it
-    // streams in, the syllables are placed on a timeline at a talking pace with pauses at
-    // punctuation, and MotionTraceEditor's lip-sync turns them into mouth shapes. The bubble
-    // shows the text as far as it has been "said".
+    // A reply spoken aloud: the text is read into syllables (morae) as it streams in, the
+    // syllables are placed on a timeline at a talking pace with pauses at punctuation, and
+    // MotionTraceEditor's lip-sync turns them into mouth shapes. The bubble shows the text as
+    // far as it has been "said". With a voice, each phrase is made into speech first and its
+    // syllables follow the sound (a phrase the voice fails on is said silently).
     class Speech
     {
     public:
+        Speech()=default;
+        Speech(Speech&&)=default;
+        Speech& operator=(Speech&&)=default;
+        ~Speech();   // stops a voice still playing (its sound lives here)
         void Reset();
+        // voice(text) asks for a phrase to be voiced and returns the request id (empty: silent).
+        void SetVoice(std::function<int(const std::wstring&)> voice){this->voice=std::move(voice);}
+        void Voiced(int id,VoiceClip* clip);  // a phrase came back from the voice (nullptr: failed)
         void Add(const std::wstring& text);   // more of the reply (as shown in the bubble)
         void Finish();                        // the reply is complete
         void Tick(double dt);
 
-        bool Active() const {return !events.empty()||!pending.empty();}
+        bool Active() const {return !events.empty()||!pending.empty()||!waiting.empty();}
         bool Speaking() const;                // still moving the mouth
         double RevealedChars() const;         // how much of the text has been said
         // Weights for the あ い う え お ん morphs now.
@@ -31,6 +42,13 @@ namespace MikuMikuDesktopPerch
 
     private:
         void Flush(const std::wstring& chunk);
+        void Place(const std::wstring& chunk,VoiceClip* clip);
+
+        std::function<int(const std::wstring&)> voice;
+        struct Waiting {int id=0;std::wstring text;bool done=false;std::unique_ptr<VoiceClip> clip;};
+        std::vector<Waiting> waiting;                      // phrases being voiced, in order
+        struct Sound {std::string wav;double start=0,end=0;bool started=false;};
+        std::vector<Sound> sounds;                         // voiced phrases, played at their time
 
         struct Chunk {size_t chars=0;double start=0,end=0;};
         std::vector<Chunk> chunks;

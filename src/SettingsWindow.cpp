@@ -1,5 +1,8 @@
 #include "SettingsWindow.hpp"
 #include "LocalChat.hpp"
+#include "Voice.hpp"
+#include <commctrl.h>
+#include <mmsystem.h>
 #include <shobjidl.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -10,6 +13,8 @@
 // Themed (version 6) common controls for the settings window, the message boxes and the file
 // dialogs.
 #pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+#pragma comment(lib,"comctl32.lib")
+#pragma comment(lib,"winmm.lib")
 
 namespace MikuMikuDesktopPerch
 {
@@ -23,7 +28,7 @@ namespace MikuMikuDesktopPerch
             IdScale,IdEdge,IdTopmost,IdStartup,
             IdFps,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
-            IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,
+            IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
@@ -37,6 +42,8 @@ namespace MikuMikuDesktopPerch
             HFONT font=nullptr;
             SettingsChoice choice;
             std::function<void(const SettingsChoice&)> onApply;
+            std::function<void(int,int)> onLight;
+            std::string sample;     // the sample voice playing (PlaySound reads it from here)
             int dpi=96;
         } state;
 
@@ -79,6 +86,17 @@ namespace MikuMikuDesktopPerch
         void Group(const wchar_t* title,int y,int h){Add(L"BUTTON",title,BS_GROUPBOX,12,y,436,h);}
         void Label(const wchar_t* text,int x,int y,int w){Add(L"STATIC",text,SS_LEFT,x,y+3,w,20);}
         void CheckBox(int id,const wchar_t* text,int x,int y,int w,bool on){Add(L"BUTTON",text,BS_AUTOCHECKBOX|WS_TABSTOP,x,y,w,22,id);Check(id,on);}
+        // A horizontal slider (from..to) showing its value in a tooltip while dragged.
+        void Slider(int id,int x,int y,int w,int from,int to,int value)
+        {
+            HWND s=Add(TRACKBAR_CLASSW,L"",TBS_HORZ|TBS_NOTICKS|TBS_TOOLTIPS|WS_TABSTOP,x,y,w,26,id);
+            SendMessageW(s,TBM_SETRANGEMIN,FALSE,from);
+            SendMessageW(s,TBM_SETRANGEMAX,FALSE,to);
+            SendMessageW(s,TBM_SETPAGESIZE,0,15);
+            SendMessageW(s,TBM_SETPOS,TRUE,value);
+        }
+        int SliderValue(int id){return static_cast<int>(SendDlgItemMessageW(state.window,id,TBM_GETPOS,0,0));}
+
         void Combo(int id,int x,int y,int w){Add(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,x,y,w,240,id);}
 
         void Build()
@@ -93,15 +111,19 @@ namespace MikuMikuDesktopPerch
             CheckBox(IdBreath,L"呼吸",156,y+94,120,s.breath);
             CheckBox(IdLookAt,L"マウスの方を見る",284,y+94,150,s.lookAtMouse);
             y+=138;
-            Group(L"表示",y,128);
+            Group(L"表示",y,156);
             Label(L"大きさ",28,y+22,130);
             Combo(IdScale,170,y+22,120);
             Label(L"輪郭線の太さ",28,y+50,130);
             Combo(IdEdge,170,y+50,120);
             CheckBox(IdTopmost,L"最前面に表示",28,y+78,200,s.topmost);
+            CheckBox(IdSelfShadow,L"セルフシャドウ（体に落ちる影）",250,y+78,190,s.selfShadow);
             CheckBox(IdStartup,L"Windowsの起動時に起動",28,y+100,300,state.choice.startWithWindows);
-            y+=138;
-            Group(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",y,142);
+            Label(L"太陽の位置（左右・高さ）",28,y+128,140);
+            Slider(IdSunAzimuth,170,y+126,130,-180,180,s.lightAzimuth);
+            Slider(IdSunElevation,306,y+126,130,5,90,s.lightElevation);
+            y+=166;
+            Group(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",y,196);
             Label(L"接続先",28,y+22,130);
             Add(L"EDIT",s.chatEndpoint.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+22,266,24,IdChatEndpoint);
             Label(L"モデル",28,y+52,130);
@@ -115,7 +137,19 @@ namespace MikuMikuDesktopPerch
             Add(L"BUTTON",L"人物設定...",BS_PUSHBUTTON|WS_TABSTOP,170,y+110,110,26,IdPersona);
             Add(L"BUTTON",L"記憶...",BS_PUSHBUTTON|WS_TABSTOP,286,y+110,110,26,IdMemory);
             if(!state.choice.memory)EnableWindow(GetDlgItem(state.window,IdMemory),FALSE);
-            y+=152;
+            CheckBox(IdChatInitiative,L"ときどき自分から話しかける（あいさつ、おかえり、ひと言）",28,y+138,410,s.chatInitiative);
+            CheckBox(IdVoice,L"声で話す（VOICEVOX）",28,y+166,140,s.voice);
+            Combo(IdVoiceList,170,y+164,128);
+            {
+                HWND list=GetDlgItem(state.window,IdVoiceList);
+                const std::wstring label=s.voiceName.empty()?L"声 "+std::to_wstring(s.voiceSpeaker):s.voiceName;
+                const auto index=SendMessageW(list,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));
+                SendMessageW(list,CB_SETITEMDATA,index,s.voiceSpeaker);
+                SendMessageW(list,CB_SETCURSEL,index,0);
+            }
+            Add(L"BUTTON",L"試聴",BS_PUSHBUTTON|WS_TABSTOP,304,y+163,56,26,IdVoiceSample);
+            Add(L"BUTTON",L"一覧を取得",BS_PUSHBUTTON|WS_TABSTOP,366,y+163,70,26,IdVoiceFetch);
+            y+=206;
             Group(L"詳細（変更すると再起動します）",y,166);
             Label(L"描画のfps",28,y+22,130);
             Combo(IdFps,170,y+22,120);
@@ -160,6 +194,49 @@ namespace MikuMikuDesktopPerch
                 SetDlgItemTextW(state.window,IdToonDir,path);
                 CoTaskMemFree(path);
             }
+        }
+
+        // The chosen voice says a short line.
+        void PlayVoiceSample()
+        {
+            const int speaker=ComboValue(IdVoiceList,state.choice.settings.voiceSpeaker);
+            SetCursor(LoadCursorW(nullptr,IDC_WAIT));
+            PlaySoundW(nullptr,nullptr,0);
+            std::string wav;
+            const std::wstring error=SynthesizeVoice(state.choice.settings.voiceEndpoint,speaker,L"こんにちは。今日もいっしょに、がんばろうね。",wav);
+            SetCursor(LoadCursorW(nullptr,IDC_ARROW));
+            if(!error.empty())
+            {
+                MessageBoxW(state.window,(error+L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。").c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
+                return;
+            }
+            state.sample=std::move(wav);
+            PlaySoundW(reinterpret_cast<LPCWSTR>(state.sample.data()),nullptr,SND_MEMORY|SND_ASYNC|SND_NODEFAULT);
+        }
+
+        // The voices the engine (at the endpoint in the settings file) offers.
+        void ListVoiceChoices()
+        {
+            SetCursor(LoadCursorW(nullptr,IDC_WAIT));
+            std::vector<std::pair<std::wstring,int>> voices;
+            const std::wstring error=ListVoices(state.choice.settings.voiceEndpoint,voices);
+            SetCursor(LoadCursorW(nullptr,IDC_ARROW));
+            if(!error.empty())
+            {
+                MessageBoxW(state.window,(error+L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。").c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
+                return;
+            }
+            HWND list=GetDlgItem(state.window,IdVoiceList);
+            const int current=ComboValue(IdVoiceList,state.choice.settings.voiceSpeaker);
+            SendMessageW(list,CB_RESETCONTENT,0,0);
+            for(const auto& [name,id]:voices)
+            {
+                const auto index=SendMessageW(list,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(name.c_str()));
+                SendMessageW(list,CB_SETITEMDATA,index,id);
+                if(id==current)SendMessageW(list,CB_SETCURSEL,index,0);
+            }
+            if(SendMessageW(list,CB_GETCURSEL,0,0)==CB_ERR)SendMessageW(list,CB_SETCURSEL,0,0);
+            SendMessageW(list,CB_SHOWDROPDOWN,TRUE,0);
         }
 
         void ListChatModels()
@@ -437,6 +514,9 @@ namespace MikuMikuDesktopPerch
             s.scale=ComboValue(IdScale,s.scale);
             s.edgeScale=ComboValue(IdEdge,static_cast<int>(std::lround(s.edgeScale*100)))/100.0f;
             s.topmost=Checked(IdTopmost);
+            s.selfShadow=Checked(IdSelfShadow);
+            s.lightAzimuth=SliderValue(IdSunAzimuth);
+            s.lightElevation=SliderValue(IdSunElevation);
             c.startWithWindows=Checked(IdStartup);
             s.fps=ComboValue(IdFps,s.fps);
             s.msaa=ComboValue(IdMsaa,s.msaa);
@@ -458,6 +538,21 @@ namespace MikuMikuDesktopPerch
             GetDlgItemTextW(state.window,IdUserName,user,128);
             s.userName=trim(user);
             s.chatMemory=Checked(IdChatMemory);
+            s.chatInitiative=Checked(IdChatInitiative);
+            s.voice=Checked(IdVoice);
+            s.voiceSpeaker=ComboValue(IdVoiceList,s.voiceSpeaker);
+            {
+                HWND list=GetDlgItem(state.window,IdVoiceList);
+                const auto index=SendMessageW(list,CB_GETCURSEL,0,0);
+                if(index!=CB_ERR)
+                {
+                    const auto length=static_cast<size_t>(SendMessageW(list,CB_GETLBTEXTLEN,index,0));
+                    std::wstring name(length+1,L'\0');
+                    SendMessageW(list,CB_GETLBTEXT,index,reinterpret_cast<LPARAM>(name.data()));
+                    name.resize(length);
+                    s.voiceName=name;
+                }
+            }
             return c;
         }
 
@@ -483,6 +578,7 @@ namespace MikuMikuDesktopPerch
                     return 0;
                 }
                 case IDCANCEL:
+                    if(state.onLight)state.onLight(state.choice.settings.lightAzimuth,state.choice.settings.lightElevation);
                     DestroyWindow(hwnd);
                     return 0;
                 case IdToonBrowse:
@@ -490,6 +586,12 @@ namespace MikuMikuDesktopPerch
                     return 0;
                 case IdChatList:
                     ListChatModels();
+                    return 0;
+                case IdVoiceFetch:
+                    ListVoiceChoices();
+                    return 0;
+                case IdVoiceSample:
+                    PlayVoiceSample();
                     return 0;
                 case IdPersona:
                     OpenPersona();
@@ -499,7 +601,11 @@ namespace MikuMikuDesktopPerch
                     return 0;
                 }
                 break;
+            case WM_HSCROLL:
+                if(state.onLight)state.onLight(SliderValue(IdSunAzimuth),SliderValue(IdSunElevation));
+                return 0;
             case WM_CLOSE:
+                if(state.onLight)state.onLight(state.choice.settings.lightAzimuth,state.choice.settings.lightElevation);
                 DestroyWindow(hwnd);
                 return 0;
             case WM_DESTROY:
@@ -508,13 +614,16 @@ namespace MikuMikuDesktopPerch
                 state.window=nullptr;
                 if(state.font){DeleteObject(state.font);state.font=nullptr;}
                 state.onApply=nullptr;
+                state.onLight=nullptr;
+                if(!state.sample.empty()){PlaySoundW(nullptr,nullptr,0);state.sample.clear();}
                 return 0;
             }
             return DefWindowProcW(hwnd,message,wParam,lParam);
         }
     }
 
-    void ShowSettingsWindow(HWND owner,const SettingsChoice& current,std::function<void(const SettingsChoice&)> onApply)
+    void ShowSettingsWindow(HWND owner,const SettingsChoice& current,std::function<void(const SettingsChoice&)> onApply,
+                            std::function<void(int azimuth,int elevation)> onLight)
     {
         if(state.window)
         {
@@ -539,15 +648,18 @@ namespace MikuMikuDesktopPerch
         }
         state.choice=current;
         state.onApply=std::move(onApply);
+        state.onLight=std::move(onLight);
+        INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES};
+        InitCommonControlsEx(&controls);
         state.dpi=static_cast<int>(GetDpiForSystem());
         NONCLIENTMETRICSW metrics{sizeof(metrics)};
         SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,state.dpi);
         state.font=CreateFontIndirectW(&metrics.lfMessageFont);
 
-        // Client 460 x 672 logical pixels, centred on the screen the cursor is on.
+        // Client 460 x 754 logical pixels, centred on the screen the cursor is on.
         const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-        RECT frame{0,0,Px(460),Px(672)};
+        RECT frame{0,0,Px(460),Px(754)};
         AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
         POINT cursor{};
         GetCursorPos(&cursor);

@@ -19,15 +19,17 @@ cbuffer Material : register(b1)
     uint UseTexture;
     uint SphereMode;        // 0 none, 1 multiply, 2 add
     uint UseToon;
-    uint MaterialPad;
+    uint ReceiveShadow;     // PMX "self shadow" flag
 };
 
 StructuredBuffer<float4x4> Bones : register(t0);
 Texture2D ColorTexture : register(t1);
 Texture2D SphereTexture : register(t2);
 Texture2D ToonTexture : register(t3);
+Texture2D<float> ShadowMap : register(t4);
 SamplerState WrapSampler : register(s0);
 SamplerState ClampSampler : register(s1);
+SamplerComparisonState ShadowSampler : register(s2);
 
 struct VSInput
 {

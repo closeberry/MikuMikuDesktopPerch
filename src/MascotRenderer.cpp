@@ -11,6 +11,8 @@
 #include "EdgePS.h"
 #include "ParticleVS.h"
 #include "ParticlePS.h"
+#include "ShadowVS.h"
+#include "ShadowPS.h"
 
 namespace MikuMikuDesktopPerch
 {
@@ -32,6 +34,8 @@ namespace MikuMikuDesktopPerch
             XMFLOAT2 viewportSize; XMFLOAT2 pad1;
             XMFLOAT4X4 particleViewProj;
             XMFLOAT4 cameraRight,cameraUp;
+            XMFLOAT4X4 lightViewProj;
+            XMFLOAT4 shadowInfo;
         };
         struct GpuParticle
         {
@@ -46,7 +50,7 @@ namespace MikuMikuDesktopPerch
             std::array<float,3> ambient; float edgeSize;
             std::array<float,4> edgeColor;
             std::array<float,4> textureMul,textureAdd,sphereMul,sphereAdd,toonMul,toonAdd;
-            std::uint32_t useTexture,sphereMode,useToon,pad;
+            std::uint32_t useTexture,sphereMode,useToon,receiveShadow;
         };
         static_assert(sizeof(MaterialConstants)<=256);
 
@@ -160,7 +164,7 @@ namespace MikuMikuDesktopPerch
         D3D12_DESCRIPTOR_HEAP_DESC rtv{};
         rtv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;rtv.NumDescriptors=FrameCount+1;
         D3D12_DESCRIPTOR_HEAP_DESC dsv{};
-        dsv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;dsv.NumDescriptors=1;
+        dsv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;dsv.NumDescriptors=2;   // the frame's depth, the shadow map
         if(FAILED(hr=device->CreateDescriptorHeap(&rtv,IID_PPV_ARGS(&rtvHeap)))||FAILED(hr=device->CreateDescriptorHeap(&dsv,IID_PPV_ARGS(&dsvHeap))))
         {error=HrText(L"Descriptor heap",hr);return false;}
         rtvStride=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -183,6 +187,26 @@ namespace MikuMikuDesktopPerch
         fenceEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
 
         if(!CreateRenderTargets(error)||!CreatePipelines(error))return false;
+
+        // The shadow map: written as depth, read by the model shader.
+        {
+            auto defaultHeap=HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+            D3D12_RESOURCE_DESC desc{};
+            desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            desc.Width=desc.Height=ShadowMapSize;desc.DepthOrArraySize=1;desc.MipLevels=1;
+            desc.Format=DXGI_FORMAT_R32_TYPELESS;
+            desc.SampleDesc.Count=1;
+            desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+            D3D12_CLEAR_VALUE clear{};
+            clear.Format=DepthFormat;clear.DepthStencil.Depth=1.0f;
+            if(FAILED(hr=device->CreateCommittedResource(&defaultHeap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,&clear,IID_PPV_ARGS(&shadowMap))))
+            {error=HrText(L"Shadow map",hr);return false;}
+            D3D12_DEPTH_STENCIL_VIEW_DESC view{};
+            view.Format=DepthFormat;
+            view.ViewDimension=D3D12_DSV_DIMENSION_TEXTURE2D;
+            const auto dsvStride=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+            device->CreateDepthStencilView(shadowMap.Get(),&view,D3D12_CPU_DESCRIPTOR_HANDLE{dsvHeap->GetCPUDescriptorHandleForHeapStart().ptr+dsvStride});
+        }
 
         // 1x1 white stands in for every missing texture.
         ImageRgba8 image;
@@ -237,7 +261,11 @@ namespace MikuMikuDesktopPerch
         range.RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         range.NumDescriptors=3;
         range.BaseShaderRegister=1;
-        D3D12_ROOT_PARAMETER params[4]{};
+        D3D12_DESCRIPTOR_RANGE shadowRange{};
+        shadowRange.RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        shadowRange.NumDescriptors=1;
+        shadowRange.BaseShaderRegister=4;
+        D3D12_ROOT_PARAMETER params[5]{};
         params[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;params[0].Descriptor.ShaderRegister=0;
         params[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;params[1].Descriptor.ShaderRegister=1;
         params[2].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;params[2].Descriptor.ShaderRegister=0;
@@ -245,7 +273,10 @@ namespace MikuMikuDesktopPerch
         params[3].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         params[3].DescriptorTable.NumDescriptorRanges=1;params[3].DescriptorTable.pDescriptorRanges=&range;
         params[3].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
-        D3D12_STATIC_SAMPLER_DESC samplers[2]{};
+        params[4].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        params[4].DescriptorTable.NumDescriptorRanges=1;params[4].DescriptorTable.pDescriptorRanges=&shadowRange;
+        params[4].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_STATIC_SAMPLER_DESC samplers[3]{};
         for(int i=0;i<2;++i)
         {
             auto& s=samplers[i];
@@ -255,9 +286,17 @@ namespace MikuMikuDesktopPerch
             s.ShaderRegister=i;
             s.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
         }
+        // Shadow comparisons: outside the map counts as lit.
+        samplers[2].Filter=D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+        samplers[2].AddressU=samplers[2].AddressV=samplers[2].AddressW=D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+        samplers[2].BorderColor=D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+        samplers[2].ComparisonFunc=D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        samplers[2].MaxLOD=D3D12_FLOAT32_MAX;
+        samplers[2].ShaderRegister=2;
+        samplers[2].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
         D3D12_ROOT_SIGNATURE_DESC rs{};
-        rs.NumParameters=4;rs.pParameters=params;
-        rs.NumStaticSamplers=2;rs.pStaticSamplers=samplers;
+        rs.NumParameters=5;rs.pParameters=params;
+        rs.NumStaticSamplers=3;rs.pStaticSamplers=samplers;
         rs.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
         ComPtr<ID3DBlob> blob,errors;
         if(FAILED(hr=D3D12SerializeRootSignature(&rs,D3D_ROOT_SIGNATURE_VERSION_1,&blob,&errors))||
@@ -308,6 +347,24 @@ namespace MikuMikuDesktopPerch
         pso.PS={g_EdgePS,sizeof(g_EdgePS)};
         pso.RasterizerState.CullMode=D3D12_CULL_MODE_FRONT;
         if(FAILED(hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&edgePso)))){error=HrText(L"Edge PSO",hr);return false;}
+
+        // Shadow map: depth only, both faces, biased against self-shadow acne.
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC shadow=pso;
+            shadow.VS={g_ShadowVS,sizeof(g_ShadowVS)};
+            shadow.PS={g_ShadowPS,sizeof(g_ShadowPS)};
+            shadow.NumRenderTargets=0;
+            shadow.RTVFormats[0]=DXGI_FORMAT_UNKNOWN;
+            shadow.BlendState.RenderTarget[0].BlendEnable=FALSE;
+            shadow.BlendState.RenderTarget[0].RenderTargetWriteMask=0;
+            shadow.SampleDesc.Count=1;
+            shadow.RasterizerState.MultisampleEnable=FALSE;
+            shadow.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
+            shadow.RasterizerState.DepthBias=1000;
+            shadow.RasterizerState.SlopeScaledDepthBias=2.0f;
+            shadow.RasterizerState.DepthBiasClamp=0.01f;
+            if(FAILED(hr=device->CreateGraphicsPipelineState(&shadow,IID_PPV_ARGS(&shadowPso)))){error=HrText(L"Shadow PSO",hr);return false;}
+        }
 
         // Particles: no vertex input, premultiplied output, depth-tested against the model.
         pso.InputLayout={nullptr,0};
@@ -476,7 +533,7 @@ namespace MikuMikuDesktopPerch
 
         D3D12_DESCRIPTOR_HEAP_DESC heap{};
         heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        heap.NumDescriptors=static_cast<UINT>(std::max<size_t>(materialCount*3,3));
+        heap.NumDescriptors=static_cast<UINT>(materialCount*3+1);   // the materials' textures, then the shadow map
         heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         srvHeap.Reset();
         if(FAILED(device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&srvHeap)))){error=L"SRV ヒープの作成に失敗しました。";return false;}
@@ -495,6 +552,14 @@ namespace MikuMikuDesktopPerch
                 D3D12_CPU_DESCRIPTOR_HANDLE handle{cpu.ptr+(i*3+s)*srvStride};
                 device->CreateShaderResourceView(slots[s]?slots[s]:white.resource.Get(),nullptr,handle);
             }
+        }
+        {
+            D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+            view.Format=DXGI_FORMAT_R32_FLOAT;
+            view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+            view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            view.Texture2D.MipLevels=1;
+            device->CreateShaderResourceView(shadowMap.Get(),&view,D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr+materialCount*3*srvStride});
         }
 
         // Per-frame upload ring: scene CB, material CBs, bone matrices, morph-applied vertices.
@@ -540,7 +605,17 @@ namespace MikuMikuDesktopPerch
     void MascotRenderer::SetCamera(FXMVECTOR eye,FXMVECTOR target,float fovY)
     {
         XMStoreFloat4x4(&view,XMMatrixLookAtLH(eye,target,XMVectorSet(0,1,0,0)));
+        XMStoreFloat3(&cameraEye,eye);
+        XMStoreFloat3(&cameraTarget,target);
+        cameraFovY=fovY;
         XMStoreFloat4x4(&projection,XMMatrixPerspectiveFovLH(fovY,static_cast<float>(width)/height,1.0f,1000.0f));
+    }
+
+    void MascotRenderer::SetLight(float azimuth,float elevation)
+    {
+        // The camera looks along +Z at the model's face, so the front is -Z and the viewer's right +X.
+        const float a=XMConvertToRadians(azimuth),e=XMConvertToRadians(elevation);
+        lightDir={-std::sin(a)*std::cos(e),-std::sin(e),std::cos(a)*std::cos(e)};
     }
 
     void MascotRenderer::SetVisualOffset(int x,int y){visualOffset={x,y};}
@@ -596,10 +671,23 @@ namespace MikuMikuDesktopPerch
         // Camera right and up in world space: the first two columns of the (row-vector) view.
         scene.cameraRight={view._11,view._21,view._31,0};
         scene.cameraUp={view._12,view._22,view._32,0};
-        scene.lightDir={-0.5f,-1.0f,0.5f};
+        scene.lightDir=lightDir;
         scene.lightColor={154/255.0f,154/255.0f,154/255.0f};
         scene.edgePixels=edgeScale*static_cast<float>(height)/600.0f;
         scene.viewportSize={static_cast<float>(width),static_cast<float>(height)};
+        {
+            // The light looks at the camera's target from far enough to see all the camera
+            // sees (the model never leaves the window), straight down its direction.
+            const XMVECTOR target=XMLoadFloat3(&cameraTarget);
+            const float halfHeight=XMVectorGetX(XMVector3Length(XMVectorSubtract(XMLoadFloat3(&cameraEye),target)))*std::tan(cameraFovY*0.5f);
+            const float halfWidth=halfHeight*static_cast<float>(width)/static_cast<float>(height);
+            const float radius=std::max(1.0f,std::sqrt(halfHeight*halfHeight+halfWidth*halfWidth));
+            const XMVECTOR toward=XMVector3Normalize(XMLoadFloat3(&scene.lightDir));
+            const XMMATRIX lightView=XMMatrixLookAtLH(XMVectorSubtract(target,XMVectorScale(toward,2*radius)),target,XMVectorSet(0,1,0,0));
+            const XMMATRIX lightProj=XMMatrixOrthographicLH(2*radius,2*radius,radius*0.5f,radius*3.5f);
+            XMStoreFloat4x4(&scene.lightViewProj,XMMatrixTranspose(w*lightView*lightProj));
+            scene.shadowInfo={selfShadow?1.0f:0.0f,1.0f/ShadowMapSize,0,0};
+        }
         std::memcpy(f.mapped+sceneOffset,&scene,sizeof(scene));
 
         const auto& materials=model.Materials();
@@ -616,6 +704,7 @@ namespace MikuMikuDesktopPerch
             c.useTexture=valid(m.texture)?1u:0u;
             c.sphereMode=(m.sphereMode==1||m.sphereMode==2)&&valid(m.sphere)?static_cast<std::uint32_t>(m.sphereMode):0u;
             c.useToon=(m.sharedToon?(m.toon>=0&&m.toon<10):valid(m.toon))?1u:0u;
+            c.receiveShadow=(m.drawFlag&0x08)?1u:0u;
             std::memcpy(f.mapped+materialOffset+i*256,&c,sizeof(c));
         }
         if(const void* bones=model.BoneMatrices())
@@ -644,18 +733,6 @@ namespace MikuMikuDesktopPerch
             auto b=Transition(backBuffer,D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET);
             commandList->ResourceBarrier(1,&b);
         }
-        commandList->OMSetRenderTargets(1,&rtv,FALSE,&dsv);
-        // Only the drawn area is cleared and resolved; the rest of a back buffer stays clear,
-        // except right after the drawn area shrank (clearWhole).
-        const D3D12_RECT drawn{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
-        const bool wholeBuffer=sampleCount==1&&clearWhole[index];
-        commandList->ClearRenderTargetView(rtv,ClearColor,wholeBuffer?0:1,wholeBuffer?nullptr:&drawn);
-        commandList->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,1,&drawn);
-        if(sampleCount==1)clearWhole[index]=false;
-        D3D12_VIEWPORT viewport{0,0,static_cast<float>(width),static_cast<float>(height),0,1};
-        D3D12_RECT scissor{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
-        commandList->RSSetViewports(1,&viewport);
-        commandList->RSSetScissorRects(1,&scissor);
         commandList->SetGraphicsRootSignature(rootSignature.Get());
         ID3D12DescriptorHeap* heaps[]={srvHeap.Get()};
         commandList->SetDescriptorHeaps(1,heaps);
@@ -669,8 +746,48 @@ namespace MikuMikuDesktopPerch
         D3D12_INDEX_BUFFER_VIEW ib{indexBuffer->GetGPUVirtualAddress(),static_cast<UINT>(model.Indices().size()*sizeof(std::uint32_t)),DXGI_FORMAT_R32_UINT};
         commandList->IASetIndexBuffer(&ib);
         commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
         const auto srvGpu=srvHeap->GetGPUDescriptorHandleForHeapStart();
+        commandList->SetGraphicsRootDescriptorTable(4,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+materialCount*3*srvStride});
+
+        // Self-shadow map: the materials that cast one (PMX flag 0x04).
+        if(selfShadow)
+        {
+            auto toDepth=Transition(shadowMap.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            commandList->ResourceBarrier(1,&toDepth);
+            const D3D12_CPU_DESCRIPTOR_HANDLE shadowDsv{dsv.ptr+device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)};
+            commandList->OMSetRenderTargets(0,nullptr,FALSE,&shadowDsv);
+            commandList->ClearDepthStencilView(shadowDsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
+            const D3D12_VIEWPORT shadowViewport{0,0,static_cast<float>(ShadowMapSize),static_cast<float>(ShadowMapSize),0,1};
+            const D3D12_RECT shadowScissor{0,0,static_cast<LONG>(ShadowMapSize),static_cast<LONG>(ShadowMapSize)};
+            commandList->RSSetViewports(1,&shadowViewport);
+            commandList->RSSetScissorRects(1,&shadowScissor);
+            commandList->SetPipelineState(shadowPso.Get());
+            for(size_t i=0;i<materialCount&&i<materials.size();++i)
+            {
+                const auto& m=materials[i];
+                if(m.indexCount==0||!(m.drawFlag&0x04)||m.diffuse[3]<0.98f)continue;
+                commandList->SetGraphicsRootConstantBufferView(1,uploadVa+materialOffset+i*256);
+                commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+i*3*srvStride});
+                commandList->DrawIndexedInstanced(m.indexCount,1,m.indexStart,0,0);
+            }
+            auto toRead=Transition(shadowMap.Get(),D3D12_RESOURCE_STATE_DEPTH_WRITE,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            commandList->ResourceBarrier(1,&toRead);
+            commandList->SetPipelineState(modelCullPso.Get());
+        }
+
+        commandList->OMSetRenderTargets(1,&rtv,FALSE,&dsv);
+        // Only the drawn area is cleared and resolved; the rest of a back buffer stays clear,
+        // except right after the drawn area shrank (clearWhole).
+        const D3D12_RECT drawn{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
+        const bool wholeBuffer=sampleCount==1&&clearWhole[index];
+        commandList->ClearRenderTargetView(rtv,ClearColor,wholeBuffer?0:1,wholeBuffer?nullptr:&drawn);
+        commandList->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,1,&drawn);
+        if(sampleCount==1)clearWhole[index]=false;
+        D3D12_VIEWPORT viewport{0,0,static_cast<float>(width),static_cast<float>(height),0,1};
+        D3D12_RECT scissor{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
+        commandList->RSSetViewports(1,&viewport);
+        commandList->RSSetScissorRects(1,&scissor);
+
         ID3D12PipelineState* current=modelCullPso.Get();
         for(size_t i=0;i<materialCount&&i<materials.size();++i)
         {

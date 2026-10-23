@@ -43,6 +43,12 @@ namespace MikuMikuDesktopPerch
         int nextId=1;
     };
 
+    // Exchanges not yet looked through for notes when the program closed (user: said by the
+    // user), kept in characters\<name>.pending.txt to be gone through at the next start. Take
+    // reads them and removes the file; Save with none removes it too.
+    void SavePendingExchanges(const std::wstring& modelPath,const std::vector<std::pair<bool,std::wstring>>& exchanges);
+    std::vector<std::pair<bool,std::wstring>> TakePendingExchanges(const std::wstring& modelPath);
+
     // Today as YYYY-MM-DD (local time).
     std::wstring TodayDate();
 }

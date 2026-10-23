@@ -20,7 +20,10 @@ namespace MikuMikuDesktopPerch
 
     // Open the settings window (or bring it forward if open) over owner, filled from current.
     // OK calls onApply with the edited values and closes it; Cancel just closes it.
-    void ShowSettingsWindow(HWND owner,const SettingsChoice& current,std::function<void(const SettingsChoice&)> onApply);
+    // Moving the sun's sliders calls onLight at once (to see it on the model); Cancel calls it
+    // again with the old position.
+    void ShowSettingsWindow(HWND owner,const SettingsChoice& current,std::function<void(const SettingsChoice&)> onApply,
+                            std::function<void(int azimuth,int elevation)> onLight);
 
     // The open settings window, or its persona or memory dialog while one is open (nullptr
     // when closed): the message loop passes it to IsDialogMessage for Tab, Enter and Esc.
