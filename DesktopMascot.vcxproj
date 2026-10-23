@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <PreferredToolArchitecture Condition="'$(PreferredToolArchitecture)'==''">x64</PreferredToolArchitecture>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{6f3c2a51-8d0e-4b7a-9e44-2c1d5b7a9e10}</ProjectGuid>
+    <RootNamespace>DesktopMascot</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)bin\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)obj\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\third_party;$(ProjectDir)external\DirectXTK12\Inc;$(ProjectDir)external\bullet3\src;$(IntDir)shaders</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>BT_USE_SSE_IN_API;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>d3d12.lib;dxgi.lib;dxguid.lib;dcomp.lib;windowscodecs.lib;shell32.lib;comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <FxCompile>
+      <ShaderModel>5.1</ShaderModel>
+      <EntryPointName>main</EntryPointName>
+      <ObjectFileOutput />
+      <HeaderFileOutput>$(IntDir)shaders\%(Filename).h</HeaderFileOutput>
+      <VariableName>g_%(Filename)</VariableName>
+      <AdditionalIncludeDirectories>$(ProjectDir)shaders</AdditionalIncludeDirectories>
+    </FxCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\third_party\PMXLoader.ixx" />
+    <ClCompile Include="src\third_party\TgaLoader.cpp" />
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\MascotModel.cpp" />
+    <ClCompile Include="src\GeneratedMotion.cpp" />
+    <ClCompile Include="src\Surfaces.cpp" />
+    <ClCompile Include="src\MascotRenderer.cpp" />
+    <ClCompile Include="src\Settings.cpp" />
+    <ClCompile Include="src\TextureLoader.cpp" />
+    <ClCompile Include="external\DirectXTK12\Src\SimpleMath.cpp" />
+    <ClCompile Include="external\bullet3\src\btBulletCollisionAll.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="external\bullet3\src\btBulletDynamicsAll.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+    <ClCompile Include="external\bullet3\src\btLinearMathAll.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\MascotModel.hpp" />
+    <ClInclude Include="src\GeneratedMotion.hpp" />
+    <ClInclude Include="src\Surfaces.hpp" />
+    <ClInclude Include="src\MascotRenderer.hpp" />
+    <ClInclude Include="src\Settings.hpp" />
+    <ClInclude Include="src\TextureLoader.hpp" />
+    <ClInclude Include="src\third_party\TgaLoader.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\Common.hlsli" />
+    <None Include="shaders\Scene.hlsli" />
+    <FxCompile Include="shaders\ModelVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
+    <FxCompile Include="shaders\ModelPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
+    <FxCompile Include="shaders\EdgeVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
+    <FxCompile Include="shaders\EdgePS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
+    <FxCompile Include="shaders\ParticleVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
+    <FxCompile Include="shaders\ParticlePS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

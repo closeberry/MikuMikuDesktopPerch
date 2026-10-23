@@ -1,0 +1,12 @@
+# Build output
+bin/
+obj/
+.vs/
+*.user
+
+# Per-user settings written next to the exe
+*.ini
+
+# Borrowed code, not kept in this repository (see README: 流用元とライセンス)
+external/
+src/third_party/
