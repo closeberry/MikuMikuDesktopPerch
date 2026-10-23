@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace MikuMikuDesktopPerch
 {
@@ -8,7 +9,12 @@ namespace MikuMikuDesktopPerch
     {
         std::wstring modelPath;
         std::wstring motionPath;      // played once when opened, then now and then
-        std::wstring idleMotionPath;  // looped while idle (empty: rest pose)
+        // Played while idle, one at a time in random order (empty: the generated standing
+        // pose). Stored as one IdleMotion line, paths separated by '|'.
+        std::vector<std::wstring> idleMotionPaths;
+        // Played on a click while standing, one at random (empty: built-in reactions). Stored
+        // like IdleMotion, as the ClickMotion line.
+        std::vector<std::wstring> clickMotionPaths;
         std::wstring toonDir;       // folder holding toon01.bmp..toon10.bmp (MMD's Data folder)
         static constexpr int MinScale=50,MaxScale=200;
         int windowHeight=300;       // logical pixels at 96 DPI, at 100% scale

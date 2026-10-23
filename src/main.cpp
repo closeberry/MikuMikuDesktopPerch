@@ -26,7 +26,7 @@ namespace
     constexpr wchar_t WindowClass[]=L"MikuMikuDesktopPerchWindow";
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdPhysics,IdBlink,IdBreath,IdLookAt,IdTopmost,IdExit,
-                      IdAuto,IdWalkLeft,IdWalkRight,IdWindowMode,IdCloseMotion,IdOpenIdleMotion,IdCloseIdleMotion,
+                      IdAuto,IdWalkLeft,IdWalkRight,IdWindowMode,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,IdOpenClickMotion,IdCloseClickMotion,
                       IdScaleBase=200};   // IdScaleBase + percent/10 for the 大きさ submenu
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
@@ -120,6 +120,7 @@ namespace
         double hangEndedAt=-1;
         Activity forcedRestPose=Activity::Idle;   // --rest-pose sit|hang (diagnostics)
         int diagnosticWalk=0;                     // --walk <px>: walk that far 3 s after start
+        int diagnosticClick=0;                    // --click head|body: 1 head, 2 body, 1.5 s after start
 
         // Ground behaviour.
         double walkTargetX=0;         // screen x for the window centre
@@ -373,11 +374,31 @@ namespace
     // Also while it is due and on its way (standing up, warping): nothing else may start then.
     bool MotionBusy()
     {
+        if(app.model.Reacting())return true;   // answering a click
         const bool due=app.model.HasMotion()&&!app.motionClosePending&&(app.motionRequested||app.clock>=app.nextMotionAt);
         return app.model.MotionPlaying()||app.clock<app.motionStartAt||due;
     }
 
     void BeginWarp();
+
+    // A click (press and release without dragging) at a screen point: the mascot reacts,
+    // differently on the head. Walking, it stops first; on a trip (warp, jump) it does not.
+    void OnClick(POINT p)
+    {
+        if(app.place!=Place::Ground||app.travel!=Travel::None)return;
+        const Activity a=app.model.CurrentActivity();
+        bool head=false;
+        if(std::array<float,3> h{};app.model.HeadPosition(h))
+        {
+            // Above the 頭 bone (the top of the neck) and within about a head's width of it.
+            const RECT r=FrameRect();
+            const POINT s=app.renderer.Project(h);
+            const double unit=ModelHeightPixels();
+            head=p.y<r.top+s.y+0.02*unit&&std::abs(p.x-(r.left+s.x))<0.12*unit;
+        }
+        if(a==Activity::Walk||a==Activity::Run)StopGroundActivity();
+        if(app.model.React(head))Trace(L"%.1f click on the %s",app.clock,head?L"head":L"body");
+    }
 
     // The opened motion plays once right after opening, then now and then (every 1.5 to 4
     // minutes) while the mascot stands or rests on a surface. Resting, it stands up first; it
@@ -838,6 +859,31 @@ namespace
         return GetOpenFileNameW(&ofn)?std::wstring(path):std::wstring();
     }
 
+    // Several files at once (empty when cancelled).
+    std::vector<std::wstring> OpenFilesDialog(HWND owner,const wchar_t* filter,const std::wstring& current)
+    {
+        if(app.hwnd)SetClickThrough(true);
+        std::vector<wchar_t> buffer(32768,L'\0');
+        std::wstring initialDir;
+        if(!current.empty())initialDir=std::filesystem::path(current).parent_path().wstring();
+        OPENFILENAMEW ofn{};
+        ofn.lStructSize=sizeof(ofn);
+        ofn.hwndOwner=owner;
+        ofn.lpstrFilter=filter;
+        ofn.lpstrFile=buffer.data();
+        ofn.nMaxFile=static_cast<DWORD>(buffer.size());
+        ofn.lpstrInitialDir=initialDir.empty()?nullptr:initialDir.c_str();
+        ofn.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR|OFN_ALLOWMULTISELECT|OFN_EXPLORER;
+        if(!GetOpenFileNameW(&ofn))return {};
+        // One file: its full path. Several: the folder, then each name, each NUL-terminated.
+        std::vector<std::wstring> parts;
+        for(const wchar_t* p=buffer.data();*p;p+=std::wcslen(p)+1)parts.emplace_back(p);
+        if(parts.size()==1)return parts;
+        std::vector<std::wstring> paths;
+        for(size_t i=1;i<parts.size();++i)paths.push_back((std::filesystem::path(parts[0])/parts[i]).wstring());
+        return paths;
+    }
+
     // Only X is remembered: the mascot always starts on the ground.
     void SaveWindowPosition()
     {
@@ -882,8 +928,15 @@ namespace
         AppendMenuW(menu,MF_STRING,IdOpenModel,L"モデルを開く...");
         AppendMenuW(menu,MF_STRING,IdOpenMotion,L"モーションを開く...");
         AppendMenuW(menu,MF_STRING|(app.settings.motionPath.empty()?MF_GRAYED:0),IdCloseMotion,L"モーションを閉じる");
-        AppendMenuW(menu,MF_STRING,IdOpenIdleMotion,L"待機モーションを開く...");
-        AppendMenuW(menu,MF_STRING|(app.settings.idleMotionPath.empty()?MF_GRAYED:0),IdCloseIdleMotion,L"待機モーションを閉じる");
+        const size_t idleCount=app.settings.idleMotionPaths.size();
+        AppendMenuW(menu,MF_STRING,IdOpenIdleMotion,L"待機モーションを開く...（複数選択可）");
+        AppendMenuW(menu,MF_STRING|(idleCount==0?MF_GRAYED:0),IdAddIdleMotion,L"待機モーションを追加...");
+        AppendMenuW(menu,MF_STRING|(idleCount==0?MF_GRAYED:0),IdCloseIdleMotion,
+                    idleCount>1?(L"待機モーションを閉じる（"+std::to_wstring(idleCount)+L"件）").c_str():L"待機モーションを閉じる");
+        const size_t clickCount=app.settings.clickMotionPaths.size();
+        AppendMenuW(menu,MF_STRING,IdOpenClickMotion,L"クリック時のモーションを開く...（複数選択可）");
+        AppendMenuW(menu,MF_STRING|(clickCount==0?MF_GRAYED:0),IdCloseClickMotion,
+                    clickCount>1?(L"クリック時のモーションを閉じる（"+std::to_wstring(clickCount)+L"件）").c_str():L"クリック時のモーションを閉じる");
         HMENU scaleMenu=CreatePopupMenu();
         for(int percent=Settings::MinScale;percent<=Settings::MaxScale;percent+=10)
         {
@@ -964,28 +1017,48 @@ namespace
             if(app.model.MotionPlaying()){app.model.StopMotion();app.motionClosePending=true;}
             else {std::wstring error;app.model.SetMotion({},error);}
             break;
-        case IdOpenIdleMotion:
-        case IdCloseIdleMotion:
+        case IdOpenClickMotion:
+        case IdCloseClickMotion:
         {
-            std::wstring path;
-            if(id==IdOpenIdleMotion)
+            // Open replaces the list; Close empties it (back to the built-in reactions).
+            std::vector<std::wstring> paths;
+            if(id==IdOpenClickMotion)
             {
-                path=OpenFileDialog(app.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",app.settings.idleMotionPath.empty()?app.settings.modelPath:app.settings.idleMotionPath);
-                if(path.empty())break;
+                const auto& list=app.settings.clickMotionPaths;
+                paths=OpenFilesDialog(app.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",list.empty()?app.settings.modelPath:list.back());
+                if(paths.empty())break;
             }
-            // The idle motion drives the model's own solver: reload the model with it.
-            std::wstring error;
-            app.renderer.WaitIdle();
-            if(!app.model.Load(app.settings.modelPath,path,app.settings.physics,app.settings.physicsFps,error)||
-               !app.renderer.LoadModel(app.model,app.settings.toonDir,static_cast<unsigned>(app.settings.maxTextureSize),error))
+            if(std::wstring error;!app.model.SetClickMotions(paths,error))
             {
                 ShowMessage(error,MB_ICONERROR);
                 break;
             }
-            ApplyProceduralSettings();
-            if(std::wstring motionError;!app.model.SetMotion(app.settings.motionPath,motionError))app.settings.motionPath.clear();
-            app.motionWasPlaying=app.motionClosePending=false;
-            app.settings.idleMotionPath=path;
+            app.settings.clickMotionPaths=paths;
+            app.settings.Save(app.settingsPath);
+            break;
+        }
+        case IdOpenIdleMotion:
+        case IdAddIdleMotion:
+        case IdCloseIdleMotion:
+        {
+            // Open replaces the list, Add appends to it (skipping ones already there), Close
+            // empties it (back to the generated standing pose).
+            std::vector<std::wstring> paths;
+            if(id!=IdCloseIdleMotion)
+            {
+                const auto& list=app.settings.idleMotionPaths;
+                auto picked=OpenFilesDialog(app.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",list.empty()?app.settings.modelPath:list.back());
+                if(picked.empty())break;
+                if(id==IdAddIdleMotion)paths=list;
+                for(auto& p:picked)
+                    if(std::find(paths.begin(),paths.end(),p)==paths.end())paths.push_back(std::move(p));
+            }
+            if(std::wstring error;!app.model.SetIdleMotions(paths,error))
+            {
+                ShowMessage(error,MB_ICONERROR);
+                break;
+            }
+            app.settings.idleMotionPaths=paths;
             app.settings.Save(app.settingsPath);
             break;
         }
@@ -1099,6 +1172,7 @@ namespace
             }
             if(app.pressed||message==WM_LBUTTONUP)
             {
+                if(app.pressed&&message==WM_LBUTTONUP&&app.place!=Place::Held)OnClick(app.pressCursor);
                 app.pressed=false;
                 if(GetCapture()==hwnd)ReleaseCapture();
             }
@@ -1224,6 +1298,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 app.diagnosticWalk=_wtoi(argv[++i]);
             }
+            else if(arg==L"--click"&&i+1<argc)
+            {
+                app.diagnosticClick=std::wstring(argv[++i])==L"head"?1:2;
+            }
             else if(arg==L"--rest-pose"&&i+1<argc)
             {
                 const std::wstring pose=argv[++i];
@@ -1299,8 +1377,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(app.settings.modelPath.empty())return 0;
         }
         // A missing idle motion is dropped rather than blocking the model.
-        if(!app.settings.idleMotionPath.empty()&&!std::filesystem::exists(app.settings.idleMotionPath))app.settings.idleMotionPath.clear();
-        if(app.model.Load(app.settings.modelPath,app.settings.idleMotionPath,app.settings.physics,app.settings.physicsFps,error))break;
+        std::erase_if(app.settings.idleMotionPaths,[](const std::wstring& p){return !std::filesystem::exists(p);});
+        if(app.model.Load(app.settings.modelPath,app.settings.idleMotionPaths,app.settings.physics,app.settings.physicsFps,error))break;
         if(!snapshotPath.empty())
         {
             // Diagnostic runs report instead of blocking on a dialog.
@@ -1357,6 +1435,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.nextDecision=8+app.Random01()*10;
     app.nextMotionAt=60+app.Random01()*120;
     if(std::wstring motionError;!app.model.SetMotion(app.settings.motionPath,motionError))app.settings.motionPath.clear();
+    std::erase_if(app.settings.clickMotionPaths,[](const std::wstring& p){return !std::filesystem::exists(p);});
+    if(std::wstring clickError;!app.model.SetClickMotions(app.settings.clickMotionPaths,clickError))app.settings.clickMotionPaths.clear();
     std::optional<Activity> forcedActivity;   // --activity for snapshot checks
     if(snapshotActivity==L"walk")forcedActivity=Activity::Walk;
     else if(snapshotActivity==L"run")forcedActivity=Activity::Run;
@@ -1499,6 +1579,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(reached)StopGroundActivity();
             }
             UpdateAutoBehavior();
+            if(app.diagnosticClick&&app.clock>1.5)
+            {
+                const bool reacted=app.model.React(app.diagnosticClick==1);
+                Trace(L"%.1f diagnostic click: %s (activity %d)",app.clock,reacted?L"reacts":L"no reaction",static_cast<int>(app.model.CurrentActivity()));
+                app.diagnosticClick=0;
+            }
             if(app.diagnosticWalk&&app.clock>3.0)
             {
                 StartWalk(CenterX()+app.diagnosticWalk);

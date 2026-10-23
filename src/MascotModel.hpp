@@ -63,9 +63,20 @@ namespace MikuMikuDesktopPerch
         MascotModel(const MascotModel&)=delete;
         MascotModel& operator=(const MascotModel&)=delete;
 
-        // idleMotionPath (looped while idle) may be empty (rest pose). Throws nothing; returns
-        // false with error text.
-        bool Load(const std::wstring& modelPath,const std::wstring& idleMotionPath,bool physics,int physicsFps,std::wstring& error);
+        // idleMotionPaths (played while idle) may be empty: the generated standing pose. Throws
+        // nothing; returns false with error text.
+        bool Load(const std::wstring& modelPath,const std::vector<std::wstring>& idleMotionPaths,bool physics,int physicsFps,std::wstring& error);
+        // Replace the idle motions without reloading the model. One motion loops; with several,
+        // each plays through and the next is picked at random (never the same twice in a row),
+        // crossfading between them. On error the current motions stay.
+        bool SetIdleMotions(const std::vector<std::wstring>& paths,std::wstring& error);
+        // Answer a click on the model (head: on the head). Standing, a click motion plays if
+        // any are set (one at random, never the same twice in a row), else a built-in reaction;
+        // sitting or hanging, a shy tilt of the head. False when it cannot react now (already
+        // reacting, the opened motion playing, walking, held, ...).
+        bool SetClickMotions(const std::vector<std::wstring>& paths,std::wstring& error);
+        bool React(bool head);
+        bool Reacting() const;
 
         // A motion played over the idle pose now and then: PlayMotion blends it in, plays it
         // once and blends back out. An empty path removes it. Load drops it (set it again).

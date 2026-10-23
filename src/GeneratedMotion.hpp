@@ -43,7 +43,17 @@ namespace MikuMikuDesktopPerch
         void SetGesturesAllowed(bool allowed){gesturesAllowed=allowed;}
         bool HeadBusy() const;
         // The current gesture shows a face morph (smile, wink): blinking on top over-deforms it.
-        bool FaceBusy() const {for(const auto& m:morphOut)if(m.second>0.01f)return true;return false;}
+        bool FaceBusy() const
+        {
+            for(const auto& m:morphOut)if(m.second>0.01f)return true;
+            for(const auto& m:reactionMorphs)if(m.second>0.01f)return true;
+            return false;
+        }
+        // Answer a click (head: on the head; otherwise the body). Standing: a reaction such as
+        // being patted, startled, waving back; sitting or hanging: a shy tilt of the head.
+        // False when busy reacting already or in no state to (walking, held, falling).
+        bool React(bool head);
+        bool Reacting() const {return reaction!=Gesture::None;}
         bool ForceGesture(const std::wstring& name);
         // Shift another pose (an opened motion blended over this layer's output) by the walking
         // travel, as Apply does to its own output.
@@ -94,7 +104,9 @@ namespace MikuMikuDesktopPerch
 
         // Stand is the plain standing pose, taken as one gesture among the others.
         enum class Gesture {None,HandOnHip,Wave,Peace,HandsBehind,LookAtPalm,HandsFolded,Stretch,LookAround,HeadTilt,Stand,
-                            TuckHair,Yawn,Think,Hum,Clap,LookFar,Cheeks};
+                            TuckHair,Yawn,Think,Hum,Clap,LookFar,Cheeks,
+                            // Click reactions only (never picked at random).
+                            PatHead,Surprised,Curious,ShyNod};
         static constexpr int GestureCount=17;
 
         void Generate(std::vector<Key>& keys,double dt);
@@ -109,6 +121,9 @@ namespace MikuMikuDesktopPerch
         // Curl each finger but the thumb (0 straight .. 1 fully curled), index to little.
         void CurlFingers(std::vector<Key>& keys,int side,std::array<float,4> amount);
         void Gestures(std::vector<Key>& keys,double dt);
+        void PoseGesture(Gesture which,double time,double length,int hand,float weight,
+                         std::vector<Key>& g,std::vector<std::pair<int,float>>& morphs);
+        void ApplyReaction(std::vector<Key>& keys,double dt);
         float Random01(){random^=random<<13;random^=random>>17;random^=random<<5;return (random&0xFFFFFF)/16777216.0f;}
 
         Rig rig;
@@ -140,6 +155,7 @@ namespace MikuMikuDesktopPerch
             static constexpr float lengths[GestureCount][2]={
                 {5,8},{2.6f,3.6f},{3,4},{5,8},{3,4.5f},{5,8},{5.5f,7},{4,5},{2.5f,3.5f},{3,6},
                 {3,4},{3.5f,4.5f},{4,6},{4,6},{2.5f,3.2f},{4,5.5f},{3,4}};
+            if(static_cast<int>(g)>GestureCount)return {2.5f,2.5f};   // click reactions
             const auto& r=lengths[static_cast<int>(g)-1];
             return {r[0],r[1]};
         }
@@ -149,6 +165,11 @@ namespace MikuMikuDesktopPerch
         double weightTime=1,weightDuration=1,weightHoldUntil=3;
         float gestureWeight=0;
         std::vector<std::pair<int,float>> morphOut;   // face morphs this frame (index, weight)
+        Gesture reaction=Gesture::None;             // the click reaction playing
+        double reactionTime=0,reactionLength=0;
+        int reactionSide=0;
+        float reactionWeight=0;
+        std::vector<std::pair<int,float>> reactionMorphs;
         std::uint32_t random=0x9E3779B9u;
     };
 }

@@ -11,11 +11,16 @@ namespace MikuMikuDesktopPerch
     {
         constexpr wchar_t Section[]=L"Mascot";
 
+        // Paths separated by '|' (never part of a Windows path).
+        std::vector<std::wstring> ReadList(const std::wstring& path,const wchar_t* key);
+        void WriteList(const std::wstring& path,const wchar_t* key,const std::vector<std::wstring>& list);
+
         std::wstring ReadString(const std::wstring& path,const wchar_t* key,const std::wstring& fallback)
         {
-            wchar_t buffer[2048]{};
-            GetPrivateProfileStringW(Section,key,fallback.c_str(),buffer,static_cast<DWORD>(std::size(buffer)),path.c_str());
-            return buffer;
+            // Room for a long IdleMotion list.
+            std::vector<wchar_t> buffer(32768);
+            GetPrivateProfileStringW(Section,key,fallback.c_str(),buffer.data(),static_cast<DWORD>(buffer.size()),path.c_str());
+            return buffer.data();
         }
         int ReadInt(const std::wstring& path,const wchar_t* key,int fallback)
         {
@@ -40,11 +45,35 @@ namespace MikuMikuDesktopPerch
         return path.wstring();
     }
 
+    namespace
+    {
+        std::vector<std::wstring> ReadList(const std::wstring& path,const wchar_t* key)
+        {
+            const std::wstring list=ReadString(path,key,{});
+            std::vector<std::wstring> paths;
+            for(size_t start=0;start<=list.size();)
+            {
+                const size_t end=std::min(list.find(L'|',start),list.size());
+                if(end>start)paths.push_back(list.substr(start,end-start));
+                start=end+1;
+            }
+            return paths;
+        }
+
+        void WriteList(const std::wstring& path,const wchar_t* key,const std::vector<std::wstring>& list)
+        {
+            std::wstring joined;
+            for(const auto& p:list)joined+=(joined.empty()?L"":L"|")+p;
+            WriteString(path,key,joined);
+        }
+    }
+
     void Settings::Load(const std::wstring& path)
     {
         modelPath=ReadString(path,L"Model",modelPath);
         motionPath=ReadString(path,L"Motion",motionPath);
-        idleMotionPath=ReadString(path,L"IdleMotion",idleMotionPath);
+        idleMotionPaths=ReadList(path,L"IdleMotion");
+        clickMotionPaths=ReadList(path,L"ClickMotion");
         toonDir=ReadString(path,L"ToonDir",toonDir);
         windowHeight=std::clamp(ReadInt(path,L"Height",windowHeight),100,4000);
         // Version 1 files were written when the default size was twice today's: halve them once.
@@ -79,7 +108,8 @@ namespace MikuMikuDesktopPerch
         }
         WriteString(path,L"Model",modelPath);
         WriteString(path,L"Motion",motionPath);
-        WriteString(path,L"IdleMotion",idleMotionPath);
+        WriteList(path,L"IdleMotion",idleMotionPaths);
+        WriteList(path,L"ClickMotion",clickMotionPaths);
         WriteString(path,L"ToonDir",toonDir);
         WriteString(path,L"Height",std::to_wstring(windowHeight));
         WriteString(path,L"SizeVersion",L"2");

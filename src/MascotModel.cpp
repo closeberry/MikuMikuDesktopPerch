@@ -9,6 +9,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <random>
 
 import PMXLoader;
 
@@ -120,7 +121,6 @@ namespace MikuMikuDesktopPerch
     {
         // Destruction order matters: solver detaches from physics, both reference pmx.
         std::unique_ptr<PMX::PMXModel> pmx;
-        std::unique_ptr<PMX::VMD> vmd;
         std::unique_ptr<PMX::Physics> physics;
         std::unique_ptr<PMX::PoseSolver> solver;
         int physicsFps=60;
@@ -229,13 +229,123 @@ namespace MikuMikuDesktopPerch
         GeneratedMotion motion;
 
         // One-shot motion, sampled by a solver of its own (no physics) and blended over the
-        // idle pose by shotWeight.
+        // idle pose by shotWeight: the opened motion (shotVmd), or a click motion. shotSource
+        // is the one playing.
         std::unique_ptr<PMX::VMD> shotVmd;
         std::unique_ptr<PMX::PoseSolver> shotSampler;
+        PMX::PoseSolver* shotSource=nullptr;
+        int shotLast=0;
         PMX::Pose shotPose;
         double shotFrame=0;
         float shotWeight=0;
-        bool shotActive=false,shotEnding=false;
+        bool shotActive=false,shotEnding=false,shotIsClick=false;
+
+        // A motion with a sampler of its own (no physics).
+        struct Clip
+        {
+            std::unique_ptr<PMX::VMD> vmd;
+            std::unique_ptr<PMX::PoseSolver> sampler;
+        };
+        // kind names the files in error text (待機モーション, ...).
+        bool LoadClips(const std::vector<std::wstring>& paths,std::vector<Clip>& clips,const wchar_t* kind,std::wstring& error)
+        {
+            clips.clear();
+            for(const auto& path:paths)
+            {
+                if(!std::filesystem::exists(path)){error=std::wstring(kind)+L"が見つかりません: "+path;return false;}
+                try
+                {
+                    Clip clip;
+                    clip.vmd=std::make_unique<PMX::VMD>(path.c_str(),932,pmx.get());
+                    clip.sampler=std::make_unique<PMX::PoseSolver>(nullptr,pmx.get(),clip.vmd.get());
+                    clips.push_back(std::move(clip));
+                }
+                catch(...)
+                {
+                    error=std::wstring(kind)+L"を読み込めませんでした: "+path;
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Click motions: one at random per click while standing (instead of a built-in reaction).
+        std::vector<Clip> clickClips;
+        int lastClick=-1;
+
+        // Idle motions, each sampled by a solver of its own (no physics) into the base pose,
+        // where the main solver has no motion. idlePrevious fades out over the switch.
+        std::vector<Clip> idleClips;
+        int idleCurrent=-1,idlePrevious=-1;
+        double idleFrame=0,idlePreviousFrame=0;
+        float idleFade=1;
+        PMX::Pose idlePose,idlePreviousPose;
+        std::mt19937 idleRandom{std::random_device{}()};
+
+        bool LoadIdle(const std::vector<std::wstring>& paths,std::wstring& error)
+        {
+            std::vector<Clip> clips;
+            if(!LoadClips(paths,clips,L"待機モーション",error))return false;
+            idleClips=std::move(clips);
+            idleCurrent=idleClips.empty()?-1:static_cast<int>(idleRandom()%idleClips.size());
+            idlePrevious=-1;
+            idleFrame=0;
+            idleFade=1;
+            return true;
+        }
+
+        void SampleIdle(PMX::Pose& pose,double dt)
+        {
+            using namespace DirectX;
+            if(idleCurrent<0)return;
+            constexpr double Fade=0.6;          // crossfade between two idle motions, seconds
+            constexpr double MinimumPlay=4.0;   // a short (or one-frame pose) motion is held this long
+            auto lastOf=[&](int clip){return static_cast<double>(std::max(idleClips[clip].vmd->lastFrame,0));};
+            idleFrame+=dt*30.0;
+            if(idleClips.size()==1)
+            {
+                const double last=lastOf(idleCurrent);
+                idleFrame=last>0?std::fmod(idleFrame,last):0;
+            }
+            else if(idlePrevious<0&&idleFrame>=std::max(lastOf(idleCurrent),MinimumPlay*30.0)-Fade*30.0)
+            {
+                int next;
+                do next=static_cast<int>(idleRandom()%idleClips.size());
+                while(next==idleCurrent);
+                idlePrevious=idleCurrent;
+                idlePreviousFrame=idleFrame;
+                idleCurrent=next;
+                idleFrame=0;
+                idleFade=0;
+            }
+            idleClips[idleCurrent].sampler->HiPose(idlePose,static_cast<float>(std::min(idleFrame,lastOf(idleCurrent))),false,false);
+            float w=1;
+            if(idlePrevious>=0)
+            {
+                idlePreviousFrame=std::min(idlePreviousFrame+dt*30.0,lastOf(idlePrevious));
+                idleClips[idlePrevious].sampler->HiPose(idlePreviousPose,static_cast<float>(idlePreviousFrame),false,false);
+                idleFade=static_cast<float>(std::min(1.0,idleFade+dt/Fade));
+                w=idleFade*idleFade*(3-2*idleFade);
+                if(idleFade>=1)idlePrevious=-1;
+            }
+            for(size_t i=0;i<pose.boneKeys.size()&&i<idlePose.boneKeys.size();++i)
+            {
+                auto& k=pose.boneKeys[i];
+                const auto& c=idlePose.boneKeys[i];
+                if(w<1&&i<idlePreviousPose.boneKeys.size())
+                {
+                    const auto& p=idlePreviousPose.boneKeys[i];
+                    XMStoreFloat4(&k.rotation,XMQuaternionSlerp(XMLoadFloat4(&p.rotation),XMLoadFloat4(&c.rotation),w));
+                    XMStoreFloat3(&k.position,XMVectorLerp(XMLoadFloat3(&p.position),XMLoadFloat3(&c.position),w));
+                }
+                else {k.rotation=c.rotation;k.position=c.position;}
+            }
+            for(size_t i=0;i<pose.morphKeys.size()&&i<idlePose.morphKeys.size();++i)
+            {
+                const float c=idlePose.morphKeys[i].value;
+                pose.morphKeys[i].value=w<1&&i<idlePreviousPose.morphKeys.size()?idlePreviousPose.morphKeys[i].value+(c-idlePreviousPose.morphKeys[i].value)*w:c;
+            }
+        }
 
         void ApplyShot(double dt)
         {
@@ -244,7 +354,7 @@ namespace MikuMikuDesktopPerch
             if(!shotEnding)
             {
                 shotFrame+=dt*30.0;
-                if(shotFrame>=shotVmd->lastFrame){shotFrame=shotVmd->lastFrame;shotEnding=true;}
+                if(shotFrame>=shotLast){shotFrame=shotLast;shotEnding=true;}
                 shotWeight=static_cast<float>(std::min(1.0,shotWeight+dt/FadeIn));
             }
             else if((shotWeight-=static_cast<float>(dt/FadeOut))<=0)
@@ -253,7 +363,7 @@ namespace MikuMikuDesktopPerch
                 shotActive=false;
                 return;
             }
-            shotSampler->HiPose(shotPose,static_cast<float>(shotFrame),false,false);
+            shotSource->HiPose(shotPose,static_cast<float>(shotFrame),false,false);
             motion.AddRootOffset(shotPose);
             auto& pose=solver->solvedPose;
             const float w=shotWeight*shotWeight*(3-2*shotWeight);
@@ -419,11 +529,12 @@ namespace MikuMikuDesktopPerch
                 physics->fps=physicsFps;
                 physics->maxSubsteps=4;
             }
-            solver=std::make_unique<PMX::PoseSolver>(physics.get(),pmx.get(),vmd.get());
+            solver=std::make_unique<PMX::PoseSolver>(physics.get(),pmx.get(),nullptr);
             ApplyFrameAcceleration();
             ResolveProceduralTargets();
             // Settle physics against the corrected pose so sleeves do not start from a T-stance.
             solver->HiPose(solver->solvedPose,static_cast<float>(frame),false,false);
+            SampleIdle(solver->solvedPose,0);
             ApplyArmCorrection(solver->solvedPose);
             solver->PoseMining(solver->solvedPose);
             if(physics)
@@ -493,8 +604,7 @@ namespace MikuMikuDesktopPerch
     bool MascotModel::SetMotion(const std::wstring& path,std::wstring& error)
     {
         auto& m=*impl;
-        m.shotActive=false;
-        m.shotWeight=0;
+        if(!m.shotIsClick){m.shotActive=false;m.shotWeight=0;}
         m.shotSampler.reset();
         m.shotVmd.reset();
         if(path.empty()||!m.pmx)return true;
@@ -520,17 +630,61 @@ namespace MikuMikuDesktopPerch
     {
         auto& m=*impl;
         if(!m.shotSampler)return;
+        m.shotSource=m.shotSampler.get();
+        m.shotLast=m.shotVmd->lastFrame;
+        m.shotIsClick=false;
         m.shotFrame=0;
         m.shotEnding=false;
         m.shotActive=true;
     }
 
     void MascotModel::StopMotion(){if(impl->shotActive)impl->shotEnding=true;}
-    bool MascotModel::MotionPlaying() const {return impl->shotActive;}
+    bool MascotModel::MotionPlaying() const {return impl->shotActive&&!impl->shotIsClick;}
+
+    bool MascotModel::SetClickMotions(const std::vector<std::wstring>& paths,std::wstring& error)
+    {
+        auto& m=*impl;
+        if(!m.pmx)return paths.empty();
+        std::vector<Impl::Clip> clips;
+        if(!m.LoadClips(paths,clips,L"クリック時のモーション",error))return false;
+        if(m.shotActive&&m.shotIsClick){m.shotActive=false;m.shotWeight=0;m.shotIsClick=false;}
+        m.clickClips=std::move(clips);
+        m.lastClick=-1;
+        return true;
+    }
+
+    bool MascotModel::React(bool head)
+    {
+        auto& m=*impl;
+        if(!m.solver||m.shotActive||m.motion.Reacting())return false;
+        if(!m.clickClips.empty()&&m.motion.CurrentActivity()==Activity::Idle)
+        {
+            int pick=static_cast<int>(m.idleRandom()%m.clickClips.size());
+            if(m.clickClips.size()>1)
+                while(pick==m.lastClick)pick=static_cast<int>(m.idleRandom()%m.clickClips.size());
+            m.lastClick=pick;
+            m.shotSource=m.clickClips[pick].sampler.get();
+            m.shotLast=m.clickClips[pick].vmd->lastFrame;
+            m.shotIsClick=true;
+            m.shotFrame=0;
+            m.shotEnding=false;
+            m.shotActive=true;
+            return true;
+        }
+        return m.motion.React(head);
+    }
+
+    bool MascotModel::Reacting() const {return impl->motion.Reacting()||(impl->shotActive&&impl->shotIsClick);}
     bool MascotModel::HeadBusy() const {return impl->motion.HeadBusy();}
     bool MascotModel::ForceGesture(const std::wstring& name){return impl->motion.ForceGesture(name);}
 
-    bool MascotModel::Load(const std::wstring& modelPath,const std::wstring& motionPath,bool physics,int physicsFps,std::wstring& error)
+    bool MascotModel::SetIdleMotions(const std::vector<std::wstring>& paths,std::wstring& error)
+    {
+        if(!impl->pmx)return paths.empty();
+        return impl->LoadIdle(paths,error);
+    }
+
+    bool MascotModel::Load(const std::wstring& modelPath,const std::vector<std::wstring>& idleMotionPaths,bool physics,int physicsFps,std::wstring& error)
     {
         auto next=std::make_unique<Impl>();
         next->physicsFps=physicsFps;
@@ -543,11 +697,7 @@ namespace MikuMikuDesktopPerch
                 return false;
             }
             next->pmx.reset(context.model);
-            if(!motionPath.empty())
-            {
-                if(!std::filesystem::exists(motionPath)){error=L"モーションファイルが見つかりません: "+motionPath;return false;}
-                next->vmd=std::make_unique<PMX::VMD>(motionPath.c_str(),932,next->pmx.get());
-            }
+            if(!next->LoadIdle(idleMotionPaths,error))return false;
         }
         catch(const std::exception& e)
         {
@@ -884,17 +1034,14 @@ namespace MikuMikuDesktopPerch
         auto& m=*impl;
         if(!m.solver)return;
         dt=std::clamp(dt,0.0,0.1);
-        m.frame+=dt*30.0;
-        const int lastFrame=m.vmd?m.vmd->lastFrame:0;
-        if(lastFrame>0&&m.frame>lastFrame)m.frame=std::fmod(m.frame,static_cast<double>(lastFrame));
-        else if(lastFrame<=0)m.frame=0;
         // Same as PoseSolver::Solve, with the procedural layer inserted before mining.
         // Physics reads solvedPose, so the layered pose also drives hair and skirt.
         // A physics reset starts from where physics last left each simulated bone.
         if(m.physics&&m.resetPhysicsPending&&m.resetBlend<0)m.BeginPhysicsReset();
         m.resetPhysicsPending=false;
         m.solver->HiPose(m.solver->solvedPose,static_cast<float>(m.frame),false,m.continuous);
-        m.motion.SetGeneratedIdle(!m.vmd);
+        m.SampleIdle(m.solver->solvedPose,dt);
+        m.motion.SetGeneratedIdle(m.idleClips.empty());
         m.motion.SetGesturesAllowed(!m.shotActive);
         m.motion.Apply(m.solver->solvedPose,dt);
         // The opened motion goes over everything the motion layer made, standing pose included.
