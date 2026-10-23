@@ -349,6 +349,7 @@ namespace MikuMikuDesktopPerch
         // where the main solver has no motion. idlePrevious fades out over the switch.
         std::vector<Clip> idleClips;
         int idleCurrent=-1,idlePrevious=-1;
+        Activity idleLastActivity=Activity::Idle;
         double idleFrame=0,idlePreviousFrame=0;
         float idleFade=1;
         PMX::Pose idlePose,idlePreviousPose;
@@ -366,13 +367,39 @@ namespace MikuMikuDesktopPerch
             return true;
         }
 
+        static constexpr double IdleFade=0.6;          // crossfade between two idle motions, seconds
+        static constexpr double IdleMinimumPlay=4.0;   // a short (or one-frame pose) motion is held this long
+        double IdleLast(int clip) const {return static_cast<double>(std::max(idleClips[clip].vmd->lastFrame,0));}
+
+        // Between two idle motions (or loops of one): near the end of the one playing, or
+        // just after the next began. Walking off or sitting down waits for such a moment.
+        bool IdleAtBreak() const
+        {
+            if(idleCurrent<0||idlePrevious>=0)return true;
+            constexpr double Near=0.4*30.0;
+            const double last=IdleLast(idleCurrent);
+            if(idleFrame<=Near)return true;
+            const double end=idleClips.size()==1?last:std::max(last,IdleMinimumPlay*30.0)-IdleFade*30.0;
+            return end<=0||end-idleFrame<=Near;
+        }
+
         void SampleIdle(PMX::Pose& pose,double dt)
         {
             using namespace DirectX;
             if(idleCurrent<0)return;
-            constexpr double Fade=0.6;          // crossfade between two idle motions, seconds
-            constexpr double MinimumPlay=4.0;   // a short (or one-frame pose) motion is held this long
-            auto lastOf=[&](int clip){return static_cast<double>(std::max(idleClips[clip].vmd->lastFrame,0));};
+            constexpr double Fade=IdleFade,MinimumPlay=IdleMinimumPlay;
+            auto lastOf=[&](int clip){return IdleLast(clip);};
+            // Back from walking, sitting and the like: start a motion from its beginning
+            // rather than somewhere in the middle.
+            const Activity activity=motion.CurrentActivity();
+            if(activity==Activity::Idle&&idleLastActivity!=Activity::Idle)
+            {
+                idleCurrent=static_cast<int>(idleRandom()%idleClips.size());
+                idlePrevious=-1;
+                idleFrame=0;
+                idleFade=1;
+            }
+            idleLastActivity=activity;
             idleFrame+=dt*30.0;
             if(idleClips.size()==1)
             {
@@ -765,6 +792,8 @@ namespace MikuMikuDesktopPerch
         }
         return m.motion.React(head);
     }
+
+    bool MascotModel::IdleMotionAtBreak() const {return impl->IdleAtBreak();}
 
     bool MascotModel::Reacting() const {return impl->motion.Reacting()||(impl->shotActive&&impl->shotIsClick);}
     bool MascotModel::HeadBusy() const {return impl->motion.HeadBusy();}

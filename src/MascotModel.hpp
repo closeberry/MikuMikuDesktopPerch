@@ -77,6 +77,9 @@ namespace MikuMikuDesktopPerch
         bool SetClickMotions(const std::vector<std::wstring>& paths,std::wstring& error);
         bool React(bool head);
         bool Reacting() const;
+        // True between idle motions (or loops of one) and whenever there is none playing:
+        // starting to walk or sit is held back until then.
+        bool IdleMotionAtBreak() const;
 
         // A motion played over the idle pose now and then: PlayMotion blends it in, plays it
         // once and blends back out. An empty path removes it. Load drops it (set it again).

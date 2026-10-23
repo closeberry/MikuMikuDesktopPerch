@@ -395,6 +395,8 @@ namespace
     bool MotionBusy()
     {
         if(app.model.Reacting())return true;   // answering a click
+        // An idle motion plays to its end (or its loop's) before she walks off or sits down.
+        if(app.model.CurrentActivity()==Activity::Idle&&!app.model.IdleMotionAtBreak())return true;
         const bool due=app.model.HasMotion()&&!app.motionClosePending&&(app.motionRequested||app.clock>=app.nextMotionAt);
         return app.model.MotionPlaying()||app.clock<app.motionStartAt||due;
     }
@@ -440,6 +442,8 @@ namespace
             return;
         }
         if(!app.model.HasMotion()||app.motionClosePending||(!app.motionRequested&&app.clock<app.nextMotionAt))return;
+        // Now and then (not when just opened): between idle motions, not in the middle of one.
+        if(!app.motionRequested&&app.model.CurrentActivity()==Activity::Idle&&!app.model.IdleMotionAtBreak())return;
         if(app.place!=Place::Ground||app.travel!=Travel::None)return;
         const Activity a=app.model.CurrentActivity();
         if(a==Activity::Walk||a==Activity::Run||a==Activity::Jump)return;
@@ -484,6 +488,7 @@ namespace
             const double distance=(120+app.Random01()*380)*(app.Random01()<0.5f?-1:1);
             double target=CenterX()+distance;
             if(target<left||target>right)target=CenterX()-distance;
+            Trace(L"%.1f auto walk to %.0f",app.clock,target);
             StartWalk(target);
         }
         app.nextDecision=app.clock+15+app.Random01()*25;
