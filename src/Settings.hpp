@@ -7,7 +7,8 @@ namespace MikuMikuDesktopPerch
     struct Settings
     {
         std::wstring modelPath;
-        std::wstring motionPath;
+        std::wstring motionPath;      // played once when opened, then now and then
+        std::wstring idleMotionPath;  // looped while idle (empty: rest pose)
         std::wstring toonDir;       // folder holding toon01.bmp..toon10.bmp (MMD's Data folder)
         static constexpr int MinScale=50,MaxScale=200;
         int windowHeight=300;       // logical pixels at 96 DPI, at 100% scale
@@ -24,7 +25,7 @@ namespace MikuMikuDesktopPerch
         bool breath=true;
         bool lookAtMouse=true;
         bool autoBehavior=true;     // walk around on its own
-        bool windowMode=false;      // run and jump onto the active window, sit / lie / hang there
+        bool windowMode=false;      // go to the active window, sit or hang there
 
         static std::wstring DefaultPath();
         void Load(const std::wstring& path);

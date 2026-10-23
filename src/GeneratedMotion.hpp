@@ -34,6 +34,20 @@ namespace MikuMikuDesktopPerch
         Activity CurrentActivity() const {return activity;}
         // Window motion in world units/s (x right, y up) for sway while grabbed.
         void SetCarryVelocity(float vx,float vy){carryVelocity={vx,vy};}
+        // Without an idle VMD, Idle is a generated standing pose instead of the model's rest
+        // (A-stance) pose.
+        void SetGeneratedIdle(bool generated){generatedIdle=generated;}
+        // Gestures now and then on the generated standing pose (hand on hip, wave, peace, ...);
+        // off while an opened motion plays. HeadBusy: the current gesture leads the head, so
+        // looking at the mouse should pause. ForceGesture (diagnostics) starts one by name.
+        void SetGesturesAllowed(bool allowed){gesturesAllowed=allowed;}
+        bool HeadBusy() const;
+        // The current gesture shows a face morph (smile, wink): blinking on top over-deforms it.
+        bool FaceBusy() const {for(const auto& m:morphOut)if(m.second>0.01f)return true;return false;}
+        bool ForceGesture(const std::wstring& name);
+        // Shift another pose (an opened motion blended over this layer's output) by the walking
+        // travel, as Apply does to its own output.
+        void AddRootOffset(PMX::Pose& pose) const;
         // Start a landing crouch; impactSpeed in world units/s.
         void Land(float impactSpeed);
         // Walking moves センター (and the foot IK targets) through the world along X.
@@ -68,16 +82,33 @@ namespace MikuMikuDesktopPerch
             float gripReach=3;                 // elbow to the middle of a curled grip
             // Fingers other than the thumb (bone, joint 0..2 from the knuckle) and the axis that
             // curls them toward the palm, per side; empty when the model has no finger bones.
-            struct Finger {int bone=-1,joint=0;};
+            struct Finger {int bone=-1,joint=0,finger=0;};   // finger: 0 index .. 3 little
             std::array<std::vector<Finger>,2> fingers{};
             std::array<DirectX::XMFLOAT3,2> fingerCurlAxis{};
             float legLength=8,thigh=4,shin=4;
+            std::array<DirectX::XMFLOAT3,2> shoulderPos{};   // 腕 rest position
+            float forearm=3;                                 // elbow to wrist
+            // Face morphs for gestures (-1 when the model lacks them).
+            int smileEyes=-1,smileMouth=-1,wink=-1;
         };
+
+        // Stand is the plain standing pose, taken as one gesture among the others.
+        enum class Gesture {None,HandOnHip,Wave,Peace,HandsBehind,LookAtPalm,HandsFolded,Stretch,LookAround,HeadTilt,Stand};
+        static constexpr int GestureCount=10;
 
         void Generate(std::vector<Key>& keys,double dt);
         void DistributeTwist(std::vector<Key>& keys) const;
         Key& KeyOf(std::vector<Key>& keys,int bone);
         void SetRotation(std::vector<Key>& keys,int bone,DirectX::FXMVECTOR rotation);
+        // Point the upper arm along upper and the forearm along fore (unit vectors, model space):
+        // the upper arm turns about its own length so the elbow bends in the plane of the two.
+        void AimArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR upper,DirectX::FXMVECTOR fore);
+        // Put the wrist at a point, with the elbow toward pole (two-bone IK from the rest shoulder).
+        void ReachArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR wrist,DirectX::FXMVECTOR pole);
+        // Curl each finger but the thumb (0 straight .. 1 fully curled), index to little.
+        void CurlFingers(std::vector<Key>& keys,int side,std::array<float,4> amount);
+        void Gestures(std::vector<Key>& keys,double dt);
+        float Random01(){random^=random<<13;random^=random>>17;random^=random<<5;return (random&0xFFFFFF)/16777216.0f;}
 
         Rig rig;
         std::vector<int> overrides;          // bones this layer writes
@@ -95,5 +126,18 @@ namespace MikuMikuDesktopPerch
         double landTime=10;
         float landDepth=0;
         bool initialized=false;
+        bool generatedIdle=false;
+        bool gesturesAllowed=true;
+        Gesture gesture=Gesture::None;
+        std::array<Gesture,2> recentGestures{Gesture::None,Gesture::None};
+        int gestureSide=0;                   // 0 left hand, 1 right
+        double gestureTime=0,gestureLength=0,nextGestureAt=2;
+        // Standing weight: -1 on the right foot, +1 on the left, 0 on both. It moves from
+        // weightFrom to weightTo over weightDuration, then stays until weightHoldUntil.
+        float weightFrom=0,weightTo=0;
+        double weightTime=1,weightDuration=1,weightHoldUntil=3;
+        float gestureWeight=0;
+        std::vector<std::pair<int,float>> morphOut;   // face morphs this frame (index, weight)
+        std::uint32_t random=0x9E3779B9u;
     };
 }

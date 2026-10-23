@@ -44,6 +44,7 @@ namespace MikuMikuDesktopPerch
     {
         modelPath=ReadString(path,L"Model",modelPath);
         motionPath=ReadString(path,L"Motion",motionPath);
+        idleMotionPath=ReadString(path,L"IdleMotion",idleMotionPath);
         toonDir=ReadString(path,L"ToonDir",toonDir);
         windowHeight=std::clamp(ReadInt(path,L"Height",windowHeight),100,4000);
         // Version 1 files were written when the default size was twice today's: halve them once.
@@ -78,6 +79,7 @@ namespace MikuMikuDesktopPerch
         }
         WriteString(path,L"Model",modelPath);
         WriteString(path,L"Motion",motionPath);
+        WriteString(path,L"IdleMotion",idleMotionPath);
         WriteString(path,L"ToonDir",toonDir);
         WriteString(path,L"Height",std::to_wstring(windowHeight));
         WriteString(path,L"SizeVersion",L"2");

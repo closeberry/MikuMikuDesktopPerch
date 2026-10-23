@@ -26,7 +26,7 @@ namespace
     constexpr wchar_t WindowClass[]=L"MikuMikuDesktopPerchWindow";
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdPhysics,IdBlink,IdBreath,IdLookAt,IdTopmost,IdExit,
-                      IdAuto,IdWalkLeft,IdWalkRight,IdWindowMode,
+                      IdAuto,IdWalkLeft,IdWalkRight,IdWindowMode,IdCloseMotion,IdOpenIdleMotion,IdCloseIdleMotion,
                       IdScaleBase=200};   // IdScaleBase + percent/10 for the 大きさ submenu
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
@@ -112,6 +112,10 @@ namespace
         Activity restPose=Activity::Idle; // pose to (re)take on the window once settled
         double restPoseAt=-1;             // clock time to take it, -1 for none
         double avoidCooldown=0;
+
+        // The opened (one-shot) motion: requested right after opening, then now and then.
+        bool motionRequested=false,motionWasPlaying=false,motionClosePending=false;
+        double nextMotionAt=0,motionStartAt=0;   // motionStartAt: standing up before it plays
         bool behindSurface=false;     // hanging: the window sits just behind the surface window
         double hangEndedAt=-1;
         Activity forcedRestPose=Activity::Idle;   // --rest-pose sit|hang (diagnostics)
@@ -138,6 +142,8 @@ namespace
         va_end(args);
         if(FILE* f=nullptr;_wfopen_s(&f,path.c_str(),L"a, ccs=UTF-8")==0&&f){fwprintf(f,L"%s\n",text);fclose(f);}
     }
+
+    int ShowMessage(const std::wstring& text,UINT type);
 
     void ApplyProceduralSettings()
     {
@@ -337,7 +343,7 @@ namespace
     {
         if(!ApplyFrame(percent,app.extent))
         {
-            MessageBoxW(app.hwnd,L"ウィンドウの大きさを変更できませんでした。",L"MikuMikuDesktopPerch",MB_ICONERROR);
+            ShowMessage(L"ウィンドウの大きさを変更できませんでした。",MB_ICONERROR);
             return;
         }
         app.settings.scale=percent;
@@ -363,11 +369,72 @@ namespace
         if(app.restPoseAt==-2)app.restPoseAt=app.clock+0.4;   // stepped aside: rest again right there
     }
 
+    // The opened motion is playing, or about to (standing up for it): nothing else starts.
+    // Also while it is due and on its way (standing up, warping): nothing else may start then.
+    bool MotionBusy()
+    {
+        const bool due=app.model.HasMotion()&&!app.motionClosePending&&(app.motionRequested||app.clock>=app.nextMotionAt);
+        return app.model.MotionPlaying()||app.clock<app.motionStartAt||due;
+    }
+
+    void BeginWarp();
+
+    // The opened motion plays once right after opening, then now and then (every 1.5 to 4
+    // minutes) while the mascot stands or rests on a surface. Resting, it stands up first; it
+    // then warps to the bottom right of the screen and plays the motion on the ground there.
+    void UpdateMotionPlayback()
+    {
+        const bool playing=app.model.MotionPlaying();
+        if(app.motionWasPlaying&&!playing)
+        {
+            Trace(L"%.1f motion finished",app.clock);
+            app.nextMotionAt=app.clock+90+app.Random01()*150;
+            if(app.motionClosePending){std::wstring error;app.model.SetMotion({},error);app.motionClosePending=false;}
+            if(app.surfaceWindow&&app.restPose!=Activity::Idle)app.restPoseAt=app.clock+0.8;
+        }
+        app.motionWasPlaying=playing;
+        if(playing)
+        {
+            if(app.place!=Place::Ground)app.model.StopMotion();
+            return;
+        }
+        if(!app.model.HasMotion()||app.motionClosePending||(!app.motionRequested&&app.clock<app.nextMotionAt))return;
+        if(app.place!=Place::Ground||app.travel!=Travel::None)return;
+        const Activity a=app.model.CurrentActivity();
+        if(a==Activity::Walk||a==Activity::Run||a==Activity::Jump)return;
+        if(a!=Activity::Idle)
+        {
+            app.restPose=a;
+            app.model.SetActivity(Activity::Idle);
+            app.motionStartAt=app.clock+0.8;
+            return;
+        }
+        if(app.clock<app.motionStartAt)return;
+        // Dance on the ground at the bottom right of the screen: warp there first.
+        {
+            const RECT work=WorkAreaOfWindow();
+            const double spotX=work.right-ModelHalfWidthPixels()-16;
+            if(app.surfaceWindow||std::abs(CenterX()-spotX)>24)
+            {
+                app.destinationWindow=nullptr;
+                app.destinationLine=work.bottom;
+                app.destinationX=spotX;
+                BeginWarp();
+                return;
+            }
+        }
+        Trace(L"%.1f motion starts",app.clock);
+        app.motionRequested=false;
+        app.restPoseAt=-1;
+        app.model.PlayMotion();
+        app.motionWasPlaying=true;
+    }
+
     // Occasionally walk somewhere when left alone on the ground. Sitting is kept for window
     // edges: on the taskbar the legs would hang off the screen.
     void UpdateAutoBehavior()
     {
-        if(!app.settings.autoBehavior||app.place!=Place::Ground||app.surfaceWindow||app.travel!=Travel::None)return;
+        if(!app.settings.autoBehavior||app.place!=Place::Ground||app.surfaceWindow||app.travel!=Travel::None||MotionBusy())return;
         if(app.model.CurrentActivity()!=Activity::Idle||app.clock<app.nextDecision)return;
         if(app.Random01()<0.6f)
         {
@@ -614,7 +681,7 @@ namespace
     // right-clicked there. Hanging is behind the window, so nothing there is in the way.
     void AvoidCursor(POINT cursor)
     {
-        if(!app.surfaceWindow||app.place!=Place::Ground||app.travel!=Travel::None||app.clock<app.avoidCooldown)return;
+        if(!app.surfaceWindow||app.place!=Place::Ground||app.travel!=Travel::None||app.clock<app.avoidCooldown||MotionBusy())return;
         const Activity a=app.model.CurrentActivity();
         if(a==Activity::Walk||a==Activity::Run||a==Activity::Jump||a==Activity::Hang)return;
         RECT legs=LegScreenRect(),covered{};
@@ -691,7 +758,7 @@ namespace
                 app.surfaceRect=frame;
                 if(dx)MoveWindowTo(app.windowX+dx,app.windowY);
                 // Maximized or dragged to the top: the head would leave the screen.
-                if(frame.top-ModelHeightPixels()<WorkAreaOfWindow().top+8&&app.travel==Travel::None)
+                if(frame.top-ModelHeightPixels()<WorkAreaOfWindow().top+8&&app.travel==Travel::None&&!MotionBusy())
                 {
                     BeginTravel(app.surfaceWindow);
                     return;
@@ -702,7 +769,8 @@ namespace
             if(app.travel==Travel::Crouching&&(app.travelTimer-=dt)<=0){Launch();return;}
 
             // A new foreground window (settled for a moment): go there.
-            if(app.travel==Travel::None&&app.clock-app.foregroundSince>0.6&&foreground!=app.surfaceWindow&&
+            // (Held back while the opened motion plays; it goes once that has finished.)
+            if(app.travel==Travel::None&&!MotionBusy()&&app.clock-app.foregroundSince>0.6&&foreground!=app.surfaceWindow&&
                foreground!=app.servedForeground&&IsStandableWindow(foreground,app.hwnd,static_cast<int>(ModelFrameOf().width*app.pixelsPerUnit)))
             {
                 BeginTravel(foreground);
@@ -710,7 +778,7 @@ namespace
             }
 
             // Settled on a window: take (or resume) the resting pose.
-            if(app.surfaceWindow&&app.travel==Travel::None&&app.restPoseAt>=0&&app.clock>=app.restPoseAt&&
+            if(app.surfaceWindow&&app.travel==Travel::None&&!MotionBusy()&&app.restPoseAt>=0&&app.clock>=app.restPoseAt&&
                app.model.CurrentActivity()==Activity::Idle)
             {
                 // Sitting faces one side or the other at random (knees to that side).
@@ -727,7 +795,8 @@ namespace
         else app.cursorIdle+=dt;
         std::array<float,3> head{};
         const Activity a=app.model.CurrentActivity();
-        if(!app.settings.lookAtMouse||a==Activity::Walk||a==Activity::Fall||!app.model.HeadPosition(head))
+        // The opened motion leads the head itself while it plays.
+        if(!app.settings.lookAtMouse||a==Activity::Walk||a==Activity::Fall||app.model.MotionPlaying()||app.model.HeadBusy()||!app.model.HeadPosition(head))
         {
             app.model.SetLookTarget(0,0,false);
             return;
@@ -742,8 +811,19 @@ namespace
         app.model.SetLookTarget(yaw,pitch,app.cursorIdle<LookIdleSeconds);
     }
 
+    void SetClickThrough(bool enabled);
+
+    // A modal dialog stops the frame loop, which keeps click-through up to date. Let clicks
+    // through the stage first, or it would block every window under it while the dialog is up.
+    int ShowMessage(const std::wstring& text,UINT type)
+    {
+        if(app.hwnd)SetClickThrough(true);
+        return MessageBoxW(app.hwnd,text.c_str(),L"MikuMikuDesktopPerch",type);
+    }
+
     std::wstring OpenFileDialog(HWND owner,const wchar_t* filter,const std::wstring& current)
     {
+        if(app.hwnd)SetClickThrough(true);
         wchar_t path[MAX_PATH]{};
         std::wstring initialDir;
         if(!current.empty())initialDir=std::filesystem::path(current).parent_path().wstring();
@@ -801,6 +881,9 @@ namespace
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu,MF_STRING,IdOpenModel,L"モデルを開く...");
         AppendMenuW(menu,MF_STRING,IdOpenMotion,L"モーションを開く...");
+        AppendMenuW(menu,MF_STRING|(app.settings.motionPath.empty()?MF_GRAYED:0),IdCloseMotion,L"モーションを閉じる");
+        AppendMenuW(menu,MF_STRING,IdOpenIdleMotion,L"待機モーションを開く...");
+        AppendMenuW(menu,MF_STRING|(app.settings.idleMotionPath.empty()?MF_GRAYED:0),IdCloseIdleMotion,L"待機モーションを閉じる");
         HMENU scaleMenu=CreatePopupMenu();
         for(int percent=Settings::MinScale;percent<=Settings::MaxScale;percent+=10)
         {
@@ -847,7 +930,7 @@ namespace
                 std::wstring error;
                 if(!probe.Load(path,{},false,app.settings.physicsFps,error))
                 {
-                    MessageBoxW(app.hwnd,error.c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
+                    ShowMessage(error,MB_ICONWARNING);
                     break;
                 }
             }
@@ -862,15 +945,47 @@ namespace
             auto path=OpenFileDialog(app.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",app.settings.motionPath.empty()?app.settings.modelPath:app.settings.motionPath);
             if(path.empty())break;
             std::wstring error;
+            if(!app.model.SetMotion(path,error))
+            {
+                ShowMessage(error,MB_ICONERROR);
+                break;
+            }
+            app.settings.motionPath=path;
+            app.settings.Save(app.settingsPath);
+            app.motionRequested=true;   // play it once now
+            app.motionClosePending=false;
+            break;
+        }
+        case IdCloseMotion:
+            // Blend out first if it is playing; dropped once it has.
+            app.settings.motionPath.clear();
+            app.settings.Save(app.settingsPath);
+            app.motionRequested=false;
+            if(app.model.MotionPlaying()){app.model.StopMotion();app.motionClosePending=true;}
+            else {std::wstring error;app.model.SetMotion({},error);}
+            break;
+        case IdOpenIdleMotion:
+        case IdCloseIdleMotion:
+        {
+            std::wstring path;
+            if(id==IdOpenIdleMotion)
+            {
+                path=OpenFileDialog(app.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",app.settings.idleMotionPath.empty()?app.settings.modelPath:app.settings.idleMotionPath);
+                if(path.empty())break;
+            }
+            // The idle motion drives the model's own solver: reload the model with it.
+            std::wstring error;
             app.renderer.WaitIdle();
             if(!app.model.Load(app.settings.modelPath,path,app.settings.physics,app.settings.physicsFps,error)||
                !app.renderer.LoadModel(app.model,app.settings.toonDir,static_cast<unsigned>(app.settings.maxTextureSize),error))
             {
-                MessageBoxW(app.hwnd,error.c_str(),L"MikuMikuDesktopPerch",MB_ICONERROR);
+                ShowMessage(error,MB_ICONERROR);
                 break;
             }
             ApplyProceduralSettings();
-            app.settings.motionPath=path;
+            if(std::wstring motionError;!app.model.SetMotion(app.settings.motionPath,motionError))app.settings.motionPath.clear();
+            app.motionWasPlaying=app.motionClosePending=false;
+            app.settings.idleMotionPath=path;
             app.settings.Save(app.settingsPath);
             break;
         }
@@ -897,7 +1012,11 @@ namespace
             break;
         case IdWalkLeft:
         case IdWalkRight:
-            if(app.place==Place::Ground)StartWalk(app.windowX+app.windowSize.cx*0.5+(id==IdWalkLeft?-300:300));
+            if(app.place==Place::Ground)
+            {
+                app.model.StopMotion();
+                StartWalk(app.windowX+app.windowSize.cx*0.5+(id==IdWalkLeft?-300:300));
+            }
             break;
         case IdBlink:
         case IdBreath:
@@ -963,6 +1082,7 @@ namespace
                     app.renderer.SetModelTransform(DirectX::XMMatrixIdentity());
                     app.previousWindowX=app.windowX;app.previousWindowY=app.windowY;
                     app.carryVelocity=app.carryAcceleration={};
+                    app.model.StopMotion();
                     app.model.SetActivity(Activity::Grabbed);
                 }
                 if(app.place==Place::Held)MoveWindowTo(cursor.x-app.dragOffset.x,cursor.y-app.dragOffset.y);
@@ -1068,6 +1188,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     std::wstring snapshotModel;   // --model <pmx>: model for this run only
     int snapshotScale=0;          // --scale <percent>: resize through the menu path after start-up
     std::wstring snapshotActivity;   // --activity walk|sit|grab|fall: hold that generated activity
+    std::wstring snapshotGesture;    // --gesture hip|wave|peace|...: hold that standing gesture
     {
         int argc=0;
         LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
@@ -1090,6 +1211,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--activity"&&i+1<argc)
             {
                 snapshotActivity=argv[++i];
+            }
+            else if(arg==L"--gesture"&&i+1<argc)
+            {
+                snapshotGesture=argv[++i];
+            }
+            else if(arg==L"--play-motion")
+            {
+                app.motionRequested=true;
             }
             else if(arg==L"--walk"&&i+1<argc)
             {
@@ -1169,7 +1298,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             app.settings.modelPath=OpenFileDialog(nullptr,L"PMX モデル (*.pmx)\0*.pmx\0",{});
             if(app.settings.modelPath.empty())return 0;
         }
-        if(app.model.Load(app.settings.modelPath,app.settings.motionPath,app.settings.physics,app.settings.physicsFps,error))break;
+        // A missing idle motion is dropped rather than blocking the model.
+        if(!app.settings.idleMotionPath.empty()&&!std::filesystem::exists(app.settings.idleMotionPath))app.settings.idleMotionPath.clear();
+        if(app.model.Load(app.settings.modelPath,app.settings.idleMotionPath,app.settings.physics,app.settings.physicsFps,error))break;
         if(!snapshotPath.empty())
         {
             // Diagnostic runs report instead of blocking on a dialog.
@@ -1224,6 +1355,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     UpdateCamera();
     MoveWindowTo(app.windowX,GroundedWindowY());
     app.nextDecision=8+app.Random01()*10;
+    app.nextMotionAt=60+app.Random01()*120;
+    if(std::wstring motionError;!app.model.SetMotion(app.settings.motionPath,motionError))app.settings.motionPath.clear();
     std::optional<Activity> forcedActivity;   // --activity for snapshot checks
     if(snapshotActivity==L"walk")forcedActivity=Activity::Walk;
     else if(snapshotActivity==L"run")forcedActivity=Activity::Run;
@@ -1235,6 +1368,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     else if(snapshotActivity==L"fall")forcedActivity=Activity::Fall;
     if(!snapshotPath.empty())app.settings.autoBehavior=false;
     if(forcedActivity)app.model.SetActivity(*forcedActivity,1);
+    if(!snapshotGesture.empty())app.model.ForceGesture(snapshotGesture);
 
     app.tray.cbSize=sizeof(app.tray);
     app.tray.hWnd=app.hwnd;
@@ -1387,6 +1521,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         }
         if(!forcedActivity)
         {
+            UpdateMotionPlayback();
             UpdateWindowMode(dt);
             AvoidCursor(cursor);
             UpdateHangOrder();
@@ -1395,7 +1530,6 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         UpdateLookTarget(cursor,r,dt);
 
         app.model.Update(dt);
-        UpdateExtent(dt);
         // The taskbar can also end up above the mascot without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         // センター's walking travel moves the window by the same amount; the camera follows it.
@@ -1405,6 +1539,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(!forcedActivity)MoveWindowTo(app.windowX+travel*ppu,app.windowY);
         }
         if(app.place==Place::Ground&&std::abs(app.windowY-GroundedWindowY())>0.5)MoveWindowTo(app.windowX,GroundedWindowY());
+        // After the walking step above: resizing measures where the feet are on screen, which
+        // must already include this frame's step or the step is applied twice.
+        UpdateExtent(dt);
         if(const std::uint32_t resets=app.model.PhysicsResets();resets!=lastPhysicsResets)
         {
             Trace(L"%.1f physics reset (%u so far) %s",app.clock,resets,app.model.PhysicsResetReason().c_str());

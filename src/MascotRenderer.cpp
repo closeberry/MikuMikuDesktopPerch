@@ -97,6 +97,7 @@ namespace MikuMikuDesktopPerch
     bool MascotRenderer::Initialize(HWND window,unsigned w,unsigned h,int msaa,std::wstring& error)
     {
         hwnd=window;width=std::max(1u,w);height=std::max(1u,h);
+        bufferWidth=width+width/4;bufferHeight=height+height/4;
         HRESULT hr;
 #if defined(_DEBUG)
         {
@@ -126,7 +127,7 @@ namespace MikuMikuDesktopPerch
         if(FAILED(hr=device->CreateCommandQueue(&queueDesc,IID_PPV_ARGS(&queue)))){error=HrText(L"Command queue",hr);return false;}
 
         DXGI_SWAP_CHAIN_DESC1 sc{};
-        sc.Width=width;sc.Height=height;
+        sc.Width=bufferWidth;sc.Height=bufferHeight;
         sc.Format=ColorFormat;
         sc.SampleDesc.Count=1;
         sc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -176,6 +177,7 @@ namespace MikuMikuDesktopPerch
         if(FAILED(hr=device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&uploadAllocator)))||
            FAILED(hr=device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,frames[0].allocator.Get(),nullptr,IID_PPV_ARGS(&commandList))))
         {error=HrText(L"Command list",hr);return false;}
+        if(FAILED(hr=commandList.As(&commandList1))){error=HrText(L"Command list 1",hr);return false;}
         commandList->Close();
         if(FAILED(hr=device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)))){error=HrText(L"Fence",hr);return false;}
         fenceEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
@@ -205,7 +207,7 @@ namespace MikuMikuDesktopPerch
         auto defaultHeap=HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
         D3D12_RESOURCE_DESC desc{};
         desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        desc.Width=width;desc.Height=height;desc.DepthOrArraySize=1;desc.MipLevels=1;
+        desc.Width=bufferWidth;desc.Height=bufferHeight;desc.DepthOrArraySize=1;desc.MipLevels=1;
         desc.SampleDesc.Count=sampleCount;
         if(sampleCount>1)
         {
@@ -430,11 +432,24 @@ namespace MikuMikuDesktopPerch
             if(m.sphereMode==1||m.sphereMode==2)markUsed(m.sphere);
             if(!m.sharedToon)markUsed(m.toon);
         }
+        // The UV triangles drawn with each color texture (to fill its unused padding).
+        std::vector<std::vector<std::array<float,2>>> uvTriangles(paths.size());
+        {
+            const auto& vertices=model.DynamicVertices();
+            const auto& indices=model.Indices();
+            for(const auto& m:materials)
+            {
+                if(m.texture<0||static_cast<size_t>(m.texture)>=paths.size())continue;
+                auto& list=uvTriangles[m.texture];
+                for(std::uint32_t k=m.indexStart;k<m.indexStart+m.indexCount&&k<indices.size();++k)
+                    if(indices[k]<vertices.size())list.push_back(vertices[indices[k]].uv);
+            }
+        }
         for(size_t i=0;ok&&i<paths.size();++i)
         {
             if(!used[i])continue;
             ImageRgba8 image;
-            if(LoadImageRgba8(paths[i],image,maxTextureSize))ok=UploadTexture(image,textures[i]);
+            if(LoadImageRgba8(paths[i],image,maxTextureSize,&uvTriangles[i]))ok=UploadTexture(image,textures[i]);
         }
         for(int i=0;ok&&i<10;++i)
         {
@@ -506,13 +521,17 @@ namespace MikuMikuDesktopPerch
     {
         w=std::max(1u,w);h=std::max(1u,h);
         if(w==width&&h==height)return true;
+        clearWhole.fill(true);
+        if(w<=bufferWidth&&h<=bufferHeight){width=w;height=h;return true;}
         WaitIdle();
         for(auto& b:backBuffers)b.Reset();
         msaaTarget.Reset();
         depthTarget.Reset();
         width=w;height=h;
+        bufferWidth=std::max(bufferWidth,width+width/4);
+        bufferHeight=std::max(bufferHeight,height+height/4);
         HRESULT hr;
-        if(FAILED(hr=swapChain->ResizeBuffers(FrameCount,width,height,ColorFormat,0))){error=HrText(L"ResizeBuffers",hr);return false;}
+        if(FAILED(hr=swapChain->ResizeBuffers(FrameCount,bufferWidth,bufferHeight,ColorFormat,0))){error=HrText(L"ResizeBuffers",hr);return false;}
         for(auto& f:frames){f.hitPoint={-1,-1};f.fenceValue=0;}
         lastAlpha=-1;
         return CreateRenderTargets(error);
@@ -626,8 +645,13 @@ namespace MikuMikuDesktopPerch
             commandList->ResourceBarrier(1,&b);
         }
         commandList->OMSetRenderTargets(1,&rtv,FALSE,&dsv);
-        commandList->ClearRenderTargetView(rtv,ClearColor,0,nullptr);
-        commandList->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
+        // Only the drawn area is cleared and resolved; the rest of a back buffer stays clear,
+        // except right after the drawn area shrank (clearWhole).
+        const D3D12_RECT drawn{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
+        const bool wholeBuffer=sampleCount==1&&clearWhole[index];
+        commandList->ClearRenderTargetView(rtv,ClearColor,wholeBuffer?0:1,wholeBuffer?nullptr:&drawn);
+        commandList->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,1,&drawn);
+        if(sampleCount==1)clearWhole[index]=false;
         D3D12_VIEWPORT viewport{0,0,static_cast<float>(width),static_cast<float>(height),0,1};
         D3D12_RECT scissor{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
         commandList->RSSetViewports(1,&viewport);
@@ -678,11 +702,21 @@ namespace MikuMikuDesktopPerch
 
         if(sampleCount>1)
         {
+            D3D12_RESOURCE_STATES backState=D3D12_RESOURCE_STATE_PRESENT;
+            if(clearWhole[index])
+            {
+                auto toTarget=Transition(backBuffer,backState,D3D12_RESOURCE_STATE_RENDER_TARGET);
+                commandList->ResourceBarrier(1,&toTarget);
+                commandList->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{rtvStart.ptr+index*rtvStride},ClearColor,0,nullptr);
+                backState=D3D12_RESOURCE_STATE_RENDER_TARGET;
+                clearWhole[index]=false;
+            }
             D3D12_RESOURCE_BARRIER b[2]={
                 Transition(msaaTarget.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_SOURCE),
-                Transition(backBuffer,D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RESOLVE_DEST)};
+                Transition(backBuffer,backState,D3D12_RESOURCE_STATE_RESOLVE_DEST)};
             commandList->ResourceBarrier(2,b);
-            commandList->ResolveSubresource(backBuffer,0,msaaTarget.Get(),0,ColorFormat);
+            D3D12_RECT source=drawn;
+            commandList1->ResolveSubresourceRegion(backBuffer,0,0,0,msaaTarget.Get(),0,&source,ColorFormat,D3D12_RESOLVE_MODE_AVERAGE);
             D3D12_RESOURCE_BARRIER a[2]={
                 Transition(msaaTarget.Get(),D3D12_RESOURCE_STATE_RESOLVE_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET),
                 Transition(backBuffer,D3D12_RESOURCE_STATE_RESOLVE_DEST,D3D12_RESOURCE_STATE_COPY_SOURCE)};
@@ -724,7 +758,14 @@ namespace MikuMikuDesktopPerch
             appliedVisualOffset=visualOffset;
         }
         swapChain->Present(1,0);
-        if(moved)composition->Commit();
+        if(moved)
+        {
+            // Commit the new position only once the GPU has finished this frame: committed
+            // earlier, it can reach the screen a refresh before the frame does (a rare one-step
+            // jump while walking).
+            WaitForFence(f.fenceValue);
+            composition->Commit();
+        }
     }
 
     bool MascotRenderer::SaveLastFrame(const std::wstring& path)
@@ -746,7 +787,8 @@ namespace MikuMikuDesktopPerch
         D3D12_TEXTURE_COPY_LOCATION src{};
         src.pResource=source;
         src.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        commandList->CopyTextureRegion(&dst,0,0,0,&src,nullptr);
+        const D3D12_BOX box{0,0,0,width,height,1};
+        commandList->CopyTextureRegion(&dst,0,0,0,&src,&box);
         auto back=Transition(source,D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_PRESENT);
         commandList->ResourceBarrier(1,&back);
         FinishUploads();

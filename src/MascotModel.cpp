@@ -227,6 +227,46 @@ namespace MikuMikuDesktopPerch
         std::array<ArmCorrection,2> arms;
 
         GeneratedMotion motion;
+
+        // One-shot motion, sampled by a solver of its own (no physics) and blended over the
+        // idle pose by shotWeight.
+        std::unique_ptr<PMX::VMD> shotVmd;
+        std::unique_ptr<PMX::PoseSolver> shotSampler;
+        PMX::Pose shotPose;
+        double shotFrame=0;
+        float shotWeight=0;
+        bool shotActive=false,shotEnding=false;
+
+        void ApplyShot(double dt)
+        {
+            using namespace DirectX;
+            constexpr double FadeIn=0.3,FadeOut=0.45;
+            if(!shotEnding)
+            {
+                shotFrame+=dt*30.0;
+                if(shotFrame>=shotVmd->lastFrame){shotFrame=shotVmd->lastFrame;shotEnding=true;}
+                shotWeight=static_cast<float>(std::min(1.0,shotWeight+dt/FadeIn));
+            }
+            else if((shotWeight-=static_cast<float>(dt/FadeOut))<=0)
+            {
+                shotWeight=0;
+                shotActive=false;
+                return;
+            }
+            shotSampler->HiPose(shotPose,static_cast<float>(shotFrame),false,false);
+            motion.AddRootOffset(shotPose);
+            auto& pose=solver->solvedPose;
+            const float w=shotWeight*shotWeight*(3-2*shotWeight);
+            for(size_t i=0;i<pose.boneKeys.size()&&i<shotPose.boneKeys.size();++i)
+            {
+                auto& k=pose.boneKeys[i];
+                const auto& s=shotPose.boneKeys[i];
+                XMStoreFloat4(&k.rotation,XMQuaternionSlerp(XMLoadFloat4(&k.rotation),XMLoadFloat4(&s.rotation),w));
+                XMStoreFloat3(&k.position,XMVectorLerp(XMLoadFloat3(&k.position),XMLoadFloat3(&s.position),w));
+            }
+            for(size_t i=0;i<pose.morphKeys.size()&&i<shotPose.morphKeys.size();++i)
+                pose.morphKeys[i].value+=(shotPose.morphKeys[i].value-pose.morphKeys[i].value)*w;
+        }
         DirectX::XMFLOAT2 frameAcceleration{};   // window acceleration, applied to physics as inertia
 
         void ApplyFrameAcceleration()
@@ -248,6 +288,7 @@ namespace MikuMikuDesktopPerch
             int neck=-1,head=-1,eyes=-1;
             double clock=0;
             double nextBlink=2.0,blinkStart=-1;
+            float blinkGate=1;   // 0 while the face is posed (gesture smile/wink, an opened motion)
             bool doubleBlink=false;
             float targetYaw=0,targetPitch=0,yaw=0,pitch=0;
             bool lookActive=false;
@@ -326,7 +367,10 @@ namespace MikuMikuDesktopPerch
 
         void ApplyProcedural(PMX::Pose& pose,double dt)
         {
-            const float blink=BlinkWeight(dt);
+            // No blinking over a posed face: the morphs would add up and over-deform it.
+            const bool facePosed=motion.FaceBusy()||shotActive;
+            proc.blinkGate=std::clamp(proc.blinkGate+static_cast<float>(dt/0.12)*(facePosed?-1.0f:1.0f),0.0f,1.0f);
+            const float blink=BlinkWeight(dt)*proc.blinkGate;
             if(proc.blink&&proc.blinkMorph>=0&&static_cast<size_t>(proc.blinkMorph)<pose.morphKeys.size())
             {
                 auto& v=pose.morphKeys[proc.blinkMorph].value;
@@ -445,6 +489,46 @@ namespace MikuMikuDesktopPerch
 
     MascotModel::MascotModel():impl(std::make_unique<Impl>()){}
     MascotModel::~MascotModel()=default;
+
+    bool MascotModel::SetMotion(const std::wstring& path,std::wstring& error)
+    {
+        auto& m=*impl;
+        m.shotActive=false;
+        m.shotWeight=0;
+        m.shotSampler.reset();
+        m.shotVmd.reset();
+        if(path.empty()||!m.pmx)return true;
+        if(!std::filesystem::exists(path)){error=L"モーションファイルが見つかりません: "+path;return false;}
+        try
+        {
+            m.shotVmd=std::make_unique<PMX::VMD>(path.c_str(),932,m.pmx.get());
+            m.shotSampler=std::make_unique<PMX::PoseSolver>(nullptr,m.pmx.get(),m.shotVmd.get());
+        }
+        catch(...)
+        {
+            m.shotSampler.reset();
+            m.shotVmd.reset();
+            error=L"モーションを読み込めませんでした: "+path;
+            return false;
+        }
+        return true;
+    }
+
+    bool MascotModel::HasMotion() const {return impl->shotSampler!=nullptr;}
+
+    void MascotModel::PlayMotion()
+    {
+        auto& m=*impl;
+        if(!m.shotSampler)return;
+        m.shotFrame=0;
+        m.shotEnding=false;
+        m.shotActive=true;
+    }
+
+    void MascotModel::StopMotion(){if(impl->shotActive)impl->shotEnding=true;}
+    bool MascotModel::MotionPlaying() const {return impl->shotActive;}
+    bool MascotModel::HeadBusy() const {return impl->motion.HeadBusy();}
+    bool MascotModel::ForceGesture(const std::wstring& name){return impl->motion.ForceGesture(name);}
 
     bool MascotModel::Load(const std::wstring& modelPath,const std::wstring& motionPath,bool physics,int physicsFps,std::wstring& error)
     {
@@ -810,7 +894,11 @@ namespace MikuMikuDesktopPerch
         if(m.physics&&m.resetPhysicsPending&&m.resetBlend<0)m.BeginPhysicsReset();
         m.resetPhysicsPending=false;
         m.solver->HiPose(m.solver->solvedPose,static_cast<float>(m.frame),false,m.continuous);
-        m.motion.Apply(m.solver->solvedPose,dt);   // authored in the A-stance frame, so before correction
+        m.motion.SetGeneratedIdle(!m.vmd);
+        m.motion.SetGesturesAllowed(!m.shotActive);
+        m.motion.Apply(m.solver->solvedPose,dt);
+        // The opened motion goes over everything the motion layer made, standing pose included.
+        if(m.shotActive)m.ApplyShot(dt);   // authored in the A-stance frame, so before correction
         m.ApplyArmCorrection(m.solver->solvedPose);
         m.ApplyProcedural(m.solver->solvedPose,dt);
         if(m.resetBlend>=0)m.BlendPhysicsBones(dt);

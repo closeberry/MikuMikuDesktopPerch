@@ -63,8 +63,20 @@ namespace MikuMikuDesktopPerch
         MascotModel(const MascotModel&)=delete;
         MascotModel& operator=(const MascotModel&)=delete;
 
-        // motionPath may be empty (rest pose). Throws nothing; returns false with error text.
-        bool Load(const std::wstring& modelPath,const std::wstring& motionPath,bool physics,int physicsFps,std::wstring& error);
+        // idleMotionPath (looped while idle) may be empty (rest pose). Throws nothing; returns
+        // false with error text.
+        bool Load(const std::wstring& modelPath,const std::wstring& idleMotionPath,bool physics,int physicsFps,std::wstring& error);
+
+        // A motion played over the idle pose now and then: PlayMotion blends it in, plays it
+        // once and blends back out. An empty path removes it. Load drops it (set it again).
+        bool SetMotion(const std::wstring& path,std::wstring& error);
+        bool HasMotion() const;
+        void PlayMotion();
+        void StopMotion();          // blend out early
+        bool MotionPlaying() const; // true until fully blended out
+        // A gesture of the generated standing pose leads the head (look-at should pause).
+        bool HeadBusy() const;
+        bool ForceGesture(const std::wstring& name);   // diagnostics
         void SetPhysics(bool enabled);
         bool PhysicsEnabled() const;
 

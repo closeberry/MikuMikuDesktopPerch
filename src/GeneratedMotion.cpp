@@ -144,6 +144,8 @@ namespace MikuMikuDesktopPerch
                 const float fore=wrist>=0?XMVectorGetX(XMVector3Length(XMVectorSubtract(restPos(wrist),restPos(rig.elbow[side])))):upper;
                 rig.armReach=upper+fore+0.35f*fore;   // hand length roughly a third of the forearm
                 rig.upperArm=upper;
+                rig.forearm=fore;
+                XMStoreFloat3(&rig.shoulderPos[side],restPos(rig.arm[side]));
                 rig.foreArm=fore*1.35f;
                 rig.gripReach=fore*1.2f;
                 XMStoreFloat3(&rig.armRestDir[side],XMVector3Normalize(armDir));
@@ -189,7 +191,7 @@ namespace MikuMikuDesktopPerch
                     const wchar_t* number[3]={L"１",L"２",L"３"};
                     int bone=Find(pmx,{s+finger+number[joint]});
                     if(bone<0&&std::wstring(finger)==L"人指")bone=Find(pmx,{s+L"人差指"+number[joint]});
-                    if(bone>=0)rig.fingers[side].push_back({bone,joint});
+                    if(bone>=0)rig.fingers[side].push_back({bone,joint,static_cast<int>(rig.fingers[side].size()/3)});
                 }
             // A curled hand grips about at the middle of the fingers.
             const float palmLength=XMVectorGetX(XMVector3Length(XMVectorSubtract(restPos(middle1),restPos(wrist))));
@@ -199,6 +201,17 @@ namespace MikuMikuDesktopPerch
         }
         if(legs>0)rig.legLength=std::max(legLength/legs,0.1f);
         if(rig.lowerBody>=0)XMStoreFloat3(&rig.lowerPivot,restPos(rig.lowerBody));
+        for(int i=0;i<static_cast<int>(pmx.morphs.size());++i)
+        {
+            const auto& name=pmx.morphs[i].name;
+            auto pick=[&](int& slot,std::initializer_list<const wchar_t*> names){
+                if(slot>=0)return;
+                for(const auto* n:names)if(name==n){slot=i;return;}
+            };
+            pick(rig.smileEyes,{L"笑い",L"にっこり"});
+            pick(rig.smileMouth,{L"にやり",L"にっこり口",L"ワ"});
+            pick(rig.wink,{L"ウィンク",L"ウインク",L"ウィンク２",L"ウィンク右"});
+        }
         if(const int head=Find(pmx,{L"頭"});head>=0)rig.headY=XMVectorGetY(restPos(head));
         else rig.headY=rig.shoulderY+0.25f*rig.legLength;
         (void)hipHeight;
@@ -224,7 +237,8 @@ namespace MikuMikuDesktopPerch
             L"armSwingAxis L="+v(rig.armSwingAxis[0])+L" R="+v(rig.armSwingAxis[1])+L"\n"+
             L"elbowBendAxis L="+v(rig.elbowBendAxis[0])+L" R="+v(rig.elbowBendAxis[1])+L"\n"+
             L"elbowTwistAxis L="+v(rig.elbowTwistAxis[0])+L" R="+v(rig.elbowTwistAxis[1])+L"\n"+
-            L"armTwistAxis L="+v(rig.armTwistAxis[0])+L" R="+v(rig.armTwistAxis[1])+L"\n";
+            L"armTwistAxis L="+v(rig.armTwistAxis[0])+L" R="+v(rig.armTwistAxis[1])+L"\n"+
+            L"morphs smileEyes="+std::to_wstring(rig.smileEyes)+L" smileMouth="+std::to_wstring(rig.smileMouth)+L" wink="+std::to_wstring(rig.wink)+L"\n";
     }
 
     void GeneratedMotion::SetActivity(Activity next,int dir)
@@ -272,6 +286,181 @@ namespace MikuMikuDesktopPerch
     void GeneratedMotion::SetRotation(std::vector<Key>& keys,int bone,FXMVECTOR rotation)
     {
         XMStoreFloat4(&KeyOf(keys,bone).rotation,XMQuaternionNormalize(rotation));
+    }
+
+    void GeneratedMotion::AimArm(std::vector<Key>& keys,int side,FXMVECTOR upper,FXMVECTOR fore)
+    {
+        if(rig.arm[side]<0||rig.elbow[side]<0)return;
+        const float bendAngle=std::acos(std::clamp(XMVectorGetX(XMVector3Dot(upper,fore)),-1.0f,1.0f));
+        // The bend axis that turns the upper arm's direction into the forearm's.
+        XMVECTOR bendAxis=XMVector3Cross(upper,fore);
+        if(XMVectorGetX(XMVector3LengthSq(bendAxis))<1e-8f)bendAxis=XMVector3Cross(upper,XMVectorSet(0,0,-1,0));
+        bendAxis=XMVector3Normalize(bendAxis);
+        if(XMVectorGetX(XMVector3Dot(XMVector3Rotate(upper,XMQuaternionRotationNormal(bendAxis,bendAngle)),fore))<0.99f)
+            bendAxis=XMVectorNegate(bendAxis);
+        // Rotation taking the rest frame (arm direction, elbow bend axis) onto that one.
+        const XMVECTOR a0=XMLoadFloat3(&rig.armRestDir[side]);
+        XMVECTOR b0=XMLoadFloat3(&rig.elbowBendAxis[side]);
+        b0=XMVector3Normalize(XMVectorSubtract(b0,XMVectorScale(a0,XMVectorGetX(XMVector3Dot(a0,b0)))));
+        const XMMATRIX from{a0,b0,XMVector3Cross(a0,b0),XMVectorSet(0,0,0,1)};
+        const XMMATRIX to{upper,bendAxis,XMVector3Cross(upper,bendAxis),XMVectorSet(0,0,0,1)};
+        SetRotation(keys,rig.arm[side],XMQuaternionRotationMatrix(XMMatrixTranspose(from)*to));
+        SetRotation(keys,rig.elbow[side],Rotation(rig.elbowBendAxis[side],bendAngle));
+    }
+
+    void GeneratedMotion::ReachArm(std::vector<Key>& keys,int side,FXMVECTOR wrist,FXMVECTOR pole)
+    {
+        const float a=rig.upperArm,b=rig.forearm;
+        const XMVECTOR shoulder=XMLoadFloat3(&rig.shoulderPos[side]);
+        XMVECTOR toWrist=XMVectorSubtract(wrist,shoulder);
+        const float d=std::clamp(XMVectorGetX(XMVector3Length(toWrist)),std::abs(a-b)+0.01f,a+b-0.01f);
+        const XMVECTOR dir=XMVector3Normalize(toWrist);
+        XMVECTOR side3=XMVectorSubtract(pole,XMVectorScale(dir,XMVectorGetX(XMVector3Dot(pole,dir))));
+        if(XMVectorGetX(XMVector3LengthSq(side3))<1e-8f)side3=XMVectorSet(0,-1,0,0);
+        side3=XMVector3Normalize(side3);
+        const float cosA=std::clamp((a*a+d*d-b*b)/(2*a*d),-1.0f,1.0f);
+        const XMVECTOR elbow=XMVectorAdd(shoulder,XMVectorAdd(XMVectorScale(dir,a*cosA),XMVectorScale(side3,a*std::sqrt(1-cosA*cosA))));
+        const XMVECTOR reached=XMVectorAdd(shoulder,XMVectorScale(dir,d));
+        AimArm(keys,side,XMVector3Normalize(XMVectorSubtract(elbow,shoulder)),XMVector3Normalize(XMVectorSubtract(reached,elbow)));
+    }
+
+    void GeneratedMotion::CurlFingers(std::vector<Key>& keys,int side,std::array<float,4> amount)
+    {
+        static constexpr float full[3]={70.0f*Deg,90.0f*Deg,60.0f*Deg};
+        for(const auto& f:rig.fingers[side])
+            SetRotation(keys,f.bone,Rotation(rig.fingerCurlAxis[side],full[f.joint]*amount[std::clamp(f.finger,0,3)]));
+    }
+
+    bool GeneratedMotion::HeadBusy() const
+    {
+        if(gesture==Gesture::None||gestureWeight<=0.01f)return false;
+        return gesture==Gesture::Wave||gesture==Gesture::Peace||gesture==Gesture::LookAtPalm||
+               gesture==Gesture::LookAround||gesture==Gesture::HeadTilt||gesture==Gesture::Stretch;
+    }
+
+    bool GeneratedMotion::ForceGesture(const std::wstring& name)
+    {
+        static const std::pair<const wchar_t*,Gesture> names[]={
+            {L"hip",Gesture::HandOnHip},{L"wave",Gesture::Wave},{L"peace",Gesture::Peace},{L"behind",Gesture::HandsBehind},
+            {L"palm",Gesture::LookAtPalm},{L"folded",Gesture::HandsFolded},{L"stretch",Gesture::Stretch},
+            {L"look",Gesture::LookAround},{L"tilt",Gesture::HeadTilt},{L"stand",Gesture::Stand}};
+        for(const auto& [n,g]:names)
+            if(name==n){gesture=g;gestureSide=0;gestureTime=0;gestureLength=1e9;return true;}
+        return false;
+    }
+
+    // Now and then while standing idle, a gesture blends in over the standing pose for a few
+    // seconds and back out. The next one never repeats the last two, so the cycle varies.
+    void GeneratedMotion::Gestures(std::vector<Key>& keys,double dt)
+    {
+        const float L=rig.legLength;
+        const float t=static_cast<float>(clock);
+        morphOut.clear();
+        if(!gesturesAllowed){gesture=Gesture::None;gestureWeight=0;nextGestureAt=std::max(nextGestureAt,clock+4.0);return;}
+        if(gesture==Gesture::None)
+        {
+            gestureWeight=0;
+            if(clock<nextGestureAt)return;
+            Gesture next;
+            do next=static_cast<Gesture>(1+static_cast<int>(Random01()*GestureCount)%GestureCount);
+            while(next==recentGestures[0]||next==recentGestures[1]);
+            recentGestures={next,recentGestures[0]};
+            gesture=next;
+            gestureSide=Random01()<0.5f?0:1;
+            gestureTime=0;
+            static constexpr float lengths[GestureCount][2]={{5,8},{2.6f,3.6f},{3,4},{5,8},{3,4.5f},{5,8},{3,4},{4,5},{2.5f,3.5f},{3,6}};
+            const auto& range=lengths[static_cast<int>(next)-1];
+            gestureLength=range[0]+(range[1]-range[0])*Random01();
+        }
+        gestureTime+=dt;
+        if(gestureTime>=gestureLength)
+        {
+            gesture=Gesture::None;
+            gestureWeight=0;
+            nextGestureAt=clock+1.5+Random01();
+            return;
+        }
+        constexpr double Blend=0.7;
+        gestureWeight=Smooth(static_cast<float>(std::min({gestureTime/Blend,(gestureLength-gestureTime)/Blend,1.0})));
+
+        std::vector<Key> g=keys;
+        const int s=gestureSide;
+        const float out=s==0?1.0f:-1.0f;      // the left side is +X; the front is -Z
+        const XMFLOAT3 S=rig.shoulderPos[s];
+        const float hipY=(rig.hipRest[0].y+rig.hipRest[1].y)*0.5f,hipZ=(rig.hipRest[0].z+rig.hipRest[1].z)*0.5f;
+        const float u=static_cast<float>(gestureTime/gestureLength);
+        auto both=[&](auto&& f){f(0,1.0f);f(1,-1.0f);};
+        auto neck=[&](float pitch,float yawAngle,float roll){SetRotation(g,rig.neck,XMQuaternionRotationRollPitchYaw(pitch,yawAngle,roll));};
+        auto face=[&](int morph,float weight){if(morph>=0)morphOut.push_back({morph,weight*gestureWeight});};
+        switch(gesture)
+        {
+        case Gesture::HandOnHip:
+            // One hand on the hip, elbow out to the side and a little back.
+            ReachArm(g,s,XMVectorSet(out*(std::abs(rig.hipRest[s].x)+0.11f*L),hipY+0.13f*L,hipZ+0.03f*L,0),XMVectorSet(out,0.1f,0.8f,0));
+            CurlFingers(g,s,{0.25f,0.25f,0.3f,0.3f});
+            neck(0,0,-out*3.0f*Deg);
+            break;
+        case Gesture::Wave:
+        {
+            // A hand raised beside the head, waving side to side, with a smile.
+            const float wave=std::sin(XM_2PI*1.8f*static_cast<float>(gestureTime));
+            ReachArm(g,s,XMVectorSet(S.x+out*(0.24f+0.07f*wave)*L,S.y+0.27f*L,S.z-0.10f*L,0),XMVectorSet(out,-1,0.3f,0));
+            CurlFingers(g,s,{0.05f,0.05f,0.05f,0.05f});
+            neck(0,0,-out*5.0f*Deg);
+            face(rig.smileEyes,1.0f);
+            face(rig.smileMouth,0.7f);
+            break;
+        }
+        case Gesture::Peace:
+            // A peace sign beside the face, head tilted toward it, with a wink.
+            ReachArm(g,s,XMVectorSet(out*0.30f*L,rig.headY+0.02f*L,S.z-0.16f*L,0),XMVectorSet(out,-1,0.3f,0));
+            CurlFingers(g,s,{0.0f,0.0f,1.0f,1.0f});
+            neck(0,0,-out*8.0f*Deg);
+            face(rig.wink,1.0f);
+            face(rig.smileMouth,0.5f);
+            break;
+        case Gesture::HandsBehind:
+            // Both hands behind the back, chest a little out.
+            both([&](int side,float o){ReachArm(g,side,XMVectorSet(o*0.05f*L,hipY+0.03f*L,hipZ+0.15f*L,0),XMVectorSet(o*0.8f,-0.2f,1,0));CurlFingers(g,side,{0.4f,0.4f,0.4f,0.4f});});
+            SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(3.0f*Deg,0,0));
+            neck(2.0f*Deg,0,0);
+            break;
+        case Gesture::LookAtPalm:
+            // Looking down at the open palm held in front of the chest.
+            ReachArm(g,s,XMVectorSet(out*0.06f*L,S.y-0.16f*L,S.z-0.40f*L,0),XMVectorSet(out,-1,-0.1f,0));
+            CurlFingers(g,s,{0.1f,0.1f,0.15f,0.2f});
+            neck(-28.0f*Deg,-out*10.0f*Deg,0);
+            break;
+        case Gesture::HandsFolded:
+            // Hands lowered and held together in front.
+            both([&](int side,float o){ReachArm(g,side,XMVectorSet(o*0.03f*L,hipY-0.12f*L,hipZ-0.13f*L,0),XMVectorSet(o,-0.2f,0.6f,0));CurlFingers(g,side,{0.35f,0.35f,0.4f,0.4f});});
+            neck(-4.0f*Deg,0,0);
+            break;
+        case Gesture::Stretch:
+            // Arms stretched up over the head, leaning back a little with the eyes narrowed.
+            both([&](int side,float o){ReachArm(g,side,XMVectorSet(o*0.08f*L,rig.headY+0.40f*L,rig.shoulderPos[side].z+0.02f*L,0),XMVectorSet(o,0.2f,0.4f,0));CurlFingers(g,side,{0.2f,0.2f,0.25f,0.3f});});
+            SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(6.0f*Deg,0,0));
+            neck(10.0f*Deg,0,0);
+            face(rig.smileEyes,0.8f);
+            break;
+        case Gesture::LookAround:
+            // Looking to one side, then the other.
+            neck(-2.0f*Deg,out*34.0f*Deg*std::sin(XM_2PI*u),0);
+            break;
+        case Gesture::HeadTilt:
+            neck(-3.0f*Deg,0,-out*12.0f*Deg);
+            break;
+        case Gesture::Stand:
+            break;
+        case Gesture::None:
+            break;
+        }
+        (void)t;
+        for(size_t i=0;i<keys.size();++i)
+        {
+            XMStoreFloat4(&keys[i].rotation,XMQuaternionSlerp(XMLoadFloat4(&keys[i].rotation),XMLoadFloat4(&g[i].rotation),gestureWeight));
+            XMStoreFloat3(&keys[i].position,XMVectorLerp(XMLoadFloat3(&keys[i].position),XMLoadFloat3(&g[i].position),gestureWeight));
+        }
     }
 
     void GeneratedMotion::Generate(std::vector<Key>& keys,double dt)
@@ -348,6 +537,42 @@ namespace MikuMikuDesktopPerch
 
         switch(activity)
         {
+        case Activity::Idle:
+        {
+            // Standing at ease, feet a little apart, arms hanging relaxed. The weight rests on
+            // one foot (or both) for a while, then moves over in about a second and a half.
+            // センター carries the hips over the standing foot (X only), that hip rises (下半身
+            // roll) and the chest leans back over it (上半身); the other leg relaxes with the
+            // knee a little forward and the heel up.
+            if(weightTime<weightDuration)weightTime+=dt;
+            else if(clock>=weightHoldUntil)
+            {
+                float next;
+                do next=static_cast<float>(static_cast<int>(Random01()*3.0f)-1);
+                while(next==weightTo);
+                weightFrom=weightTo;
+                weightTo=next;
+                weightTime=0;
+                weightDuration=1.2+0.6*Random01();
+                weightHoldUntil=clock+weightDuration+(next==0?2.5+3.0*Random01():4.0+6.0*Random01());
+            }
+            const float shift=weightFrom+(weightTo-weightFrom)*Smooth(static_cast<float>(weightTime/weightDuration));
+            for(int side=0;side<2;++side)
+            {
+                const float out=side==0?1.0f:-1.0f;
+                const float relaxed=std::clamp(-shift*out,0.0f,1.0f);   // this foot carries no weight
+                footKey(side,XMVectorAdd(standingFoot(side,0.04f*L*relaxed,0.012f*L*relaxed),XMVectorSet(out*0.035f*L,0,0,0)),-7.0f*Deg*relaxed,0);
+            }
+            KeyOf(keys,rig.center).position={0.05f*L*shift,0,0};
+            KeyOf(keys,rig.groove).position={0,-0.012f*L*std::abs(shift),0};
+            SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,0,3.5f*Deg*shift));
+            SetRotation(keys,rig.upperBody,XMQuaternionRotationRollPitchYaw(1.0f*Deg,0,-2.5f*Deg*shift));
+            SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(0,0,1.0f*Deg*shift));
+            const float sway=1.5f*Deg*std::sin(XM_2PI*t/5.3f);
+            limbs(sway,-sway,10.0f*Deg);
+            if(generatedIdle)Gestures(keys,dt);
+            break;
+        }
         case Activity::Walk:gait(WalkGait);break;
         case Activity::Run:gait(RunGait);break;
         case Activity::Jump:
@@ -513,8 +738,6 @@ namespace MikuMikuDesktopPerch
             limbs(55.0f*Deg,55.0f*Deg,25.0f*Deg);
             break;
         }
-        case Activity::Idle:
-            break;
         }
     }
 
@@ -562,7 +785,7 @@ namespace MikuMikuDesktopPerch
         fadeTime+=dt;
 
         std::vector<Key> target(overrides.size());
-        if(activity==Activity::Idle)
+        if(activity==Activity::Idle&&!generatedIdle)
         {
             for(size_t i=0;i<overrides.size();++i)
             {
@@ -574,6 +797,7 @@ namespace MikuMikuDesktopPerch
         }
         else
         {
+            if(activity==Activity::Idle){walkAmount=0;yaw=0;}
             Generate(target,dt);
             DistributeTwist(target);
         }
@@ -607,14 +831,21 @@ namespace MikuMikuDesktopPerch
             k.rotation=out[i].rotation;
             k.position=out[i].position;
         }
+        // Face morphs of the current gesture (on top of what the pose already has).
+        if(activity!=Activity::Idle||!generatedIdle){morphOut.clear();gesture=Gesture::None;gestureWeight=0;}
+        for(const auto& [morph,weight]:morphOut)
+            if(static_cast<size_t>(morph)<pose.morphKeys.size())pose.morphKeys[morph].value=std::max(pose.morphKeys[morph].value,weight);
 
-        // Accumulated walking travel: センター carries the body, the foot IK targets (parented to
-        // 全ての親, not センター) are shifted alongside so every activity stays under the body.
-        if(rootOffset!=0.0f)
-        {
-            if(rig.center>=0)pose.boneKeys[rig.center].position.x+=rootOffset;
-            for(int side=0;side<2;++side)
-                if(rig.legIK[side]>=0)pose.boneKeys[rig.legIK[side]].position.x+=rootOffset;
-        }
+        AddRootOffset(pose);
+    }
+
+    // Accumulated walking travel: センター carries the body, the foot IK targets (parented to
+    // 全ての親, not センター) are shifted alongside so every activity stays under the body.
+    void GeneratedMotion::AddRootOffset(PMX::Pose& pose) const
+    {
+        if(rootOffset==0.0f)return;
+        if(rig.center>=0&&static_cast<size_t>(rig.center)<pose.boneKeys.size())pose.boneKeys[rig.center].position.x+=rootOffset;
+        for(int side=0;side<2;++side)
+            if(rig.legIK[side]>=0&&static_cast<size_t>(rig.legIK[side])<pose.boneKeys.size())pose.boneKeys[rig.legIK[side]].position.x+=rootOffset;
     }
 }

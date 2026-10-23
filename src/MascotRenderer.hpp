@@ -31,7 +31,9 @@ namespace MikuMikuDesktopPerch
         ~MascotRenderer();
         bool Initialize(HWND hwnd,unsigned width,unsigned height,int msaa,std::wstring& error);
         bool LoadModel(const MascotModel& model,const std::wstring& toonDir,unsigned maxTextureSize,std::wstring& error);
-        // Recreate the swap chain buffers and render targets at a new size (call SetCamera afterwards).
+        // Change the drawn size (call SetCamera afterwards). The buffers keep some headroom and
+        // are only reallocated when the size outgrows them: a reallocation can show for a frame
+        // out of step with the frame's position, a smaller drawn area never does.
         bool Resize(unsigned width,unsigned height,std::wstring& error);
         void SetCamera(DirectX::FXMVECTOR eye,DirectX::FXMVECTOR target,float fovY);
         // Display-only transform of the drawn model (identity normally); Project ignores it.
@@ -83,7 +85,9 @@ namespace MikuMikuDesktopPerch
         void WaitForFence(UINT64 value);
 
         HWND hwnd=nullptr;
-        unsigned width=0,height=0;
+        unsigned width=0,height=0;                 // drawn area, at the top left of the buffers
+        unsigned bufferWidth=0,bufferHeight=0;     // allocated size (>= width, height)
+        std::array<bool,FrameCount> clearWhole{};  // back buffer still holds a larger frame
         UINT sampleCount=1;
         std::wstring adapterName;
 
@@ -98,6 +102,7 @@ namespace MikuMikuDesktopPerch
         HANDLE fenceEvent=nullptr;
         UINT64 nextFenceValue=1;
         Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList;
+        Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList1> commandList1;   // for ResolveSubresourceRegion
         std::array<Frame,FrameCount> frames;
         std::array<Microsoft::WRL::ComPtr<ID3D12Resource>,FrameCount> backBuffers;
         Microsoft::WRL::ComPtr<ID3D12Resource> msaaTarget,depthTarget;
