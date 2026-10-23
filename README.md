@@ -11,6 +11,12 @@ Win32 + Direct3D 12 + DirectComposition で動作し、モデルが描かれて�
 - 規約で認められていない使い方をしないでください。判断がつかないときは、そのモデルでの使用を控えてください
 - モデルやモーションの使用によって生じた問題について、このソフトウェアの作者は責任を負いません
 
+## 動作環境
+
+- Windows 10/11（64bit）
+- DirectX 12に対応したGPU
+- Microsoft Visual C++ 再頒布可能パッケージ（Visual Studio 2015〜2022以降、x64）。起動時に `MSVCP140.dll` や `VCRUNTIME140.dll` が見つからないと表示される場合は、[Microsoftのページ](https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist)から `vc_redist.x64.exe` をダウンロードしてインストールしてください。Visual Studioが入っていても、C++のワークロードを入れていない環境では必要です
+
 ## ビルド
 
 必要なもの：Visual Studio 2022 以降（「C++によるデスクトップ開発」ワークロード、v143ツールセット、Windows 10/11 SDK）。C++20でビルドします。
