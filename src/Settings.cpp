@@ -84,6 +84,7 @@ namespace MikuMikuDesktopPerch
         x=ReadInt(path,L"X",x);
         y=ReadInt(path,L"Y",y);
         fps=std::clamp(ReadInt(path,L"Fps",fps),5,120);
+        motionBlur=ReadInt(path,L"MotionBlur",motionBlur?1:0)!=0;
         physics=ReadInt(path,L"Physics",physics?1:0)!=0;
         physicsFps=std::clamp(ReadInt(path,L"PhysicsFps",physicsFps),30,240);
         msaa=ReadInt(path,L"Msaa",msaa);
@@ -135,6 +136,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"X",std::to_wstring(x));
         WriteString(path,L"Y",std::to_wstring(y));
         WriteString(path,L"Fps",std::to_wstring(fps));
+        WriteString(path,L"MotionBlur",motionBlur?L"1":L"0");
         WriteString(path,L"Physics",physics?L"1":L"0");
         WriteString(path,L"PhysicsFps",std::to_wstring(physicsFps));
         WriteString(path,L"Msaa",std::to_wstring(msaa));

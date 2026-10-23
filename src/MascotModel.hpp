@@ -98,6 +98,8 @@ namespace MikuMikuDesktopPerch
         bool HeadBusy() const;
         bool ForceGesture(const std::wstring& name);   // diagnostics
         void SetPhysics(bool enabled);
+        // The drawing rate, which physics keeps in step with (one frame period per Update).
+        void SetFrameRate(int fps);
         bool PhysicsEnabled() const;
 
         // Procedural motion layered on top of the VMD (each can be toggled independently).

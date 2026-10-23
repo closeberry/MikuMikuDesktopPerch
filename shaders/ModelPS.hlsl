@@ -8,6 +8,14 @@ struct PSInput
     float3 worldPosition : TEXCOORD2;
     float2 uv : TEXCOORD0;
     float4 shadowPosition : TEXCOORD3;
+    float4 clipNow : TEXCOORD4;
+    float4 clipPrev : TEXCOORD5;
+};
+
+struct PSOutput
+{
+    float4 color : SV_Target0;
+    float2 motion : SV_Target1;   // for motion blur (no target bound when it is off)
 };
 
 // 1 where the light reaches, 0 in the model's own shadow, softened over a few texels.
@@ -22,7 +30,7 @@ float SelfShadow(float4 shadowPosition)
     return p.z > 1 ? 1 : lit / 9;   // beyond the map's far end: lit (the border is lit too)
 }
 
-float4 main(PSInput input) : SV_Target
+PSOutput main(PSInput input)
 {
     // MMD standard shading: ambient + diffuse*light, then texture, sphere, toon and specular.
     float3 n = normalize(input.normal);
@@ -71,5 +79,8 @@ float4 main(PSInput input) : SV_Target
     }
     color = saturate(color);
     clip(color.a - 1.0 / 255.0);
-    return color;
+    PSOutput output;
+    output.color = color;
+    output.motion = ScreenMotion(input.clipNow, input.clipPrev);
+    return output;
 }

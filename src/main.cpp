@@ -230,9 +230,14 @@ namespace
         return {std::max(m.width*0.65f,0.8f*m.height),m.top+0.25f*m.height,-0.5f*m.height};
     }
 
+    // Above this size the frame is drawn at this size's resolution and scaled up on screen, so
+    // a very large mascot costs the GPU no more than this.
+    constexpr int SharpScaleLimit=300;
+
     // Model size on screen follows Height/Scale; the window covers app.extent at that size.
     SIZE WindowSizeFor(int scalePercent)
     {
+        app.renderer.SetResolutionScale(std::min(1.0f,static_cast<float>(SharpScaleLimit)/std::max(scalePercent,1)));
         const ModelFrame m=ModelFrameOf();
         const int modelPixels=MulDiv(MulDiv(app.settings.windowHeight,static_cast<int>(GetDpiForSystem()),96),scalePercent,100);
         app.pixelsPerUnit=modelPixels/(m.height*1.1f);
@@ -1132,9 +1137,10 @@ namespace
         }
         if(choice.startWithWindows!=StartupRegistered()&&!SetStartup(choice.startWithWindows))
             ShowMessage(L"スタートアップの設定を変更できませんでした。",MB_ICONERROR);
-        const bool restart=s.fps!=current.fps||s.msaa!=current.msaa||s.maxTextureSize!=current.maxTextureSize||
+        const bool restart=s.fps!=current.fps||s.motionBlur!=current.motionBlur||s.msaa!=current.msaa||s.maxTextureSize!=current.maxTextureSize||
                            s.physicsFps!=current.physicsFps||s.toonDir!=current.toonDir;
         current.fps=s.fps;
+        current.motionBlur=s.motionBlur;
         current.msaa=s.msaa;
         current.maxTextureSize=s.maxTextureSize;
         current.physicsFps=s.physicsFps;
@@ -1895,6 +1901,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     std::wstring snapshotGesture;    // --gesture hip|wave|peace|...: hold that standing gesture
     bool snapshotDoze=false;         // --doze: doze off from the start
     std::array<std::wstring,2> snapshotGait;   // --walk-motion / --run-motion <vmd>: use that gait motion
+    std::optional<int> snapshotFps;           // --fps <n>: drawing rate for this run
+    std::optional<bool> snapshotBlur;         // --motion-blur 0|1
     {
         int argc=0;
         LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
@@ -1960,6 +1968,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--self-shadow"&&i+1<argc)
             {
                 app.settings.selfShadow=_wtoi(argv[++i])!=0;
+            }
+            else if(arg==L"--motion-blur"&&i+1<argc)
+            {
+                snapshotBlur=_wtoi(argv[++i])!=0;
+            }
+            else if(arg==L"--fps"&&i+1<argc)
+            {
+                snapshotFps=std::clamp(_wtoi(argv[++i]),5,120);
             }
             else if(arg==L"--look"&&i+2<argc)
             {
@@ -2067,8 +2083,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         GetTempPathW(MAX_PATH,temp);
         app.settingsPath=std::wstring(temp)+L"MikuMikuDesktopPerch_snapshot.ini";
         if(!snapshotModel.empty())app.settings.modelPath=snapshotModel;
+        if(snapshotFps)app.settings.fps=*snapshotFps;
+        if(snapshotBlur)app.settings.motionBlur=*snapshotBlur;
         app.settings.x=app.settings.y=-1;
     }
+
+    app.model.SetFrameRate(app.settings.fps);
 
     // Keep asking for a model until one loads (or the user cancels).
     std::wstring error;
@@ -2138,7 +2158,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     // and stop painting; a not-quite-opaque layered window is ignored (and looks the same).
     SetLayeredWindowAttributes(app.hwnd,0,254,LWA_ALPHA);
 
-    if(!app.renderer.Initialize(app.hwnd,width,height,app.settings.msaa,error)||
+    app.renderer.SetFrameRate(app.settings.fps);
+    if(!app.renderer.Initialize(app.hwnd,width,height,app.settings.msaa,app.settings.motionBlur,error)||
        !app.renderer.LoadModel(app.model,app.settings.toonDir,static_cast<unsigned>(app.settings.maxTextureSize),error))
     {
         MessageBoxW(nullptr,error.c_str(),L"MikuMikuDesktopPerch",MB_ICONERROR);

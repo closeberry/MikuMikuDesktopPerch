@@ -1,6 +1,13 @@
 #include "Common.hlsli"
 
-float4 main(VSInput input) : SV_Position
+struct VSOutput
+{
+    float4 position : SV_Position;
+    float4 clipNow : TEXCOORD4;
+    float4 clipPrev : TEXCOORD5;
+};
+
+VSOutput main(VSInput input)
 {
     float3 position, normal;
     Skin(input, position, normal);
@@ -12,8 +19,13 @@ float4 main(VSInput input) : SV_Position
     // normal is all sideways and the outline is full width.
     float3 viewNormal = normalize(mul(float4(normal, 0), View).xyz);
     float2 offset = viewNormal.xy * EdgeSize * input.edge * EdgePixels * 2.0 / ViewportSize;
+    VSOutput output;
+    output.clipPrev = PreviousClip(input, clipPosition);
+    output.clipPrev.xy += offset * output.clipPrev.w;
     clipPosition.xy += offset * clipPosition.w;
     // A little behind the surface, so the outline never wins the depth test at creases.
     clipPosition.z += 0.0005 * clipPosition.w;
-    return clipPosition;
+    output.position = clipPosition;
+    output.clipNow = clipPosition;
+    return output;
 }

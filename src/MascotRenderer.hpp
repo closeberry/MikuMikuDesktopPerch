@@ -7,6 +7,7 @@
 #include <dcomp.h>
 #include <wrl/client.h>
 #include <DirectXMath.h>
+#include <algorithm>
 #include <array>
 #include <string>
 #include <vector>
@@ -29,7 +30,16 @@ namespace MikuMikuDesktopPerch
         static constexpr size_t MaxParticles=512;
 
         ~MascotRenderer();
-        bool Initialize(HWND hwnd,unsigned width,unsigned height,int msaa,std::wstring& error);
+        // motionBlur: smear what moves along its motion since the last frame (a pass after the
+        // model; see PostPS.hlsl), so low frame rates look less choppy.
+        bool Initialize(HWND hwnd,unsigned width,unsigned height,int msaa,bool motionBlur,std::wstring& error);
+        // The drawing rate: the smear is a share of one frame's worth of motion at this rate.
+        void SetFrameRate(int fps){framePeriod=1.0/std::max(fps,1);}
+        // Draw at this share of the window's pixels (at most 1) and scale the frame up to the
+        // window in a last pass: very large sizes cost little more than the size this
+        // resolution is capped at. Takes effect with the next Resize (or Initialize). Sizes and
+        // points given to and returned from the renderer stay in window pixels.
+        void SetResolutionScale(float scale){resolutionScale=std::clamp(scale,0.1f,1.0f);}
         bool LoadModel(const MascotModel& model,const std::wstring& toonDir,unsigned maxTextureSize,std::wstring& error);
         // Change the drawn size (call SetCamera afterwards). The buffers keep some headroom and
         // are only reallocated when the size outgrows them: a reallocation can show for a frame
@@ -82,6 +92,7 @@ namespace MikuMikuDesktopPerch
         };
 
         bool CreatePipelines(std::wstring& error);
+        void WritePassDescriptors();
         bool CreateRenderTargets(std::wstring& error);
         bool UploadBuffer(const void* data,size_t size,Microsoft::WRL::ComPtr<ID3D12Resource>& buffer,D3D12_RESOURCE_STATES finalState);
         bool UploadTexture(const ImageRgba8& image,Texture& texture);
@@ -91,7 +102,10 @@ namespace MikuMikuDesktopPerch
 
         HWND hwnd=nullptr;
         unsigned width=0,height=0;                 // drawn area, at the top left of the buffers
-        unsigned bufferWidth=0,bufferHeight=0;     // allocated size (>= width, height)
+        unsigned windowWidth=0,windowHeight=0;     // the window's size (the back buffer's drawn area)
+        float resolutionScale=1;
+        unsigned bufferWidth=0,bufferHeight=0;     // allocated size of the drawing targets (>= width, height)
+        unsigned swapWidth=0,swapHeight=0;         // allocated size of the back buffers (>= windowWidth, windowHeight)
         std::array<bool,FrameCount> clearWhole{};  // back buffer still holds a larger frame
         UINT sampleCount=1;
         std::wstring adapterName;
@@ -115,12 +129,29 @@ namespace MikuMikuDesktopPerch
         UINT rtvStride=0,srvStride=0;
 
         Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
-        Microsoft::WRL::ComPtr<ID3D12PipelineState> modelCullPso,modelDoubleSidedPso,edgePso,particlePso,shadowPso;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> modelCullPso,modelDoubleSidedPso,edgePso,particlePso,shadowPso,blurPso,upscalePso;
         // Self-shadow map (depth from the light), sampled by the model shader.
         static constexpr UINT ShadowMapSize=2048;
         Microsoft::WRL::ComPtr<ID3D12Resource> shadowMap;
         bool selfShadow=true;
         DirectX::XMFLOAT3 lightDir{-0.5f,-1.0f,0.5f};   // the way the light travels (MMD's default)
+
+        // With motion blur or a scaled-up frame, the model is drawn into sceneColor (through
+        // msaaTarget with MSAA), with its screen motion in sceneMotion (msaaMotion) for the blur,
+        // then smeared and/or scaled up into the back buffer (blurredColor holds the smeared
+        // frame when both). The motion is measured against last frame's camera, bones and place
+        // on screen.
+        static constexpr DXGI_FORMAT MotionFormat=DXGI_FORMAT_R16G16_FLOAT;
+        bool motionBlur=false;
+        Microsoft::WRL::ComPtr<ID3D12Resource> sceneColor,sceneMotion,msaaMotion,blurredColor;
+        DirectX::XMFLOAT2 lastScale{1,1};   // drawn pixels per window pixel last frame
+        bool history=false;   // last frame's state below is usable
+        DirectX::XMFLOAT4X4 lastViewProj{};
+        DirectX::XMFLOAT2 lastViewport{};
+        DirectX::XMFLOAT2 lastScreenOffset{};
+        std::vector<std::uint8_t> lastBones;
+        double framePeriod=1/30.0;
+        LARGE_INTEGER lastRenderTime{};
 
         // Upload batching for load-time resources.
         Microsoft::WRL::ComPtr<ID3D12CommandAllocator> uploadAllocator;

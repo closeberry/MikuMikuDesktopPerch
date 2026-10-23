@@ -175,6 +175,10 @@ namespace MikuMikuDesktopPerch
         std::unique_ptr<PMX::Physics> physics;
         std::unique_ptr<PMX::PoseSolver> solver;
         int physicsFps=60;
+        // The drawn frame's period, as physics sees it: the drawing rate, or the rate frames
+        // really come at when that is clearly slower or faster (a slow GPU, the display's
+        // refresh). It moves only on a lasting change, so the physics step stays put.
+        double framePeriod=1/30.0,frameAverage=1/30.0;
 
         std::vector<StaticVertex> staticVertices;
         std::vector<std::uint32_t> indices;
@@ -795,6 +799,11 @@ namespace MikuMikuDesktopPerch
                 physics=std::make_unique<PMX::Physics>();
                 physics->fps=physicsFps;
                 physics->maxSubsteps=4;
+                // Bones take the bodies as they are after the last step. By default Bullet hands
+                // out each body interpolated a step behind, which is only right when time is left
+                // over between steps: with steps in time with the frames it is a full step behind,
+                // and the hair and skirt trail ever further while the body moves on.
+                physics->World()->setLatencyMotionStateInterpolation(false);
             }
             solver=std::make_unique<PMX::PoseSolver>(physics.get(),pmx.get(),nullptr);
             ApplyFrameAcceleration();
@@ -982,6 +991,8 @@ namespace MikuMikuDesktopPerch
     {
         auto next=std::make_unique<Impl>();
         next->physicsFps=physicsFps;
+        next->framePeriod=impl->framePeriod;
+        next->frameAverage=impl->frameAverage;
         if(!IsPmxFile(modelPath))
         {
             error=L"PMX 2.0/2.1 のモデルファイルではないか、大きすぎるため、読み込めません。\n\nモデル: "+modelPath;
@@ -1247,6 +1258,11 @@ namespace MikuMikuDesktopPerch
         return true;
     }
 
+    void MascotModel::SetFrameRate(int fps)
+    {
+        impl->framePeriod=impl->frameAverage=1.0/std::max(fps,1);
+    }
+
     void MascotModel::SetPhysics(bool enabled)
     {
         if(impl->pmx&&enabled!=PhysicsEnabled())impl->CreateSolver(enabled);
@@ -1423,7 +1439,19 @@ namespace MikuMikuDesktopPerch
             // Physics stays off while the simulated bones ease back.
             if(m.resetBlend<0)
             {
-                m.physics->Update(dt);
+                // Physics in step with drawing: every drawn frame advances it by one frame period
+                // in the same whole number of equal steps (at least the physics rate). Left to
+                // itself Bullet takes 0 steps one frame and 2 the next whenever the frame time
+                // hovers around a step, and on the frames without one the body moves on and the
+                // hair and skirt are left behind. A late or early frame (the timer and the
+                // display's refresh drift apart now and then) still counts as one period.
+                m.frameAverage+=(std::clamp(dt,0.25*m.framePeriod,4.0*m.framePeriod)-m.frameAverage)*std::min(1.0,dt/2.0);
+                if(std::abs(m.frameAverage/m.framePeriod-1)>0.15)m.framePeriod=m.frameAverage;
+                const int steps=std::clamp(static_cast<int>(std::ceil(m.framePeriod*m.physicsFps-0.05)),1,8);
+                m.physics->fps=steps/m.framePeriod;
+                m.physics->maxSubsteps=steps+1;
+                // (A hair over, so rounding never drops a step; the rare extra one is allowed for.)
+                m.physics->Update(m.framePeriod*(1+1e-4));
                 m.WatchPhysics(dt);
             }
         }

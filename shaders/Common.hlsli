@@ -43,9 +43,9 @@ struct VSInput
     float edge : TEXCOORD3;
 };
 
-float4x4 BoneOrIdentity(int index)
+float4x4 BoneOrIdentity(int index, uint base)
 {
-    return index >= 0 ? Bones[index] : float4x4(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1);
+    return index >= 0 ? Bones[base + index] : float4x4(1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1);
 }
 
 float4 QuatFromMatrix(float3x3 m)
@@ -94,7 +94,8 @@ float4 Slerp(float4 a, float4 b, float t)
     return (a * sin((1 - t) * theta) + b * sin(t * theta)) / sin(theta);
 }
 
-void Skin(VSInput input, out float3 position, out float3 normal)
+// Skinned with the bones from Bones[base] on (0: this frame's, BlurFlags.y: last frame's).
+void SkinWith(VSInput input, uint base, out float3 position, out float3 normal)
 {
     if (input.weightType == 3)
     {
@@ -104,18 +105,38 @@ void Skin(VSInput input, out float3 position, out float3 normal)
         float3 hdr = input.weight.yzw;
         float3 cr1 = c - w * hdr;
         float3 cr0 = cr1 + hdr;
-        float4x4 m0 = BoneOrIdentity(input.bone.x);
-        float4x4 m1 = BoneOrIdentity(input.bone.y);
+        float4x4 m0 = BoneOrIdentity(input.bone.x, base);
+        float4x4 m1 = BoneOrIdentity(input.bone.y, base);
         float3x3 r = MatrixFromQuat(Slerp(QuatFromMatrix((float3x3)m1), QuatFromMatrix((float3x3)m0), w));
         position = mul(input.position - c, r) + lerp(mul(float4(cr1, 1), m1).xyz, mul(float4(cr0, 1), m0).xyz, w);
         normal = mul(input.normal, r);
-        return;
     }
-    float4x4 m = 0;
-    [unroll] for (int i = 0; i < 4; ++i)
+    else
     {
-        if (input.bone[i] >= 0) m += Bones[input.bone[i]] * input.weight[i];
+        float4x4 m = 0;
+        [unroll] for (int i = 0; i < 4; ++i)
+        {
+            if (input.bone[i] >= 0) m += Bones[base + input.bone[i]] * input.weight[i];
+        }
+        position = mul(float4(input.position, 1), m).xyz;
+        normal = mul(input.normal, (float3x3)m);
     }
-    position = mul(float4(input.position, 1), m).xyz;
-    normal = mul(input.normal, (float3x3)m);
+}
+
+void Skin(VSInput input, out float3 position, out float3 normal)
+{
+    SkinWith(input, 0, position, normal);
+}
+
+// Where the vertex was drawn last frame (for motion blur; this frame's position when it is off).
+float4 PreviousClip(VSInput input, float4 clipNow)
+{
+    float4 clipPrev = clipNow;
+    if (BlurFlags.x)
+    {
+        float3 position, normal;
+        SkinWith(input, BlurFlags.y, position, normal);
+        clipPrev = mul(float4(position, 1), PrevViewProj);
+    }
+    return clipPrev;
 }

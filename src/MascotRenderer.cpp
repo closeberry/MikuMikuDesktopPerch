@@ -13,6 +13,9 @@
 #include "ParticlePS.h"
 #include "ShadowVS.h"
 #include "ShadowPS.h"
+#include "PostVS.h"
+#include "PostPS.h"
+#include "UpscalePS.h"
 
 namespace MikuMikuDesktopPerch
 {
@@ -36,7 +39,15 @@ namespace MikuMikuDesktopPerch
             XMFLOAT4 cameraRight,cameraUp;
             XMFLOAT4X4 lightViewProj;
             XMFLOAT4 shadowInfo;
+            XMFLOAT4X4 prevViewProj;
+            XMFLOAT4 motionInfo;
+            XMFLOAT4 blurInfo;
+            std::uint32_t blurFlags[4];
         };
+        // Motion blur: the share of a frame's motion smeared (a film camera's half-open
+        // shutter), and the longest smear as a share of the drawn height at 30 fps (longer at
+        // lower rates, where a frame's motion is longer, up to BlurLongestMax).
+        constexpr float BlurShutter=0.5f,BlurLongest=0.06f,BlurLongestMax=0.15f;
         struct GpuParticle
         {
             XMFLOAT3 position; float size;
@@ -98,10 +109,15 @@ namespace MikuMikuDesktopPerch
         if(fenceEvent)CloseHandle(fenceEvent);
     }
 
-    bool MascotRenderer::Initialize(HWND window,unsigned w,unsigned h,int msaa,std::wstring& error)
+    bool MascotRenderer::Initialize(HWND window,unsigned w,unsigned h,int msaa,bool blur,std::wstring& error)
     {
-        hwnd=window;width=std::max(1u,w);height=std::max(1u,h);
+        hwnd=window;
+        windowWidth=std::max(1u,w);windowHeight=std::max(1u,h);
+        width=std::max(1u,static_cast<unsigned>(std::lround(windowWidth*resolutionScale)));
+        height=std::max(1u,static_cast<unsigned>(std::lround(windowHeight*resolutionScale)));
+        motionBlur=blur;
         bufferWidth=width+width/4;bufferHeight=height+height/4;
+        swapWidth=windowWidth+windowWidth/4;swapHeight=windowHeight+windowHeight/4;
         HRESULT hr;
 #if defined(_DEBUG)
         {
@@ -131,7 +147,7 @@ namespace MikuMikuDesktopPerch
         if(FAILED(hr=device->CreateCommandQueue(&queueDesc,IID_PPV_ARGS(&queue)))){error=HrText(L"Command queue",hr);return false;}
 
         DXGI_SWAP_CHAIN_DESC1 sc{};
-        sc.Width=bufferWidth;sc.Height=bufferHeight;
+        sc.Width=swapWidth;sc.Height=swapHeight;
         sc.Format=ColorFormat;
         sc.SampleDesc.Count=1;
         sc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -160,9 +176,16 @@ namespace MikuMikuDesktopPerch
             if(SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS,&q,sizeof(q)))&&q.NumQualityLevels>0)
             {sampleCount=count;break;}
         }
+        if(motionBlur&&sampleCount>1)
+        {
+            // The motion target is multisampled with the colour: without support, no blur.
+            D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS q{};
+            q.Format=MotionFormat;q.SampleCount=sampleCount;
+            if(FAILED(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS,&q,sizeof(q)))||q.NumQualityLevels==0)motionBlur=false;
+        }
 
         D3D12_DESCRIPTOR_HEAP_DESC rtv{};
-        rtv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;rtv.NumDescriptors=FrameCount+1;
+        rtv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;rtv.NumDescriptors=FrameCount+5;   // back buffers, MSAA colour, scene colour, motion, MSAA motion, blurred colour
         D3D12_DESCRIPTOR_HEAP_DESC dsv{};
         dsv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_DSV;dsv.NumDescriptors=2;   // the frame's depth, the shadow map
         if(FAILED(hr=device->CreateDescriptorHeap(&rtv,IID_PPV_ARGS(&rtvHeap)))||FAILED(hr=device->CreateDescriptorHeap(&dsv,IID_PPV_ARGS(&dsvHeap))))
@@ -244,6 +267,24 @@ namespace MikuMikuDesktopPerch
             {error=HrText(L"MSAA target",hr);return false;}
             device->CreateRenderTargetView(msaaTarget.Get(),nullptr,D3D12_CPU_DESCRIPTOR_HANDLE{rtv.ptr+FrameCount*rtvStride});
         }
+        {
+            D3D12_RESOURCE_DESC target=desc;
+            target.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+            D3D12_CLEAR_VALUE clear{};
+            const auto make=[&](DXGI_FORMAT format,UINT samples,ComPtr<ID3D12Resource>& resource,UINT slot)
+            {
+                target.Format=clear.Format=format;
+                target.SampleDesc.Count=samples;
+                if(FAILED(device->CreateCommittedResource(&defaultHeap,D3D12_HEAP_FLAG_NONE,&target,D3D12_RESOURCE_STATE_RENDER_TARGET,&clear,IID_PPV_ARGS(&resource))))
+                    return false;
+                device->CreateRenderTargetView(resource.Get(),nullptr,D3D12_CPU_DESCRIPTOR_HANDLE{rtv.ptr+(FrameCount+slot)*rtvStride});
+                return true;
+            };
+            if(!make(ColorFormat,1,sceneColor,1)||
+               (motionBlur&&(!make(MotionFormat,1,sceneMotion,2)||(sampleCount>1&&!make(MotionFormat,sampleCount,msaaMotion,3))||!make(ColorFormat,1,blurredColor,4))))
+            {error=L"Drawing targets";return false;}
+            WritePassDescriptors();
+        }
         desc.Format=DepthFormat;
         desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL|D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
         D3D12_CLEAR_VALUE depthClear{};
@@ -318,8 +359,12 @@ namespace MikuMikuDesktopPerch
         pso.pRootSignature=rootSignature.Get();
         pso.InputLayout={layout,static_cast<UINT>(std::size(layout))};
         pso.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        pso.NumRenderTargets=1;
+        pso.NumRenderTargets=motionBlur?2:1;
         pso.RTVFormats[0]=ColorFormat;
+        if(motionBlur)pso.RTVFormats[1]=MotionFormat;
+        // The motion target takes the frontmost surface's motion as it is.
+        pso.BlendState.IndependentBlendEnable=TRUE;
+        pso.BlendState.RenderTarget[1].RenderTargetWriteMask=motionBlur?D3D12_COLOR_WRITE_ENABLE_ALL:0;
         pso.DSVFormat=DepthFormat;
         pso.SampleDesc.Count=sampleCount;
         pso.SampleMask=UINT_MAX;
@@ -354,9 +399,9 @@ namespace MikuMikuDesktopPerch
             shadow.VS={g_ShadowVS,sizeof(g_ShadowVS)};
             shadow.PS={g_ShadowPS,sizeof(g_ShadowPS)};
             shadow.NumRenderTargets=0;
-            shadow.RTVFormats[0]=DXGI_FORMAT_UNKNOWN;
+            shadow.RTVFormats[0]=shadow.RTVFormats[1]=DXGI_FORMAT_UNKNOWN;
             shadow.BlendState.RenderTarget[0].BlendEnable=FALSE;
-            shadow.BlendState.RenderTarget[0].RenderTargetWriteMask=0;
+            shadow.BlendState.RenderTarget[0].RenderTargetWriteMask=shadow.BlendState.RenderTarget[1].RenderTargetWriteMask=0;
             shadow.SampleDesc.Count=1;
             shadow.RasterizerState.MultisampleEnable=FALSE;
             shadow.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
@@ -373,8 +418,45 @@ namespace MikuMikuDesktopPerch
         pso.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
         pso.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ZERO;
         blend.SrcBlend=D3D12_BLEND_ONE;
+        pso.BlendState.RenderTarget[1].RenderTargetWriteMask=0;   // sparkles leave the motion alone
         if(FAILED(hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&particlePso)))){error=HrText(L"Particle PSO",hr);return false;}
+
+        {
+            // The smear and the scaling up: one triangle over the target, no blending.
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC post{};
+            post.pRootSignature=rootSignature.Get();
+            post.VS={g_PostVS,sizeof(g_PostVS)};
+            post.PS={g_PostPS,sizeof(g_PostPS)};
+            post.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            post.NumRenderTargets=1;
+            post.RTVFormats[0]=ColorFormat;
+            post.SampleDesc.Count=1;
+            post.SampleMask=UINT_MAX;
+            post.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+            post.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;
+            post.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
+            post.RasterizerState.DepthClipEnable=TRUE;
+            if(motionBlur&&FAILED(hr=device->CreateGraphicsPipelineState(&post,IID_PPV_ARGS(&blurPso)))){error=HrText(L"Blur PSO",hr);return false;}
+            post.PS={g_UpscalePS,sizeof(g_UpscalePS)};
+            if(FAILED(hr=device->CreateGraphicsPipelineState(&post,IID_PPV_ARGS(&upscalePso)))){error=HrText(L"Upscale PSO",hr);return false;}
+        }
         return true;
+    }
+
+    // The last passes' inputs, after the materials' textures and the shadow map, three to a
+    // table (white fills the unused slots): the blur's (the drawn frame and its motion), the
+    // scaling up's from the drawn frame, and from the smeared one.
+    void MascotRenderer::WritePassDescriptors()
+    {
+        if(!srvHeap||!sceneColor||!white.resource)return;
+        const auto cpu=srvHeap->GetCPUDescriptorHandleForHeapStart();
+        const size_t base=materialCount*3+1;
+        ID3D12Resource* const slots[9]={
+            sceneColor.Get(),sceneMotion?sceneMotion.Get():white.resource.Get(),white.resource.Get(),
+            sceneColor.Get(),white.resource.Get(),white.resource.Get(),
+            blurredColor?blurredColor.Get():white.resource.Get(),white.resource.Get(),white.resource.Get()};
+        for(size_t i=0;i<9;++i)
+            device->CreateShaderResourceView(slots[i],nullptr,D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr+(base+i)*srvStride});
     }
 
     void MascotRenderer::BeginUploads()
@@ -533,7 +615,7 @@ namespace MikuMikuDesktopPerch
 
         D3D12_DESCRIPTOR_HEAP_DESC heap{};
         heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        heap.NumDescriptors=static_cast<UINT>(materialCount*3+1);   // the materials' textures, then the shadow map
+        heap.NumDescriptors=static_cast<UINT>(materialCount*3+10);   // the materials' textures, the shadow map, the last passes' inputs
         heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         srvHeap.Reset();
         if(FAILED(device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&srvHeap)))){error=L"SRV ヒープの作成に失敗しました。";return false;}
@@ -561,12 +643,15 @@ namespace MikuMikuDesktopPerch
             view.Texture2D.MipLevels=1;
             device->CreateShaderResourceView(shadowMap.Get(),&view,D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr+materialCount*3*srvStride});
         }
+        WritePassDescriptors();
+        history=false;
 
-        // Per-frame upload ring: scene CB, material CBs, bone matrices, morph-applied vertices.
+        // Per-frame upload ring: scene CB, material CBs, bone matrices (this frame's, then last
+        // frame's for motion blur), morph-applied vertices.
         sceneOffset=0;
         materialOffset=Align256(sizeof(SceneConstants));
         boneOffset=Align256(materialOffset+materialCount*256);
-        dynamicOffset=Align256(boneOffset+boneCount*64);
+        dynamicOffset=Align256(boneOffset+boneCount*64*2);
         particleOffset=Align256(dynamicOffset+vertexCount*sizeof(DynamicVertex));
         uploadSize=particleOffset+MaxParticles*sizeof(GpuParticle);
         auto uploadHeap=HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
@@ -584,19 +669,24 @@ namespace MikuMikuDesktopPerch
 
     bool MascotRenderer::Resize(unsigned w,unsigned h,std::wstring& error)
     {
-        w=std::max(1u,w);h=std::max(1u,h);
-        if(w==width&&h==height)return true;
+        const unsigned ww=std::max(1u,w),wh=std::max(1u,h);
+        w=std::max(1u,static_cast<unsigned>(std::lround(ww*resolutionScale)));
+        h=std::max(1u,static_cast<unsigned>(std::lround(wh*resolutionScale)));
+        if(w==width&&h==height&&ww==windowWidth&&wh==windowHeight)return true;
         clearWhole.fill(true);
-        if(w<=bufferWidth&&h<=bufferHeight){width=w;height=h;return true;}
+        if(w<=bufferWidth&&h<=bufferHeight&&ww<=swapWidth&&wh<=swapHeight){width=w;height=h;windowWidth=ww;windowHeight=wh;return true;}
         WaitIdle();
         for(auto& b:backBuffers)b.Reset();
         msaaTarget.Reset();
         depthTarget.Reset();
-        width=w;height=h;
+        sceneColor.Reset();sceneMotion.Reset();msaaMotion.Reset();blurredColor.Reset();
+        width=w;height=h;windowWidth=ww;windowHeight=wh;
         bufferWidth=std::max(bufferWidth,width+width/4);
         bufferHeight=std::max(bufferHeight,height+height/4);
+        swapWidth=std::max(swapWidth,windowWidth+windowWidth/4);
+        swapHeight=std::max(swapHeight,windowHeight+windowHeight/4);
         HRESULT hr;
-        if(FAILED(hr=swapChain->ResizeBuffers(FrameCount,bufferWidth,bufferHeight,ColorFormat,0))){error=HrText(L"ResizeBuffers",hr);return false;}
+        if(FAILED(hr=swapChain->ResizeBuffers(FrameCount,swapWidth,swapHeight,ColorFormat,0))){error=HrText(L"ResizeBuffers",hr);return false;}
         for(auto& f:frames){f.hitPoint={-1,-1};f.fenceValue=0;}
         lastAlpha=-1;
         return CreateRenderTargets(error);
@@ -608,7 +698,7 @@ namespace MikuMikuDesktopPerch
         XMStoreFloat3(&cameraEye,eye);
         XMStoreFloat3(&cameraTarget,target);
         cameraFovY=fovY;
-        XMStoreFloat4x4(&projection,XMMatrixPerspectiveFovLH(fovY,static_cast<float>(width)/height,1.0f,1000.0f));
+        XMStoreFloat4x4(&projection,XMMatrixPerspectiveFovLH(fovY,static_cast<float>(windowWidth)/windowHeight,1.0f,1000.0f));
     }
 
     void MascotRenderer::SetLight(float azimuth,float elevation)
@@ -631,7 +721,7 @@ namespace MikuMikuDesktopPerch
     {
         const XMMATRIX vp=XMLoadFloat4x4(&view)*XMLoadFloat4x4(&projection);
         const XMVECTOR ndc=XMVector3TransformCoord(XMVectorSet(world[0],world[1],world[2],1),vp);
-        return {static_cast<LONG>((XMVectorGetX(ndc)*0.5f+0.5f)*width),static_cast<LONG>((0.5f-XMVectorGetY(ndc)*0.5f)*height)};
+        return {static_cast<LONG>((XMVectorGetX(ndc)*0.5f+0.5f)*windowWidth),static_cast<LONG>((0.5f-XMVectorGetY(ndc)*0.5f)*windowHeight)};
     }
 
     int MascotRenderer::AlphaAt(POINT p)
@@ -663,8 +753,13 @@ namespace MikuMikuDesktopPerch
         // Constants.
         SceneConstants scene{};
         const XMMATRIX v=XMLoadFloat4x4(&view),w=XMLoadFloat4x4(&modelWorld);
-        // Sub-pixel shift applied after projection (in clip space, scaled by w).
-        const XMMATRIX p=XMLoadFloat4x4(&projection)*XMMatrixTranslation(2*pixelOffset.x/width,-2*pixelOffset.y/height,0);
+        // Sub-pixel shift applied after projection (in clip space, scaled by w), in drawn pixels.
+        const XMFLOAT2 scale{static_cast<float>(width)/windowWidth,static_cast<float>(height)/windowHeight};
+        const bool upscale=width!=windowWidth||height!=windowHeight;
+        if(scale.x!=lastScale.x||scale.y!=lastScale.y)history=false;   // last frame was drawn at another resolution
+        lastScale=scale;
+        const XMFLOAT2 shiftPixels{pixelOffset.x*scale.x,pixelOffset.y*scale.y};
+        const XMMATRIX p=XMLoadFloat4x4(&projection)*XMMatrixTranslation(2*shiftPixels.x/width,-2*shiftPixels.y/height,0);
         XMStoreFloat4x4(&scene.viewProj,XMMatrixTranspose(w*v*p));
         XMStoreFloat4x4(&scene.view,XMMatrixTranspose(w*v));
         XMStoreFloat4x4(&scene.particleViewProj,XMMatrixTranspose(v*p));
@@ -688,6 +783,33 @@ namespace MikuMikuDesktopPerch
             XMStoreFloat4x4(&scene.lightViewProj,XMMatrixTranspose(w*lightView*lightProj));
             scene.shadowInfo={selfShadow?1.0f:0.0f,1.0f/ShadowMapSize,0,0};
         }
+        // Motion blur: last frame's camera and place on screen (the window moves by whole
+        // pixels plus the sub-pixel shift). A jump (another monitor) or a first frame has none.
+        const bool blur=motionBlur&&sceneMotion;
+        const XMFLOAT2 screenOffset{visualOffset.x*scale.x+shiftPixels.x,visualOffset.y*scale.y+shiftPixels.y};
+        XMFLOAT2 shift{screenOffset.x-lastScreenOffset.x,screenOffset.y-lastScreenOffset.y};
+        if(!history||std::abs(shift.x)>width*0.5f||std::abs(shift.y)>height*0.5f)
+        {
+            lastViewProj=scene.viewProj;
+            lastViewport=scene.viewportSize;
+            shift={0,0};
+            lastBones.assign(static_cast<const std::uint8_t*>(model.BoneMatrices()),
+                             static_cast<const std::uint8_t*>(model.BoneMatrices())+(model.BoneMatrices()?std::min(model.BoneCount(),boneCount)*64:0));
+        }
+        scene.prevViewProj=lastViewProj;
+        scene.motionInfo={shift.x,shift.y,lastViewport.x,lastViewport.y};
+        // The smear is a share of one frame's worth of motion at the drawing rate: a late
+        // frame (one that moved further) is not smeared further for it.
+        LARGE_INTEGER now{},frequency{};
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&frequency);
+        const double sinceLast=lastRenderTime.QuadPart?static_cast<double>(now.QuadPart-lastRenderTime.QuadPart)/frequency.QuadPart:framePeriod;
+        lastRenderTime=now;
+        const float perFrame=static_cast<float>(std::clamp(framePeriod/std::max(sinceLast,1e-4),0.25,1.5));
+        const float longest=std::min(BlurLongest*static_cast<float>(1/(30*framePeriod)),BlurLongestMax);
+        scene.blurInfo={BlurShutter*perFrame,std::max(8.0f,std::max(BlurLongest,longest)*height),scale.x,scale.y};
+        scene.blurFlags[0]=blur?1u:0u;
+        scene.blurFlags[1]=static_cast<std::uint32_t>(boneCount);
         std::memcpy(f.mapped+sceneOffset,&scene,sizeof(scene));
 
         const auto& materials=model.Materials();
@@ -708,7 +830,19 @@ namespace MikuMikuDesktopPerch
             std::memcpy(f.mapped+materialOffset+i*256,&c,sizeof(c));
         }
         if(const void* bones=model.BoneMatrices())
-            std::memcpy(f.mapped+boneOffset,bones,std::min(model.BoneCount(),boneCount)*64);
+        {
+            const size_t size=std::min(model.BoneCount(),boneCount)*64;
+            std::memcpy(f.mapped+boneOffset,bones,size);
+            if(blur)
+            {
+                std::memcpy(f.mapped+boneOffset+boneCount*64,lastBones.data(),std::min(size,lastBones.size()));
+                lastBones.assign(static_cast<const std::uint8_t*>(bones),static_cast<const std::uint8_t*>(bones)+size);
+            }
+        }
+        lastViewProj=scene.viewProj;
+        lastViewport=scene.viewportSize;
+        lastScreenOffset=screenOffset;
+        history=true;
         for(size_t i=0;i<particles.size();++i)
         {
             const auto& q=particles[i];
@@ -726,9 +860,13 @@ namespace MikuMikuDesktopPerch
         commandList->Reset(f.allocator.Get(),modelCullPso.Get());
         ID3D12Resource* backBuffer=backBuffers[index].Get();
         const auto rtvStart=rtvHeap->GetCPUDescriptorHandleForHeapStart();
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv{sampleCount>1?rtvStart.ptr+FrameCount*rtvStride:rtvStart.ptr+index*rtvStride};
+        // Drawn into: the MSAA target, or sceneColor for a pass after it, else the back buffer.
+        const bool offscreen=blur||upscale;
+        const D3D12_CPU_DESCRIPTOR_HANDLE rtv{sampleCount>1?rtvStart.ptr+FrameCount*rtvStride:
+                                              offscreen?rtvStart.ptr+(FrameCount+1)*rtvStride:rtvStart.ptr+index*rtvStride};
+        const D3D12_CPU_DESCRIPTOR_HANDLE motionRtv{rtvStart.ptr+(FrameCount+(sampleCount>1?3:2))*rtvStride};
         const auto dsv=dsvHeap->GetCPUDescriptorHandleForHeapStart();
-        if(sampleCount==1)
+        if(sampleCount==1&&!offscreen)
         {
             auto b=Transition(backBuffer,D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET);
             commandList->ResourceBarrier(1,&b);
@@ -775,14 +913,16 @@ namespace MikuMikuDesktopPerch
             commandList->SetPipelineState(modelCullPso.Get());
         }
 
-        commandList->OMSetRenderTargets(1,&rtv,FALSE,&dsv);
+        const D3D12_CPU_DESCRIPTOR_HANDLE targets[2]={rtv,motionRtv};
+        commandList->OMSetRenderTargets(blur?2:1,targets,FALSE,&dsv);
         // Only the drawn area is cleared and resolved; the rest of a back buffer stays clear,
         // except right after the drawn area shrank (clearWhole).
         const D3D12_RECT drawn{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
-        const bool wholeBuffer=sampleCount==1&&clearWhole[index];
+        const bool wholeBuffer=sampleCount==1&&!offscreen&&clearWhole[index];
         commandList->ClearRenderTargetView(rtv,ClearColor,wholeBuffer?0:1,wholeBuffer?nullptr:&drawn);
+        if(blur)commandList->ClearRenderTargetView(motionRtv,ClearColor,1,&drawn);
         commandList->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,1,&drawn);
-        if(sampleCount==1)clearWhole[index]=false;
+        if(wholeBuffer)clearWhole[index]=false;
         D3D12_VIEWPORT viewport{0,0,static_cast<float>(width),static_cast<float>(height),0,1};
         D3D12_RECT scissor{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
         commandList->RSSetViewports(1,&viewport);
@@ -817,7 +957,83 @@ namespace MikuMikuDesktopPerch
             commandList->DrawInstanced(6,static_cast<UINT>(particles.size()),0,0);
         }
 
-        if(sampleCount>1)
+        if(offscreen)
+        {
+            // Into sceneColor (and sceneMotion), resolved from MSAA ...
+            std::vector<D3D12_RESOURCE_BARRIER> before,after;
+            if(sampleCount>1)
+            {
+                before.push_back(Transition(msaaTarget.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_SOURCE));
+                before.push_back(Transition(sceneColor.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_DEST));
+                if(blur)
+                {
+                    before.push_back(Transition(msaaMotion.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_SOURCE));
+                    before.push_back(Transition(sceneMotion.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_DEST));
+                }
+                commandList->ResourceBarrier(static_cast<UINT>(before.size()),before.data());
+                D3D12_RECT source=drawn;
+                commandList1->ResolveSubresourceRegion(sceneColor.Get(),0,0,0,msaaTarget.Get(),0,&source,ColorFormat,D3D12_RESOLVE_MODE_AVERAGE);
+                if(blur)commandList1->ResolveSubresourceRegion(sceneMotion.Get(),0,0,0,msaaMotion.Get(),0,&source,MotionFormat,D3D12_RESOLVE_MODE_AVERAGE);
+                std::vector<D3D12_RESOURCE_BARRIER> resolved{
+                    Transition(msaaTarget.Get(),D3D12_RESOURCE_STATE_RESOLVE_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET),
+                    Transition(sceneColor.Get(),D3D12_RESOURCE_STATE_RESOLVE_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+                if(blur)
+                {
+                    resolved.push_back(Transition(msaaMotion.Get(),D3D12_RESOURCE_STATE_RESOLVE_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET));
+                    resolved.push_back(Transition(sceneMotion.Get(),D3D12_RESOURCE_STATE_RESOLVE_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+                }
+                commandList->ResourceBarrier(static_cast<UINT>(resolved.size()),resolved.data());
+            }
+            else
+            {
+                before.push_back(Transition(sceneColor.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+                if(blur)before.push_back(Transition(sceneMotion.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+                commandList->ResourceBarrier(static_cast<UINT>(before.size()),before.data());
+            }
+            after.push_back(Transition(sceneColor.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET));
+            if(blur)after.push_back(Transition(sceneMotion.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET));
+            const auto table=[&](size_t set){return D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+(materialCount*3+1+set*3)*srvStride};};
+            // ... smeared at the drawn size (into blurredColor when it is scaled up after) ...
+            if(blur&&upscale)
+            {
+                const D3D12_CPU_DESCRIPTOR_HANDLE blurredRtv{rtvStart.ptr+(FrameCount+4)*rtvStride};
+                commandList->OMSetRenderTargets(1,&blurredRtv,FALSE,nullptr);
+                commandList->SetPipelineState(blurPso.Get());
+                commandList->SetGraphicsRootDescriptorTable(3,table(0));
+                commandList->DrawInstanced(3,1,0,0);
+                auto toRead=Transition(blurredColor.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                commandList->ResourceBarrier(1,&toRead);
+                after.push_back(Transition(blurredColor.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET));
+            }
+            // ... and into the back buffer, scaled up to the window's pixels or smeared there.
+            auto toTarget=Transition(backBuffer,D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET);
+            commandList->ResourceBarrier(1,&toTarget);
+            const D3D12_CPU_DESCRIPTOR_HANDLE backRtv{rtvStart.ptr+index*rtvStride};
+            if(clearWhole[index])
+            {
+                commandList->ClearRenderTargetView(backRtv,ClearColor,0,nullptr);
+                clearWhole[index]=false;
+            }
+            commandList->OMSetRenderTargets(1,&backRtv,FALSE,nullptr);
+            if(upscale)
+            {
+                const D3D12_VIEWPORT windowViewport{0,0,static_cast<float>(windowWidth),static_cast<float>(windowHeight),0,1};
+                const D3D12_RECT windowScissor{0,0,static_cast<LONG>(windowWidth),static_cast<LONG>(windowHeight)};
+                commandList->RSSetViewports(1,&windowViewport);
+                commandList->RSSetScissorRects(1,&windowScissor);
+                commandList->SetPipelineState(upscalePso.Get());
+                commandList->SetGraphicsRootDescriptorTable(3,table(blur?2:1));
+            }
+            else
+            {
+                commandList->SetPipelineState(blurPso.Get());
+                commandList->SetGraphicsRootDescriptorTable(3,table(0));
+            }
+            commandList->DrawInstanced(3,1,0,0);
+            after.push_back(Transition(backBuffer,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE));
+            commandList->ResourceBarrier(static_cast<UINT>(after.size()),after.data());
+        }
+        else if(sampleCount>1)
         {
             D3D12_RESOURCE_STATES backState=D3D12_RESOURCE_STATE_PRESENT;
             if(clearWhole[index])
@@ -846,7 +1062,7 @@ namespace MikuMikuDesktopPerch
         }
 
         // Copy the pixel under the cursor so click-through can follow the silhouette.
-        const POINT hit{std::clamp<LONG>(f.hitPoint.x,0,static_cast<LONG>(width)-1),std::clamp<LONG>(f.hitPoint.y,0,static_cast<LONG>(height)-1)};
+        const POINT hit{std::clamp<LONG>(f.hitPoint.x,0,static_cast<LONG>(windowWidth)-1),std::clamp<LONG>(f.hitPoint.y,0,static_cast<LONG>(windowHeight)-1)};
         D3D12_TEXTURE_COPY_LOCATION dst{};
         dst.pResource=f.readback.Get();
         dst.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
@@ -889,9 +1105,9 @@ namespace MikuMikuDesktopPerch
     {
         WaitIdle();
         ID3D12Resource* source=backBuffers[lastRenderedIndex].Get();
-        const UINT pitch=(width*4+255)&~255u;
+        const UINT pitch=(windowWidth*4+255)&~255u;
         auto heap=HeapProperties(D3D12_HEAP_TYPE_READBACK);
-        auto desc=BufferDesc(static_cast<UINT64>(pitch)*height);
+        auto desc=BufferDesc(static_cast<UINT64>(pitch)*windowHeight);
         ComPtr<ID3D12Resource> readback;
         if(FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&readback))))return false;
         BeginUploads();
@@ -900,11 +1116,11 @@ namespace MikuMikuDesktopPerch
         D3D12_TEXTURE_COPY_LOCATION dst{};
         dst.pResource=readback.Get();
         dst.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        dst.PlacedFootprint.Footprint={ColorFormat,width,height,1,pitch};
+        dst.PlacedFootprint.Footprint={ColorFormat,windowWidth,windowHeight,1,pitch};
         D3D12_TEXTURE_COPY_LOCATION src{};
         src.pResource=source;
         src.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        const D3D12_BOX box{0,0,0,width,height,1};
+        const D3D12_BOX box{0,0,0,windowWidth,windowHeight,1};
         commandList->CopyTextureRegion(&dst,0,0,0,&src,&box);
         auto back=Transition(source,D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_PRESENT);
         commandList->ResourceBarrier(1,&back);
@@ -921,8 +1137,8 @@ namespace MikuMikuDesktopPerch
             SUCCEEDED(wic->CreateStream(&stream))&&SUCCEEDED(stream->InitializeFromFilename(path.c_str(),GENERIC_WRITE))&&
             SUCCEEDED(wic->CreateEncoder(GUID_ContainerFormatPng,nullptr,&encoder))&&SUCCEEDED(encoder->Initialize(stream.Get(),WICBitmapEncoderNoCache))&&
             SUCCEEDED(encoder->CreateNewFrame(&frame,nullptr))&&SUCCEEDED(frame->Initialize(nullptr))&&
-            SUCCEEDED(frame->SetSize(width,height))&&SUCCEEDED(frame->SetPixelFormat(&format))&&
-            SUCCEEDED(frame->WritePixels(height,pitch,pitch*height,data))&&SUCCEEDED(frame->Commit())&&SUCCEEDED(encoder->Commit());
+            SUCCEEDED(frame->SetSize(windowWidth,windowHeight))&&SUCCEEDED(frame->SetPixelFormat(&format))&&
+            SUCCEEDED(frame->WritePixels(windowHeight,pitch,pitch*windowHeight,data))&&SUCCEEDED(frame->Commit())&&SUCCEEDED(encoder->Commit());
         readback->Unmap(0,nullptr);
         return ok;
     }

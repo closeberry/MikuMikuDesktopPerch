@@ -26,7 +26,7 @@ namespace MikuMikuDesktopPerch
         {
             IdAuto=1001,IdWindowMode,IdPhysics,IdBlink,IdBreath,IdLookAt,
             IdScale,IdEdge,IdTopmost,IdStartup,
-            IdFps,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse,
+            IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount
@@ -161,6 +161,7 @@ namespace MikuMikuDesktopPerch
             Group(L"詳細（変更すると再起動します）",y,166);
             Label(L"描画のfps",28,y+22,130);
             Combo(IdFps,170,y+22,120);
+            CheckBox(IdMotionBlur,L"モーションブラー",304,y+22,132,s.motionBlur);
             Label(L"アンチエイリアス",28,y+50,130);
             Combo(IdMsaa,170,y+50,120);
             Label(L"テクスチャの最大サイズ",28,y+78,140);
@@ -563,6 +564,7 @@ namespace MikuMikuDesktopPerch
             s.lightElevation=SliderValue(IdSunElevation);
             c.startWithWindows=Checked(IdStartup);
             s.fps=ComboValue(IdFps,s.fps);
+            s.motionBlur=Checked(IdMotionBlur);
             s.msaa=ComboValue(IdMsaa,s.msaa);
             s.maxTextureSize=ComboValue(IdTexture,s.maxTextureSize);
             s.physicsFps=ComboValue(IdPhysicsFps,s.physicsFps);
