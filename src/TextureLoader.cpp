@@ -24,8 +24,16 @@ namespace MikuMikuDesktopPerch
             ComPtr<IWICBitmapFrameDecode> frame;
             ComPtr<IWICFormatConverter> converter;
             UINT width=0,height=0;
-            if(FAILED(factory->CreateDecoderFromFilename(path.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder))||
-               FAILED(decoder->GetFrame(0,&frame))||FAILED(frame->GetSize(&width,&height))||
+            if(FAILED(factory->CreateDecoderFromFilename(path.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder)))
+                return false;
+            // Only the formats Windows itself decodes: an image handled by an add-on codec
+            // (whatever its file name says) is not opened.
+            GUID container{};
+            if(FAILED(decoder->GetContainerFormat(&container))||
+               (container!=GUID_ContainerFormatBmp&&container!=GUID_ContainerFormatPng&&container!=GUID_ContainerFormatJpeg&&
+                container!=GUID_ContainerFormatGif&&container!=GUID_ContainerFormatTiff))
+                return false;
+            if(FAILED(decoder->GetFrame(0,&frame))||FAILED(frame->GetSize(&width,&height))||
                !width||!height||width>16384||height>16384||
                FAILED(factory->CreateFormatConverter(&converter))||
                FAILED(converter->Initialize(frame.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom)))
@@ -52,6 +60,8 @@ namespace MikuMikuDesktopPerch
             };
             for(size_t t=0;t+2<uv.size();t+=3)
             {
+                if(!std::isfinite(uv[t][0]+uv[t][1]+uv[t+1][0]+uv[t+1][1]+uv[t+2][0]+uv[t+2][1]))continue;
+                if(std::abs(uv[t][0])>1e6f||std::abs(uv[t][1])>1e6f)continue;   // far outside any tile
                 // Texel space, shifted so the triangle starts in the first tile.
                 const float shiftU=std::floor(std::min({uv[t][0],uv[t+1][0],uv[t+2][0]}));
                 const float shiftV=std::floor(std::min({uv[t][1],uv[t+1][1],uv[t+2][1]}));

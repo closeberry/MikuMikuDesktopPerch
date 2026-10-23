@@ -47,9 +47,11 @@
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)src\third_party;$(ProjectDir)external\DirectXTK12\Inc;$(ProjectDir)external\bullet3\src;$(IntDir)shaders</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>BT_USE_SSE_IN_API;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
+      <ControlFlowGuard>Guard</ControlFlowGuard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
+      <CETCompat>true</CETCompat>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>d3d12.lib;dxgi.lib;dxguid.lib;dcomp.lib;windowscodecs.lib;shell32.lib;comdlg32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
@@ -79,6 +81,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ResourceCompile Include="res\MikuMikuDesktopPerch.rc" />
     <ClCompile Include="src\third_party\PMXLoader.ixx" />
     <ClCompile Include="src\third_party\TgaLoader.cpp" />
     <ClCompile Include="src\main.cpp" />
@@ -87,6 +90,7 @@
     <ClCompile Include="src\Surfaces.cpp" />
     <ClCompile Include="src\MascotRenderer.cpp" />
     <ClCompile Include="src\Settings.cpp" />
+    <ClCompile Include="src\SettingsWindow.cpp" />
     <ClCompile Include="src\TextureLoader.cpp" />
     <ClCompile Include="external\DirectXTK12\Src\SimpleMath.cpp" />
     <ClCompile Include="external\bullet3\src\btBulletCollisionAll.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -99,6 +103,7 @@
     <ClInclude Include="src\Surfaces.hpp" />
     <ClInclude Include="src\MascotRenderer.hpp" />
     <ClInclude Include="src\Settings.hpp" />
+    <ClInclude Include="src\SettingsWindow.hpp" />
     <ClInclude Include="src\TextureLoader.hpp" />
     <ClInclude Include="src\third_party\TgaLoader.hpp" />
   </ItemGroup>

@@ -41,7 +41,8 @@ namespace MotionTraceEditor::PreviewTextureFileLoader
         if(colorMapType!=0||
            (imageType!=2&&imageType!=10)||
            (bitsPerPixel!=24&&bitsPerPixel!=32)||
-           imageWidth==0||imageHeight==0)
+           imageWidth==0||imageHeight==0||
+           imageWidth>16384||imageHeight>16384)   // same limit as the other formats
             return false;
 
         file.seekg(idLength,std::ios::cur);

@@ -9,6 +9,8 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <string_view>
+#include <fstream>
 #include <random>
 
 import PMXLoader;
@@ -45,6 +47,55 @@ namespace MikuMikuDesktopPerch
             {
                 return false;
             }
+        }
+
+        // Before a file reaches PMXLoader: it must be a regular file of sane size that starts
+        // like the format it claims, so a renamed or truncated file is turned away up front.
+        bool HasHeader(const std::wstring& path,std::uintmax_t maxBytes,std::initializer_list<std::string_view> magics,
+                       std::string& head)
+        {
+            std::error_code ec;
+            if(!std::filesystem::is_regular_file(path,ec))return false;
+            const auto size=std::filesystem::file_size(path,ec);
+            if(ec||size>maxBytes)return false;
+            std::ifstream file(std::filesystem::path(path),std::ios::binary);
+            head.assign(32,'\0');
+            file.read(head.data(),static_cast<std::streamsize>(head.size()));
+            head.resize(static_cast<size_t>(std::max<std::streamsize>(file.gcount(),0)));
+            for(const auto magic:magics)
+                if(head.size()>=magic.size()&&head.compare(0,magic.size(),magic)==0)return true;
+            return false;
+        }
+
+        bool IsPmxFile(const std::wstring& path)
+        {
+            std::string head;
+            if(!HasHeader(path,std::uintmax_t{1}<<30,{"PMX "},head)||head.size()<8)return false;
+            float version=0;
+            std::memcpy(&version,head.data()+4,sizeof(version));
+            return version==2.0f||version==2.1f;
+        }
+
+        bool IsVmdFile(const std::wstring& path)
+        {
+            std::string head;
+            return HasHeader(path,std::uintmax_t{512}<<20,{"Vocaloid Motion Data 0002","Vocaloid Motion Data file"},head);
+        }
+
+        // A VMD and its sampler (a PoseSolver without physics), guarded like the model load:
+        // false (with nothing kept) when the data faults the parser.
+        bool LoadVmd(const std::wstring& path,PMX::PMXModel* pmx,std::unique_ptr<PMX::VMD>& vmd,std::unique_ptr<PMX::PoseSolver>& sampler)
+        {
+            struct Context {const std::wstring* path;PMX::PMXModel* pmx;PMX::VMD* vmd;PMX::PoseSolver* sampler;} context{&path,pmx,nullptr,nullptr};
+            const bool ok=RunGuarded([](void* c){
+                auto* ctx=static_cast<Context*>(c);
+                ctx->vmd=new PMX::VMD(ctx->path->c_str(),932,ctx->pmx);
+                ctx->sampler=new PMX::PoseSolver(nullptr,ctx->pmx,ctx->vmd);
+            },&context);
+            if(!ok)return false;   // a fault mid-parse: what was built is abandoned, not freed
+            vmd.reset(context.vmd);
+            sampler.reset(context.sampler);
+            return true;
         }
 
         // PoseSolver indexes bones, morphs and bodies straight from the file, so a broken
@@ -274,11 +325,11 @@ namespace MikuMikuDesktopPerch
             for(const auto& path:paths)
             {
                 if(!std::filesystem::exists(path)){error=std::wstring(kind)+L"が見つかりません: "+path;return false;}
+                if(!IsVmdFile(path)){error=std::wstring(kind)+L"はVMDファイルではないか、大きすぎます: "+path;return false;}
                 try
                 {
                     Clip clip;
-                    clip.vmd=std::make_unique<PMX::VMD>(path.c_str(),932,pmx.get());
-                    clip.sampler=std::make_unique<PMX::PoseSolver>(nullptr,pmx.get(),clip.vmd.get());
+                    if(!LoadVmd(path,pmx.get(),clip.vmd,clip.sampler)){error=std::wstring(kind)+L"のデータが壊れているため、読み込めませんでした: "+path;return false;}
                     clips.push_back(std::move(clip));
                 }
                 catch(...)
@@ -630,10 +681,14 @@ namespace MikuMikuDesktopPerch
         m.shotVmd.reset();
         if(path.empty()||!m.pmx)return true;
         if(!std::filesystem::exists(path)){error=L"モーションファイルが見つかりません: "+path;return false;}
+        if(!IsVmdFile(path)){error=L"VMDファイルではないか、大きすぎます: "+path;return false;}
         try
         {
-            m.shotVmd=std::make_unique<PMX::VMD>(path.c_str(),932,m.pmx.get());
-            m.shotSampler=std::make_unique<PMX::PoseSolver>(nullptr,m.pmx.get(),m.shotVmd.get());
+            if(!LoadVmd(path,m.pmx.get(),m.shotVmd,m.shotSampler))
+            {
+                error=L"モーションのデータが壊れているため、読み込めませんでした: "+path;
+                return false;
+            }
         }
         catch(...)
         {
@@ -709,6 +764,11 @@ namespace MikuMikuDesktopPerch
     {
         auto next=std::make_unique<Impl>();
         next->physicsFps=physicsFps;
+        if(!IsPmxFile(modelPath))
+        {
+            error=L"PMX 2.0/2.1 のモデルファイルではないか、大きすぎるため、読み込めません。\n\nモデル: "+modelPath;
+            return false;
+        }
         try
         {
             struct Context {const std::wstring* path;PMX::PMXModel* model;} context{&modelPath,nullptr};
@@ -888,7 +948,16 @@ namespace MikuMikuDesktopPerch
             }
         }
 
+        // Textures are read only from local files: a path to another machine (\\server\share,
+        // also the \\?\ and \\.\ device forms) would make Windows connect out and offer the
+        // user's credentials, and a colon past the drive letter names a stream or a URL.
         next->texturePaths=pmx.absTextures;
+        for(auto& path:next->texturePaths)
+        {
+            const bool remote=path.size()>=2&&(path[0]==L'\\'||path[0]==L'/')&&(path[1]==L'\\'||path[1]==L'/');
+            const auto colon=path.find(L':',2);
+            if(remote||colon!=std::wstring::npos)path.clear();
+        }
         next->materials.resize(pmx.materials.size());
         std::uint32_t start=0;
         for(size_t i=0;i<pmx.materials.size();++i)

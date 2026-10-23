@@ -2,6 +2,7 @@
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
 #include "Settings.hpp"
+#include "SettingsWindow.hpp"
 #include "Surfaces.hpp"
 #include <windows.h>
 #include <windowsx.h>
@@ -25,9 +26,8 @@ namespace
 {
     constexpr wchar_t WindowClass[]=L"MikuMikuDesktopPerchWindow";
     constexpr UINT TrayMessage=WM_APP+1;
-    enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdPhysics,IdBlink,IdBreath,IdLookAt,IdTopmost,IdExit,
-                      IdAuto,IdWalkLeft,IdWalkRight,IdWindowMode,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,IdOpenClickMotion,IdCloseClickMotion,
-                      IdScaleBase=200};   // IdScaleBase + percent/10 for the 大きさ submenu
+    enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
+                      IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit};
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
     constexpr float Gravity=98.0f;          // world units/s², the same as the physics world
@@ -87,6 +87,7 @@ namespace
         Place place=Place::Ground;
         bool pressed=false;           // left button down, not yet a grab
         POINT pressCursor{},dragOffset{};
+        int wheelDelta=0;                           // mouse wheel travel not yet turned into a size step
         DirectX::XMFLOAT2 carryVelocity{},carryAcceleration{};   // window motion, px/s and px/s²
         double previousWindowX=0,previousWindowY=0;
         double fallSpeed=0;           // px/s, downward
@@ -884,6 +885,38 @@ namespace
         return paths;
     }
 
+    // Start with Windows: a value under the current user's Run key pointing at this exe.
+    constexpr wchar_t RunKey[]=L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    constexpr wchar_t RunValue[]=L"MikuMikuDesktopPerch";
+
+    std::wstring StartupCommand()
+    {
+        wchar_t exe[MAX_PATH]{};
+        GetModuleFileNameW(nullptr,exe,MAX_PATH);
+        return L"\""+std::wstring(exe)+L"\"";
+    }
+
+    // Registered for this exe (an entry left by a copy elsewhere does not count).
+    bool StartupRegistered()
+    {
+        wchar_t value[MAX_PATH+8]{};
+        DWORD size=sizeof(value);
+        if(RegGetValueW(HKEY_CURRENT_USER,RunKey,RunValue,RRF_RT_REG_SZ,nullptr,value,&size)!=ERROR_SUCCESS)return false;
+        return _wcsicmp(value,StartupCommand().c_str())==0;
+    }
+
+    bool SetStartup(bool enabled)
+    {
+        if(!enabled)
+        {
+            const LSTATUS status=RegDeleteKeyValueW(HKEY_CURRENT_USER,RunKey,RunValue);
+            return status==ERROR_SUCCESS||status==ERROR_FILE_NOT_FOUND;
+        }
+        const std::wstring command=StartupCommand();
+        return RegSetKeyValueW(HKEY_CURRENT_USER,RunKey,RunValue,REG_SZ,command.c_str(),
+                               static_cast<DWORD>((command.size()+1)*sizeof(wchar_t)))==ERROR_SUCCESS;
+    }
+
     // Only X is remembered: the mascot always starts on the ground.
     void SaveWindowPosition()
     {
@@ -924,53 +957,104 @@ namespace
 
     void ShowMenu(POINT screen)
     {
+        // Things used often stay here; switches and display options are in the settings window.
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu,MF_STRING,IdOpenModel,L"モデルを開く...");
-        AppendMenuW(menu,MF_STRING,IdOpenMotion,L"モーションを開く...");
-        AppendMenuW(menu,MF_STRING|(app.settings.motionPath.empty()?MF_GRAYED:0),IdCloseMotion,L"モーションを閉じる");
+        HMENU motions=CreatePopupMenu();
+        AppendMenuW(motions,MF_STRING,IdOpenMotion,L"モーションを開く...");
+        AppendMenuW(motions,MF_STRING|(app.settings.motionPath.empty()?MF_GRAYED:0),IdCloseMotion,L"モーションを閉じる");
+        AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
         const size_t idleCount=app.settings.idleMotionPaths.size();
-        AppendMenuW(menu,MF_STRING,IdOpenIdleMotion,L"待機モーションを開く...（複数選択可）");
-        AppendMenuW(menu,MF_STRING|(idleCount==0?MF_GRAYED:0),IdAddIdleMotion,L"待機モーションを追加...");
-        AppendMenuW(menu,MF_STRING|(idleCount==0?MF_GRAYED:0),IdCloseIdleMotion,
+        AppendMenuW(motions,MF_STRING,IdOpenIdleMotion,L"待機モーションを開く...（複数選択可）");
+        AppendMenuW(motions,MF_STRING|(idleCount==0?MF_GRAYED:0),IdAddIdleMotion,L"待機モーションを追加...");
+        AppendMenuW(motions,MF_STRING|(idleCount==0?MF_GRAYED:0),IdCloseIdleMotion,
                     idleCount>1?(L"待機モーションを閉じる（"+std::to_wstring(idleCount)+L"件）").c_str():L"待機モーションを閉じる");
+        AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
         const size_t clickCount=app.settings.clickMotionPaths.size();
-        AppendMenuW(menu,MF_STRING,IdOpenClickMotion,L"クリック時のモーションを開く...（複数選択可）");
-        AppendMenuW(menu,MF_STRING|(clickCount==0?MF_GRAYED:0),IdCloseClickMotion,
+        AppendMenuW(motions,MF_STRING,IdOpenClickMotion,L"クリック時のモーションを開く...（複数選択可）");
+        AppendMenuW(motions,MF_STRING|(clickCount==0?MF_GRAYED:0),IdCloseClickMotion,
                     clickCount>1?(L"クリック時のモーションを閉じる（"+std::to_wstring(clickCount)+L"件）").c_str():L"クリック時のモーションを閉じる");
-        HMENU scaleMenu=CreatePopupMenu();
-        for(int percent=Settings::MinScale;percent<=Settings::MaxScale;percent+=10)
-        {
-            const std::wstring label=std::to_wstring(percent)+L"%";
-            AppendMenuW(scaleMenu,MF_STRING|(percent==app.settings.scale?MF_CHECKED:0),IdScaleBase+percent/10,label.c_str());
-        }
-        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(scaleMenu),L"大きさ");
+        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(motions),L"モーション");
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         const bool grounded=app.place==Place::Ground;
         AppendMenuW(menu,MF_STRING|(app.settings.windowMode?MF_CHECKED:0),IdWindowMode,L"アクティブウィンドウに乗る");
-        AppendMenuW(menu,MF_STRING|(app.settings.autoBehavior?MF_CHECKED:0),IdAuto,L"おまかせ行動");
         AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkLeft,L"左へ歩く");
         AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkRight,L"右へ歩く");
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
-        AppendMenuW(menu,MF_STRING|(app.model.PhysicsEnabled()?MF_CHECKED:0),IdPhysics,L"物理演算");
-        AppendMenuW(menu,MF_STRING|(app.settings.blink?MF_CHECKED:0),IdBlink,L"まばたき");
-        AppendMenuW(menu,MF_STRING|(app.settings.breath?MF_CHECKED:0),IdBreath,L"呼吸");
-        AppendMenuW(menu,MF_STRING|(app.settings.lookAtMouse?MF_CHECKED:0),IdLookAt,L"マウスの方を見る");
-        AppendMenuW(menu,MF_STRING|(app.settings.topmost?MF_CHECKED:0),IdTopmost,L"最前面に表示");
-        AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+        AppendMenuW(menu,MF_STRING,IdSettings,L"設定...");
         AppendMenuW(menu,MF_STRING,IdExit,L"終了");
+        // The menu needs its owner in the foreground, which also raises it: while hanging, put
+        // the mascot straight back behind the window it hangs from (before and after the menu).
+        auto keepBehind=[]{
+            if(app.behindSurface&&app.surfaceWindow)
+                SetWindowPos(app.hwnd,app.surfaceWindow,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER);
+        };
         SetForegroundWindow(app.hwnd);
+        keepBehind();
         TrackPopupMenu(menu,TPM_RIGHTBUTTON,screen.x,screen.y,0,app.hwnd,nullptr);
         PostMessageW(app.hwnd,WM_NULL,0,0);
+        keepBehind();
         DestroyMenu(menu);
+    }
+
+    void SetWindowMode(bool enabled)
+    {
+        app.settings.windowMode=enabled;
+        app.servedForeground=nullptr;
+        app.foregroundSince=app.clock;
+        if(!enabled&&app.surfaceWindow&&app.place==Place::Ground)
+        {
+            // Leaving the mode while on a window: drop down to the ground line.
+            app.surfaceWindow=nullptr;
+            app.travel=Travel::None;
+            app.restPoseAt=-1;
+            app.place=Place::Falling;
+            app.fallSpeed=0;
+            app.model.SetActivity(Activity::Fall);
+        }
+    }
+
+    // OK in the settings window: switches and display options take effect at once; the
+    // detailed ones (frame rate, antialiasing, textures, physics rate, toon folder) are read at
+    // start-up, so offer a restart for them.
+    void ApplySettings(const SettingsChoice& choice)
+    {
+        const Settings& s=choice.settings;
+        Settings& current=app.settings;
+        if(s.windowMode!=current.windowMode)SetWindowMode(s.windowMode);
+        if(s.autoBehavior!=current.autoBehavior){current.autoBehavior=s.autoBehavior;app.nextDecision=app.clock+5;}
+        current.physics=s.physics;
+        if(s.physics!=app.model.PhysicsEnabled())app.model.SetPhysics(s.physics);
+        current.blink=s.blink;
+        current.breath=s.breath;
+        current.lookAtMouse=s.lookAtMouse;
+        ApplyProceduralSettings();
+        if(s.topmost!=current.topmost)
+        {
+            current.topmost=s.topmost;
+            if(!app.behindSurface)SetWindowPos(app.hwnd,current.topmost?HWND_TOPMOST:HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        }
+        current.edgeScale=s.edgeScale;
+        if(choice.startWithWindows!=StartupRegistered()&&!SetStartup(choice.startWithWindows))
+            ShowMessage(L"スタートアップの設定を変更できませんでした。",MB_ICONERROR);
+        const bool restart=s.fps!=current.fps||s.msaa!=current.msaa||s.maxTextureSize!=current.maxTextureSize||
+                           s.physicsFps!=current.physicsFps||s.toonDir!=current.toonDir;
+        current.fps=s.fps;
+        current.msaa=s.msaa;
+        current.maxTextureSize=s.maxTextureSize;
+        current.physicsFps=s.physicsFps;
+        current.toonDir=s.toonDir;
+        if(s.scale!=current.scale)ApplyScale(s.scale);
+        current.Save(app.settingsPath);
+        if(restart&&ShowMessage(L"詳細の設定は、再起動すると反映されます。\n今すぐ再起動しますか？",MB_ICONQUESTION|MB_YESNO)==IDYES)
+        {
+            app.restart=true;
+            DestroyWindow(app.hwnd);
+        }
     }
 
     void OnCommand(UINT id)
     {
-        if(id>=IdScaleBase+Settings::MinScale/10&&id<=IdScaleBase+Settings::MaxScale/10)
-        {
-            ApplyScale(static_cast<int>(id-IdScaleBase)*10);
-            return;
-        }
         switch(id)
         {
         case IdOpenModel:
@@ -1063,24 +1147,7 @@ namespace
             break;
         }
         case IdWindowMode:
-            app.settings.windowMode=!app.settings.windowMode;
-            app.servedForeground=nullptr;
-            app.foregroundSince=app.clock;
-            if(!app.settings.windowMode&&app.surfaceWindow&&app.place==Place::Ground)
-            {
-                // Leaving the mode while on a window: drop down to the ground line.
-                app.surfaceWindow=nullptr;
-                app.travel=Travel::None;
-                app.restPoseAt=-1;
-                app.place=Place::Falling;
-                app.fallSpeed=0;
-                app.model.SetActivity(Activity::Fall);
-            }
-            app.settings.Save(app.settingsPath);
-            break;
-        case IdAuto:
-            app.settings.autoBehavior=!app.settings.autoBehavior;
-            app.nextDecision=app.clock+5;
+            SetWindowMode(!app.settings.windowMode);
             app.settings.Save(app.settingsPath);
             break;
         case IdWalkLeft:
@@ -1091,25 +1158,8 @@ namespace
                 StartWalk(app.windowX+app.windowSize.cx*0.5+(id==IdWalkLeft?-300:300));
             }
             break;
-        case IdBlink:
-        case IdBreath:
-        case IdLookAt:
-        {
-            bool& flag=id==IdBlink?app.settings.blink:(id==IdBreath?app.settings.breath:app.settings.lookAtMouse);
-            flag=!flag;
-            ApplyProceduralSettings();
-            app.settings.Save(app.settingsPath);
-            break;
-        }
-        case IdPhysics:
-            app.settings.physics=!app.model.PhysicsEnabled();
-            app.model.SetPhysics(app.settings.physics);
-            app.settings.Save(app.settingsPath);
-            break;
-        case IdTopmost:
-            app.settings.topmost=!app.settings.topmost;
-            if(!app.behindSurface)SetWindowPos(app.hwnd,app.settings.topmost?HWND_TOPMOST:HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
-            app.settings.Save(app.settingsPath);
+        case IdSettings:
+            ShowSettingsWindow(app.hwnd,{app.settings,StartupRegistered()},ApplySettings);
             break;
         case IdExit:
             DestroyWindow(app.hwnd);
@@ -1177,6 +1227,26 @@ namespace
                 if(GetCapture()==hwnd)ReleaseCapture();
             }
             return 0;
+        case WM_MOUSEACTIVATE:
+            // Hanging behind a window: a click must not raise the mascot over it.
+            if(app.behindSurface)return MA_NOACTIVATE;
+            break;
+        case WM_MOUSEWHEEL:
+        {
+            // Over the mascot (clicks elsewhere pass through, so the wheel does too): one notch
+            // is one 10% size step, up to grow. Smooth-scrolling wheels send smaller deltas.
+            if(app.place==Place::Held)return 0;
+            app.wheelDelta+=GET_WHEEL_DELTA_WPARAM(wParam);
+            int steps=0;
+            while(app.wheelDelta>=WHEEL_DELTA){app.wheelDelta-=WHEEL_DELTA;++steps;}
+            while(app.wheelDelta<=-WHEEL_DELTA){app.wheelDelta+=WHEEL_DELTA;--steps;}
+            if(steps!=0)
+            {
+                const int percent=std::clamp(app.settings.scale+steps*10,Settings::MinScale,Settings::MaxScale);
+                if(percent!=app.settings.scale)ApplyScale(percent);
+            }
+            return 0;
+        }
         case WM_RBUTTONUP:
         {
             POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
@@ -1320,6 +1390,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         LocalFree(argv);
     }
 
+    // DLLs loaded by name from here on are not looked for in the current folder (a model or
+    // motion folder could carry a planted copy). GPU drivers keep their own search paths.
+    SetDllDirectoryW(L"");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
 
@@ -1355,6 +1428,22 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         }
     }
 
+    // One mascot at a time (diagnostic runs excepted). The mutex goes away with the process,
+    // or just before a restart starts the next one.
+    HANDLE instanceMutex=nullptr;
+    if(snapshotPath.empty())
+    {
+        instanceMutex=CreateMutexW(nullptr,FALSE,L"Local\\MikuMikuDesktopPerch");
+        if(instanceMutex&&GetLastError()==ERROR_ALREADY_EXISTS)
+        {
+            MessageBoxW(nullptr,L"MikuMikuDesktopPerch はすでに起動しています。\n\nタスクトレイのアイコンを右クリックすると、メニューを開けます。",
+                        L"MikuMikuDesktopPerch",MB_ICONINFORMATION);
+            CloseHandle(instanceMutex);
+            CoUninitialize();
+            return 0;
+        }
+    }
+
     app.settingsPath=Settings::DefaultPath();
     app.settings.Load(app.settingsPath);
     if(!snapshotPath.empty())
@@ -1379,6 +1468,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         // A missing idle motion is dropped rather than blocking the model.
         std::erase_if(app.settings.idleMotionPaths,[](const std::wstring& p){return !std::filesystem::exists(p);});
         if(app.model.Load(app.settings.modelPath,app.settings.idleMotionPaths,app.settings.physics,app.settings.physicsFps,error))break;
+        // So is one that does not load: the model comes up on the built-in idle instead.
+        if(std::wstring plainError;!app.settings.idleMotionPaths.empty()&&
+           app.model.Load(app.settings.modelPath,{},app.settings.physics,app.settings.physicsFps,plainError))
+        {
+            if(snapshotPath.empty())
+                MessageBoxW(nullptr,(L"待機モーションを読み込めなかったため、外しました。\n\n"+error).c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
+            app.settings.idleMotionPaths.clear();
+            break;
+        }
         if(!snapshotPath.empty())
         {
             // Diagnostic runs report instead of blocking on a dialog.
@@ -1409,7 +1507,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     wc.lpfnWndProc=WindowProc;
     wc.hInstance=instance;
     wc.hCursor=LoadCursorW(nullptr,IDC_HAND);
-    wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION);
+    // res/MikuMikuDesktopPerch.rc: icon 1, at the sizes the shell asks for.
+    wc.hIcon=static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_DEFAULTCOLOR));
+    wc.hIconSm=static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));
     wc.lpszClassName=WindowClass;
     RegisterClassExW(&wc);
     // NOREDIRECTIONBITMAP + DirectComposition gives per-pixel alpha;
@@ -1455,7 +1555,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.tray.uID=1;
     app.tray.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP;
     app.tray.uCallbackMessage=TrayMessage;
-    app.tray.hIcon=wc.hIcon;
+    app.tray.hIcon=wc.hIconSm?wc.hIconSm:wc.hIcon;
     wcscpy_s(app.tray.szTip,L"MikuMikuDesktopPerch");
     Shell_NotifyIconW(NIM_ADD,&app.tray);
 
@@ -1486,6 +1586,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE))
         {
             if(msg.message==WM_QUIT){running=false;break;}
+            if(const HWND settings=SettingsWindowHandle();settings&&IsDialogMessageW(settings,&msg))continue;
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -1654,6 +1755,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     CloseHandle(timer);
     app.renderer.WaitIdle();
 
+    if(instanceMutex){CloseHandle(instanceMutex);instanceMutex=nullptr;}
     if(app.restart)
     {
         wchar_t exe[MAX_PATH]{};

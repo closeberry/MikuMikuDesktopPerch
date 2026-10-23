@@ -1,0 +1,253 @@
+#include "SettingsWindow.hpp"
+#include <shobjidl.h>
+#include <wrl/client.h>
+#include <algorithm>
+#include <cmath>
+#include <string>
+#include <vector>
+
+// Themed (version 6) common controls for the settings window, the message boxes and the file
+// dialogs.
+#pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+
+namespace MikuMikuDesktopPerch
+{
+    namespace
+    {
+        constexpr wchar_t ClassName[]=L"MikuMikuDesktopPerchSettings";
+
+        enum ControlId:int
+        {
+            IdAuto=1001,IdWindowMode,IdPhysics,IdBlink,IdBreath,IdLookAt,
+            IdScale,IdEdge,IdTopmost,IdStartup,
+            IdFps,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse
+        };
+
+        struct State
+        {
+            HWND window=nullptr;
+            HFONT font=nullptr;
+            SettingsChoice choice;
+            std::function<void(const SettingsChoice&)> onApply;
+            int dpi=96;
+        } state;
+
+        int Px(int logical){return MulDiv(logical,state.dpi,96);}
+
+        HWND Add(const wchar_t* cls,const wchar_t* text,DWORD style,int x,int y,int w,int h,int id=0)
+        {
+            HWND c=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|style,Px(x),Px(y),Px(w),Px(h),state.window,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);
+            SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(state.font),TRUE);
+            return c;
+        }
+
+        void Check(int id,bool on){CheckDlgButton(state.window,id,on?BST_CHECKED:BST_UNCHECKED);}
+        bool Checked(int id){return IsDlgButtonChecked(state.window,id)==BST_CHECKED;}
+
+        // A drop-down list of (label, value) choices with value selected. A value not in the
+        // list (edited into the ini by hand) is added so it is kept as it is.
+        void FillCombo(int id,std::vector<std::pair<std::wstring,int>> items,int value,const std::wstring& otherLabel)
+        {
+            HWND combo=GetDlgItem(state.window,id);
+            if(std::none_of(items.begin(),items.end(),[&](const auto& i){return i.second==value;}))items.push_back({otherLabel,value});
+            for(const auto& [label,v]:items)
+            {
+                const auto index=SendMessageW(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));
+                SendMessageW(combo,CB_SETITEMDATA,index,v);
+                if(v==value)SendMessageW(combo,CB_SETCURSEL,index,0);
+            }
+        }
+
+        int ComboValue(int id,int fallback)
+        {
+            HWND combo=GetDlgItem(state.window,id);
+            const auto index=SendMessageW(combo,CB_GETCURSEL,0,0);
+            return index==CB_ERR?fallback:static_cast<int>(SendMessageW(combo,CB_GETITEMDATA,index,0));
+        }
+
+        void Group(const wchar_t* title,int y,int h){Add(L"BUTTON",title,BS_GROUPBOX,12,y,436,h);}
+        void Label(const wchar_t* text,int x,int y,int w){Add(L"STATIC",text,SS_LEFT,x,y+3,w,20);}
+        void CheckBox(int id,const wchar_t* text,int x,int y,int w,bool on){Add(L"BUTTON",text,BS_AUTOCHECKBOX|WS_TABSTOP,x,y,w,22,id);Check(id,on);}
+        void Combo(int id,int x,int y,int w){Add(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,x,y,w,240,id);}
+
+        void Build()
+        {
+            const Settings& s=state.choice.settings;
+            int y=10;
+            Group(L"動き",y,128);
+            CheckBox(IdAuto,L"おまかせ行動（ひとりで歩き回る）",28,y+22,400,s.autoBehavior);
+            CheckBox(IdWindowMode,L"アクティブウィンドウに乗る",28,y+46,400,s.windowMode);
+            CheckBox(IdPhysics,L"物理演算（髪やスカートの揺れ）",28,y+70,400,s.physics);
+            CheckBox(IdBlink,L"まばたき",28,y+94,120,s.blink);
+            CheckBox(IdBreath,L"呼吸",156,y+94,120,s.breath);
+            CheckBox(IdLookAt,L"マウスの方を見る",284,y+94,150,s.lookAtMouse);
+            y+=138;
+            Group(L"表示",y,128);
+            Label(L"大きさ",28,y+22,130);
+            Combo(IdScale,170,y+22,120);
+            Label(L"輪郭線の太さ",28,y+50,130);
+            Combo(IdEdge,170,y+50,120);
+            CheckBox(IdTopmost,L"最前面に表示",28,y+78,200,s.topmost);
+            CheckBox(IdStartup,L"Windowsの起動時に起動",28,y+100,300,state.choice.startWithWindows);
+            y+=138;
+            Group(L"詳細（変更すると再起動します）",y,166);
+            Label(L"描画のfps",28,y+22,130);
+            Combo(IdFps,170,y+22,120);
+            Label(L"アンチエイリアス",28,y+50,130);
+            Combo(IdMsaa,170,y+50,120);
+            Label(L"テクスチャの最大サイズ",28,y+78,140);
+            Combo(IdTexture,170,y+78,120);
+            Label(L"物理演算の更新",28,y+106,130);
+            Combo(IdPhysicsFps,170,y+106,120);
+            Label(L"共有トゥーンのフォルダ",28,y+134,140);
+            Add(L"EDIT",s.toonDir.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+134,190,24,IdToonDir);
+            Add(L"BUTTON",L"参照...",BS_PUSHBUTTON|WS_TABSTOP,366,y+133,70,26,IdToonBrowse);
+            y+=176;
+            Add(L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,276,y,82,28,IDOK);
+            Add(L"BUTTON",L"キャンセル",BS_PUSHBUTTON|WS_TABSTOP,366,y,82,28,IDCANCEL);
+
+            std::vector<std::pair<std::wstring,int>> scales;
+            for(int p=Settings::MinScale;p<=Settings::MaxScale;p+=10)scales.push_back({std::to_wstring(p)+L"%",p});
+            FillCombo(IdScale,scales,s.scale,std::to_wstring(s.scale)+L"%");
+            const int edge=static_cast<int>(std::lround(s.edgeScale*100));
+            FillCombo(IdEdge,{{L"なし",0},{L"細い（0.5倍）",50},{L"やや細い（0.75倍）",75},{L"標準",100},{L"やや太い（1.25倍）",125},{L"太い（1.5倍）",150},{L"とても太い（2倍）",200}},
+                      edge,std::to_wstring(edge/100.0).substr(0,4)+L"倍");
+            FillCombo(IdFps,{{L"15",15},{L"20",20},{L"30（標準）",30},{L"45",45},{L"60",60}},s.fps,std::to_wstring(s.fps));
+            FillCombo(IdMsaa,{{L"なし",1},{L"2x",2},{L"4x（標準）",4},{L"8x",8}},s.msaa,std::to_wstring(s.msaa)+L"x");
+            FillCombo(IdTexture,{{L"512",512},{L"1024（標準）",1024},{L"2048",2048},{L"4096",4096},{L"縮小しない",0}},s.maxTextureSize,std::to_wstring(s.maxTextureSize));
+            FillCombo(IdPhysicsFps,{{L"30回/秒",30},{L"60回/秒（標準）",60},{L"90回/秒",90},{L"120回/秒",120}},s.physicsFps,std::to_wstring(s.physicsFps)+L"回/秒");
+        }
+
+        void BrowseToonDir()
+        {
+            Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+            if(FAILED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog))))return;
+            DWORD options=0;
+            dialog->GetOptions(&options);
+            dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM);
+            dialog->SetTitle(L"共有トゥーン（toon01.bmp〜toon10.bmp）のあるフォルダ");
+            if(FAILED(dialog->Show(state.window)))return;
+            Microsoft::WRL::ComPtr<IShellItem> item;
+            PWSTR path=nullptr;
+            if(SUCCEEDED(dialog->GetResult(&item))&&SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH,&path)))
+            {
+                SetDlgItemTextW(state.window,IdToonDir,path);
+                CoTaskMemFree(path);
+            }
+        }
+
+        SettingsChoice Read()
+        {
+            SettingsChoice c=state.choice;
+            Settings& s=c.settings;
+            s.autoBehavior=Checked(IdAuto);
+            s.windowMode=Checked(IdWindowMode);
+            s.physics=Checked(IdPhysics);
+            s.blink=Checked(IdBlink);
+            s.breath=Checked(IdBreath);
+            s.lookAtMouse=Checked(IdLookAt);
+            s.scale=ComboValue(IdScale,s.scale);
+            s.edgeScale=ComboValue(IdEdge,static_cast<int>(std::lround(s.edgeScale*100)))/100.0f;
+            s.topmost=Checked(IdTopmost);
+            c.startWithWindows=Checked(IdStartup);
+            s.fps=ComboValue(IdFps,s.fps);
+            s.msaa=ComboValue(IdMsaa,s.msaa);
+            s.maxTextureSize=ComboValue(IdTexture,s.maxTextureSize);
+            s.physicsFps=ComboValue(IdPhysicsFps,s.physicsFps);
+            wchar_t toon[MAX_PATH]{};
+            GetDlgItemTextW(state.window,IdToonDir,toon,MAX_PATH);
+            s.toonDir=toon;
+            return c;
+        }
+
+        LRESULT CALLBACK Proc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
+        {
+            switch(message)
+            {
+            case WM_COMMAND:
+                switch(LOWORD(wParam))
+                {
+                case IDOK:
+                {
+                    const SettingsChoice chosen=Read();
+                    auto apply=state.onApply;
+                    DestroyWindow(hwnd);
+                    if(apply)apply(chosen);
+                    return 0;
+                }
+                case IDCANCEL:
+                    DestroyWindow(hwnd);
+                    return 0;
+                case IdToonBrowse:
+                    BrowseToonDir();
+                    return 0;
+                }
+                break;
+            case WM_CLOSE:
+                DestroyWindow(hwnd);
+                return 0;
+            case WM_DESTROY:
+                state.window=nullptr;
+                if(state.font){DeleteObject(state.font);state.font=nullptr;}
+                state.onApply=nullptr;
+                return 0;
+            }
+            return DefWindowProcW(hwnd,message,wParam,lParam);
+        }
+    }
+
+    void ShowSettingsWindow(HWND owner,const SettingsChoice& current,std::function<void(const SettingsChoice&)> onApply)
+    {
+        if(state.window)
+        {
+            ShowWindow(state.window,SW_SHOWNORMAL);
+            SetForegroundWindow(state.window);
+            return;
+        }
+        static bool registered=false;
+        const HINSTANCE instance=GetModuleHandleW(nullptr);
+        if(!registered)
+        {
+            WNDCLASSEXW wc{sizeof(wc)};
+            wc.lpfnWndProc=Proc;
+            wc.hInstance=instance;
+            wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+            wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
+            wc.lpszClassName=ClassName;
+            wc.hIcon=reinterpret_cast<HICON>(GetClassLongPtrW(owner,GCLP_HICON));
+            wc.hIconSm=reinterpret_cast<HICON>(GetClassLongPtrW(owner,GCLP_HICONSM));
+            if(!RegisterClassExW(&wc))return;
+            registered=true;
+        }
+        state.choice=current;
+        state.onApply=std::move(onApply);
+        state.dpi=static_cast<int>(GetDpiForSystem());
+        NONCLIENTMETRICSW metrics{sizeof(metrics)};
+        SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,state.dpi);
+        state.font=CreateFontIndirectW(&metrics.lfMessageFont);
+
+        // Client 460 x 520 logical pixels, centred on the screen the cursor is on.
+        const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
+        const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
+        RECT frame{0,0,Px(460),Px(520)};
+        AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        MONITORINFO monitor{sizeof(monitor)};
+        GetMonitorInfoW(MonitorFromPoint(cursor,MONITOR_DEFAULTTONEAREST),&monitor);
+        const RECT& work=monitor.rcWork;
+        const int w=frame.right-frame.left,h=frame.bottom-frame.top;
+        // Owned by the mascot's window: kept above it (it is topmost) and gone with it.
+        state.window=CreateWindowExW(exStyle,ClassName,L"MikuMikuDesktopPerch の設定",style,
+                                     work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,
+                                     owner,nullptr,instance,nullptr);
+        if(!state.window)return;
+        Build();
+        ShowWindow(state.window,SW_SHOWNORMAL);
+        SetForegroundWindow(state.window);
+        SetFocus(GetDlgItem(state.window,IdAuto));
+    }
+
+    HWND SettingsWindowHandle(){return state.window;}
+}
