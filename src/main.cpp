@@ -235,13 +235,18 @@ namespace
     // a very large mascot costs the GPU no more than this.
     constexpr int SharpScaleLimit=300;
 
+    // The size on screen is in MMD's units, the same for every model: Height/Scale is what a
+    // model of this height (a typical one, in MMD units) gets, with a little room. A taller or
+    // shorter model shows taller or shorter, as in MMD, and accessories reaching past the head
+    // (which widen the model's bounds) do not shrink it.
+    constexpr float ReferenceModelHeight=20;
+
     // Model size on screen follows Height/Scale; the window covers app.extent at that size.
     SIZE WindowSizeFor(int scalePercent)
     {
         app.renderer.SetResolutionScale(std::min(1.0f,static_cast<float>(SharpScaleLimit)/std::max(scalePercent,1)));
-        const ModelFrame m=ModelFrameOf();
         const int modelPixels=MulDiv(MulDiv(app.settings.windowHeight,static_cast<int>(GetDpiForSystem()),96),scalePercent,100);
-        app.pixelsPerUnit=modelPixels/(m.height*1.1f);
+        app.pixelsPerUnit=modelPixels/(ReferenceModelHeight*1.1f);
         return {static_cast<LONG>(std::lround(2*app.extent.halfWidth*app.pixelsPerUnit)),
                 static_cast<LONG>(std::lround((app.extent.top-app.extent.bottom)*app.pixelsPerUnit))};
     }
