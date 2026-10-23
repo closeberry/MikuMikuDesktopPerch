@@ -31,8 +31,9 @@ namespace MikuMikuDesktopPerch
         float edgeScale=1.0f;
         bool selfShadow=true;       // the model shades itself from the light (MMD's self-shadow)
         // Where the light (the sun) is, in degrees: around (0 in front of her, + to the
-        // viewer's right, ±180 behind) and up from the horizon. The default is MMD's light.
-        int lightAzimuth=45,lightElevation=55;
+        // viewer's right, ±180 behind) and up from the horizon. The default: low in front, a
+        // little to the right, so the shading falls softly across the body.
+        int lightAzimuth=12,lightElevation=25;
         int maxTextureSize=1024;   // larger textures are downscaled at load (0 = keep original)
         bool blink=true;
         bool breath=true;
