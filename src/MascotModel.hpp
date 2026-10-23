@@ -100,6 +100,11 @@ namespace MikuMikuDesktopPerch
         void SetPhysics(bool enabled);
         // The drawing rate, which physics keeps in step with (one frame period per Update).
         void SetFrameRate(int fps);
+        // Solver passes per physics step: more settle long chains (hair) that jitter.
+        void SetPhysicsIterations(int iterations);
+        // Smooth the simulated bones' small, quick trembling (0 off .. 3 strong): stronger while
+        // she holds still, weaker while she moves, and large swings pass through.
+        void SetPhysicsFilter(int strength);
         bool PhysicsEnabled() const;
 
         // Procedural motion layered on top of the VMD (each can be toggled independently).

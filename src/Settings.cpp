@@ -86,7 +86,9 @@ namespace MikuMikuDesktopPerch
         fps=std::clamp(ReadInt(path,L"Fps",fps),5,120);
         motionBlur=ReadInt(path,L"MotionBlur",motionBlur?1:0)!=0;
         physics=ReadInt(path,L"Physics",physics?1:0)!=0;
+        physicsFilter=std::clamp(ReadInt(path,L"PhysicsFilter",physicsFilter),0,3);
         physicsFps=std::clamp(ReadInt(path,L"PhysicsFps",physicsFps),30,240);
+        physicsIterations=std::clamp(ReadInt(path,L"PhysicsIterations",physicsIterations),1,100);
         msaa=ReadInt(path,L"Msaa",msaa);
         if(msaa!=1&&msaa!=2&&msaa!=4&&msaa!=8)msaa=4;
         topmost=ReadInt(path,L"Topmost",topmost?1:0)!=0;
@@ -138,7 +140,9 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"Fps",std::to_wstring(fps));
         WriteString(path,L"MotionBlur",motionBlur?L"1":L"0");
         WriteString(path,L"Physics",physics?L"1":L"0");
+        WriteString(path,L"PhysicsFilter",std::to_wstring(physicsFilter));
         WriteString(path,L"PhysicsFps",std::to_wstring(physicsFps));
+        WriteString(path,L"PhysicsIterations",std::to_wstring(physicsIterations));
         WriteString(path,L"Msaa",std::to_wstring(msaa));
         WriteString(path,L"Topmost",topmost?L"1":L"0");
         WriteString(path,L"MaxTextureSize",std::to_wstring(maxTextureSize));

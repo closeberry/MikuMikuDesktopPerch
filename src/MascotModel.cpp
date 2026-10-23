@@ -179,6 +179,85 @@ namespace MikuMikuDesktopPerch
         // really come at when that is clearly slower or faster (a slow GPU, the display's
         // refresh). It moves only on a lasting change, so the physics step stays put.
         double framePeriod=1/30.0,frameAverage=1/30.0;
+        int physicsIterations=10;
+
+        // Trembling filter (SetPhysicsFilter): per bone, its transform relative to its parent,
+        // smoothed with an adaptive low-pass (the "1 euro" filter: the cutoff rises with the
+        // smoothed speed, so small quick back-and-forth is held while a real swing follows).
+        // Bones with a body are smoothed; the bones below them follow their smoothed parents.
+        struct FilteredBone
+        {
+            int bone=-1,parent=-1;
+            bool simulated=false;
+            DirectX::XMFLOAT4 rotation{0,0,0,1};
+            DirectX::XMFLOAT3 translation{};
+            DirectX::XMFLOAT3 speed{};   // smoothed rotation speed (axis * radians per second)
+        };
+        std::vector<FilteredBone> filteredBones;   // parents before children
+        int physicsFilter=0;
+        bool filterPrimed=false;
+        float filterMoving=0;   // 0 holding still .. 1 moving, eased
+        std::vector<DirectX::XMMATRIX> filteredMatrices;
+
+        void FilterPhysicsBones(double dt)
+        {
+            using namespace DirectX;
+            if(physicsFilter<=0||filteredBones.empty()||!solver||solver->boneMatrices.size()<pmx->bones.size()){filterPrimed=false;return;}
+            // Cutoff while holding still (Hz), by strength; three times higher while moving.
+            static constexpr float StillCutoff[4]={0,6.0f,3.0f,1.5f};
+            constexpr float Beta=1.5f,SpeedCutoff=1.0f,MovingBoost=2.0f;
+            const bool moving=motion.CurrentActivity()!=Activity::Idle||shotActive||frameAcceleration.x!=0||frameAcceleration.y!=0;
+            filterMoving=std::clamp(filterMoving+static_cast<float>(dt)*(moving?3.0f:-2.0f),0.0f,1.0f);
+            const float still=StillCutoff[physicsFilter]*(1+MovingBoost*filterMoving*filterMoving*(3-2*filterMoving));
+            const auto alpha=[&](float cutoff){return 1-std::exp(-6.2831853f*cutoff*static_cast<float>(std::max(dt,1e-4)));};
+            auto& matrices=solver->boneMatrices;
+            filteredMatrices.assign(matrices.size(),XMMatrixIdentity());
+            std::vector<bool> changed(matrices.size(),false);
+            for(auto& f:filteredBones)
+            {
+                // The bones' own frames (the matrices skin from the rest pose, so a bone's frame is
+                // its rest position moved by them), and the bone in its parent's frame: the joint's
+                // turn about the bone itself, with the bone's offset as translation.
+                const auto frameOf=[&](int b){return XMMatrixTranslationFromVector(XMLoadFloat3(&pmx->bones[b].position))*XMMatrixTranspose(matrices[b]);};
+                const XMMATRIX global=frameOf(f.bone);
+                const XMMATRIX parentRaw=f.parent>=0?frameOf(f.parent):XMMatrixIdentity();
+                const XMMATRIX parentNow=f.parent>=0&&changed[f.parent]?filteredMatrices[f.parent]:parentRaw;
+                XMMATRIX local=global*XMMatrixInverse(nullptr,parentRaw);
+                if(f.simulated)
+                {
+                    XMVECTOR scale,rotation,translation;
+                    if(!XMMatrixDecompose(&scale,&rotation,&translation,local)){filteredMatrices[f.bone]=local*parentNow;changed[f.bone]=true;continue;}
+                    XMVECTOR kept=XMLoadFloat4(&f.rotation);
+                    if(XMVectorGetX(XMVector4Dot(kept,rotation))<0)rotation=XMVectorNegate(rotation);
+                    // How fast and which way it turns, from the kept pose to the new one.
+                    XMVECTOR axis;float angle=0;
+                    XMQuaternionToAxisAngle(&axis,&angle,XMQuaternionMultiply(XMQuaternionInverse(kept),rotation));
+                    if(!filterPrimed||std::abs(angle)>1.0f)
+                    {
+                        // First frame, or a jump (a reset): take it as it is.
+                        XMStoreFloat4(&f.rotation,rotation);
+                        XMStoreFloat3(&f.translation,translation);
+                        f.speed={0,0,0};
+                    }
+                    else
+                    {
+                        const XMVECTOR turn=std::abs(angle)>1e-6f?XMVectorScale(XMVector3Normalize(axis),angle/static_cast<float>(std::max(dt,1e-4))):XMVectorZero();
+                        const XMVECTOR speed=XMVectorLerp(XMLoadFloat3(&f.speed),turn,alpha(SpeedCutoff));
+                        XMStoreFloat3(&f.speed,speed);
+                        const float a=alpha(still+Beta*XMVectorGetX(XMVector3Length(speed)));
+                        XMStoreFloat4(&f.rotation,XMQuaternionSlerp(kept,rotation,a));
+                        XMStoreFloat3(&f.translation,XMVectorLerp(XMLoadFloat3(&f.translation),translation,a));
+                    }
+                    local=XMMatrixScalingFromVector(scale)*XMMatrixRotationQuaternion(XMLoadFloat4(&f.rotation))*
+                          XMMatrixTranslationFromVector(XMLoadFloat3(&f.translation));
+                }
+                filteredMatrices[f.bone]=local*parentNow;
+                changed[f.bone]=true;
+            }
+            for(const auto& f:filteredBones)
+                matrices[f.bone]=XMMatrixTranspose(XMMatrixTranslationFromVector(XMVectorNegate(XMLoadFloat3(&pmx->bones[f.bone].position)))*filteredMatrices[f.bone]);
+            filterPrimed=true;
+        }
 
         std::vector<StaticVertex> staticVertices;
         std::vector<std::uint32_t> indices;
@@ -804,6 +883,7 @@ namespace MikuMikuDesktopPerch
                 // over between steps: with steps in time with the frames it is a full step behind,
                 // and the hair and skirt trail ever further while the body moves on.
                 physics->World()->setLatencyMotionStateInterpolation(false);
+                physics->World()->getSolverInfo().m_numIterations=physicsIterations;
             }
             solver=std::make_unique<PMX::PoseSolver>(physics.get(),pmx.get(),nullptr);
             ApplyFrameAcceleration();
@@ -992,6 +1072,8 @@ namespace MikuMikuDesktopPerch
         auto next=std::make_unique<Impl>();
         next->physicsFps=physicsFps;
         next->framePeriod=impl->framePeriod;
+        next->physicsIterations=impl->physicsIterations;
+        next->physicsFilter=impl->physicsFilter;
         next->frameAverage=impl->frameAverage;
         if(!IsPmxFile(modelPath))
         {
@@ -1153,6 +1235,25 @@ namespace MikuMikuDesktopPerch
                 const float length=std::sqrt((b.x-a.x)*(b.x-a.x)+(b.y-a.y)*(b.y-a.y)+(b.z-a.z)*(b.z-a.z));
                 if(length>0.3f)next->physicsBones.push_back({static_cast<int>(i),anchor,length});
             }
+            // The trembling filter: simulated bones and everything below them, parents first.
+            std::vector<int> depth(pmx.bones.size(),-1);
+            const auto depthOf=[&](int b){int d=0;for(int p=pmx.bones[b].parent;p>=0&&static_cast<size_t>(p)<pmx.bones.size()&&d<=static_cast<int>(pmx.bones.size());p=pmx.bones[p].parent)++d;return d;};
+            std::vector<bool> below(pmx.bones.size(),false);
+            for(size_t i=0;i<pmx.bones.size();++i)
+                for(int b=static_cast<int>(i),guard=0;b>=0&&static_cast<size_t>(b)<pmx.bones.size()&&guard<=static_cast<int>(pmx.bones.size());b=pmx.bones[b].parent,++guard)
+                    if(simulated[b]){below[i]=true;break;}
+            for(size_t i=0;i<pmx.bones.size();++i)
+                if(below[i])
+                {
+                    Impl::FilteredBone f;
+                    f.bone=static_cast<int>(i);
+                    const int parent=pmx.bones[i].parent;
+                    f.parent=parent>=0&&static_cast<size_t>(parent)<pmx.bones.size()?parent:-1;
+                    f.simulated=simulated[i];
+                    next->filteredBones.push_back(f);
+                    depth[i]=depthOf(static_cast<int>(i));
+                }
+            std::stable_sort(next->filteredBones.begin(),next->filteredBones.end(),[&](const Impl::FilteredBone& a,const Impl::FilteredBone& b){return depth[a.bone]<depth[b.bone];});
         }
         next->indices.assign(pmx.indices.begin(),pmx.indices.end());
 
@@ -1261,6 +1362,17 @@ namespace MikuMikuDesktopPerch
     void MascotModel::SetFrameRate(int fps)
     {
         impl->framePeriod=impl->frameAverage=1.0/std::max(fps,1);
+    }
+
+    void MascotModel::SetPhysicsIterations(int iterations)
+    {
+        impl->physicsIterations=std::clamp(iterations,1,100);
+        if(impl->physics)impl->physics->World()->getSolverInfo().m_numIterations=impl->physicsIterations;
+    }
+
+    void MascotModel::SetPhysicsFilter(int strength)
+    {
+        impl->physicsFilter=std::clamp(strength,0,3);
     }
 
     void MascotModel::SetPhysics(bool enabled)
@@ -1397,7 +1509,7 @@ namespace MikuMikuDesktopPerch
         if(m.shotActive)m.ApplyShot(dt);   // authored in the A-stance frame, so before correction
         m.ApplyArmCorrection(m.solver->solvedPose);
         m.ApplyProcedural(m.solver->solvedPose,dt);
-        if(m.resetBlend>=0)m.BlendPhysicsBones(dt);
+        if(m.resetBlend>=0){m.BlendPhysicsBones(dt);m.filterPrimed=false;}
         m.solver->PoseMining(m.solver->solvedPose);
         m.continuous=true;
         if(m.physics)
@@ -1452,6 +1564,7 @@ namespace MikuMikuDesktopPerch
                 m.physics->maxSubsteps=steps+1;
                 // (A hair over, so rounding never drops a step; the rare extra one is allowed for.)
                 m.physics->Update(m.framePeriod*(1+1e-4));
+                m.FilterPhysicsBones(dt);
                 m.WatchPhysics(dt);
             }
         }

@@ -26,7 +26,9 @@ namespace MikuMikuDesktopPerch
         int fps=30;
         bool motionBlur=false;      // smear what moves, so low frame rates look smoother
         bool physics=true;
+        int physicsFilter=3;        // smoothing of the simulated bones' trembling: 0 off, 1 weak, 2 medium, 3 strong
         int physicsFps=60;
+        int physicsIterations=10;   // solver passes per physics step (more: long chains jitter less)
         int msaa=4;
         bool topmost=true;
         float edgeScale=1.0f;

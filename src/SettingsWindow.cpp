@@ -26,7 +26,7 @@ namespace MikuMikuDesktopPerch
         {
             IdAuto=1001,IdWindowMode,IdPhysics,IdBlink,IdBreath,IdLookAt,
             IdScale,IdEdge,IdTopmost,IdStartup,
-            IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse,
+            IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdPhysicsIterations,IdPhysicsFilter,IdToonDir,IdToonBrowse,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount
@@ -108,7 +108,9 @@ namespace MikuMikuDesktopPerch
             Group(L"動き",y,128);
             CheckBox(IdAuto,L"おまかせ行動（ひとりで歩き回る）",28,y+22,400,s.autoBehavior);
             CheckBox(IdWindowMode,L"アクティブウィンドウに乗る",28,y+46,400,s.windowMode);
-            CheckBox(IdPhysics,L"物理演算（髪やスカートの揺れ）",28,y+70,400,s.physics);
+            CheckBox(IdPhysics,L"物理演算（髪やスカートの揺れ）",28,y+70,228,s.physics);
+            Label(L"震え止め",262,y+70,60);
+            Combo(IdPhysicsFilter,326,y+68,110);
             CheckBox(IdBlink,L"まばたき",28,y+94,120,s.blink);
             CheckBox(IdBreath,L"呼吸",156,y+94,120,s.breath);
             CheckBox(IdLookAt,L"マウスの方を見る",284,y+94,150,s.lookAtMouse);
@@ -168,6 +170,8 @@ namespace MikuMikuDesktopPerch
             Combo(IdTexture,170,y+78,120);
             Label(L"物理演算の更新",28,y+106,130);
             Combo(IdPhysicsFps,170,y+106,120);
+            Label(L"反復回数",300,y+106,56);
+            Combo(IdPhysicsIterations,360,y+106,76);
             Label(L"共有トゥーンのフォルダ",28,y+134,140);
             Add(L"EDIT",s.toonDir.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+134,190,24,IdToonDir);
             Add(L"BUTTON",L"参照...",BS_PUSHBUTTON|WS_TABSTOP,366,y+133,70,26,IdToonBrowse);
@@ -185,6 +189,8 @@ namespace MikuMikuDesktopPerch
             FillCombo(IdMsaa,{{L"なし",1},{L"2x",2},{L"4x（標準）",4},{L"8x",8}},s.msaa,std::to_wstring(s.msaa)+L"x");
             FillCombo(IdTexture,{{L"512",512},{L"1024（標準）",1024},{L"2048",2048},{L"4096",4096},{L"縮小しない",0}},s.maxTextureSize,std::to_wstring(s.maxTextureSize));
             FillCombo(IdPhysicsFps,{{L"30回/秒",30},{L"60回/秒（標準）",60},{L"90回/秒",90},{L"120回/秒",120}},s.physicsFps,std::to_wstring(s.physicsFps)+L"回/秒");
+            FillCombo(IdPhysicsFilter,{{L"なし",0},{L"弱",1},{L"中",2},{L"強（標準）",3}},s.physicsFilter,L"");
+            FillCombo(IdPhysicsIterations,{{L"10（標準）",10},{L"20",20},{L"30",30},{L"50",50}},s.physicsIterations,std::to_wstring(s.physicsIterations));
         }
 
         void BrowseToonDir()
@@ -568,6 +574,8 @@ namespace MikuMikuDesktopPerch
             s.msaa=ComboValue(IdMsaa,s.msaa);
             s.maxTextureSize=ComboValue(IdTexture,s.maxTextureSize);
             s.physicsFps=ComboValue(IdPhysicsFps,s.physicsFps);
+            s.physicsIterations=ComboValue(IdPhysicsIterations,s.physicsIterations);
+            s.physicsFilter=ComboValue(IdPhysicsFilter,s.physicsFilter);
             wchar_t toon[MAX_PATH]{};
             GetDlgItemTextW(state.window,IdToonDir,toon,MAX_PATH);
             s.toonDir=toon;

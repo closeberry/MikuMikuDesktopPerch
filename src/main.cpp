@@ -201,6 +201,7 @@ namespace
     void ApplyProceduralSettings()
     {
         app.model.SetProcedural(app.settings.blink,app.settings.breath,app.settings.lookAtMouse);
+        app.model.SetPhysicsFilter(app.settings.physicsFilter);
         app.renderer.SetSelfShadow(app.settings.selfShadow);
         app.renderer.SetLight(static_cast<float>(app.settings.lightAzimuth),static_cast<float>(app.settings.lightElevation));
     }
@@ -1106,6 +1107,7 @@ namespace
         if(s.autoBehavior!=current.autoBehavior){current.autoBehavior=s.autoBehavior;app.nextDecision=app.clock+5;}
         current.physics=s.physics;
         if(s.physics!=app.model.PhysicsEnabled())app.model.SetPhysics(s.physics);
+        current.physicsFilter=s.physicsFilter;
         current.blink=s.blink;
         current.breath=s.breath;
         current.lookAtMouse=s.lookAtMouse;
@@ -1138,12 +1140,13 @@ namespace
         if(choice.startWithWindows!=StartupRegistered()&&!SetStartup(choice.startWithWindows))
             ShowMessage(L"スタートアップの設定を変更できませんでした。",MB_ICONERROR);
         const bool restart=s.fps!=current.fps||s.motionBlur!=current.motionBlur||s.msaa!=current.msaa||s.maxTextureSize!=current.maxTextureSize||
-                           s.physicsFps!=current.physicsFps||s.toonDir!=current.toonDir;
+                           s.physicsFps!=current.physicsFps||s.physicsIterations!=current.physicsIterations||s.toonDir!=current.toonDir;
         current.fps=s.fps;
         current.motionBlur=s.motionBlur;
         current.msaa=s.msaa;
         current.maxTextureSize=s.maxTextureSize;
         current.physicsFps=s.physicsFps;
+        current.physicsIterations=s.physicsIterations;
         current.toonDir=s.toonDir;
         if(s.scale!=current.scale)ApplyScale(s.scale);
         current.Save(app.settingsPath);
@@ -1903,6 +1906,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     std::array<std::wstring,2> snapshotGait;   // --walk-motion / --run-motion <vmd>: use that gait motion
     std::optional<int> snapshotFps;           // --fps <n>: drawing rate for this run
     std::optional<bool> snapshotBlur;         // --motion-blur 0|1
+    std::optional<int> snapshotIterations;    // --physics-iterations <n>
+    std::optional<int> snapshotFilter;        // --physics-filter 0-3
     {
         int argc=0;
         LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
@@ -1972,6 +1977,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--motion-blur"&&i+1<argc)
             {
                 snapshotBlur=_wtoi(argv[++i])!=0;
+            }
+            else if(arg==L"--physics-iterations"&&i+1<argc)
+            {
+                snapshotIterations=std::clamp(_wtoi(argv[++i]),1,100);
+            }
+            else if(arg==L"--physics-filter"&&i+1<argc)
+            {
+                snapshotFilter=std::clamp(_wtoi(argv[++i]),0,3);
             }
             else if(arg==L"--fps"&&i+1<argc)
             {
@@ -2085,10 +2098,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(!snapshotModel.empty())app.settings.modelPath=snapshotModel;
         if(snapshotFps)app.settings.fps=*snapshotFps;
         if(snapshotBlur)app.settings.motionBlur=*snapshotBlur;
+        if(snapshotIterations)app.settings.physicsIterations=*snapshotIterations;
+        if(snapshotFilter)app.settings.physicsFilter=*snapshotFilter;
         app.settings.x=app.settings.y=-1;
     }
 
     app.model.SetFrameRate(app.settings.fps);
+    app.model.SetPhysicsIterations(app.settings.physicsIterations);
 
     // Keep asking for a model until one loads (or the user cancels).
     std::wstring error;
