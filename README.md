@@ -103,7 +103,7 @@ DesktopMascot.exe --check-list <list.txt> <out.tsv>
 
 ## 流用元とライセンス
 
-次のものは他から借りたものなので、Gitでは管理していません（`.gitignore` で除外）。ビルドには同じ場所に置いておく必要があります。PMXLoader・bullet3・SimpleMathはMotionTraceEditor（`G:\Develop\DayoPhysicsTools\MotionTraceTool`）からそのままコピーできますが、TgaLoaderは抜き出して手を加えたものなので、手元のファイルを保管しておいてください。
+PMXLoader・bullet3・SimpleMathは公開されているものを借りているので、Gitでは管理していません（`.gitignore` で除外）。ビルドには同じ場所に置いておく必要があります。TgaLoaderは未公開のMotionTraceEditorから抜き出したものなので、Gitで管理しています。
 
 - `src/third_party/PMXLoader.ixx`：MikuMikuDayo（MIT、`licenses/MikuMikuDayo-LICENSE.txt`）。MotionTraceEditorからそのままコピーしたもので、編集していません
 - `src/third_party/TgaLoader.cpp`：MotionTraceEditor の `PreviewTextureFileLoader.cpp` からTGAデコーダーだけを抜き出したもの
