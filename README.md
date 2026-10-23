@@ -105,10 +105,10 @@ DesktopMascot.exe --check-list <list.txt> <out.tsv>
 
 PMXLoader・bullet3・SimpleMathは公開されているものを借りているので、Gitでは管理していません（`.gitignore` で除外）。ビルドには同じ場所に置いておく必要があります。TgaLoaderは未公開のMotionTraceEditorから抜き出したものなので、Gitで管理しています。
 
-- `src/third_party/PMXLoader.ixx`：MikuMikuDayo（MIT、`licenses/MikuMikuDayo-LICENSE.txt`）。MotionTraceEditorからそのままコピーしたもので、編集していません
-- `src/third_party/TgaLoader.cpp`：MotionTraceEditor の `PreviewTextureFileLoader.cpp` からTGAデコーダーだけを抜き出したもの
-- `external/bullet3`：Bullet Physics（zlibライセンス）。MotionTraceEditorに同梱されていた、`btGeneric6DofConstraint.cpp` 修正済みの版
-- `external/DirectXTK12`：SimpleMath（MIT、Microsoft）
+- `src/third_party/PMXLoader.ixx`：MikuMikuDayo（MIT、`licenses/MikuMikuDayo-LICENSE.txt`）の PMXLoader をそのまま置きます（編集しません）
+- `src/third_party/TgaLoader.cpp`：MotionTraceEditor の `PreviewTextureFileLoader.cpp` からTGAデコーダーだけを抜き出したもの（Git管理）
+- `external/bullet3`：Bullet Physics（zlibライセンス、https://github.com/bulletphysics/bullet3 ）の `src` フォルダ一式を置きます。Bullet 3.25 には不具合があるので、`PMXLoader.ixx` の先頭付近のコメントに書かれている修正（`src\BulletDynamics\ConstraintSolver\btGeneric6DofConstraint.cpp`）を当ててください
+- `external/DirectXTK12`：DirectX Tool Kit for DirectX 12（MIT、Microsoft、https://github.com/microsoft/DirectXTK12 ）のうち `Inc/SimpleMath.h`、`Inc/SimpleMath.inl`、`Src/SimpleMath.cpp` を置きます
 
 ## 未対応（今後の候補）
 

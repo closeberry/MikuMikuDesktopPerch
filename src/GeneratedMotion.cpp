@@ -281,7 +281,8 @@ namespace DesktopMascot
         const float follow=static_cast<float>(1.0-std::exp(-dt/0.18));
         activityTime+=dt;
         const bool profile=activity==Activity::Walk||activity==Activity::Run||((activity==Activity::Jump||activity==Activity::Sit)&&direction!=0);
-        const float targetYaw=profile?-direction*WalkYaw:0.0f;
+        // Sitting turns only half as far as walking: enough for the knees to point aside.
+        const float targetYaw=profile?-direction*WalkYaw*(activity==Activity::Sit?0.5f:1.0f):0.0f;
         yaw+=(targetYaw-yaw)*follow;
 
         auto footKey=[&](int side,FXMVECTOR target,float pitch,float footYaw){
