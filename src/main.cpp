@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "ChatWindows.hpp"
 #include "LocalChat.hpp"
+#include "Memory.hpp"
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
 #include "Settings.hpp"
@@ -22,6 +23,7 @@
 #include <cstdarg>
 #include <cwctype>
 #include <optional>
+#include <sstream>
 #include <string_view>
 
 using namespace MikuMikuDesktopPerch;
@@ -100,6 +102,14 @@ namespace
         ChatInput chatInput;
         CharacterProfile character;
         std::vector<ChatMessage> conversation;
+        // Long-term memory: notes about the user, picked out of finished exchanges by a second
+        // request to the LLM once the conversation pauses.
+        CharacterMemory memory;
+        std::unique_ptr<LocalChat> memoryChat;
+        std::vector<ChatMessage> unmemorized;   // exchanges not yet looked through for notes
+        double lastReplyAt=0;
+        int memoryRequest=0;
+        std::wstring memoryReply;
         std::wstring reply;
         size_t replyShown=0;      // characters of the cleaned reply already in the bubble
         Speech speech;            // the reply's syllables on a timeline, for the mouth
@@ -1063,6 +1073,8 @@ namespace
         current.edgeScale=s.edgeScale;
         current.chatEndpoint=s.chatEndpoint;
         if(s.chatModel!=current.chatModel){current.chatModel=s.chatModel;app.conversation.clear();}
+        current.chatMemory=s.chatMemory;
+        if(!current.chatMemory)app.unmemorized.clear();
         if(choice.character.name!=app.character.name||choice.character.persona!=app.character.persona)
         {
             // A new character starts a new conversation.
@@ -1155,9 +1167,13 @@ namespace
         const std::wstring partner=user.empty()
             ?L"話し相手の名前は分からないので、名前では呼ばないでください（「◯◯さん」のような書き方もしないでください）。\n"
             :L"話し相手（あなたに話しかけている人）の名前は「"+user+L"」です。\n";
+        std::wstring remembered;
+        if(app.settings.chatMemory)
+            if(const std::wstring notes=app.memory.Recall(text,1500);!notes.empty())
+                remembered=L"\n以前の会話で覚えたこと（必要なときだけ自然に話に生かしてください。ここにないことを覚えているふりはしないでください）：\n"+notes+L"\n";
         std::vector<ChatMessage> messages;
         messages.push_back({L"system",
-            L"あなたは「"+app.character.name+L"」です。\n"+app.character.persona+L"\n\n"+partner+
+            L"あなたは「"+app.character.name+L"」です。\n"+app.character.persona+L"\n\n"+partner+remembered+
             L"いまは"+clock+L"です。\n"
             L"あなたの返事は、デスクトップの上にいるあなたの頭上の吹き出しに表示されます。"
             L"1〜3文くらいの短い話し言葉で答えてください。Markdown、箇条書き、絵文字、顔文字は使わないでください。"});
@@ -1218,9 +1234,83 @@ namespace
             app.replyShown=all.size();
         }
         app.speech.Finish();
-        if(!clean.empty())app.conversation.push_back({L"assistant",clean});
+        if(!clean.empty())
+        {
+            if(app.settings.chatMemory&&!app.conversation.empty()&&app.conversation.back().role==L"user")
+            {
+                app.unmemorized.push_back(app.conversation.back());
+                app.unmemorized.push_back({L"assistant",clean});
+                while(app.unmemorized.size()>24)app.unmemorized.erase(app.unmemorized.begin());
+            }
+            app.lastReplyAt=app.clock;
+            app.conversation.push_back({L"assistant",clean});
+        }
         else if(!app.conversation.empty()&&app.conversation.back().role==L"user")app.conversation.pop_back();
         app.bubble.Finish();
+    }
+
+    // Once the conversation has paused (or grown long), ask the LLM what in it is worth
+    // remembering. It runs in the background on its own request, never during a reply.
+    void MaybeMemorize()
+    {
+        if(!app.settings.chatMemory||app.unmemorized.empty()||app.settings.chatModel.empty())return;
+        if((app.chat&&app.chat->Busy())||(app.memoryChat&&app.memoryChat->Busy()))return;
+        if(app.clock-app.lastReplyAt<20&&app.unmemorized.size()<8)return;
+        if(!CheckLocalEndpoint(app.settings.chatEndpoint).empty()){app.unmemorized.clear();return;}
+        if(!app.memoryChat)app.memoryChat=std::make_unique<LocalChat>(app.hwnd);
+        const std::wstring& name=app.character.name;
+        const std::wstring partner=app.settings.userName.empty()?L"話し相手":L"話し相手（"+app.settings.userName+L"）";
+        std::wstring dialogue;
+        for(const auto& m:app.unmemorized)dialogue+=(m.role==L"user"?L"話し相手：":name+L"：")+m.content+L"\n";
+        std::wstring known;
+        for(const auto& e:app.memory.Entries())known+=L"- "+e.text+L"\n";
+        if(known.size()>3000)known=known.substr(known.size()-3000);
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        wchar_t today[32]{};
+        swprintf_s(today,L"%d年%d月%d日",now.wYear,now.wMonth,now.wDay);
+        std::vector<ChatMessage> messages;
+        messages.push_back({L"system",L"あなたは会話の記録係です。指示されたことだけを、指示された形で書きます。"});
+        messages.push_back({L"user",
+            L"次は「"+name+L"」と"+partner+L"の会話です。今日は"+today+L"です。\n"
+            L"この先の会話で「"+name+L"」が覚えておくとよい、話し相手についての新しいことを書き出してください。\n"
+            L"覚えること：話し相手の好きなもの・苦手なもの、予定や出来事、家族やペット、仕事や学校や趣味、二人の約束、話し相手が「覚えておいて」と言ったこと。\n"
+            L"書き方：\n"
+            L"・1行に1つ、「話し相手は〜」のように主語をつけた短い一文で、多くても3つまで。\n"
+            L"・「明日」「来週」などは今日の日付をもとに日付に直す。\n"
+            L"・あいさつ、その場かぎりの雑談、"+name+L"自身の発言は書かない。\n"
+            L"・すでに覚えていることと同じ内容は書かない。\n"
+            L"・書くことがなければ「なし」とだけ書く。\n\n"
+            L"すでに覚えていること：\n"+(known.empty()?std::wstring(L"（まだない）\n"):known)+L"\n"
+            L"会話：\n"+dialogue});
+        app.unmemorized.clear();
+        app.memoryReply.clear();
+        app.memoryRequest=app.memoryChat->Start(app.settings.chatEndpoint,app.settings.chatModel,std::move(messages));
+        Trace(L"%.1f memory: request %d",app.clock,app.memoryRequest);
+    }
+
+    void OnMemoryDone(const std::wstring& error)
+    {
+        Trace(L"%.1f memory: done %s",app.clock,error.c_str());
+        if(!error.empty())return;   // the exchanges are dropped: nothing to retry with later
+        bool added=false;
+        std::wstringstream lines(CleanReply(app.memoryReply+L"\n"));
+        for(std::wstring line;std::getline(lines,line);)
+        {
+            // Bullets and numbering the model adds anyway.
+            const size_t start=line.find_first_not_of(L" \t\r-*・•●0123456789.．)）、");
+            if(start==std::wstring::npos)continue;
+            line=line.substr(start);
+            while(!line.empty()&&std::iswspace(line.back()))line.pop_back();
+            if(line.empty()||line.find(L"なし")==0||line.size()>CharacterMemory::MaxLength)continue;
+            if(line.back()==L'：'||line.back()==L':')continue;   // a heading
+            if(app.memory.Add(line,TodayDate())){added=true;Trace(L"%.1f memory: + %s",app.clock,line.c_str());}
+        }
+        if(added)
+        {
+            app.memory.Save();
+            RefreshMemoryWindow();
+        }
     }
 
     // Per frame: the bubble follows the head (its tail points at the top of the head) and the
@@ -1356,7 +1446,7 @@ namespace
             }
             break;
         case IdSettings:
-            ShowSettingsWindow(app.hwnd,{app.settings,StartupRegistered(),app.character},ApplySettings);
+            ShowSettingsWindow(app.hwnd,{app.settings,StartupRegistered(),app.character,&app.memory},ApplySettings);
             break;
         case IdExit:
             DestroyWindow(app.hwnd);
@@ -1461,9 +1551,22 @@ namespace
             return 0;
         }
         case LocalChat::TextMessage:
+            if(app.memoryRequest&&static_cast<int>(lParam)==app.memoryRequest)
+            {
+                std::unique_ptr<std::wstring> text(reinterpret_cast<std::wstring*>(wParam));
+                if(app.memoryReply.size()<8000)app.memoryReply+=*text;
+                return 0;
+            }
             OnChatText(reinterpret_cast<std::wstring*>(wParam),static_cast<int>(lParam));
             return 0;
         case LocalChat::DoneMessage:
+            if(app.memoryRequest&&static_cast<int>(lParam)==app.memoryRequest)
+            {
+                std::unique_ptr<std::wstring> error(reinterpret_cast<std::wstring*>(wParam));
+                app.memoryRequest=0;
+                OnMemoryDone(*error);
+                return 0;
+            }
             OnChatDone(reinterpret_cast<std::wstring*>(wParam),static_cast<int>(lParam));
             return 0;
         case TrayMessage:
@@ -1480,6 +1583,7 @@ namespace
             return 0;
         case WM_DESTROY:
             app.chat.reset();
+            app.memoryChat.reset();
             app.chatInput.Close();
             app.bubble.Hide();
             SaveWindowPosition();
@@ -1796,6 +1900,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     Shell_NotifyIconW(NIM_ADD,&app.tray);
     app.bubble.Create(app.hwnd);
     app.character=CharacterProfile::Load(app.settings.modelPath,app.model.ModelName());
+    app.memory.Load(app.settings.modelPath);
 
     ShowWindow(app.hwnd,SW_SHOWNOACTIVATE);
     // Event-driven: called on the message loop whenever another window takes the foreground.
@@ -1918,6 +2023,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(reached)StopGroundActivity();
             }
             UpdateAutoBehavior();
+            MaybeMemorize();
             if(app.pendingClick&&app.clock>=app.pendingClickAt)
             {
                 OnClick(*app.pendingClick);

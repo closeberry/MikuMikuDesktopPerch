@@ -98,6 +98,7 @@ namespace MikuMikuDesktopPerch
         chatEndpoint=ReadString(path,L"ChatEndpoint",chatEndpoint);
         chatModel=ReadString(path,L"ChatModel",chatModel);
         userName=ReadString(path,L"UserName",userName);
+        chatMemory=ReadInt(path,L"ChatMemory",chatMemory?1:0)!=0;
         edgeScale=std::clamp(static_cast<float>(_wtof(ReadString(path,L"EdgeScale",std::to_wstring(edgeScale)).c_str())),0.0f,10.0f);
     }
 
@@ -134,29 +135,32 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"ChatEndpoint",chatEndpoint);
         WriteString(path,L"ChatModel",chatModel);
         WriteString(path,L"UserName",userName);
+        WriteString(path,L"ChatMemory",chatMemory?L"1":L"0");
         wchar_t edge[32]{};
         swprintf_s(edge,L"%.2f",edgeScale);
         WriteString(path,L"EdgeScale",edge);
     }
 
+    // characters\<model file name>-<hash of its full path><extension>: two copies of a model in
+    // different folders are different characters, and the file name says which model it is.
+    std::wstring CharacterDataFile(const std::wstring& modelPath,const wchar_t* extension,bool create)
+    {
+        wchar_t base[MAX_PATH]{};
+        if(!GetEnvironmentVariableW(L"LOCALAPPDATA",base,MAX_PATH))return {};
+        std::wstring key=modelPath;
+        std::transform(key.begin(),key.end(),key.begin(),[](wchar_t c){return static_cast<wchar_t>(std::towlower(c));});
+        unsigned long long hash=1469598103934665603ull;
+        for(const wchar_t c:key){hash^=static_cast<unsigned long long>(c);hash*=1099511628211ull;}
+        wchar_t hex[20]{};
+        swprintf_s(hex,L"%016llx",hash);
+        const std::filesystem::path folder=std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"characters";
+        if(create){std::error_code ec;std::filesystem::create_directories(folder,ec);}
+        return (folder/(std::filesystem::path(modelPath).stem().wstring()+L"-"+hex+extension)).wstring();
+    }
+
     namespace
     {
-        // characters\<model file name>-<hash of its full path>.ini: two copies of a model in
-        // different folders are different characters, and the file name says which model it is.
-        std::wstring CharacterFile(const std::wstring& modelPath,bool create)
-        {
-            wchar_t base[MAX_PATH]{};
-            if(!GetEnvironmentVariableW(L"LOCALAPPDATA",base,MAX_PATH))return {};
-            std::wstring key=modelPath;
-            std::transform(key.begin(),key.end(),key.begin(),[](wchar_t c){return static_cast<wchar_t>(std::towlower(c));});
-            unsigned long long hash=1469598103934665603ull;
-            for(const wchar_t c:key){hash^=static_cast<unsigned long long>(c);hash*=1099511628211ull;}
-            wchar_t hex[20]{};
-            swprintf_s(hex,L"%016llx",hash);
-            const std::filesystem::path folder=std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"characters";
-            if(create){std::error_code ec;std::filesystem::create_directories(folder,ec);}
-            return (folder/(std::filesystem::path(modelPath).stem().wstring()+L"-"+hex+L".ini")).wstring();
-        }
+        std::wstring CharacterFile(const std::wstring& modelPath,bool create){return CharacterDataFile(modelPath,L".ini",create);}
 
         // One ini line holds the whole persona: line breaks and backslashes are escaped.
         std::wstring Escape(const std::wstring& text)

@@ -1,4 +1,5 @@
 #pragma once
+#include "Memory.hpp"
 #include "Settings.hpp"
 #include <windows.h>
 #include <functional>
@@ -12,13 +13,19 @@ namespace MikuMikuDesktopPerch
         Settings settings;
         bool startWithWindows=false;
         CharacterProfile character;   // of the current model
+        // The current model's memory: the memory window edits it (and saves it) directly,
+        // since notes keep arriving from conversations while the settings are open.
+        CharacterMemory* memory=nullptr;
     };
 
     // Open the settings window (or bring it forward if open) over owner, filled from current.
     // OK calls onApply with the edited values and closes it; Cancel just closes it.
     void ShowSettingsWindow(HWND owner,const SettingsChoice& current,std::function<void(const SettingsChoice&)> onApply);
 
-    // The open settings window, or its persona dialog while that is open (nullptr when
-    // closed): the message loop passes it to IsDialogMessage for Tab, Enter and Esc.
+    // The open settings window, or its persona or memory dialog while one is open (nullptr
+    // when closed): the message loop passes it to IsDialogMessage for Tab, Enter and Esc.
     HWND SettingsWindowHandle();
+
+    // Notes were added to the memory: the memory window, if open, shows them.
+    void RefreshMemoryWindow();
 }

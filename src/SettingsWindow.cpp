@@ -23,14 +23,17 @@ namespace MikuMikuDesktopPerch
             IdScale,IdEdge,IdTopmost,IdStartup,
             IdFps,IdMsaa,IdTexture,IdPhysicsFps,IdToonDir,IdToonBrowse,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
-            IdPersonaText,IdPersonaReset
+            IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,
+            IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
+        constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
 
         struct State
         {
             HWND window=nullptr;
             HWND persona=nullptr;   // the persona dialog, while open
+            HWND memory=nullptr;    // the memory dialog, while open
             HFONT font=nullptr;
             SettingsChoice choice;
             std::function<void(const SettingsChoice&)> onApply;
@@ -108,7 +111,10 @@ namespace MikuMikuDesktopPerch
             Label(L"あなたの呼び名",28,y+82,130);
             Add(L"EDIT",s.userName.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+82,190,24,IdUserName);
             SendDlgItemMessageW(state.window,IdUserName,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"例: たろう"));
+            CheckBox(IdChatMemory,L"会話の内容を覚える",28,y+112,140,s.chatMemory);
             Add(L"BUTTON",L"人物設定...",BS_PUSHBUTTON|WS_TABSTOP,170,y+110,110,26,IdPersona);
+            Add(L"BUTTON",L"記憶...",BS_PUSHBUTTON|WS_TABSTOP,286,y+110,110,26,IdMemory);
+            if(!state.choice.memory)EnableWindow(GetDlgItem(state.window,IdMemory),FALSE);
             y+=152;
             Group(L"詳細（変更すると再起動します）",y,166);
             Label(L"描画のfps",28,y+22,130);
@@ -264,6 +270,160 @@ namespace MikuMikuDesktopPerch
             SetFocus(GetDlgItem(p,IdPersonaName));
         }
 
+        // The memory dialog: what the character has learnt about the user, newest last.
+        // Deleting and adding take effect (and are saved) at once.
+        void FillMemoryList()
+        {
+            if(!state.memory||!state.choice.memory)return;
+            HWND list=GetDlgItem(state.memory,IdMemoryList);
+            const int top=static_cast<int>(SendMessageW(list,LB_GETTOPINDEX,0,0));
+            SendMessageW(list,WM_SETREDRAW,FALSE,0);
+            SendMessageW(list,LB_RESETCONTENT,0,0);
+            int widest=0;
+            HDC dc=GetDC(list);
+            const HGDIOBJ old=SelectObject(dc,state.font);
+            for(const auto& e:state.choice.memory->Entries())
+            {
+                const std::wstring line=(e.date.empty()?std::wstring(L"----------"):e.date)+L"　"+e.text;
+                const auto index=SendMessageW(list,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(line.c_str()));
+                SendMessageW(list,LB_SETITEMDATA,index,e.id);
+                SIZE size{};
+                GetTextExtentPoint32W(dc,line.c_str(),static_cast<int>(line.size()),&size);
+                widest=(std::max)(widest,static_cast<int>(size.cx));
+            }
+            SelectObject(dc,old);
+            ReleaseDC(list,dc);
+            SendMessageW(list,LB_SETHORIZONTALEXTENT,widest+Px(8),0);
+            SendMessageW(list,LB_SETTOPINDEX,(std::max)(0,top),0);
+            SendMessageW(list,WM_SETREDRAW,TRUE,0);
+            InvalidateRect(list,nullptr,TRUE);
+            const std::wstring count=std::to_wstring(state.choice.memory->Entries().size())+L"件";
+            SetDlgItemTextW(state.memory,IdMemoryCount,count.c_str());
+        }
+
+        void SaveMemory()
+        {
+            if(state.choice.memory&&!state.choice.memory->Save())
+                MessageBoxW(state.memory,L"記憶を保存できませんでした。",L"MikuMikuDesktopPerch",MB_ICONERROR);
+            FillMemoryList();
+        }
+
+        void CloseMemory()
+        {
+            if(!state.memory)return;
+            EnableWindow(state.window,TRUE);
+            DestroyWindow(state.memory);
+            state.memory=nullptr;
+            SetForegroundWindow(state.window);
+        }
+
+        LRESULT CALLBACK MemoryProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
+        {
+            CharacterMemory* memory=state.choice.memory;
+            switch(message)
+            {
+            case WM_COMMAND:
+                switch(LOWORD(wParam))
+                {
+                case IdMemoryAdd:
+                {
+                    std::wstring text(CharacterMemory::MaxLength+1,L'\0');
+                    text.resize(static_cast<size_t>(GetDlgItemTextW(hwnd,IdMemoryNew,text.data(),static_cast<int>(text.size()))));
+                    if(memory&&memory->Add(text,TodayDate()))
+                    {
+                        SetDlgItemTextW(hwnd,IdMemoryNew,L"");
+                        SaveMemory();
+                        HWND list=GetDlgItem(hwnd,IdMemoryList);
+                        SendMessageW(list,LB_SETTOPINDEX,SendMessageW(list,LB_GETCOUNT,0,0)-1,0);
+                    }
+                    SetFocus(GetDlgItem(hwnd,IdMemoryNew));
+                    return 0;
+                }
+                case IdMemoryDelete:
+                {
+                    HWND list=GetDlgItem(hwnd,IdMemoryList);
+                    const int selected=static_cast<int>(SendMessageW(list,LB_GETSELCOUNT,0,0));
+                    if(!memory||selected<=0)return 0;
+                    std::vector<int> rows(static_cast<size_t>(selected));
+                    SendMessageW(list,LB_GETSELITEMS,selected,reinterpret_cast<LPARAM>(rows.data()));
+                    for(const int row:rows)memory->Remove(static_cast<int>(SendMessageW(list,LB_GETITEMDATA,row,0)));
+                    SaveMemory();
+                    return 0;
+                }
+                case IdMemoryClear:
+                    if(memory&&!memory->Entries().empty()&&
+                       MessageBoxW(hwnd,L"このモデルの記憶をすべて削除します。よろしいですか？",L"MikuMikuDesktopPerch",MB_ICONWARNING|MB_OKCANCEL|MB_DEFBUTTON2)==IDOK)
+                    {
+                        memory->Clear();
+                        SaveMemory();
+                    }
+                    return 0;
+                case IDOK:
+                    // Enter in the new-note box adds it; anywhere else it closes.
+                    if(GetFocus()==GetDlgItem(hwnd,IdMemoryNew)){SendMessageW(hwnd,WM_COMMAND,IdMemoryAdd,0);return 0;}
+                    CloseMemory();
+                    return 0;
+                case IDCANCEL:
+                    CloseMemory();
+                    return 0;
+                }
+                break;
+            case WM_CLOSE:
+                CloseMemory();
+                return 0;
+            }
+            return DefWindowProcW(hwnd,message,wParam,lParam);
+        }
+
+        void OpenMemory()
+        {
+            if(state.memory){SetForegroundWindow(state.memory);return;}
+            if(!state.choice.memory)return;
+            static bool registered=false;
+            const HINSTANCE instance=GetModuleHandleW(nullptr);
+            if(!registered)
+            {
+                WNDCLASSEXW wc{sizeof(wc)};
+                wc.lpfnWndProc=MemoryProc;
+                wc.hInstance=instance;
+                wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+                wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
+                wc.lpszClassName=MemoryClass;
+                if(!RegisterClassExW(&wc))return;
+                registered=true;
+            }
+            const DWORD style=WS_CAPTION|WS_SYSMENU;
+            const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
+            RECT frame{0,0,Px(540),Px(420)};
+            AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
+            RECT owner{};
+            GetWindowRect(state.window,&owner);
+            const std::wstring title=L"記憶（"+state.choice.character.name+L"）";
+            state.memory=CreateWindowExW(exStyle,MemoryClass,title.c_str(),style,owner.left+Px(10),owner.top+Px(60),
+                                         frame.right-frame.left,frame.bottom-frame.top,state.window,nullptr,instance,nullptr);
+            if(!state.memory)return;
+            const HWND m=state.memory;
+            AddTo(m,L"STATIC",L"会話から覚えたことです。次の会話から、話に関係のあるものを思い出します。削除や追加はすぐ保存されます"
+                              L"（このコンピューターの中だけに保存し、外部には送りません）。",
+                  SS_LEFT,16,12,508,40);
+            AddTo(m,L"LISTBOX",L"",LBS_EXTENDEDSEL|LBS_NOINTEGRALHEIGHT|LBS_NOTIFY|WS_VSCROLL|WS_HSCROLL|WS_BORDER|WS_TABSTOP,16,56,508,236,IdMemoryList);
+            AddTo(m,L"STATIC",L"",SS_LEFT,16,298,120,20,IdMemoryCount);
+            AddTo(m,L"BUTTON",L"選んだものを削除",BS_PUSHBUTTON|WS_TABSTOP,296,296,130,28,IdMemoryDelete);
+            AddTo(m,L"BUTTON",L"すべて削除",BS_PUSHBUTTON|WS_TABSTOP,434,296,90,28,IdMemoryClear);
+            HWND input=AddTo(m,L"EDIT",L"",ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,16,340,410,24,IdMemoryNew);
+            SendMessageW(input,EM_SETLIMITTEXT,CharacterMemory::MaxLength,0);
+            SendMessageW(input,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"覚えてほしいこと（例: 話し相手はコーヒーが好き）"));
+            AddTo(m,L"BUTTON",L"追加",BS_PUSHBUTTON|WS_TABSTOP,434,338,90,28,IdMemoryAdd);
+            AddTo(m,L"BUTTON",L"閉じる",BS_PUSHBUTTON|WS_TABSTOP,434,380,90,28,IDCANCEL);
+            FillMemoryList();
+            HWND list=GetDlgItem(m,IdMemoryList);
+            SendMessageW(list,LB_SETTOPINDEX,(std::max<LRESULT>)(0,SendMessageW(list,LB_GETCOUNT,0,0)-1),0);
+            EnableWindow(state.window,FALSE);
+            ShowWindow(m,SW_SHOWNORMAL);
+            SetForegroundWindow(m);
+            SetFocus(list);
+        }
+
         SettingsChoice Read()
         {
             SettingsChoice c=state.choice;
@@ -297,6 +457,7 @@ namespace MikuMikuDesktopPerch
             wchar_t user[128]{};
             GetDlgItemTextW(state.window,IdUserName,user,128);
             s.userName=trim(user);
+            s.chatMemory=Checked(IdChatMemory);
             return c;
         }
 
@@ -333,6 +494,9 @@ namespace MikuMikuDesktopPerch
                 case IdPersona:
                     OpenPersona();
                     return 0;
+                case IdMemory:
+                    OpenMemory();
+                    return 0;
                 }
                 break;
             case WM_CLOSE:
@@ -340,6 +504,7 @@ namespace MikuMikuDesktopPerch
                 return 0;
             case WM_DESTROY:
                 if(state.persona){DestroyWindow(state.persona);state.persona=nullptr;}
+                if(state.memory){DestroyWindow(state.memory);state.memory=nullptr;}
                 state.window=nullptr;
                 if(state.font){DeleteObject(state.font);state.font=nullptr;}
                 state.onApply=nullptr;
@@ -401,5 +566,7 @@ namespace MikuMikuDesktopPerch
         SetFocus(GetDlgItem(state.window,IdAuto));
     }
 
-    HWND SettingsWindowHandle(){return state.persona?state.persona:state.window;}
+    HWND SettingsWindowHandle(){return state.persona?state.persona:state.memory?state.memory:state.window;}
+
+    void RefreshMemoryWindow(){FillMemoryList();}
 }

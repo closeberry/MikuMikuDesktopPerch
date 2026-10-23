@@ -54,6 +54,6 @@ namespace MikuMikuDesktopPerch
         std::thread worker;
         std::shared_ptr<Request> current;
         std::atomic<bool> busy{false};
-        int nextId=1;
+        inline static int nextId=1;   // shared, so replies from two instances never mix up
     };
 }

@@ -37,11 +37,16 @@ namespace MikuMikuDesktopPerch
         std::wstring chatEndpoint=L"http://127.0.0.1:11434/v1";
         std::wstring chatModel;
         std::wstring userName;      // what the mascot calls the user (empty: no name)
+        bool chatMemory=true;       // remember things from conversations (per model, on this computer)
 
         static std::wstring DefaultPath();
         void Load(const std::wstring& path);
         void Save(const std::wstring& path) const;
     };
+
+    // A file of the current model's character in %LOCALAPPDATA%\MikuMikuDesktopPerch\characters
+    // (the profile is <name>.ini); create makes the folder. Empty when there is no such folder.
+    std::wstring CharacterDataFile(const std::wstring& modelPath,const wchar_t* extension,bool create);
 
     // Who the mascot is when talking, kept per model (a model is its own character) in
     // %LOCALAPPDATA%\MikuMikuDesktopPerch\characters, not in the shared settings file.

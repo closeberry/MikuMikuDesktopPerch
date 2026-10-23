@@ -87,6 +87,7 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ChatWindows.cpp" />
     <ClCompile Include="src\LocalChat.cpp" />
+    <ClCompile Include="src\Memory.cpp" />
     <ClCompile Include="src\Speech.cpp" />
     <ClCompile Include="src\MascotModel.cpp" />
     <ClCompile Include="src\GeneratedMotion.cpp" />
@@ -104,6 +105,7 @@
     <ClInclude Include="src\MascotModel.hpp" />
     <ClInclude Include="src\ChatWindows.hpp" />
     <ClInclude Include="src\LocalChat.hpp" />
+    <ClInclude Include="src\Memory.hpp" />
     <ClInclude Include="src\Speech.hpp" />
     <ClInclude Include="src\third_party\LipSyncCore.hpp" />
     <ClInclude Include="src\GeneratedMotion.hpp" />
