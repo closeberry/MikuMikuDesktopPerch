@@ -211,6 +211,8 @@ namespace MikuMikuDesktopPerch
             pick(rig.smileEyes,{L"笑い",L"にっこり"});
             pick(rig.smileMouth,{L"にやり",L"にっこり口",L"ワ"});
             pick(rig.wink,{L"ウィンク",L"ウインク",L"ウィンク２",L"ウィンク右"});
+            pick(rig.eyesClosed,{L"まばたき",L"瞬き",L"blink",L"Blink"});
+            pick(rig.mouthOpen,{L"あ",L"あ２",L"a"});
         }
         if(const int head=Find(pmx,{L"頭"});head>=0)rig.headY=XMVectorGetY(restPos(head));
         else rig.headY=rig.shoulderY+0.25f*rig.legLength;
@@ -334,8 +336,15 @@ namespace MikuMikuDesktopPerch
     bool GeneratedMotion::HeadBusy() const
     {
         if(gesture==Gesture::None||gestureWeight<=0.01f)return false;
-        return gesture==Gesture::Wave||gesture==Gesture::Peace||gesture==Gesture::LookAtPalm||
-               gesture==Gesture::LookAround||gesture==Gesture::HeadTilt||gesture==Gesture::Stretch;
+        switch(gesture)
+        {
+        case Gesture::Wave:case Gesture::Peace:case Gesture::LookAtPalm:case Gesture::LookAround:case Gesture::HeadTilt:
+        case Gesture::Stretch:case Gesture::TuckHair:case Gesture::Yawn:case Gesture::Think:case Gesture::Hum:
+        case Gesture::LookFar:case Gesture::Cheeks:
+            return true;
+        default:
+            return false;
+        }
     }
 
     bool GeneratedMotion::ForceGesture(const std::wstring& name)
@@ -343,9 +352,19 @@ namespace MikuMikuDesktopPerch
         static const std::pair<const wchar_t*,Gesture> names[]={
             {L"hip",Gesture::HandOnHip},{L"wave",Gesture::Wave},{L"peace",Gesture::Peace},{L"behind",Gesture::HandsBehind},
             {L"palm",Gesture::LookAtPalm},{L"folded",Gesture::HandsFolded},{L"stretch",Gesture::Stretch},
-            {L"look",Gesture::LookAround},{L"tilt",Gesture::HeadTilt},{L"stand",Gesture::Stand}};
+            {L"look",Gesture::LookAround},{L"tilt",Gesture::HeadTilt},{L"stand",Gesture::Stand},
+            {L"hair",Gesture::TuckHair},{L"yawn",Gesture::Yawn},{L"think",Gesture::Think},{L"hum",Gesture::Hum},
+            {L"clap",Gesture::Clap},{L"far",Gesture::LookFar},{L"cheeks",Gesture::Cheeks}};
+        // name or name@seconds: hold the gesture, or freeze it that far into its timeline.
+        const auto at=name.find(L'@');
+        const std::wstring base=name.substr(0,at);
         for(const auto& [n,g]:names)
-            if(name==n){gesture=g;gestureSide=0;gestureTime=0;gestureLength=1e9;return true;}
+            if(base==n)
+            {
+                gesture=g;gestureSide=0;gestureTime=0;gestureLength=1e9;frozenAt=-1;
+                if(at!=std::wstring::npos){frozenAt=std::stod(name.substr(at+1));gestureLength=GestureLengths(g)[1];}
+                return true;
+            }
         return false;
     }
 
@@ -368,11 +387,10 @@ namespace MikuMikuDesktopPerch
             gesture=next;
             gestureSide=Random01()<0.5f?0:1;
             gestureTime=0;
-            static constexpr float lengths[GestureCount][2]={{5,8},{2.6f,3.6f},{3,4},{5,8},{3,4.5f},{5,8},{3,4},{4,5},{2.5f,3.5f},{3,6}};
-            const auto& range=lengths[static_cast<int>(next)-1];
+            const auto range=GestureLengths(next);
             gestureLength=range[0]+(range[1]-range[0])*Random01();
         }
-        gestureTime+=dt;
+        gestureTime=frozenAt>=0?frozenAt:gestureTime+dt;
         if(gestureTime>=gestureLength)
         {
             gesture=Gesture::None;
@@ -381,7 +399,7 @@ namespace MikuMikuDesktopPerch
             return;
         }
         constexpr double Blend=0.7;
-        gestureWeight=Smooth(static_cast<float>(std::min({gestureTime/Blend,(gestureLength-gestureTime)/Blend,1.0})));
+        gestureWeight=frozenAt>=0?1.0f:Smooth(static_cast<float>(std::min({gestureTime/Blend,(gestureLength-gestureTime)/Blend,1.0})));
 
         std::vector<Key> g=keys;
         const int s=gestureSide;
@@ -392,6 +410,11 @@ namespace MikuMikuDesktopPerch
         auto both=[&](auto&& f){f(0,1.0f);f(1,-1.0f);};
         auto neck=[&](float pitch,float yawAngle,float roll){SetRotation(g,rig.neck,XMQuaternionRotationRollPitchYaw(pitch,yawAngle,roll));};
         auto face=[&](int morph,float weight){if(morph>=0)morphOut.push_back({morph,weight*gestureWeight});};
+        const float a=static_cast<float>(gestureTime),len=static_cast<float>(gestureLength);
+        // 0 -> 1 over [from, from + span] seconds into the gesture.
+        auto ramp=[&](float from,float span){return Smooth(std::clamp((a-from)/span,0.0f,1.0f));};
+        auto mix=[](FXMVECTOR p,FXMVECTOR q,float w){return XMVectorLerp(p,q,w);};
+        const float faceZ=S.z-0.12f*L;   // roughly the front of the face
         switch(gesture)
         {
         case Gesture::HandOnHip:
@@ -437,12 +460,31 @@ namespace MikuMikuDesktopPerch
             neck(-4.0f*Deg,0,0);
             break;
         case Gesture::Stretch:
-            // Arms stretched up over the head, leaning back a little with the eyes narrowed.
-            both([&](int side,float o){ReachArm(g,side,XMVectorSet(o*0.08f*L,rig.headY+0.40f*L,rig.shoulderPos[side].z+0.02f*L,0),XMVectorSet(o,0.2f,0.4f,0));CurlFingers(g,side,{0.2f,0.2f,0.25f,0.3f});});
-            SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(6.0f*Deg,0,0));
-            neck(10.0f*Deg,0,0);
-            face(rig.smileEyes,0.8f);
+        {
+            // A slow stretch: the arms rise over the head for about two seconds, push up further
+            // while the body leans back and over to one side with the eyes shut, then come down
+            // out to the sides with a breath out.
+            const float rise=ramp(0,2.0f),release=ramp(len-1.8f,1.4f);
+            const float peak=std::sin(XM_PI*std::clamp((a-1.6f)/std::max(len-3.4f,0.5f),0.0f,1.0f));
+            both([&](int side,float o){
+                const float sz=rig.shoulderPos[side].z;
+                const XMVECTOR front=XMVectorSet(o*0.16f*L,rig.shoulderPos[side].y+0.10f*L,sz-0.22f*L,0);
+                const XMVECTOR up=XMVectorSet(o*0.07f*L,rig.headY+(0.36f+0.06f*peak)*L,sz+0.02f*L,0);
+                const XMVECTOR down=XMVectorSet(o*0.42f*L,rig.shoulderPos[side].y-0.20f*L,sz+0.02f*L,0);
+                const XMVECTOR hang=XMVectorAdd(XMLoadFloat3(&rig.shoulderPos[side]),XMVectorSet(o*0.05f*L,-0.40f*L,-0.06f*L,0));
+                XMVECTOR wrist=mix(hang,front,ramp(0,0.9f));
+                wrist=mix(wrist,up,ramp(0.8f,1.2f));
+                wrist=mix(wrist,down,release);
+                ReachArm(g,side,wrist,XMVectorSet(o,0.2f-0.6f*release,0.4f,0));
+                CurlFingers(g,side,{0.2f-0.15f*peak,0.2f-0.15f*peak,0.25f-0.1f*peak,0.3f-0.1f*peak});
+            });
+            const float lean=rise*(1-release);
+            SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw((4.0f+6.0f*peak)*Deg*lean,0,out*5.0f*Deg*peak));
+            neck((6.0f+8.0f*peak)*Deg*lean,0,out*3.0f*Deg*peak);
+            face(rig.eyesClosed>=0?rig.eyesClosed:rig.smileEyes,0.9f*peak);
+            face(rig.smileMouth,0.4f*release);
             break;
+        }
         case Gesture::LookAround:
             // Looking to one side, then the other.
             neck(-2.0f*Deg,out*34.0f*Deg*std::sin(XM_2PI*u),0);
@@ -451,6 +493,78 @@ namespace MikuMikuDesktopPerch
             neck(-3.0f*Deg,0,-out*12.0f*Deg);
             break;
         case Gesture::Stand:
+            break;
+        case Gesture::TuckHair:
+        {
+            // Tucking the hair behind the ear: the hand comes up beside the head and strokes
+            // back and down, the head tilting a little the other way, eyes lowered.
+            const float stroke=ramp(0.8f,1.4f);
+            ReachArm(g,s,XMVectorSet(out*(0.17f+0.02f*stroke)*L,rig.headY+(0.10f-0.06f*stroke)*L,S.z-(0.10f-0.12f*stroke)*L,0),XMVectorSet(out,-1,0.2f,0));
+            CurlFingers(g,s,{0.15f,0.15f,0.25f,0.35f});
+            neck(-6.0f*Deg,-out*6.0f*Deg,out*6.0f*Deg);
+            break;
+        }
+        case Gesture::Yawn:
+        {
+            // A yawn: the mouth opens wide behind the back of a hand, eyes shut, head back a
+            // little, then a small blink of relief.
+            const float open=std::sin(XM_PI*std::clamp((a-0.5f)/std::max(len-1.6f,0.5f),0.0f,1.0f));
+            ReachArm(g,s,XMVectorSet(out*0.05f*L,rig.headY-0.08f*L,faceZ-0.14f*L,0),XMVectorSet(out,-1,0.1f,0));
+            CurlFingers(g,s,{0.15f,0.15f,0.2f,0.25f});
+            SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(3.0f*Deg*open,0,0));
+            neck(8.0f*Deg*open,0,-out*4.0f*Deg);
+            face(rig.mouthOpen,0.9f*open);
+            face(rig.eyesClosed>=0?rig.eyesClosed:rig.smileEyes,std::min(1.0f,1.4f*open));
+            break;
+        }
+        case Gesture::Think:
+            // Thinking: a hand at the chin, the other arm across the front holding that elbow,
+            // the head tilted and turned a little up.
+            ReachArm(g,s,XMVectorSet(out*0.03f*L,rig.headY-0.10f*L,faceZ-0.10f*L,0),XMVectorSet(out*0.3f,-1,0,0));
+            CurlFingers(g,s,{0.5f,0.6f,0.8f,0.8f});
+            ReachArm(g,1-s,XMVectorSet(out*0.10f*L,S.y-0.34f*L,S.z-0.22f*L,0),XMVectorSet(-out*0.6f,-1,0.4f,0));
+            CurlFingers(g,1-s,{0.3f,0.3f,0.35f,0.35f});
+            neck(5.0f*Deg,out*8.0f*Deg,-out*9.0f*Deg+out*3.0f*Deg*std::sin(XM_2PI*a/3.0f));
+            break;
+        case Gesture::Hum:
+        {
+            // Humming along: the body sways gently side to side with a soft smile.
+            const float sway=std::sin(XM_2PI*a/1.6f);
+            SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(0,0,4.0f*Deg*sway));
+            SetRotation(g,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,0,-1.5f*Deg*sway));
+            neck(-2.0f*Deg,0,5.0f*Deg*std::sin(XM_2PI*a/1.6f-0.6f));
+            face(rig.smileEyes,0.6f);
+            face(rig.smileMouth,0.4f);
+            break;
+        }
+        case Gesture::Clap:
+        {
+            // A few small claps in front of the chest, smiling.
+            const float beat=0.5f+0.5f*std::cos(XM_2PI*2.4f*std::max(a-0.6f,0.0f));
+            both([&](int side,float o){
+                ReachArm(g,side,XMVectorSet(o*(0.045f+0.07f*beat)*L,S.y-0.14f*L,S.z-0.30f*L,0),XMVectorSet(o,-1,0.5f,0));
+                CurlFingers(g,side,{0.1f,0.1f,0.15f,0.2f});
+            });
+            neck(-3.0f*Deg,0,0);
+            face(rig.smileEyes,0.9f);
+            face(rig.smileMouth,0.7f);
+            break;
+        }
+        case Gesture::LookFar:
+            // Shading the eyes with a hand and gazing into the distance, slowly scanning.
+            ReachArm(g,s,XMVectorSet(out*0.09f*L,rig.headY+0.10f*L,faceZ-0.16f*L,0),XMVectorSet(out,-0.4f,0.2f,0));
+            CurlFingers(g,s,{0.05f,0.05f,0.1f,0.15f});
+            neck(6.0f*Deg,out*18.0f*Deg*std::sin(XM_PI*(u-0.5f)),0);
+            break;
+        case Gesture::Cheeks:
+            // Both hands on the cheeks with a happy smile, the head rocking a little.
+            both([&](int side,float o){
+                ReachArm(g,side,XMVectorSet(o*0.14f*L,rig.headY-0.04f*L,faceZ-0.04f*L,0),XMVectorSet(o,-1,0.1f,0));
+                CurlFingers(g,side,{0.1f,0.1f,0.15f,0.2f});
+            });
+            neck(-4.0f*Deg,0,7.0f*Deg*std::sin(XM_2PI*a/2.2f));
+            face(rig.smileEyes,1.0f);
+            face(rig.smileMouth,0.8f);
             break;
         case Gesture::None:
             break;

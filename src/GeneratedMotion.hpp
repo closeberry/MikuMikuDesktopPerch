@@ -89,12 +89,13 @@ namespace MikuMikuDesktopPerch
             std::array<DirectX::XMFLOAT3,2> shoulderPos{};   // 腕 rest position
             float forearm=3;                                 // elbow to wrist
             // Face morphs for gestures (-1 when the model lacks them).
-            int smileEyes=-1,smileMouth=-1,wink=-1;
+            int smileEyes=-1,smileMouth=-1,wink=-1,eyesClosed=-1,mouthOpen=-1;
         };
 
         // Stand is the plain standing pose, taken as one gesture among the others.
-        enum class Gesture {None,HandOnHip,Wave,Peace,HandsBehind,LookAtPalm,HandsFolded,Stretch,LookAround,HeadTilt,Stand};
-        static constexpr int GestureCount=10;
+        enum class Gesture {None,HandOnHip,Wave,Peace,HandsBehind,LookAtPalm,HandsFolded,Stretch,LookAround,HeadTilt,Stand,
+                            TuckHair,Yawn,Think,Hum,Clap,LookFar,Cheeks};
+        static constexpr int GestureCount=17;
 
         void Generate(std::vector<Key>& keys,double dt);
         void DistributeTwist(std::vector<Key>& keys) const;
@@ -132,6 +133,16 @@ namespace MikuMikuDesktopPerch
         std::array<Gesture,2> recentGestures{Gesture::None,Gesture::None};
         int gestureSide=0;                   // 0 left hand, 1 right
         double gestureTime=0,gestureLength=0,nextGestureAt=2;
+        double frozenAt=-1;                  // diagnostics: hold the gesture at this time
+        // Shortest and longest run of each gesture, in seconds.
+        static std::array<float,2> GestureLengths(Gesture g)
+        {
+            static constexpr float lengths[GestureCount][2]={
+                {5,8},{2.6f,3.6f},{3,4},{5,8},{3,4.5f},{5,8},{5.5f,7},{4,5},{2.5f,3.5f},{3,6},
+                {3,4},{3.5f,4.5f},{4,6},{4,6},{2.5f,3.2f},{4,5.5f},{3,4}};
+            const auto& r=lengths[static_cast<int>(g)-1];
+            return {r[0],r[1]};
+        }
         // Standing weight: -1 on the right foot, +1 on the left, 0 on both. It moves from
         // weightFrom to weightTo over weightDuration, then stays until weightHoldUntil.
         float weightFrom=0,weightTo=0;
