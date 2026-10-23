@@ -1,14 +1,16 @@
 # MikuMikuDesktopPerch
 
-デスクトップ上にMMDモデル（PMX）を透過表示し、VMDモーションをループ再生する常駐マスコットです。
+デスクトップ上にMMDモデル（PMX）を透過表示する常駐マスコットです。プログラムで生成したオリジナルのモーションで歩いたり、ウィンドウの縁に座ったりぶら下がったりします（VMDモーションのループ再生もできます）。
 Win32 + Direct3D 12 + DirectComposition で動作し、モデルが描かれていない部分のクリックは下のウィンドウに抜けます。
 
 ## ビルド
 
-Visual Studio 18（C++20、v143ツールセット）で `MikuMikuDesktopPerch.vcxproj` をビルドします。
+必要なもの：Visual Studio 2022 以降（「C++によるデスクトップ開発」ワークロード、v143ツールセット、Windows 10/11 SDK）。C++20でビルドします。
+
+ビルドの前に、Gitで管理していない借用コードを所定の場所に置いてください（[流用元とライセンス](#流用元とライセンス)）。そのうえで `MikuMikuDesktopPerch.vcxproj` をVisual Studioで開いてビルドするか、Developer PowerShell for VS で次を実行します。
 
 ```powershell
-& "G:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" MikuMikuDesktopPerch.vcxproj /p:Configuration=Release /p:Platform=x64
+msbuild MikuMikuDesktopPerch.vcxproj /p:Configuration=Release /p:Platform=x64
 ```
 
 出力先は `bin\<Configuration>\MikuMikuDesktopPerch.exe` です。シェーダー（`shaders\*.hlsl`）はビルド時にFXCでコンパイルされ、exeに埋め込まれます。
@@ -17,7 +19,7 @@ Visual Studio 18（C++20、v143ツールセット）で `MikuMikuDesktopPerch.vc
 
 - 左ドラッグ：移動
 - 右クリック／タスクトレイアイコンの右クリック：メニュー（モデルを開く、モーションを開く、大きさ（50〜200%、10%刻み）、物理演算、まばたき、呼吸、マウスの方を見る、最前面に表示、終了）
-- 大きさを変えると、足元（ウィンドウ下端の中央）を基準に拡大・縮小します
+- 大きさを変えると、足元を基準に拡大・縮小します
 - まばたき・呼吸・視線はVMDの動きに上乗せされ、物理演算（髪やスカートの揺れ）にも反映されます。マウスが8秒間止まっていると、首の向きはモーション本来の向きにゆっくり戻ります
 
 ## 生成モーション（試作）
@@ -28,7 +30,7 @@ VMDを使わず、プログラムで生成する動きです。作法は [docs/M
 - **表示のしくみ**：ウィンドウ自体は作業領域（タスクバーを除く画面）全体を覆う透明な「舞台」で、普段は動かしません。マスコットの絵（スワップチェーン）をDirectCompositionのオフセットで舞台の中で動かします。ウィンドウを動かす方式では、ウィンドウの移動と新しいフレームの表示が1リフレッシュずれ、歩くと足が前後に震えて見えたためです。オフセットはフレームと同じ合成で反映され、端数のピクセルは描画側でずらします。舞台はモニターをまたいだときだけ移動します。舞台は不透明度254にしてあります（不透明度255のウィンドウに覆われると、Chrome系のアプリは隠れたと判断して描画を止めるため）
 - **絵の大きさ**：座ったときの脚、広がった髪、ワープの光の粒まで収まる大きさで始めます。それでもはみ出しそうなときは、0.25秒ごとの確認で画面上の位置を変えずに広げ、落ち着いてから4秒たつと元の大きさに戻します
 - **最前面**：タスクバーをクリックすると、タスクバーがマスコットより前に出ることがあります。前面のウィンドウが切り替わったときと2秒ごとに、最前面を設定し直します（スタートメニューや通知などの上には出ません）
-- **歩く**：横向きになり、足ＩＫで足を運びながらセンターで進みます。ウィンドウとカメラはセンターに合わせて移動します。右クリックメニューの「左へ歩く」「右へ歩く」で約300px歩きます
+- **歩く**：横向きになり、足ＩＫで足を運びながらセンターで進みます。絵とカメラはセンターに合わせて移動します。右クリックメニューの「左へ歩く」「右へ歩く」で約300px歩きます
 - **走る**：歩きと同じ仕組みで、周期・歩幅・前傾・腕振りを変え、両足が浮く瞬間を入れています
 - **ジャンプ**：深くかがむ → 腕を振り上げて踏み切る → 上昇中はひざを抱え、落ち始めると着地に向けて脚を伸ばす → 着地でひざが沈む。軌道はウィンドウ側で動かし、実際の重力加速度（9.8m/s²、MMDの1単位=8cmとして換算）の放物線なので、頂点に近づくほど遅く、落ちるほど速くなります。近くのウィンドウへ乗り移るときに使います。滞空中は髪がふわっと浮きます
 - **ワープ**：遠くのウィンドウへは、回転しながら小さくなってきらきらした光の粒の渦に消え、行き先で逆に光が集まって回転しながら現れます。光の粒は、小さなきらめき・細かいラメ・光条の長い大きな輝きを混ぜ、それぞれが明滅します。回転と縮小は表示だけの変換で、ボーンやモーションには影響しません。消えていく間に物理演算をなめらかにリセットします
@@ -52,16 +54,14 @@ VMDを使わず、プログラムで生成する動きです。作法は [docs/M
 
 ## 設定（exeと同じフォルダの `MikuMikuDesktopPerch.ini`、UTF-16）
 
-以前の名前（DesktopMascot）で保存された `DesktopMascot.ini` が同じフォルダにあれば、最初の起動で `MikuMikuDesktopPerch.ini` に名前を変えて引き継ぎます。
-
 | キー | 既定値 | 内容 |
 |---|---|---|
 | Model | （初回起動時にファイル選択） | PMXファイル |
 | Motion | 空（初期ポーズ） | ループ再生するVMD |
 | ToonDir | 空 | 共有トゥーン `toon01.bmp`〜`toon10.bmp` の置き場所（MMDの `Data` フォルダ）。空のときは近似グラデーションを使います |
-| Height | 300 | 大きさ100%のときのモデルの高さの目安（96 DPI基準の論理ピクセル）。以前の版（既定600）で保存された値は、最初の読み込みで半分にします |
+| Height | 300 | 大きさ100%のときのモデルの高さの目安（96 DPI基準の論理ピクセル） |
 | Scale | 100 | 大きさ（%、50〜200） |
-| X | -1 | ウィンドウの横位置。-1のときは画面の右端（縦位置は常に地面に合わせます） |
+| X | -1 | マスコットの横位置（画面のピクセル）。-1のときは画面の右端（縦位置は常に地面に合わせます） |
 | AutoBehavior | 1 | おまかせ行動（地面でひとりで歩く） |
 | WindowMode | 0 | アクティブウィンドウモード |
 | Fps | 30 | 描画fps |
@@ -104,14 +104,18 @@ MikuMikuDesktopPerch.exe --check-list <list.txt> <out.tsv>
 - `src/MascotRenderer.*`：D3D12の描画。GPUスキニング（BDEF1/2/4、SDEF。QDEFはBDEF4として扱います）、MMD標準に近いトゥーン・スフィア・輪郭線
 - `src/TextureLoader.*`：WIC（bmp/png/jpgなど）とTGAの読み込み、CPUでのミップマップ生成
 
+## ライセンス
+
+このソフトウェアは MIT License で公開しています（[LICENSE](LICENSE)）。借用しているコードのライセンスは `licenses/` にあります。exeを配布するときは、`LICENSE` と `licenses/` フォルダを同梱してください。
+
 ## 流用元とライセンス
 
-PMXLoader・bullet3・SimpleMathは公開されているものを借りているので、Gitでは管理していません（`.gitignore` で除外）。ビルドには同じ場所に置いておく必要があります。TgaLoaderは未公開のMotionTraceEditorから抜き出したものなので、Gitで管理しています。
+PMXLoader・bullet3・SimpleMathは公開されているものを借りているので、Gitでは管理していません（`.gitignore` で除外）。ビルドの前に、次の場所に置いてください。TgaLoaderは未公開のMotionTraceEditor（作者自身のツール）から抜き出したものなので、Gitで管理しています。
 
-- `src/third_party/PMXLoader.ixx`：MikuMikuDayo（MIT、`licenses/MikuMikuDayo-LICENSE.txt`）の PMXLoader をそのまま置きます（編集しません）
+- `src/third_party/PMXLoader.ixx`：[MikuMikuDayo](https://github.com/pennennennennennenem/MikuMikuDayo)（MIT、`licenses/MikuMikuDayo-LICENSE.txt`）の PMXLoader をそのまま置きます（編集しません）
 - `src/third_party/TgaLoader.cpp`：MotionTraceEditor の `PreviewTextureFileLoader.cpp` からTGAデコーダーだけを抜き出したもの（Git管理）
-- `external/bullet3`：Bullet Physics（zlibライセンス、https://github.com/bulletphysics/bullet3 ）の `src` フォルダ一式を置きます。Bullet 3.25 には不具合があるので、`PMXLoader.ixx` の先頭付近のコメントに書かれている修正（`src\BulletDynamics\ConstraintSolver\btGeneric6DofConstraint.cpp`）を当ててください
-- `external/DirectXTK12`：DirectX Tool Kit for DirectX 12（MIT、Microsoft、https://github.com/microsoft/DirectXTK12 ）のうち `Inc/SimpleMath.h`、`Inc/SimpleMath.inl`、`Src/SimpleMath.cpp` を置きます
+- `external/bullet3`：[Bullet Physics](https://github.com/bulletphysics/bullet3)（zlibライセンス、`licenses/Bullet-LICENSE.txt`）の `src` フォルダ一式を `external/bullet3/src` に置きます。Bullet 3.25 には不具合があるので、`PMXLoader.ixx` の先頭付近のコメントに書かれている修正（`src\BulletDynamics\ConstraintSolver\btGeneric6DofConstraint.cpp`）を当ててください
+- `external/DirectXTK12`：[DirectX Tool Kit for DirectX 12](https://github.com/microsoft/DirectXTK12)（MIT、`licenses/DirectXTK12-LICENSE.txt`）のうち `Inc/SimpleMath.h`、`Inc/SimpleMath.inl`、`Src/SimpleMath.cpp` を同じ構成で置きます
 
 ## 未対応（今後の候補）
 
