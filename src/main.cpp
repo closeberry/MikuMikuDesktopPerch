@@ -2147,7 +2147,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     else if(snapshotActivity==L"sit")forcedActivity=Activity::Sit;
     else if(snapshotActivity==L"grab")forcedActivity=Activity::Grabbed;
     else if(snapshotActivity==L"fall")forcedActivity=Activity::Fall;
-    if(!snapshotPath.empty())app.settings.autoBehavior=false;
+    if(!snapshotPath.empty()){app.settings.autoBehavior=false;app.settings.windowMode=false;app.settings.chatInitiative=false;}
     if(forcedActivity)app.model.SetActivity(*forcedActivity,1);
     if(!snapshotGesture.empty())app.model.ForceGesture(snapshotGesture);
     if(snapshotDoze){app.dozing=app.forcedDoze=true;app.model.SetDozing(true);}
