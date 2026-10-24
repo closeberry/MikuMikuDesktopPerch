@@ -38,6 +38,7 @@ Bone names are given in Japanese as they appear in standard MMD models, with Eng
 - When hanging and when crouching for a jump too, the body is tilted only by rotating 上半身 and 下半身, and its height is changed only with グルーブ (センター is neither rotated nor moved up or down)
 - The up-and-down movement of jumps and falls is not included in the motion; it is expressed by moving the window
 - When hanging (a chin-up), the 腕 bone is turned along its length so the elbow bends upward. The elbow only rotates about its bend axis, without twist
+- While generating, the fingers are not left straight but curled a little (a little more from the index to the little finger). Gestures and resting poses set their own curl over this
 - The fingers other than the thumb are rotated only about the axis that bends toward the palm (the direction joining the bases of the index and little fingers)
 - The warp's spin and shrink are display-only transforms, and are not written to センター or 全ての親
 - When turning to face the other character in a chat between characters, 下半身 and 上半身 (when it is not a child of 下半身) are rotated about Y, and the positions of the left and right 足ＩＫ (and the つま先ＩＫ that are not children of 足ＩＫ) are rotated about the vertical axis around the point between the feet, with the same amount added to their rotation. センター and 全ての親 are not rotated

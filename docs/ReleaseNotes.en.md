@@ -2,7 +2,7 @@
 
 [日本語](ReleaseNotes.md)
 
-## Next version (unreleased)
+## 1.2.0
 
 ### What's new
 
@@ -13,6 +13,7 @@
 - **Checking for updates**: shortly after starting and once a day, the app checks the latest release on GitHub. When there is a new version, a character says so, and choosing "Yes (update)" does everything automatically: the download (with a SHA-256 check), replacing the files, and restarting. It can be turned off with "Check for new versions" in the settings (on by default)
 - **English**: Japanese or English can be chosen under Display → Language in the settings (the default, "Auto", follows the Windows display language). Besides the menus, the settings window and the messages, talks with the LLM are in English too, and the mouth moves for English replies. The voice (VOICEVOX) supports Japanese only
 - Each character's voice plays on its own output, so when two talk at once, one does not cut the other off
+- **Relaxed hands**: in generated motions (the standing pose, walking, running and so on), the fingers curl a little instead of staying straight
 
 ### Documents
 

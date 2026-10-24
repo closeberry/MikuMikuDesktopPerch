@@ -748,6 +748,9 @@ namespace MikuMikuDesktopPerch
         // Sitting turns only half as far as walking: enough for the knees to point aside.
         const float targetYaw=profile?-direction*WalkYaw*(activity==Activity::Sit?0.5f:1.0f):0.0f;
         yaw+=(targetYaw-yaw)*follow;
+        // Relaxed hands: the fingers curl a little, more toward the little finger. Gestures and
+        // resting poses set their own curl over this.
+        for(int side=0;side<2;++side)CurlFingers(keys,side,{0.2f,0.25f,0.3f,0.35f});
 
         auto footKey=[&](int side,FXMVECTOR target,float pitch,float footYaw){
             auto& k=KeyOf(keys,rig.legIK[side]);
