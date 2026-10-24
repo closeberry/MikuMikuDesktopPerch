@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "MascotModel.hpp"
+#include "Text.hpp"
 #include "GeneratedMotion.hpp"
 #include <btBulletDynamicsCommon.h>
 #include <windows.h>
@@ -109,30 +110,30 @@ namespace MikuMikuDesktopPerch
             auto at=[](const wchar_t* what,size_t index){return std::wstring(what)+L" "+std::to_wstring(index);};
 
             for(size_t i=0;i<pmx.indices.size();++i)
-                if(!inRange(pmx.indices[i],vertices,false))return at(L"面の頂点番号",i);
+                if(!inRange(pmx.indices[i],vertices,false))return at(T(L"面の頂点番号",L"face vertex index"),i);
             long long faces=0;
             for(const auto& m:pmx.materials)faces+=m.vertexCount;
-            if(faces>static_cast<long long>(pmx.indices.size()))return L"材質の面数が面の総数を超えています";
+            if(faces>static_cast<long long>(pmx.indices.size()))return T(L"材質の面数が面の総数を超えています",L"material face counts exceed the faces");
             for(size_t i=0;i<pmx.vertices.size();++i)
                 for(int j=0;j<4;++j)
-                    if(pmx.vertices[i].weight[j]!=0.0f&&!inRange(pmx.vertices[i].bone[j],bones,true))return at(L"頂点のボーン番号",i);
+                    if(pmx.vertices[i].weight[j]!=0.0f&&!inRange(pmx.vertices[i].bone[j],bones,true))return at(T(L"頂点のボーン番号",L"vertex bone index"),i);
             for(size_t i=0;i<pmx.materials.size();++i)
             {
                 const auto& m=pmx.materials[i];
                 if(!inRange(m.tex,textures,true)||!inRange(m.spTex,textures,true)||(m.toonFlag==0&&!inRange(m.toonTex,textures,true)))
-                    return at(L"材質のテクスチャ番号",i);
+                    return at(T(L"材質のテクスチャ番号",L"material texture index"),i);
             }
             for(size_t i=0;i<pmx.bones.size();++i)
             {
                 const auto& b=pmx.bones[i];
-                if(!inRange(b.parent,bones,true))return at(L"ボーンの親番号",i);
+                if(!inRange(b.parent,bones,true))return at(T(L"ボーンの親番号",L"bone parent index"),i);
                 // An append flag with no append parent (-1) is dereferenced by PoseSolver too.
-                if(!inRange(b.appendParent,bones,!(b.IsAppendRotation()||b.IsAppendTranslation())))return at(L"ボーンの付与親番号",i)+L"（"+b.name+L"）";
-                if(!inRange(b.toBone,bones,true))return at(L"ボーンの接続先番号",i);
+                if(!inRange(b.appendParent,bones,!(b.IsAppendRotation()||b.IsAppendTranslation())))return at(T(L"ボーンの付与親番号",L"bone grant parent index"),i)+L"（"+b.name+L"）";
+                if(!inRange(b.toBone,bones,true))return at(T(L"ボーンの接続先番号",L"bone tail index"),i);
                 if(b.IsIK())
                 {
-                    if(!inRange(b.IKTarget,bones,false))return at(L"IKのターゲット番号",i);
-                    for(const auto& l:b.IKLinks)if(!inRange(l.bone,bones,false))return at(L"IKのリンク番号",i);
+                    if(!inRange(b.IKTarget,bones,false))return at(T(L"IKのターゲット番号",L"IK target index"),i);
+                    for(const auto& l:b.IKLinks)if(!inRange(l.bone,bones,false))return at(T(L"IKのリンク番号",L"IK link index"),i);
                 }
             }
             for(size_t i=0;i<pmx.morphs.size();++i)
@@ -152,13 +153,13 @@ namespace MikuMikuDesktopPerch
                     case 9:ok=inRange(reinterpret_cast<const PMX::PMXFlipMorphOffset*>(data)[j].morph,morphs,false);break;
                     case 10:ok=inRange(reinterpret_cast<const PMX::PMXImpulseMorphOffset*>(data)[j].body,bodies,false);break;
                     }
-                    if(!ok)return at(L"モーフの参照番号",i)+L"（"+m.name+L"）";
+                    if(!ok)return at(T(L"モーフの参照番号",L"morph reference index"),i)+L"（"+m.name+L"）";
                 }
             }
             for(size_t i=0;i<pmx.bodies.size();++i)
-                if(!inRange(pmx.bodies[i].bone,bones,true))return at(L"剛体のボーン番号",i);
+                if(!inRange(pmx.bodies[i].bone,bones,true))return at(T(L"剛体のボーン番号",L"rigid body bone index"),i);
             for(size_t i=0;i<pmx.joints.size();++i)
-                if(!inRange(pmx.joints[i].bodyA,bodies,false)||!inRange(pmx.joints[i].bodyB,bodies,false))return at(L"ジョイントの剛体番号",i);
+                if(!inRange(pmx.joints[i].bodyA,bodies,false)||!inRange(pmx.joints[i].bodyB,bodies,false))return at(T(L"ジョイントの剛体番号",L"joint rigid body index"),i);
             return {};
         }
 
@@ -407,17 +408,17 @@ namespace MikuMikuDesktopPerch
             clips.clear();
             for(const auto& path:paths)
             {
-                if(!std::filesystem::exists(path)){error=std::wstring(kind)+L"が見つかりません: "+path;return false;}
-                if(!IsVmdFile(path)){error=std::wstring(kind)+L"はVMDファイルではないか、大きすぎます: "+path;return false;}
+                if(!std::filesystem::exists(path)){error=Fmt(T(L"{0}が見つかりません: ",L"The {0} was not found: "),{kind})+path;return false;}
+                if(!IsVmdFile(path)){error=Fmt(T(L"{0}はVMDファイルではないか、大きすぎます: ",L"The {0} is not a VMD file, or is too large: "),{kind})+path;return false;}
                 try
                 {
                     Clip clip;
-                    if(!LoadVmd(path,pmx.get(),clip.vmd,clip.sampler)){error=std::wstring(kind)+L"のデータが壊れているため、読み込めませんでした: "+path;return false;}
+                    if(!LoadVmd(path,pmx.get(),clip.vmd,clip.sampler)){error=Fmt(T(L"{0}のデータが壊れているため、読み込めませんでした: ",L"Could not load the {0}: its data is damaged: "),{kind})+path;return false;}
                     clips.push_back(std::move(clip));
                 }
                 catch(...)
                 {
-                    error=std::wstring(kind)+L"を読み込めませんでした: "+path;
+                    error=Fmt(T(L"{0}を読み込めませんでした: ",L"Could not load the {0}: "),{kind})+path;
                     return false;
                 }
             }
@@ -498,7 +499,7 @@ namespace MikuMikuDesktopPerch
         bool LoadIdle(const std::vector<std::wstring>& paths,std::wstring& error)
         {
             std::vector<Clip> clips;
-            if(!LoadClips(paths,clips,L"待機モーション",error))return false;
+            if(!LoadClips(paths,clips,T(L"待機モーション",L"idle motion"),error))return false;
             idleClips=std::move(clips);
             idleCurrent=idleClips.empty()?-1:static_cast<int>(idleRandom()%idleClips.size());
             idlePrevious=-1;
@@ -1012,13 +1013,13 @@ namespace MikuMikuDesktopPerch
         m.shotSampler.reset();
         m.shotVmd.reset();
         if(path.empty()||!m.pmx)return true;
-        if(!std::filesystem::exists(path)){error=L"モーションファイルが見つかりません: "+path;return false;}
-        if(!IsVmdFile(path)){error=L"VMDファイルではないか、大きすぎます: "+path;return false;}
+        if(!std::filesystem::exists(path)){error=T(L"モーションファイルが見つかりません: ",L"The motion file was not found: ")+path;return false;}
+        if(!IsVmdFile(path)){error=T(L"VMDファイルではないか、大きすぎます: ",L"Not a VMD file, or too large: ")+path;return false;}
         try
         {
             if(!LoadVmd(path,m.pmx.get(),m.shotVmd,m.shotSampler))
             {
-                error=L"モーションのデータが壊れているため、読み込めませんでした: "+path;
+                error=T(L"モーションのデータが壊れているため、読み込めませんでした: ",L"Could not load the motion: its data is damaged: ")+path;
                 return false;
             }
         }
@@ -1026,7 +1027,7 @@ namespace MikuMikuDesktopPerch
         {
             m.shotSampler.reset();
             m.shotVmd.reset();
-            error=L"モーションを読み込めませんでした: "+path;
+            error=T(L"モーションを読み込めませんでした: ",L"Could not load the motion: ")+path;
             return false;
         }
         return true;
@@ -1054,7 +1055,7 @@ namespace MikuMikuDesktopPerch
         auto& m=*impl;
         if(!m.pmx)return paths.empty();
         std::vector<Impl::Clip> clips;
-        if(!m.LoadClips(paths,clips,L"クリック時のモーション",error))return false;
+        if(!m.LoadClips(paths,clips,T(L"クリック時のモーション",L"click motion"),error))return false;
         if(m.shotActive&&m.shotIsClick){m.shotActive=false;m.shotWeight=0;m.shotIsClick=false;}
         m.clickClips=std::move(clips);
         m.lastClick=-1;
@@ -1068,11 +1069,11 @@ namespace MikuMikuDesktopPerch
         std::vector<Impl::Clip> clips;
         if(!path.empty())
         {
-            if(!m.LoadClips({path},clips,which==0?L"歩くモーション":L"走るモーション",error))return false;
+            if(!m.LoadClips({path},clips,which==0?T(L"歩くモーション",L"walk motion"):T(L"走るモーション",L"run motion"),error))return false;
             const float speed=m.GaitSpeed(clips.front());
             if(speed<=0)
             {
-                error=L"このモーションでは、足が地面について進む速さを測れませんでした（その場で足踏みする、ループの歩き・走りのモーションを選んでください）: "+path;
+                error=T(L"このモーションでは、足が地面について進む速さを測れませんでした（その場で足踏みする、ループの歩き・走りのモーションを選んでください）: ",L"Could not measure how fast the feet move along the ground in this motion (choose a looping walk or run in place): ")+path;
                 return false;
             }
             m.motion.SetClipSpeed(which,speed);
@@ -1125,7 +1126,7 @@ namespace MikuMikuDesktopPerch
         next->frameAverage=impl->frameAverage;
         if(!IsPmxFile(modelPath))
         {
-            error=L"PMX 2.0/2.1 のモデルファイルではないか、大きすぎるため、読み込めません。\n\nモデル: "+modelPath;
+            error=T(L"PMX 2.0/2.1 のモデルファイルではないか、大きすぎるため、読み込めません。\n\nモデル: ",L"Cannot load this: it is not a PMX 2.0/2.1 model file, or is too large.\n\nModel: ")+modelPath;
             return false;
         }
         try
@@ -1133,7 +1134,7 @@ namespace MikuMikuDesktopPerch
             struct Context {const std::wstring* path;PMX::PMXModel* model;} context{&modelPath,nullptr};
             if(!RunGuarded([](void* c){auto* ctx=static_cast<Context*>(c);ctx->model=new PMX::PMXModel(ctx->path->c_str());},&context))
             {
-                error=L"モデルのデータが壊れているため、読み込めませんでした。\n\nモデル: "+modelPath;
+                error=T(L"モデルのデータが壊れているため、読み込めませんでした。\n\nモデル: ",L"Could not load the model: its data is damaged.\n\nModel: ")+modelPath;
                 return false;
             }
             next->pmx.reset(context.model);
@@ -1141,12 +1142,12 @@ namespace MikuMikuDesktopPerch
         }
         catch(const std::exception& e)
         {
-            error=L"読み込みに失敗しました: "+modelPath+L"\n"+std::wstring(e.what(),e.what()+std::strlen(e.what()));
+            error=T(L"読み込みに失敗しました: ",L"Could not load: ")+modelPath+L"\n"+std::wstring(e.what(),e.what()+std::strlen(e.what()));
             return false;
         }
         catch(...)
         {
-            error=L"読み込みに失敗しました: "+modelPath;
+            error=T(L"読み込みに失敗しました: ",L"Could not load: ")+modelPath;
             return false;
         }
 
@@ -1159,10 +1160,10 @@ namespace MikuMikuDesktopPerch
                 bone.flag&=~(0x0100|0x0200);
 
         const auto& pmx=*next->pmx;
-        if(pmx.vertices.empty()||pmx.indices.empty()){error=L"頂点のないモデルです: "+modelPath;return false;}
+        if(pmx.vertices.empty()||pmx.indices.empty()){error=T(L"頂点のないモデルです: ",L"The model has no vertices: ")+modelPath;return false;}
         if(const auto broken=FindBrokenReference(pmx);!broken.empty())
         {
-            error=L"モデルのデータに範囲外の参照があるため、表示できません。\n\nモデル: "+modelPath+L"\n箇所: "+broken;
+            error=T(L"モデルのデータに範囲外の参照があるため、表示できません。\n\nモデル: ",L"Cannot show this model: its data refers to things that are not there.\n\nModel: ")+modelPath+T(L"\n箇所: ",L"\nWhere: ")+broken;
             return false;
         }
 
@@ -1184,8 +1185,8 @@ namespace MikuMikuDesktopPerch
                 if(findBone(names)<0)missing+=(missing.empty()?L"":L"、")+std::wstring(*names.begin());
             if(!missing.empty())
             {
-                error=L"人型モデルに必要なボーンが見つからないため、このモデルは表示できません。\n\n"
-                      L"モデル: "+modelPath+L"\n不足しているボーン: "+missing;
+                error=T(L"人型モデルに必要なボーンが見つからないため、このモデルは表示できません。\n\nモデル: ",L"Cannot show this model: bones a human figure needs are missing.\n\nModel: ")+
+                      modelPath+T(L"\n不足しているボーン: ",L"\nMissing bones: ")+missing;
                 return false;
             }
             // Bone names alone are not enough (some animals reuse them): check the skeleton is upright.
@@ -1196,12 +1197,12 @@ namespace MikuMikuDesktopPerch
             const float spineTilt=DirectX::XMConvertToDegrees(std::atan2(std::sqrt(spineX*spineX+spineZ*spineZ),spineY));
             const float armDown=DirectX::XMConvertToDegrees(std::atan2(arm.y-elbow.y,std::abs(elbow.x-arm.x)));
             std::wstring reason;
-            if(!(head.y>neck.y&&neck.y>upper.y&&upper.y>knee.y))reason=L"頭・首・上半身・ひざが上から順に並んでいません";
-            else if(spineTilt>35.0f)reason=L"上半身から頭への向きが垂直ではありません（"+std::to_wstring(static_cast<int>(spineTilt))+L"°傾いています）";
-            else if(armDown>70.0f)reason=L"腕が体の横に伸びていません（下向きに"+std::to_wstring(static_cast<int>(armDown))+L"°）";
+            if(!(head.y>neck.y&&neck.y>upper.y&&upper.y>knee.y))reason=T(L"頭・首・上半身・ひざが上から順に並んでいません",L"the head, neck, upper body and knees are not in order from the top");
+            else if(spineTilt>35.0f)reason=Fmt(T(L"上半身から頭への向きが垂直ではありません（{0}°傾いています）",L"the upper body to the head is not upright (it leans {0}°)"),{std::to_wstring(static_cast<int>(spineTilt))});
+            else if(armDown>70.0f)reason=Fmt(T(L"腕が体の横に伸びていません（下向きに{0}°）",L"the arms do not reach out to the sides ({0}° down)"),{std::to_wstring(static_cast<int>(armDown))});
             if(!reason.empty())
             {
-                error=L"人型の骨格ではないため、このモデルは表示できません。\n\nモデル: "+modelPath+L"\n理由: "+reason;
+                error=T(L"人型の骨格ではないため、このモデルは表示できません。\n\nモデル: ",L"Cannot show this model: it is not a human figure.\n\nModel: ")+modelPath+T(L"\n理由: ",L"\nReason: ")+reason;
                 return false;
             }
         }
@@ -1373,7 +1374,7 @@ namespace MikuMikuDesktopPerch
             // PoseSolver rejects some malformed skeletons (e.g. broken IK or append chains) by throwing.
             next->solver.reset();
             next->physics.reset();
-            error=L"このモデルのボーン構造を解釈できないため、表示できません。\n\nモデル: "+modelPath;
+            error=T(L"このモデルのボーン構造を解釈できないため、表示できません。\n\nモデル: ",L"Cannot show this model: its bone structure could not be read.\n\nModel: ")+modelPath;
             return false;
         }
         if(next->arms[0].correction!=0.0f||next->arms[1].correction!=0.0f)

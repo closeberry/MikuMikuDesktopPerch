@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "Settings.hpp"
+#include "Text.hpp"
 #include <windows.h>
 #include <filesystem>
 #include <fstream>
@@ -145,6 +146,8 @@ namespace MikuMikuDesktopPerch
         chatterMinutes=std::clamp(ReadInt(path,L"ChatterMinutes",chatterMinutes),5,600);
         banterMinutes=std::clamp(ReadInt(path,L"BanterMinutes",banterMinutes),0,600);
         updateCheck=ReadInt(path,L"UpdateCheck",updateCheck?1:0)!=0;
+        language=ReadString(path,L"Language",language);
+        if(language!=L"ja"&&language!=L"en")language.clear();
         voice=ReadInt(path,L"Voice",voice?1:0)!=0;
         voiceEndpoint=ReadString(path,L"VoiceEndpoint",voiceEndpoint);
         voiceDirect=ReadInt(path,L"VoiceDirect",voiceDirect?1:0)!=0;
@@ -197,6 +200,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"ChatterMinutes",std::to_wstring(chatterMinutes));
         WriteString(path,L"BanterMinutes",std::to_wstring(banterMinutes));
         WriteString(path,L"UpdateCheck",updateCheck?L"1":L"0");
+        WriteString(path,L"Language",language);
         WriteString(path,L"Voice",voice?L"1":L"0");
         WriteString(path,L"VoiceEndpoint",voiceEndpoint);
         WriteString(path,L"VoiceDirect",voiceDirect?L"1":L"0");
@@ -255,6 +259,9 @@ namespace MikuMikuDesktopPerch
 
     std::wstring CharacterProfile::DefaultPersona()
     {
+        if(English())
+            return L"A little mascot living on the desktop, chatting with whoever talks to her.\n"
+                   L"Cheerful and friendly, she speaks casually and cares about the other person.";
         return L"デスクトップの上で暮らしている小さなマスコットとして、話しかけてくれた人とおしゃべりします。\n"
                L"明るく親しみやすい話し言葉で、相手のことを気にかけます。\n"
                L"一人称は「わたし」。";

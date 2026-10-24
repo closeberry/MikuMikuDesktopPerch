@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "Voice.hpp"
+#include "Text.hpp"
 #include "HttpJson.hpp"
 #include "LocalChat.hpp"
 #include "VoicevoxCore.hpp"
@@ -21,7 +22,7 @@ namespace MikuMikuDesktopPerch
         {
             if(const auto problem=CheckLocalEndpoint(endpoint);!problem.empty()){error=problem;return false;}
             Url url;
-            if(!Crack(endpoint,url)){error=L"音声エンジンの接続先が正しくありません。";return false;}
+            if(!Crack(endpoint,url)){error=T(T(L"音声エンジンの接続先が正しくありません。",L"The voice engine's address is not valid."),L"The voice engine's address is not valid.");return false;}
             HINTERNET session=WinHttpOpen(L"MikuMikuDesktopPerch",WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
             HINTERNET connection=nullptr,request=nullptr;
             if(session)
@@ -43,9 +44,9 @@ namespace MikuMikuDesktopPerch
                 char buffer[16384];
                 for(DWORD read=0;WinHttpReadData(request,buffer,sizeof(buffer),&read)&&read>0&&reply.size()<MaxBody;)reply.append(buffer,read);
                 ok=status==200;
-                if(!ok)error=L"音声エンジンがエラーを返しました（"+std::to_wstring(status)+L"）。";
+                if(!ok)error=Fmt(T(L"音声エンジンがエラーを返しました（{0}）。",L"The voice engine returned an error ({0})."),{std::to_wstring(status)});
             }
-            else error=L"音声エンジンに接続できません。VOICEVOX などを起動しているか確かめてください。";
+            else error=T(T(L"音声エンジンに接続できません。VOICEVOX などを起動しているか確かめてください。",L"Cannot connect to the voice engine. Check that VOICEVOX or the like is running."),L"Cannot connect to the voice engine. Check that VOICEVOX or the like is running.");
             if(request)WinHttpCloseHandle(request);
             if(connection)WinHttpCloseHandle(connection);
             if(session)WinHttpCloseHandle(session);
@@ -118,7 +119,7 @@ namespace MikuMikuDesktopPerch
             std::wstring error;
             if(source.direct)error=VoicevoxCore::Synthesis(source.folder,query,speaker,wav);
             else Request(source.endpoint,L"POST",L"/synthesis?speaker="+std::to_wstring(speaker),query,30000,wav,error);
-            if(error.empty()&&(wav.size()<=44||wav.compare(0,4,"RIFF")!=0))error=L"音声の作成に失敗しました。";
+            if(error.empty()&&(wav.size()<=44||wav.compare(0,4,"RIFF")!=0))error=T(T(L"音声の作成に失敗しました。",L"Could not make the speech."),L"Could not make the speech.");
             return error;
         }
     }
@@ -130,7 +131,7 @@ namespace MikuMikuDesktopPerch
         std::wstring error;
         if(!Request(source.endpoint,L"GET",L"/speakers",{},5000,body,error))return error;
         Json j;
-        if(!JsonParser(body).Parse(j)||j.type!=Json::Type::Array)return L"音声エンジンの返事を読めませんでした。";
+        if(!JsonParser(body).Parse(j)||j.type!=Json::Type::Array)return T(T(L"音声エンジンの返事を読めませんでした。",L"Could not read the voice engine's reply."),L"Could not read the voice engine's reply.");
         for(const auto& speaker:j.items)
         {
             const Json* name=speaker.Member("name");
@@ -145,7 +146,7 @@ namespace MikuMikuDesktopPerch
                                   std::atoi(id->text.c_str())});
             }
         }
-        if(voices.empty())return L"音声エンジンに声がありません。";
+        if(voices.empty())return T(T(L"音声エンジンに声がありません。",L"The voice engine has no voices."),L"The voice engine has no voices.");
         return {};
     }
 

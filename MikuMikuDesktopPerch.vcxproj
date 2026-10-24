@@ -99,6 +99,7 @@
     <ClCompile Include="src\SettingsWindow.cpp" />
     <ClCompile Include="src\TextureLoader.cpp" />
     <ClCompile Include="src\Updater.cpp" />
+    <ClCompile Include="src\Text.cpp" />
     <ClCompile Include="external\DirectXTK12\Src\SimpleMath.cpp" />
     <ClCompile Include="external\bullet3\src\btBulletCollisionAll.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
     <ClCompile Include="external\bullet3\src\btBulletDynamicsAll.cpp"><WarningLevel>TurnOffAllWarnings</WarningLevel></ClCompile>
@@ -107,6 +108,7 @@
   <ItemGroup>
     <ClInclude Include="src\MascotModel.hpp" />
     <ClInclude Include="src\Updater.hpp" />
+    <ClInclude Include="src\Text.hpp" />
     <ClInclude Include="src\ChatWindows.hpp" />
     <ClInclude Include="src\LocalChat.hpp" />
     <ClInclude Include="src\HttpJson.hpp" />

@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "MascotRenderer.hpp"
+#include "Text.hpp"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -136,7 +137,7 @@ namespace MikuMikuDesktopPerch
             if(SUCCEEDED(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&gpu->device)))){gpu->adapterName=desc.Description;break;}
             adapter.Reset();
         }
-        if(!gpu->device){error=L"D3D12 に対応した GPU が見つかりません。";return nullptr;}
+        if(!gpu->device){error=T(L"D3D12 に対応した GPU が見つかりません。",L"No GPU supporting Direct3D 12 was found.");return nullptr;}
         shared=gpu;
         return gpu;
     }
@@ -252,7 +253,7 @@ namespace MikuMikuDesktopPerch
         BeginUploads();
         const bool ok=UploadTexture(image,white);
         FinishUploads();
-        if(!ok){error=L"既定テクスチャの作成に失敗しました。";return false;}
+        if(!ok){error=T(L"既定テクスチャの作成に失敗しました。",L"Could not create the default texture.");return false;}
         return true;
     }
 
@@ -626,14 +627,14 @@ namespace MikuMikuDesktopPerch
             ok=UploadTexture(image,sharedToons[i]);
         }
         FinishUploads();
-        if(!ok){error=L"GPU リソースの作成に失敗しました。";return false;}
+        if(!ok){error=T(L"GPU リソースの作成に失敗しました。",L"Could not create GPU resources.");return false;}
 
         D3D12_DESCRIPTOR_HEAP_DESC heap{};
         heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         heap.NumDescriptors=static_cast<UINT>(materialCount*3+10);   // the materials' textures, the shadow map, the last passes' inputs
         heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         srvHeap.Reset();
-        if(FAILED(device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&srvHeap)))){error=L"SRV ヒープの作成に失敗しました。";return false;}
+        if(FAILED(device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&srvHeap)))){error=T(L"SRV ヒープの作成に失敗しました。",L"Could not create the SRV heap.");return false;}
         auto cpu=srvHeap->GetCPUDescriptorHandleForHeapStart();
         auto pick=[&](int index)->ID3D12Resource*{
             return index>=0&&static_cast<size_t>(index)<textures.size()&&textures[index].valid?textures[index].resource.Get():nullptr;};
@@ -677,7 +678,7 @@ namespace MikuMikuDesktopPerch
             f.upload.Reset();f.mapped=nullptr;f.dynamicRevision=0;
             if(FAILED(device->CreateCommittedResource(&uploadHeap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&f.upload)))||
                FAILED(f.upload->Map(0,nullptr,reinterpret_cast<void**>(&f.mapped))))
-            {error=L"アップロードバッファの作成に失敗しました。";return false;}
+            {error=T(L"アップロードバッファの作成に失敗しました。",L"Could not create the upload buffer.");return false;}
         }
         return true;
     }

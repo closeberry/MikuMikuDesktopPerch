@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "Updater.hpp"
+#include "Text.hpp"
 #include "HttpJson.hpp"
 #include <bcrypt.h>
 #include <filesystem>
@@ -54,10 +55,10 @@ namespace MikuMikuDesktopPerch
         std::wstring HttpsGet(const std::wstring& address,const wchar_t* accept,size_t limit,std::string& body)
         {
             Url url;
-            if(!Crack(address,url)||!url.secure||(url.host!=L"github.com"&&url.host!=L"api.github.com"))return L"更新の確認先が正しくありません。";
+            if(!Crack(address,url)||!url.secure||(url.host!=L"github.com"&&url.host!=L"api.github.com"))return T(L"更新の確認先が正しくありません。",L"The update address is not valid.");
             HINTERNET session=WinHttpOpen((L"MikuMikuDesktopPerch/"+CurrentVersion()).c_str(),WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                           WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
-            if(!session)return L"インターネットに接続できませんでした。";
+            if(!session)return T(L"インターネットに接続できませんでした。",L"Could not connect to the internet.");
             WinHttpSetTimeouts(session,10000,10000,15000,30000);
             std::wstring error;
             HINTERNET connection=WinHttpConnect(session,url.host.c_str(),url.port,0);
@@ -66,19 +67,19 @@ namespace MikuMikuDesktopPerch
             const std::wstring headers=std::wstring(L"Accept: ")+accept+L"\r\n";
             if(!request||!WinHttpSendRequest(request,headers.c_str(),static_cast<DWORD>(-1),WINHTTP_NO_REQUEST_DATA,0,0,0)||
                !WinHttpReceiveResponse(request,nullptr))
-                error=L"GitHubに接続できませんでした。";
+                error=T(L"GitHubに接続できませんでした。",L"Could not connect to GitHub.");
             else
             {
                 DWORD status=0,size=sizeof(status);
                 WinHttpQueryHeaders(request,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&size,WINHTTP_NO_HEADER_INDEX);
-                if(status!=200)error=L"GitHubから受け取れませんでした（"+std::to_wstring(status)+L"）。";
+                if(status!=200)error=Fmt(T(L"GitHubから受け取れませんでした（{0}）。",L"Could not get it from GitHub ({0})."),{std::to_wstring(status)});
                 for(DWORD available=0;error.empty()&&WinHttpQueryDataAvailable(request,&available)&&available>0;)
                 {
                     const size_t at=body.size();
-                    if(at+available>limit){error=L"受け取ったデータが大きすぎます。";break;}
+                    if(at+available>limit){error=T(L"受け取ったデータが大きすぎます。",L"What came back is too large.");break;}
                     body.resize(at+available);
                     DWORD read=0;
-                    if(!WinHttpReadData(request,body.data()+at,available,&read)){error=L"受け取る途中で切れました。";break;}
+                    if(!WinHttpReadData(request,body.data()+at,available,&read)){error=T(L"受け取る途中で切れました。",L"The connection was lost on the way.");break;}
                     body.resize(at+read);
                 }
             }
@@ -142,14 +143,14 @@ namespace MikuMikuDesktopPerch
             STARTUPINFOW si{sizeof(si)};
             PROCESS_INFORMATION pi{};
             if(!CreateProcessW(tar.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&si,&pi))
-                return L"ダウンロードした更新を展開できませんでした（tar.exe を起動できません）。";
+                return T(L"ダウンロードした更新を展開できませんでした（tar.exe を起動できません）。",L"Could not unpack the update (tar.exe does not start).");
             const bool done=WaitForSingleObject(pi.hProcess,120000)==WAIT_OBJECT_0;
             DWORD code=1;
             GetExitCodeProcess(pi.hProcess,&code);
             if(!done)TerminateProcess(pi.hProcess,1);
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
-            return done&&code==0?std::wstring():L"ダウンロードした更新を展開できませんでした。";
+            return done&&code==0?std::wstring():T(L"ダウンロードした更新を展開できませんでした。",L"Could not unpack the update.");
         }
 
         std::wstring DownloadAndUnpack(const Release& release)
@@ -157,7 +158,7 @@ namespace MikuMikuDesktopPerch
             std::string zip;
             if(std::wstring error=HttpsGet(release.zipUrl,L"application/octet-stream",MaxZipBytes,zip);!error.empty())return error;
             if(!release.sha256.empty()&&_wcsicmp(Sha256(zip).c_str(),release.sha256.c_str())!=0)
-                return L"ダウンロードした更新が壊れていました（SHA-256が一致しません）。";
+                return T(L"ダウンロードした更新が壊れていました（SHA-256が一致しません）。",L"The downloaded update is damaged (its SHA-256 does not match).");
             const std::filesystem::path work=WorkFolder();
             std::error_code ec;
             std::filesystem::remove_all(work,ec);
@@ -166,12 +167,12 @@ namespace MikuMikuDesktopPerch
             {
                 std::ofstream out(zipPath,std::ios::binary);
                 out.write(zip.data(),static_cast<std::streamsize>(zip.size()));
-                if(!out)return L"ダウンロードした更新を保存できませんでした。";
+                if(!out)return T(L"ダウンロードした更新を保存できませんでした。",L"Could not save the downloaded update.");
             }
             if(std::wstring error=Unpack(zipPath,work/L"files");!error.empty())return error;
             const std::filesystem::path exe=work/L"files"/AppFolder/L"MikuMikuDesktopPerch.exe";
-            if(!std::filesystem::exists(exe,ec))return L"ダウンロードした更新に MikuMikuDesktopPerch.exe がありませんでした。";
-            if(FileVersion(exe)!=release.version)return L"ダウンロードした更新のバージョンが違いました。";
+            if(!std::filesystem::exists(exe,ec))return T(L"ダウンロードした更新に MikuMikuDesktopPerch.exe がありませんでした。",L"The update has no MikuMikuDesktopPerch.exe.");
+            if(FileVersion(exe)!=release.version)return T(L"ダウンロードした更新のバージョンが違いました。",L"The update has the wrong version.");
             return {};
         }
     }
@@ -240,11 +241,11 @@ namespace MikuMikuDesktopPerch
         fs::remove(old,ec);
         // A running exe cannot be overwritten, but it can be renamed.
         if(!MoveFileExW(exe.c_str(),old.c_str(),MOVEFILE_REPLACE_EXISTING))
-            return L"このフォルダには書き込めないため、更新できませんでした。\n"+folder.wstring();
+            return T(L"このフォルダには書き込めないため、更新できませんでした。\n",L"Could not update: this folder cannot be written to.\n")+folder.wstring();
         if(!CopyFileW((from/L"MikuMikuDesktopPerch.exe").c_str(),exe.c_str(),FALSE))
         {
             MoveFileExW(old.c_str(),exe.c_str(),MOVEFILE_REPLACE_EXISTING);
-            return L"新しい MikuMikuDesktopPerch.exe を置けなかったため、更新できませんでした。";
+            return T(L"新しい MikuMikuDesktopPerch.exe を置けなかったため、更新できませんでした。",L"Could not update: the new MikuMikuDesktopPerch.exe could not be put in place.");
         }
         // The rest (README, docs, licences) as well; one that cannot be replaced is left as it was.
         for(auto it=fs::recursive_directory_iterator(from,ec);!ec&&it!=fs::recursive_directory_iterator();it.increment(ec))

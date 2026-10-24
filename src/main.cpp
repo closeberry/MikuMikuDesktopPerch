@@ -10,6 +10,7 @@
 #include "SettingsWindow.hpp"
 #include "Surfaces.hpp"
 #include "Updater.hpp"
+#include "Text.hpp"
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
@@ -488,7 +489,7 @@ namespace
             if(Mascot& m=*app.mascots[i];!ApplyFrame(m,percent,m.extent))
             {
                 for(size_t j=0;j<i;++j)ApplyFrame(*app.mascots[j],previous,app.mascots[j]->extent);
-                ShowMessage(L"ウィンドウの大きさを変更できませんでした。",MB_ICONERROR);
+                ShowMessage(T(L"ウィンドウの大きさを変更できませんでした。",L"Could not resize the window."),MB_ICONERROR);
                 return;
             }
         app.settings.scale=percent;
@@ -1229,44 +1230,44 @@ namespace
     {
         // Things used often stay here; switches and display options are in the settings window.
         HMENU menu=CreatePopupMenu();
-        AppendMenuW(menu,MF_STRING,IdTalk,L"話しかける...");
+        AppendMenuW(menu,MF_STRING,IdTalk,T(L"話しかける...",L"Talk..."));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         // A character's window goes away when its model changes or it is taken off, and the
         // settings window belongs to one: not while that is open.
         const UINT settingsOpen=SettingsWindowHandle()?MF_GRAYED:0;
-        AppendMenuW(menu,MF_STRING|settingsOpen,IdOpenModel,L"モデルを開く...");
+        AppendMenuW(menu,MF_STRING|settingsOpen,IdOpenModel,T(L"モデルを開く...",L"Open model..."));
         AppendMenuW(menu,MF_STRING|(app.mascots.size()>=Settings::MaxCharacters?MF_GRAYED:0),IdAddCharacter,
-                    (L"キャラクターを追加...（"+std::to_wstring(app.mascots.size())+L"/"+std::to_wstring(Settings::MaxCharacters)+L"）").c_str());
+                    Fmt(T(L"キャラクターを追加...（{0}/{1}）",L"Add character... ({0}/{1})"),{std::to_wstring(app.mascots.size()),std::to_wstring(Settings::MaxCharacters)}).c_str());
         AppendMenuW(menu,MF_STRING|(app.mascots.size()<=1?MF_GRAYED:settingsOpen),IdRemoveCharacter,
-                    (L"「"+m.character.name+L"」を外す").c_str());
+                    Fmt(T(L"「{0}」を外す",L"Take {0} off"),{m.character.name}).c_str());
         HMENU motions=CreatePopupMenu();
-        AppendMenuW(motions,MF_STRING,IdOpenMotion,L"モーションを開く...");
-        AppendMenuW(motions,MF_STRING|(Own(m).motionPath.empty()?MF_GRAYED:0),IdCloseMotion,L"モーションを閉じる");
+        AppendMenuW(motions,MF_STRING,IdOpenMotion,T(L"モーションを開く...",L"Open motion..."));
+        AppendMenuW(motions,MF_STRING|(Own(m).motionPath.empty()?MF_GRAYED:0),IdCloseMotion,T(L"モーションを閉じる",L"Close motion"));
         AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
         const size_t idleCount=Own(m).idleMotionPaths.size();
-        AppendMenuW(motions,MF_STRING,IdOpenIdleMotion,L"待機モーションを開く...（複数選択可）");
-        AppendMenuW(motions,MF_STRING|(idleCount==0?MF_GRAYED:0),IdAddIdleMotion,L"待機モーションを追加...");
+        AppendMenuW(motions,MF_STRING,IdOpenIdleMotion,T(L"待機モーションを開く...（複数選択可）",L"Open idle motions... (one or more)"));
+        AppendMenuW(motions,MF_STRING|(idleCount==0?MF_GRAYED:0),IdAddIdleMotion,T(L"待機モーションを追加...",L"Add idle motions..."));
         AppendMenuW(motions,MF_STRING|(idleCount==0?MF_GRAYED:0),IdCloseIdleMotion,
-                    idleCount>1?(L"待機モーションを閉じる（"+std::to_wstring(idleCount)+L"件）").c_str():L"待機モーションを閉じる");
+                    idleCount>1?Fmt(T(L"待機モーションを閉じる（{0}件）",L"Close idle motions ({0})"),{std::to_wstring(idleCount)}).c_str():T(L"待機モーションを閉じる",L"Close idle motion"));
         AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
         const size_t clickCount=Own(m).clickMotionPaths.size();
-        AppendMenuW(motions,MF_STRING,IdOpenClickMotion,L"クリック時のモーションを開く...（複数選択可）");
+        AppendMenuW(motions,MF_STRING,IdOpenClickMotion,T(L"クリック時のモーションを開く...（複数選択可）",L"Open click motions... (one or more)"));
         AppendMenuW(motions,MF_STRING|(clickCount==0?MF_GRAYED:0),IdCloseClickMotion,
-                    clickCount>1?(L"クリック時のモーションを閉じる（"+std::to_wstring(clickCount)+L"件）").c_str():L"クリック時のモーションを閉じる");
+                    clickCount>1?Fmt(T(L"クリック時のモーションを閉じる（{0}件）",L"Close click motions ({0})"),{std::to_wstring(clickCount)}).c_str():T(L"クリック時のモーションを閉じる",L"Close click motion"));
         AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
-        AppendMenuW(motions,MF_STRING|(Own(m).walkMotionPath.empty()?0:MF_CHECKED),IdOpenWalkMotion,L"歩くモーションを開く...");
-        AppendMenuW(motions,MF_STRING|(Own(m).runMotionPath.empty()?0:MF_CHECKED),IdOpenRunMotion,L"走るモーションを開く...");
+        AppendMenuW(motions,MF_STRING|(Own(m).walkMotionPath.empty()?0:MF_CHECKED),IdOpenWalkMotion,T(L"歩くモーションを開く...",L"Open walk motion..."));
+        AppendMenuW(motions,MF_STRING|(Own(m).runMotionPath.empty()?0:MF_CHECKED),IdOpenRunMotion,T(L"走るモーションを開く...",L"Open run motion..."));
         AppendMenuW(motions,MF_STRING|(Own(m).walkMotionPath.empty()&&Own(m).runMotionPath.empty()?MF_GRAYED:0),IdCloseGaitMotion,
-                    L"歩く・走るモーションを閉じる");
-        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(motions),L"モーション");
+                    T(L"歩く・走るモーションを閉じる",L"Close walk and run motions"));
+        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(motions),T(L"モーション",L"Motion"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         const bool grounded=m.place==Place::Ground;
-        AppendMenuW(menu,MF_STRING|(app.settings.windowMode?MF_CHECKED:0),IdWindowMode,L"アクティブウィンドウに乗る");
-        AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkLeft,L"左へ歩く");
-        AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkRight,L"右へ歩く");
+        AppendMenuW(menu,MF_STRING|(app.settings.windowMode?MF_CHECKED:0),IdWindowMode,T(L"アクティブウィンドウに乗る",L"Ride on the active window"));
+        AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkLeft,T(L"左へ歩く",L"Walk left"));
+        AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkRight,T(L"右へ歩く",L"Walk right"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
-        AppendMenuW(menu,MF_STRING,IdSettings,L"設定...");
-        AppendMenuW(menu,MF_STRING,IdExit,L"終了");
+        AppendMenuW(menu,MF_STRING,IdSettings,T(L"設定...",L"Settings..."));
+        AppendMenuW(menu,MF_STRING,IdExit,T(L"終了",L"Exit"));
         // The menu needs its owner in the foreground, which also raises it: while hanging, put
         // the mascot straight back behind the window it hangs from (before and after the menu).
         auto keepBehind=[&m]{
@@ -1366,10 +1367,24 @@ namespace
             // A new character starts a new conversation.
             m.character=choice.character;
             m.conversation.clear();
-            if(!m.character.Save(Own(m).modelPath))ShowMessage(L"人物設定を保存できませんでした。",MB_ICONERROR);
+            if(!m.character.Save(Own(m).modelPath))ShowMessage(T(L"人物設定を保存できませんでした。",L"Could not save the persona."),MB_ICONERROR);
+        }
+        if(s.language!=current.language)
+        {
+            // Everything follows at once; a persona left as the default becomes the new
+            // language's default (and the conversation starts again in that language).
+            const std::wstring oldDefault=CharacterProfile::DefaultPersona();
+            current.language=s.language;
+            SetLanguage(current.language);
+            for(const auto& owned:app.mascots)
+                if(owned->character.persona==oldDefault)
+                {
+                    owned->character.persona=CharacterProfile::DefaultPersona();
+                    owned->conversation.clear();
+                }
         }
         if(choice.startWithWindows!=StartupRegistered()&&!SetStartup(choice.startWithWindows))
-            ShowMessage(L"スタートアップの設定を変更できませんでした。",MB_ICONERROR);
+            ShowMessage(T(L"スタートアップの設定を変更できませんでした。",L"Could not change starting with Windows."),MB_ICONERROR);
         const bool restart=s.fps!=current.fps||s.motionBlur!=current.motionBlur||s.msaa!=current.msaa||s.maxTextureSize!=current.maxTextureSize||
                            s.physicsFps!=current.physicsFps||s.physicsIterations!=current.physicsIterations||s.toonDir!=current.toonDir;
         current.fps=s.fps;
@@ -1381,7 +1396,7 @@ namespace
         current.toonDir=s.toonDir;
         if(s.scale!=current.scale)ApplyScale(s.scale);
         current.Save(app.settingsPath);
-        if(restart&&ShowMessage(L"詳細の設定は、再起動すると反映されます。\n今すぐ再起動しますか？",MB_ICONQUESTION|MB_YESNO)==IDYES)
+        if(restart&&ShowMessage(T(L"詳細の設定は、再起動すると反映されます。\n今すぐ再起動しますか？",L"The advanced settings take effect after a restart.\nRestart now?"),MB_ICONQUESTION|MB_YESNO)==IDYES)
         {
             app.restart=true;
             DestroyWindow(app.hwnd);
@@ -1416,8 +1431,8 @@ namespace
                 if(closing)
                 {
                     const size_t end=out.find(closing,i+1);
-                    if(end!=std::wstring::npos&&end-i<=7){i=end;continue;}
-                    if(end==std::wstring::npos&&out.size()-i<=7)break;
+                    if(end!=std::wstring::npos&&end-i<=11){i=end;continue;}
+                    if(end==std::wstring::npos&&out.size()-i<=11)break;
                 }
                 kept+=c;
             }
@@ -1455,7 +1470,7 @@ namespace
     {
         if(app.settings.chatModel.empty())
         {
-            if(tell)m.bubble.ShowNotice(L"設定の「会話」で、使うモデルを選んでください（Ollama などを起動してから「一覧を取得」）。");
+            if(tell)m.bubble.ShowNotice(T(L"設定の「会話」で、使うモデルを選んでください（Ollama などを起動してから「一覧を取得」）。",L"Choose a model under Talking in the settings (start Ollama or the like, then press Get list)."));
             return false;
         }
         if(const auto problem=CheckLocalEndpoint(app.settings.chatEndpoint);!problem.empty())
@@ -1468,12 +1483,53 @@ namespace
     }
 
     // The feelings a reply may start with, as the tags the LLM is asked to write.
-    constexpr std::pair<const wchar_t*,Expression> Feelings[]={
-        {L"笑顔",Expression::Smile},{L"驚き",Expression::Surprise},{L"困り",Expression::Troubled},{L"怒り",Expression::Angry},
-        {L"悲しみ",Expression::Sad},{L"照れ",Expression::Shy},{L"普通",Expression::Neutral}};
+    // (English replies are asked for the English tag in square brackets.)
+    struct Feeling {const wchar_t* japanese;const wchar_t* english;Expression expression;};
+    constexpr Feeling Feelings[]={
+        {L"笑顔",L"smile",Expression::Smile},{L"驚き",L"surprise",Expression::Surprise},{L"困り",L"troubled",Expression::Troubled},
+        {L"怒り",L"angry",Expression::Angry},{L"悲しみ",L"sad",Expression::Sad},{L"照れ",L"shy",Expression::Shy},{L"普通",L"neutral",Expression::Neutral}};
+
+    // How the LLM is asked to mark the feeling at the start of a reply, in the language in use.
+    std::wstring FeelingTags()
+    {
+        std::wstring tags;
+        for(const auto& f:Feelings)tags+=English()?L"["+std::wstring(f.english)+L"] ":L"［"+std::wstring(f.japanese)+L"］";
+        return tags;
+    }
+
+    // The feeling a reply starts with, if its tag has come in (near the start, in either language).
+    const Feeling* ReplyFeeling(const std::wstring& reply)
+    {
+        std::wstring head=reply.substr(0,24);
+        std::transform(head.begin(),head.end(),head.begin(),[](wchar_t c){return static_cast<wchar_t>(std::towlower(c));});
+        for(const auto& f:Feelings)
+            if(head.find(f.japanese)!=std::wstring::npos||head.find(L"["+std::wstring(f.english))!=std::wstring::npos||
+               head.find(L"［"+std::wstring(f.english))!=std::wstring::npos)return &f;
+        return nullptr;
+    }
 
     void BeginReply(Mascot& m,std::vector<ChatMessage> messages);
     void EndBanter(const wchar_t* why);
+
+    // The date and time for the LLM, in the language in use.
+    std::wstring NowText()
+    {
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        wchar_t text[96]{};
+        if(English())
+        {
+            static constexpr const wchar_t* Days[]={L"Sunday",L"Monday",L"Tuesday",L"Wednesday",L"Thursday",L"Friday",L"Saturday"};
+            static constexpr const wchar_t* Months[]={L"January",L"February",L"March",L"April",L"May",L"June",L"July",L"August",L"September",L"October",L"November",L"December"};
+            swprintf_s(text,L"%s, %s %d, %d, %d:%02d",Days[now.wDayOfWeek%7],Months[(now.wMonth+11)%12],now.wDay,now.wYear,now.wHour,now.wMinute);
+        }
+        else
+        {
+            static constexpr const wchar_t* Days[]={L"日",L"月",L"火",L"水",L"木",L"金",L"土"};
+            swprintf_s(text,L"%d年%d月%d日（%s）%d時%02d分",now.wYear,now.wMonth,now.wDay,Days[now.wDayOfWeek%7],now.wHour,now.wMinute);
+        }
+        return text;
+    }
 
     // Ask for a reply to the conversation as it stands; query is what the memory is searched for.
     void StartReply(Mascot& m,const std::wstring& query)
@@ -1481,28 +1537,36 @@ namespace
         // The last six exchanges are enough for a chat at the desk.
         while(m.conversation.size()>12)m.conversation.erase(m.conversation.begin());
         const std::wstring& text=query;
-        SYSTEMTIME now{};
-        GetLocalTime(&now);
-        static constexpr const wchar_t* Days[]={L"日",L"月",L"火",L"水",L"木",L"金",L"土"};
-        wchar_t clock[64]{};
-        swprintf_s(clock,L"%d年%d月%d日（%s）%d時%02d分",now.wYear,now.wMonth,now.wDay,Days[now.wDayOfWeek%7],now.wHour,now.wMinute);
+        const std::wstring clock=NowText();
         const std::wstring& user=app.settings.userName;
         const std::wstring partner=user.empty()
-            ?L"話し相手の名前は分からないので、名前では呼ばないでください（「◯◯さん」のような書き方もしないでください）。\n"
-            :L"話し相手（あなたに話しかけている人）の名前は「"+user+L"」です。\n";
+            ?std::wstring(T(L"話し相手の名前は分からないので、名前では呼ばないでください（「◯◯さん」のような書き方もしないでください）。\n",
+                            L"You do not know the name of the person you talk with, so do not call them by any name.\n"))
+            :Fmt(T(L"話し相手（あなたに話しかけている人）の名前は「{0}」です。\n",L"The person talking with you is called \"{0}\".\n"),{user});
         std::wstring remembered;
         if(app.settings.chatMemory)
             if(const std::wstring notes=m.memory.Recall(text,1500);!notes.empty())
-                remembered=L"\n以前の会話で覚えたこと（必要なときだけ自然に話に生かしてください。ここにないことを覚えているふりはしないでください）：\n"+notes+L"\n";
+                remembered=T(L"\n以前の会話で覚えたこと（必要なときだけ自然に話に生かしてください。ここにないことを覚えているふりはしないでください）：\n",
+                             L"\nWhat you remember from earlier conversations (bring it in naturally, only when it fits; do not pretend to remember anything not listed here):\n")+notes+L"\n";
         std::vector<ChatMessage> messages;
-        messages.push_back({L"system",
-            L"あなたは「"+m.character.name+L"」です。\n"+m.character.persona+L"\n\n"+partner+remembered+
-            L"いまは"+clock+L"です。\n"
-            L"あなたの返事は、デスクトップの上にいるあなたの頭上の吹き出しに表示されます。"
-            L"1〜3文くらいの短い話し言葉で答えてください。Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
-            L"返事のいちばん最初に、そのときの気持ちを［笑顔］［驚き］［困り］［怒り］［悲しみ］［照れ］［普通］のどれか1つで書いてください（例：［笑顔］そうなんだ！）。"
-            L"この印は最初の1つだけで、ほかの所には書かないでください。\n"
-            L"話し相手の発言が（ ）で囲まれているときは、実際の発言ではなく状況の説明です。その状況に合わせて、あなたから話しかけてください。"});
+        if(English())
+            messages.push_back({L"system",
+                L"You are \""+m.character.name+L"\".\n"+m.character.persona+L"\n\n"+partner+remembered+
+                L"It is now "+clock+L".\n"
+                L"Your replies appear in a speech bubble over your head on the desktop. "
+                L"Always answer in English, in one to three short, casual spoken sentences. Do not use Markdown, lists, emoji or emoticons.\n"
+                L"Begin every reply with how you feel, as exactly one of "+FeelingTags()+L"(for example: [smile] Oh, really!). "
+                L"Use that tag only once, at the very start.\n"
+                L"When what the other person says is in ( ), it is not something they said but a description of the situation: speak to them first, in a way that suits it."});
+        else
+            messages.push_back({L"system",
+                L"あなたは「"+m.character.name+L"」です。\n"+m.character.persona+L"\n\n"+partner+remembered+
+                L"いまは"+clock+L"です。\n"
+                L"あなたの返事は、デスクトップの上にいるあなたの頭上の吹き出しに表示されます。"
+                L"1〜3文くらいの短い話し言葉で答えてください。Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
+                L"返事のいちばん最初に、そのときの気持ちを"+FeelingTags()+L"のどれか1つで書いてください（例：［笑顔］そうなんだ！）。"
+                L"この印は最初の1つだけで、ほかの所には書かないでください。\n"
+                L"話し相手の発言が（ ）で囲まれているときは、実際の発言ではなく状況の説明です。その状況に合わせて、あなたから話しかけてください。"});
         messages.insert(messages.end(),m.conversation.begin(),m.conversation.end());
         BeginReply(m,std::move(messages));
     }
@@ -1533,7 +1597,7 @@ namespace
     {
         if(!ChatReady(m,false))return;
         Trace(L"%.1f speak first: %s",app.clock,situation.c_str());
-        m.conversation.push_back({L"user",L"（"+situation+L"）"});
+        m.conversation.push_back({L"user",English()?L"("+situation+L")":L"（"+situation+L"）"});
         StartReply(m,situation);
     }
 
@@ -1594,7 +1658,9 @@ namespace
         {
             const int minutes=static_cast<int>((app.clock-app.awaySince)/60);
             app.awaySince=-1;
-            SpeakFirst(anyone(),L"話し相手が"+std::to_wstring(minutes)+L"分ほど席を外していて、いまパソコンの前に戻ってきました。おかえりのひと言を");
+            SpeakFirst(anyone(),Fmt(T(L"話し相手が{0}分ほど席を外していて、いまパソコンの前に戻ってきました。おかえりのひと言を",
+                                     L"The person you talk with was away from the computer for about {0} minutes and has just come back. Say a word of welcome back"),
+                                   {std::to_wstring(minutes)}));
             app.nextChatterAt=std::max(app.nextChatterAt,app.clock+20*60);
             return;
         }
@@ -1612,10 +1678,10 @@ namespace
                 app.settings.lastGreeting=key;
                 app.settings.Save(app.settingsPath);
                 const std::wstring s=slot;
-                SpeakFirst(anyone(),s==L"morning"?L"朝です。話し相手がパソコンを使い始めました。朝のあいさつを":
-                           s==L"noon"?L"お昼どきです。お昼ごはんのことなどで、軽く声をかけて":
-                           s==L"evening"?L"夕方から夜の時間です。今日一日おつかれさまの気持ちで、ひと言":
-                                          L"夜遅い時間です。夜ふかしを気づかうひと言を");
+                SpeakFirst(anyone(),s==L"morning"?T(L"朝です。話し相手がパソコンを使い始めました。朝のあいさつを",L"It is morning. The person you talk with has started using the computer. Say good morning"):
+                           s==L"noon"?T(L"お昼どきです。お昼ごはんのことなどで、軽く声をかけて",L"It is around lunchtime. Say something light, about lunch or the like"):
+                           s==L"evening"?T(L"夕方から夜の時間です。今日一日おつかれさまの気持ちで、ひと言",L"It is evening. Say a word of thanks for the day's work"):
+                                          T(L"夜遅い時間です。夜ふかしを気づかうひと言を",L"It is late at night. Say a word of concern about staying up late"));
                 app.nextChatterAt=std::max(app.nextChatterAt,app.clock+20*60);
                 return;
             }
@@ -1623,7 +1689,8 @@ namespace
         if(app.clock>=app.nextChatterAt)
         {
             app.nextChatterAt=app.clock+Interval(app.settings.chatterMinutes);
-            SpeakFirst(anyone(),L"特に用事はないけれど、話し相手に何かひと言話しかけたくなりました。覚えていることや、いまの時間帯・季節にちなんだ話題で");
+            SpeakFirst(anyone(),T(L"特に用事はないけれど、話し相手に何かひと言話しかけたくなりました。覚えていることや、いまの時間帯・季節にちなんだ話題で",
+                                  L"Nothing in particular, but you feel like saying a word to the person you talk with: about something you remember, or the time of day or the season"));
         }
     }
 
@@ -1686,15 +1753,13 @@ namespace
         if(id!=m.chatRequest)return;
         m.reply+=*owned;
         if(!m.replyFeelingSet)
-            for(const auto& [tag,feeling]:Feelings)
-                if(m.reply.find(tag)!=std::wstring::npos&&m.reply.find(tag)<16)
-                {
-                    m.replyFeelingSet=true;
-                    m.model.SetExpression(feeling,true);
-                    m.feelingUntil=-1;
-                    Trace(L"%.1f talk: feeling %s",app.clock,tag);
-                    break;
-                }
+            if(const Feeling* feeling=ReplyFeeling(m.reply))
+            {
+                m.replyFeelingSet=true;
+                m.model.SetExpression(feeling->expression,true);
+                m.feelingUntil=-1;
+                Trace(L"%.1f talk: feeling %s",app.clock,feeling->english);
+            }
         if(m.banterLine)
         {
             bool complete=false;
@@ -1755,7 +1820,7 @@ namespace
         if(!clean.empty())
         {
             if(app.settings.chatMemory&&!m.conversation.empty()&&m.conversation.back().role==L"user"&&
-               m.conversation.back().content.rfind(L"（",0)!=0)
+               m.conversation.back().content.rfind(L"（",0)!=0&&m.conversation.back().content.rfind(L"(",0)!=0)
             {
                 m.unmemorized.push_back(m.conversation.back());
                 m.unmemorized.push_back({L"assistant",clean});
@@ -1775,6 +1840,11 @@ namespace
         L"いまの季節や天気のこと",L"好きな食べ物やおやつのこと",L"最近気になっていること",L"休みの日にしてみたいこと",
         L"デスクトップの上での暮らしのこと",L"このパソコンの持ち主（いつも話しかけてくれる人）のこと",
         L"相手に前から聞いてみたかったこと",L"いまの時間帯にちなんだこと",L"好きな音楽や歌のこと",L"ちょっとした思い出話"};
+    constexpr const wchar_t* EnglishBanterTopics[]={
+        L"the season and the weather",L"favorite foods and snacks",L"something on your mind lately",L"what you would like to do on a day off",
+        L"life on the desktop",L"the owner of this computer (who always talks to you)",
+        L"something you have long wanted to ask the other",L"something about this time of day",L"favorite music and songs",L"a little memory"};
+    static_assert(std::size(BanterTopics)==std::size(EnglishBanterTopics));
 
     // Someone is saying something, about to, or being talked to: nobody else starts talking.
     bool AnyoneTalking()
@@ -1852,7 +1922,8 @@ namespace
         b.stage=App::Banter::Stage::Gathering;
         b.first=&first;b.second=&second;
         b.since=app.clock;
-        b.topic=BanterTopics[std::min(std::size(BanterTopics)-1,static_cast<size_t>(app.Random01()*std::size(BanterTopics)))];
+        const size_t topic=std::min(std::size(BanterTopics)-1,static_cast<size_t>(app.Random01()*std::size(BanterTopics)));
+        b.topic=English()?EnglishBanterTopics[topic]:BanterTopics[topic];
         b.linesLeft=4+static_cast<int>(app.Random01()*3);   // 4 to 6 lines
         Trace(L"%.1f banter: %s and %s, %d lines about %s",app.clock,first.character.name.c_str(),second.character.name.c_str(),b.linesLeft,b.topic.c_str());
         const bool sameSurface=second.surfaceWindow==first.surfaceWindow&&std::abs(FeetLine(second)-FeetLine(first))<4;
@@ -1881,39 +1952,61 @@ namespace
         if(!ChatReady(m,false)){EndBanter(L"the LLM is not set up");return;}
         const std::wstring& name=m.character.name;
         const std::wstring& other=partner.character.name;
-        SYSTEMTIME now{};
-        GetLocalTime(&now);
-        static constexpr const wchar_t* Days[]={L"日",L"月",L"火",L"水",L"木",L"金",L"土"};
-        wchar_t clock[64]{};
-        swprintf_s(clock,L"%d年%d月%d日（%s）%d時%02d分",now.wYear,now.wMonth,now.wDay,Days[now.wDayOfWeek%7],now.wHour,now.wMinute);
+        const std::wstring clock=NowText();
         std::wstring otherPersona=partner.character.persona;
         if(otherPersona.size()>400)otherPersona=otherPersona.substr(0,400)+L"…";
         const std::wstring& user=app.settings.userName;
         std::wstring remembered;
         if(app.settings.chatMemory)
             if(const std::wstring notes=m.memory.Recall(b.topic,600);!notes.empty())
-                remembered=L"\nこのパソコンの持ち主について、あなたが覚えていること（話に合うときだけ使ってください）：\n"+notes+L"\n";
+                remembered=T(L"\nこのパソコンの持ち主について、あなたが覚えていること（話に合うときだけ使ってください）：\n",
+                             L"\nWhat you remember about the owner of this computer (use it only when it fits the talk):\n")+notes+L"\n";
         std::vector<ChatMessage> messages;
-        messages.push_back({L"system",
-            L"あなたは「"+name+L"」です。\n"+m.character.persona+L"\n\n"
-            L"いま、デスクトップの上で、となりにいる「"+other+L"」とおしゃべりしています。「"+other+L"」は、こんな人です：\n"+otherPersona+L"\n\n"+
-            (user.empty()?std::wstring(L"このパソコンの持ち主（いつも二人に話しかけてくれる人）が、二人の様子を見ています。\n")
-                         :L"このパソコンの持ち主（いつも二人に話しかけてくれる人）の名前は「"+user+L"」で、二人の様子を見ています。\n")+
-            remembered+
-            L"いまは"+clock+L"です。おしゃべりのきっかけ："+b.topic+L"\n"
-            L"あなたのセリフは、あなたの頭上の吹き出しに表示されます。あなた（「"+name+L"」）のセリフを1つだけ、1〜2文の短い話し言葉で書いてください。"
-            L"「"+other+L"」のセリフ、名前、ト書き、（ ）書きは書かないでください。Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
-            L"セリフのいちばん最初に、そのときの気持ちを［笑顔］［驚き］［困り］［怒り］［悲しみ］［照れ］［普通］のどれか1つで書いてください（例：［笑顔］ねえ、聞いて！）。"});
         std::wstring ask;
-        if(b.lines.empty())ask=L"あなたから「"+other+L"」に話しかけて、おしゃべりを始めてください。";
+        if(English())
+        {
+            messages.push_back({L"system",
+                L"You are \""+name+L"\".\n"+m.character.persona+L"\n\n"
+                L"You are now chatting with \""+other+L"\", who is beside you on the desktop. \""+other+L"\" is like this:\n"+otherPersona+L"\n\n"+
+                (user.empty()?std::wstring(L"The owner of this computer (who always talks to you both) is watching you two.\n")
+                             :L"The owner of this computer (who always talks to you both) is called \""+user+L"\" and is watching you two.\n")+
+                remembered+
+                L"It is now "+clock+L". What got the chat going: "+b.topic+L"\n"
+                L"Your line appears in a speech bubble over your head. Write only your own (\""+name+L"\") line, in English: one short, casual spoken line of one or two sentences. "
+                L"Do not write \""+other+L"\"'s lines, names, stage directions or anything in ( ). Do not use Markdown, lists, emoji or emoticons.\n"
+                L"Begin your line with how you feel, as exactly one of "+FeelingTags()+L"(for example: [smile] Hey, guess what!)."});
+            if(b.lines.empty())ask=L"Speak to \""+other+L"\" and start the chat.";
+            else
+            {
+                ask=L"The chat so far:\n";
+                for(const auto& [who,said]:b.lines)ask+=who+L": "+said+L"\n";
+                ask+=L"\nFollowing \""+other+L"\"'s last line, say \""+name+L"\"'s next line.";
+                if(b.linesLeft<=1)ask+=L" This is the last line: bring the chat to a natural close.";
+            }
+            messages.push_back({L"user",ask});
+        }
         else
         {
-            ask=L"ここまでの二人の会話：\n";
-            for(const auto& [who,said]:b.lines)ask+=who+L"："+said+L"\n";
-            ask+=L"\n「"+other+L"」の最後のセリフに続けて、「"+name+L"」の次のセリフを言ってください。";
-            if(b.linesLeft<=1)ask+=L"これで最後のひと言です。おしゃべりが自然に終わるように締めくくってください。";
+            messages.push_back({L"system",
+                L"あなたは「"+name+L"」です。\n"+m.character.persona+L"\n\n"
+                L"いま、デスクトップの上で、となりにいる「"+other+L"」とおしゃべりしています。「"+other+L"」は、こんな人です：\n"+otherPersona+L"\n\n"+
+                (user.empty()?std::wstring(L"このパソコンの持ち主（いつも二人に話しかけてくれる人）が、二人の様子を見ています。\n")
+                             :L"このパソコンの持ち主（いつも二人に話しかけてくれる人）の名前は「"+user+L"」で、二人の様子を見ています。\n")+
+                remembered+
+                L"いまは"+clock+L"です。おしゃべりのきっかけ："+b.topic+L"\n"
+                L"あなたのセリフは、あなたの頭上の吹き出しに表示されます。あなた（「"+name+L"」）のセリフを1つだけ、1〜2文の短い話し言葉で書いてください。"
+                L"「"+other+L"」のセリフ、名前、ト書き、（ ）書きは書かないでください。Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
+                L"セリフのいちばん最初に、そのときの気持ちを"+FeelingTags()+L"のどれか1つで書いてください（例：［笑顔］ねえ、聞いて！）。"});
+            if(b.lines.empty())ask=L"あなたから「"+other+L"」に話しかけて、おしゃべりを始めてください。";
+            else
+            {
+                ask=L"ここまでの二人の会話：\n";
+                for(const auto& [who,said]:b.lines)ask+=who+L"："+said+L"\n";
+                ask+=L"\n「"+other+L"」の最後のセリフに続けて、「"+name+L"」の次のセリフを言ってください。";
+                if(b.linesLeft<=1)ask+=L"これで最後のひと言です。おしゃべりが自然に終わるように締めくくってください。";
+            }
+            messages.push_back({L"user",ask});
         }
-        messages.push_back({L"user",ask});
         b.lineStarted=true;
         m.banterLine=true;
         BeginReply(m,std::move(messages));
@@ -1998,14 +2091,14 @@ namespace
         if(!yes)
         {
             Trace(L"%.1f update %s: declined",app.clock,app.update->version.c_str());
-            SayFixed(m,L"わかった。また今度ね。");
+            SayFixed(m,T(L"わかった。また今度ね。",L"Okay. Maybe next time."));
             app.declinedVersion=app.update->version;
             app.update.reset();
             app.asker=nullptr;
             return;
         }
         Trace(L"%.1f update %s: downloading",app.clock,app.update->version.c_str());
-        SayFixed(m,L"じゃあ、更新するね。終わったら、すぐに戻ってくるよ。");
+        SayFixed(m,T(L"じゃあ、更新するね。終わったら、すぐに戻ってくるよ。",L"Then I'll update. I'll be right back when it's done."));
         app.updating=true;
         app.updater->Download(*app.update);
     }
@@ -2025,12 +2118,13 @@ namespace
         const std::wstring& version=app.update->version;
         Trace(L"%.1f update %s: asking",app.clock,version.c_str());
         if(ChatReady(m,false))
-            SpeakFirst(m,L"このアプリ（MikuMikuDesktopPerch）の新しいバージョン"+version+L"が出ました。話し相手にそのことを伝えて、いま更新するかどうかを聞いて");
-        else SayFixed(m,L"MikuMikuDesktopPerch の新しいバージョン（"+version+L"）が出てるよ。いま更新する？");
+            SpeakFirst(m,Fmt(T(L"このアプリ（MikuMikuDesktopPerch）の新しいバージョン{0}が出ました。話し相手にそのことを伝えて、いま更新するかどうかを聞いて",
+                              L"A new version ({0}) of this app, MikuMikuDesktopPerch, is out. Tell the person you talk with, and ask whether to update now"),{version}));
+        else SayFixed(m,Fmt(T(L"MikuMikuDesktopPerch の新しいバージョン（{0}）が出てるよ。いま更新する？",L"A new version of MikuMikuDesktopPerch ({0}) is out. Shall I update now?"),{version}));
         const RECT r=FrameRect(m);
         const POINT ground=GroundPointOnScreen(m);
         app.updateChoice.Open(m.hwnd,{(r.left+r.right)/2,ground.y-static_cast<LONG>(ModelHeightPixels(m)*0.12)},
-                              L"はい（更新する）",L"いいえ",OnUpdateAnswer);
+                              T(L"はい（更新する）",L"Yes (update)"),T(L"いいえ",L"No"),OnUpdateAnswer);
     }
 
     // Now and then (shortly after start, then once a day) ask GitHub for a newer release.
@@ -2062,8 +2156,8 @@ namespace
             DestroyWindow(app.hwnd);
             return;
         }
-        if(app.asker)SayFixed(*app.asker,L"ごめんね、更新できなかったみたい……");
-        ShowMessage(L"更新できませんでした。\n\n"+problem,MB_ICONWARNING);
+        if(app.asker)SayFixed(*app.asker,T(L"ごめんね、更新できなかったみたい……",L"Sorry, the update didn't work..."));
+        ShowMessage(T(L"更新できませんでした。\n\n",L"Could not update.\n\n")+problem,MB_ICONWARNING);
         app.declinedVersion=app.update?app.update->version:std::wstring();
         app.update.reset();
         app.asker=nullptr;
@@ -2080,19 +2174,34 @@ namespace
         if(!CheckLocalEndpoint(app.settings.chatEndpoint).empty()){m.unmemorized.clear();return;}
         if(!m.memoryChat)m.memoryChat=std::make_unique<LocalChat>(m.hwnd);
         const std::wstring& name=m.character.name;
-        const std::wstring partner=app.settings.userName.empty()?L"話し相手":L"話し相手（"+app.settings.userName+L"）";
+        const std::wstring partner=app.settings.userName.empty()?std::wstring(T(L"話し相手",L"the user"))
+                                                                 :Fmt(T(L"話し相手（{0}）",L"the user ({0})"),{app.settings.userName});
         std::wstring dialogue;
-        for(const auto& m:m.unmemorized)dialogue+=(m.role==L"user"?L"話し相手：":name+L"：")+m.content+L"\n";
+        for(const auto& said:m.unmemorized)dialogue+=(said.role==L"user"?std::wstring(T(L"話し相手：",L"User: ")):name+T(L"：",L": "))+said.content+L"\n";
         std::wstring known;
         for(const auto& e:m.memory.Entries())known+=L"- "+e.text+L"\n";
         if(known.size()>3000)known=known.substr(known.size()-3000);
         SYSTEMTIME now{};
         GetLocalTime(&now);
         wchar_t today[32]{};
-        swprintf_s(today,L"%d年%d月%d日",now.wYear,now.wMonth,now.wDay);
+        swprintf_s(today,English()?L"%04d-%02d-%02d":L"%d年%d月%d日",now.wYear,now.wMonth,now.wDay);
         std::vector<ChatMessage> messages;
-        messages.push_back({L"system",L"あなたは会話の記録係です。指示されたことだけを、指示された形で書きます。"});
-        messages.push_back({L"user",
+        messages.push_back({L"system",T(L"あなたは会話の記録係です。指示されたことだけを、指示された形で書きます。",
+                                        L"You keep the record of conversations. You write only what you are asked, in the form asked.")});
+        if(English())messages.push_back({L"user",
+            L"Below is a conversation between \""+name+L"\" and "+partner+L". Today is "+today+L".\n"
+            L"Write down new things about the user that \""+name+L"\" should remember in future conversations.\n"
+            L"What to remember: what the user likes and dislikes, plans and events, family and pets, work, school and hobbies, promises between the two, "
+            L"and anything the user asked to be remembered.\n"
+            L"How to write:\n"
+            L"- One per line, a short sentence with its subject, like \"The user ...\", three at most.\n"
+            L"- Turn \"tomorrow\", \"next week\" and the like into dates, from today's date.\n"
+            L"- Do not write greetings, passing small talk, or what "+name+L" said.\n"
+            L"- Do not repeat what is already remembered.\n"
+            L"- If there is nothing to write, write only \"none\".\n\n"
+            L"Already remembered:\n"+(known.empty()?std::wstring(L"(nothing yet)\n"):known)+L"\n"
+            L"Conversation:\n"+dialogue});
+        else messages.push_back({L"user",
             L"次は「"+name+L"」と"+partner+L"の会話です。今日は"+today+L"です。\n"
             L"この先の会話で「"+name+L"」が覚えておくとよい、話し相手についての新しいことを書き出してください。\n"
             L"覚えること：話し相手の好きなもの・苦手なもの、予定や出来事、家族やペット、仕事や学校や趣味、二人の約束、話し相手が「覚えておいて」と言ったこと。\n"
@@ -2123,7 +2232,7 @@ namespace
             if(start==std::wstring::npos)continue;
             line=line.substr(start);
             while(!line.empty()&&std::iswspace(line.back()))line.pop_back();
-            if(line.empty()||line.find(L"なし")==0||line.size()>CharacterMemory::MaxLength)continue;
+            if(line.empty()||line.find(L"なし")==0||_wcsnicmp(line.c_str(),L"none",4)==0||line.size()>CharacterMemory::MaxLength)continue;
             if(line.back()==L'：'||line.back()==L':')continue;   // a heading
             if(m.memory.Add(line,TodayDate())){added=true;Trace(L"%.1f memory: + %s",app.clock,line.c_str());}
         }
@@ -2180,7 +2289,7 @@ namespace
         for(const auto& c:app.settings.characters)
             if(_wcsicmp(c.modelPath.c_str(),path.c_str())==0)
             {
-                ShowMessage(L"このモデルは、すでにデスクトップにいます。",MB_ICONINFORMATION);
+                ShowMessage(T(L"このモデルは、すでにデスクトップにいます。",L"This model is already on the desktop."),MB_ICONINFORMATION);
                 return false;
             }
         MascotModel probe;
@@ -2202,7 +2311,7 @@ namespace
             break;
         case IdOpenModel:
         {
-            auto path=OpenFileDialog(m.hwnd,L"PMX モデル (*.pmx)\0*.pmx\0",Own(m).modelPath);
+            auto path=OpenFileDialog(m.hwnd,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),Own(m).modelPath);
             if(path.empty()||!ModelUsable(path))break;
             // The window size follows the model's proportions: the character is made afresh
             // with the new model, where it stands now.
@@ -2214,7 +2323,7 @@ namespace
         case IdAddCharacter:
         {
             if(app.settings.characters.size()>=Settings::MaxCharacters)break;
-            auto path=OpenFileDialog(m.hwnd,L"PMX モデル (*.pmx)\0*.pmx\0",Own(m).modelPath);
+            auto path=OpenFileDialog(m.hwnd,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),Own(m).modelPath);
             if(path.empty()||!ModelUsable(path))break;
             CharacterSettings added;
             added.modelPath=path;
@@ -2227,7 +2336,7 @@ namespace
             break;
         case IdOpenMotion:
         {
-            auto path=OpenFileDialog(m.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",Own(m).motionPath.empty()?Own(m).modelPath:Own(m).motionPath);
+            auto path=OpenFileDialog(m.hwnd,T(L"VMD モーション (*.vmd)\0*.vmd\0",L"VMD motion (*.vmd)\0*.vmd\0"),Own(m).motionPath.empty()?Own(m).modelPath:Own(m).motionPath);
             if(path.empty())break;
             std::wstring error;
             if(!m.model.SetMotion(path,error))
@@ -2255,7 +2364,7 @@ namespace
             // A walk or run in place (the kind moved by 全ての親) replaces the generated gait.
             const int which=id==IdOpenWalkMotion?0:1;
             std::wstring& setting=which==0?Own(m).walkMotionPath:Own(m).runMotionPath;
-            const auto path=OpenFileDialog(m.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",setting.empty()?Own(m).modelPath:setting);
+            const auto path=OpenFileDialog(m.hwnd,T(L"VMD モーション (*.vmd)\0*.vmd\0",L"VMD motion (*.vmd)\0*.vmd\0"),setting.empty()?Own(m).modelPath:setting);
             if(path.empty())break;
             if(std::wstring error;!m.model.SetGaitMotion(which,path,error)){ShowMessage(error,MB_ICONERROR);break;}
             setting=path;
@@ -2280,7 +2389,7 @@ namespace
             if(id==IdOpenClickMotion)
             {
                 const auto& list=Own(m).clickMotionPaths;
-                paths=OpenFilesDialog(m.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",list.empty()?Own(m).modelPath:list.back());
+                paths=OpenFilesDialog(m.hwnd,T(L"VMD モーション (*.vmd)\0*.vmd\0",L"VMD motion (*.vmd)\0*.vmd\0"),list.empty()?Own(m).modelPath:list.back());
                 if(paths.empty())break;
             }
             if(std::wstring error;!m.model.SetClickMotions(paths,error))
@@ -2302,7 +2411,7 @@ namespace
             if(id!=IdCloseIdleMotion)
             {
                 const auto& list=Own(m).idleMotionPaths;
-                auto picked=OpenFilesDialog(m.hwnd,L"VMD モーション (*.vmd)\0*.vmd\0",list.empty()?Own(m).modelPath:list.back());
+                auto picked=OpenFilesDialog(m.hwnd,T(L"VMD モーション (*.vmd)\0*.vmd\0",L"VMD motion (*.vmd)\0*.vmd\0"),list.empty()?Own(m).modelPath:list.back());
                 if(picked.empty())break;
                 if(id==IdAddIdleMotion)paths=list;
                 for(auto& p:picked)
@@ -2559,7 +2668,7 @@ namespace
             // So is one that does not load: the model comes up on the built-in idle instead.
             std::wstring plainError;
             if(own.idleMotionPaths.empty()||!m.model.Load(own.modelPath,{},app.settings.physics,app.settings.physicsFps,plainError))return false;
-            if(!app.diagnostic)ShowMessage(L"待機モーションを読み込めなかったため、外しました。\n\n"+error,MB_ICONWARNING);
+            if(!app.diagnostic)ShowMessage(T(L"待機モーションを読み込めなかったため、外しました。\n\n",L"The idle motions could not be loaded, so they were taken off.\n\n")+error,MB_ICONWARNING);
             own.idleMotionPaths.clear();
             error.clear();
         }
@@ -2583,7 +2692,7 @@ namespace
         const RECT& st=m.stage;
         m.hwnd=CreateWindowExW(exStyle,WindowClass,L"MikuMikuDesktopPerch",WS_POPUP,st.left,st.top,st.right-st.left,st.bottom-st.top,
                                nullptr,nullptr,GetModuleHandleW(nullptr),&m);
-        if(!m.hwnd){error=L"ウィンドウを作成できませんでした。";return false;}
+        if(!m.hwnd){error=T(L"ウィンドウを作成できませんでした。",L"Could not create the window.");return false;}
         // Alpha 254, not 255: Chromium-based apps treat an opaque window covering theirs as occluding
         // and stop painting; a not-quite-opaque layered window is ignored (and looks the same).
         SetLayeredWindowAttributes(m.hwnd,0,254,LWA_ALPHA);
@@ -2898,6 +3007,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         }
     }
 
+    // The language first: the message below comes before the settings are read in full.
+    {
+        Settings early;
+        early.Load(Settings::DefaultPath());
+        SetLanguage(early.language);
+    }
+
     // One mascot at a time (diagnostic runs excepted). The mutex goes away with the process,
     // or just before a restart starts the next one.
     HANDLE instanceMutex=nullptr;
@@ -2906,7 +3022,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         instanceMutex=CreateMutexW(nullptr,FALSE,L"Local\\MikuMikuDesktopPerch");
         if(instanceMutex&&GetLastError()==ERROR_ALREADY_EXISTS)
         {
-            MessageBoxW(nullptr,L"MikuMikuDesktopPerch はすでに起動しています。\n\nタスクトレイのアイコンを右クリックすると、メニューを開けます。",
+            MessageBoxW(nullptr,T(L"MikuMikuDesktopPerch はすでに起動しています。\n\nタスクトレイのアイコンを右クリックすると、メニューを開けます。",L"MikuMikuDesktopPerch is already running.\n\nRight-click its icon in the notification area for the menu."),
                         L"MikuMikuDesktopPerch",MB_ICONINFORMATION);
             CloseHandle(instanceMutex);
             CoUninitialize();
@@ -2916,6 +3032,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
 
     app.settingsPath=Settings::DefaultPath();
     app.settings.Load(app.settingsPath);
+    SetLanguage(app.settings.language);
     app.diagnostic=!snapshotPath.empty();
     if(app.diagnostic)
     {
@@ -2959,7 +3076,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         std::wstring& modelPath=app.settings.characters[0].modelPath;
         if(modelPath.empty()||!std::filesystem::exists(modelPath))
         {
-            modelPath=OpenFileDialog(nullptr,L"PMX モデル (*.pmx)\0*.pmx\0",{});
+            modelPath=OpenFileDialog(nullptr,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),{});
             if(modelPath.empty())return 0;
         }
         if(CreateMascot(0,error))break;
@@ -2977,7 +3094,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     for(size_t slot=1;slot<app.settings.characters.size();)
     {
         if(CreateMascot(slot,error)){++slot;continue;}
-        ShowMessage(L"「"+app.settings.characters[slot].modelPath+L"」を読み込めなかったため、外しました。\n\n"+error,MB_ICONWARNING);
+        ShowMessage(Fmt(T(L"「{0}」を読み込めなかったため、外しました。\n\n",L"{0} could not be loaded, so it was taken off.\n\n"),{app.settings.characters[slot].modelPath})+error,MB_ICONWARNING);
         app.settings.characters.erase(app.settings.characters.begin()+static_cast<std::ptrdiff_t>(slot));
     }
     app.settings.Save(app.settingsPath);

@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "VoicevoxCore.hpp"
+#include "Text.hpp"
 #include "HttpJson.hpp"
 #include <windows.h>
 #include <cstdint>
@@ -69,7 +70,7 @@ namespace MikuMikuDesktopPerch::VoicevoxCore
                 std::lock_guard lock(mutex);
                 if(auto e=Open(folder);!e.empty())return e;
                 out=voices;
-                return voices.empty()?L"VOICEVOXのフォルダに声のモデル（model\\*.vvm）がありません。":std::wstring();
+                return voices.empty()?T(L"VOICEVOXのフォルダに声のモデル（model\\*.vvm）がありません。",L"The VOICEVOX folder has no voice models (model\\*.vvm)."):std::wstring();
             }
 
             std::wstring AudioQuery(const std::wstring& folder,const std::wstring& text,int style,std::string& json)
@@ -112,7 +113,7 @@ namespace MikuMikuDesktopPerch::VoicevoxCore
             std::wstring Error(ResultCode r) const
             {
                 const char* text=api.errorMessage?api.errorMessage(r):nullptr;
-                return L"VOICEVOX CORE のエラー: "+(text?Wide(text):std::to_wstring(r));
+                return T(L"VOICEVOX CORE のエラー: ",L"VOICEVOX CORE error: ")+(text?Wide(text):std::to_wstring(r));
             }
 
             // Load the library, ONNX Runtime and the dictionary, make the synthesizer, and read
@@ -121,16 +122,16 @@ namespace MikuMikuDesktopPerch::VoicevoxCore
             std::wstring Open(const std::wstring& folder)
             {
                 if(synthesizer)
-                    return opened==folder?std::wstring():L"VOICEVOXのフォルダを変えたときは、アプリを再起動してください。";
+                    return opened==folder?std::wstring():T(L"VOICEVOXのフォルダを変えたときは、アプリを再起動してください。",L"After changing the VOICEVOX folder, restart the app.");
                 const std::wstring found=FindCoreFolder(folder);
-                if(found.empty())return L"指定したフォルダに voicevox_core.dll が見つかりません（VOICEVOXをインストールしたフォルダを指定してください）: "+folder;
+                if(found.empty())return T(L"指定したフォルダに voicevox_core.dll が見つかりません（VOICEVOXをインストールしたフォルダを指定してください）: ",L"voicevox_core.dll is not in that folder (choose the folder VOICEVOX is installed in): ")+folder;
                 const std::filesystem::path core=found;
                 if(!library)
                 {
                     // By full path, with its own folder (and System32) for what it needs in turn:
                     // never from the current folder or PATH.
                     library=LoadLibraryExW((core/L"voicevox_core.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
-                    if(!library)return L"voicevox_core.dll を読み込めませんでした。";
+                    if(!library)return T(L"voicevox_core.dll を読み込めませんでした。",L"Could not load voicevox_core.dll.");
                     bool all=true;
                     auto get=[&](auto& slot,const char* name){slot=reinterpret_cast<std::remove_reference_t<decltype(slot)>>(GetProcAddress(library,name));all=all&&slot;};
                     get(api.getVersion,"voicevox_get_version");
@@ -155,8 +156,8 @@ namespace MikuMikuDesktopPerch::VoicevoxCore
                         api={};
                         FreeLibrary(library);
                         library=nullptr;
-                        return L"この voicevox_core.dll には対応していません（対応しているのは VOICEVOX CORE 0.16 です）"+
-                               (version.empty()?std::wstring():L"：バージョン "+Wide(version))+L"。エンジン方式を使ってください。";
+                        return T(L"この voicevox_core.dll には対応していません（対応しているのは VOICEVOX CORE 0.16 です）",L"This voicevox_core.dll is not supported (VOICEVOX CORE 0.16 is)")+
+                               (version.empty()?std::wstring():T(L"：バージョン ",L": version ")+Wide(version))+T(L"。エンジン方式を使ってください。",L". Use the engine instead.");
                     }
                 }
                 if(!onnxruntime)
@@ -169,7 +170,7 @@ namespace MikuMikuDesktopPerch::VoicevoxCore
                 if(!openJtalk)
                 {
                     const std::filesystem::path dictionary=FindDictionary(core);
-                    if(dictionary.empty())return L"Open JTalk の辞書（open_jtalk_dic_utf_8-…）が見つかりません。";
+                    if(dictionary.empty())return T(L"Open JTalk の辞書（open_jtalk_dic_utf_8-…）が見つかりません。",L"The Open JTalk dictionary (open_jtalk_dic_utf_8-…) is missing.");
                     if(const ResultCode r=api.openJtalkNew(Path8(dictionary).c_str(),&openJtalk);r!=Ok){openJtalk=nullptr;return Error(r);}
                 }
                 // On the CPU: the GPU is left to the mascot (and the LLM).
@@ -228,7 +229,7 @@ namespace MikuMikuDesktopPerch::VoicevoxCore
             std::wstring Load(int style)
             {
                 const auto it=modelOf.find(style);
-                if(it==modelOf.end())return L"VOICEVOXのフォルダにこの声（"+std::to_wstring(style)+L"）のモデルがありません。";
+                if(it==modelOf.end())return Fmt(T(L"VOICEVOXのフォルダにこの声（{0}）のモデルがありません。",L"The VOICEVOX folder has no model for this voice ({0})."),{std::to_wstring(style)});
                 if(loaded.count(it->second))return {};
                 VoiceModelFile* model=nullptr;
                 if(const ResultCode r=api.modelOpen(Path8(it->second).c_str(),&model);r!=Ok)return Error(r);

@@ -1,4 +1,5 @@
 #include "LocalChat.hpp"
+#include "Text.hpp"
 #include "HttpJson.hpp"
 #include <winhttp.h>
 #include <algorithm>
@@ -38,8 +39,8 @@ namespace MikuMikuDesktopPerch
     std::wstring CheckLocalEndpoint(const std::wstring& endpoint)
     {
         Url url;
-        if(!Crack(endpoint,url))return L"接続先のURLが正しくありません（例: http://127.0.0.1:11434/v1）。";
-        if(!IsLocalHost(url.host))return L"接続先には、このコンピューター（localhost、127.0.0.1）のサーバーだけを指定できます。";
+        if(!Crack(endpoint,url))return T(T(L"接続先のURLが正しくありません（例: http://127.0.0.1:11434/v1）。",L"The server address is not a valid URL (for example http://127.0.0.1:11434/v1)."),L"The server address is not a valid URL (for example http://127.0.0.1:11434/v1).");
+        if(!IsLocalHost(url.host))return T(T(L"接続先には、このコンピューター（localhost、127.0.0.1）のサーバーだけを指定できます。",L"Only a server on this computer (localhost, 127.0.0.1) can be used."),L"Only a server on this computer (localhost, 127.0.0.1) can be used.");
         return {};
     }
 
@@ -68,18 +69,18 @@ namespace MikuMikuDesktopPerch
             char buffer[4096];
             for(DWORD read=0;WinHttpReadData(request,buffer,sizeof(buffer),&read)&&read>0&&body.size()<(1u<<20);)body.append(buffer,read);
         }
-        else error=L"LLMのサーバーに接続できませんでした。Ollama や LM Studio などが起動しているか確かめてください。";
+        else error=T(T(L"LLMのサーバーに接続できませんでした。Ollama や LM Studio などが起動しているか確かめてください。",L"Could not connect to the LLM server. Check that Ollama, LM Studio or the like is running."),L"Could not connect to the LLM server. Check that Ollama, LM Studio or the like is running.");
         if(request)WinHttpCloseHandle(request);
         if(connection)WinHttpCloseHandle(connection);
         if(session)WinHttpCloseHandle(session);
         if(!error.empty())return error;
-        if(status!=200)return L"モデルの一覧を取得できませんでした（"+std::to_wstring(status)+L"）: "+ServerError(body);
+        if(status!=200)return Fmt(T(L"モデルの一覧を取得できませんでした（{0}）: ",L"Could not get the list of models ({0}): "),{std::to_wstring(status)})+ServerError(body);
         Json j;
         const Json* data=JsonParser(body).Parse(j)?Path(&j,{"data"}):nullptr;
-        if(!data||data->type!=Json::Type::Array)return L"モデルの一覧を読み取れませんでした。";
+        if(!data||data->type!=Json::Type::Array)return T(T(L"モデルの一覧を読み取れませんでした。",L"Could not read the list of models."),L"Could not read the list of models.");
         for(const auto& item:data->items)
             if(const Json* id=item.Member("id");id&&id->type==Json::Type::String)models.push_back(Wide(id->text));
-        if(models.empty())return L"サーバーにモデルがありません（Ollama なら ollama pull でモデルを入れてください）。";
+        if(models.empty())return T(T(L"サーバーにモデルがありません（Ollama なら ollama pull でモデルを入れてください）。",L"The server has no models (with Ollama, add one with ollama pull)."),L"The server has no models (with Ollama, add one with ollama pull).");
         return {};
     }
 
@@ -139,7 +140,7 @@ namespace MikuMikuDesktopPerch
         constexpr size_t MaxReplyBytes=64*1024,MaxLineBytes=256*1024;
         auto fail=[&](const std::wstring& text){if(error.empty())error=text;};
         Url url;
-        if(!Crack(r->endpoint,url)||!IsLocalHost(url.host))fail(L"接続先のURLが正しくないか、このコンピューターのサーバーではありません。");
+        if(!Crack(r->endpoint,url)||!IsLocalHost(url.host))fail(T(T(L"接続先のURLが正しくないか、このコンピューターのサーバーではありません。",L"The server address is not valid, or not on this computer."),L"The server address is not valid, or not on this computer."));
         if(error.empty())
         {
             std::lock_guard guard(r->lock);
@@ -153,7 +154,7 @@ namespace MikuMikuDesktopPerch
             if(r->connection)
                 r->request=WinHttpOpenRequest(r->connection,L"POST",(url.path+L"/chat/completions").c_str(),nullptr,WINHTTP_NO_REFERER,
                                               WINHTTP_DEFAULT_ACCEPT_TYPES,url.secure?WINHTTP_FLAG_SECURE:0);
-            if(!r->request)fail(L"接続の準備に失敗しました。");
+            if(!r->request)fail(T(T(L"接続の準備に失敗しました。",L"Could not prepare the connection."),L"Could not prepare the connection."));
         }
         // Thinking first (Gemma 4, Qwen 3 and others) only delays a chat reply: llama.cpp's
         // server turns it off with this template flag; servers that do not know it ignore it.
@@ -171,7 +172,7 @@ namespace MikuMikuDesktopPerch
             const wchar_t* headers=L"Content-Type: application/json\r\n";
             if(!WinHttpSendRequest(request,headers,static_cast<DWORD>(-1),body.data(),static_cast<DWORD>(body.size()),static_cast<DWORD>(body.size()),0)||
                !WinHttpReceiveResponse(request,nullptr))
-                fail(L"LLMのサーバーに接続できませんでした。Ollama や LM Studio などが起動しているか、接続先が合っているか確かめてください。");
+                fail(T(T(L"LLMのサーバーに接続できませんでした。Ollama や LM Studio などが起動しているか、接続先が合っているか確かめてください。",L"Could not connect to the LLM server. Check that Ollama, LM Studio or the like is running and the address is right."),L"Could not connect to the LLM server. Check that Ollama, LM Studio or the like is running and the address is right."));
         }
         DWORD status=0;
         if(error.empty()&&!r->cancelled)
@@ -193,7 +194,7 @@ namespace MikuMikuDesktopPerch
             if(!JsonParser(line).Parse(j))return;
             if(const Json* e=Path(&j,{"error"}))
             {
-                fail(L"LLMのサーバーがエラーを返しました: "+(e->type==Json::Type::String?Wide(e->text):ServerError(line)));
+                fail(T(L"LLMのサーバーがエラーを返しました: ",L"The LLM server returned an error: ")+(e->type==Json::Type::String?Wide(e->text):ServerError(line)));
                 done=true;
                 return;
             }
@@ -209,7 +210,7 @@ namespace MikuMikuDesktopPerch
         {
             char buffer[4096];
             DWORD read=0;
-            if(!WinHttpReadData(request,buffer,sizeof(buffer),&read)){if(!r->cancelled)fail(L"返事の受信中に接続が切れました。");break;}
+            if(!WinHttpReadData(request,buffer,sizeof(buffer),&read)){if(!r->cancelled)fail(T(T(L"返事の受信中に接続が切れました。",L"The connection was lost while the reply came in."),L"The connection was lost while the reply came in."));break;}
             if(read==0)break;
             if(status!=200){if(all.size()<4096)all.append(buffer,read);continue;}
             pending.append(buffer,read);
@@ -220,18 +221,18 @@ namespace MikuMikuDesktopPerch
                 pending.erase(0,nl+1);
                 if(done)break;
             }
-            if(pending.size()>MaxLineBytes){fail(L"LLMのサーバーの返事を読み取れませんでした。");break;}
+            if(pending.size()>MaxLineBytes){fail(T(T(L"LLMのサーバーの返事を読み取れませんでした。",L"Could not read the LLM server's reply."),L"Could not read the LLM server's reply."));break;}
         }
         if(error.empty()&&!r->cancelled)
         {
-            if(status!=200&&status!=0)fail(L"LLMのサーバーがエラーを返しました（"+std::to_wstring(status)+L"）: "+ServerError(all));
+            if(status!=200&&status!=0)fail(Fmt(T(L"LLMのサーバーがエラーを返しました（{0}）: ",L"The LLM server returned an error ({0}): "),{std::to_wstring(status)})+ServerError(all));
             else if(!streamed)
             {
                 // A server that ignored "stream": one JSON body with the whole message.
                 Json j;
                 const Json* text=JsonParser(all).Parse(j)?Path(&j,{"choices","0","message","content"}):nullptr;
                 if(text&&text->type==Json::Type::String)Post(notify,TextMessage,Wide(text->text.substr(0,MaxReplyBytes)),r->id);
-                else fail(L"LLMのサーバーの返事を読み取れませんでした。");
+                else fail(T(T(L"LLMのサーバーの返事を読み取れませんでした。",L"Could not read the LLM server's reply."),L"Could not read the LLM server's reply."));
             }
         }
         r->Close();

@@ -67,6 +67,7 @@ namespace MikuMikuDesktopPerch
         int chatterMinutes=45;
         int banterMinutes=30;
         bool updateCheck=true;      // look for a newer release on GitHub now and then
+        std::wstring language;      // "ja", "en", or empty: Windows' display language (see Text.hpp)
         // Speaking aloud through a VOICEVOX-compatible engine on this computer, in one of its voices.
         bool voice=false;
         bool voiceDirect=false;     // VOICEVOX's files used directly (voiceFolder), not its engine

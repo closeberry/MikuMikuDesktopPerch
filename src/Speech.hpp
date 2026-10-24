@@ -11,7 +11,8 @@ namespace MikuMikuDesktopPerch
 {
     // The reading of Japanese text in hiragana, through the Windows Japanese IME's conversion
     // engine (MSIME.Japan). Where that is unavailable, kana are kept and every other character
-    // becomes a guess of two syllables, which is enough to move a mouth.
+    // becomes a guess of two syllables, which is enough to move a mouth. English words become
+    // their vowel sounds in kana (spelling read roughly: enough for the mouth, not a voice).
     std::wstring HiraganaReading(const std::wstring& text);
 
     // A reply spoken aloud: the text is read into syllables (morae) as it streams in, the

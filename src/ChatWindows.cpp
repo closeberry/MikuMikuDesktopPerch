@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include <algorithm>
 #include "ChatWindows.hpp"
+#include "Text.hpp"
 #include <commctrl.h>
 #include <objidl.h>
 // GDI+ uses min and max unqualified; give it the std ones instead of the windows.h macros.
@@ -191,7 +192,7 @@ namespace MikuMikuDesktopPerch
             display=L"…"+shown.substr(cut);
             box=measureText(display,font.get(),maxWidth);
         }
-        const std::wstring tag=notice?L"お知らせ":speaker;
+        const std::wstring tag=notice?std::wstring(T(L"お知らせ",L"Notice")):speaker;
         const RectF tagBox=tag.empty()?RectF():measureText(tag,tagFont.get(),maxWidth);
         const float tagW=tag.empty()?0:std::min(tagBox.Width+20*s,maxWidth),tagH=tag.empty()?0:22*s;
         const float w=std::max({box.Width+pad*2+2,tagW+28*s,72*s}),h=std::max(box.Height,lineHeight)+pad*1.3f+padTop;
@@ -468,7 +469,7 @@ namespace MikuMikuDesktopPerch
         if(!window)
         {
             if(!Register(InputClass,Proc,reinterpret_cast<HBRUSH>(COLOR_WINDOW+1)))return;
-            window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_TOPMOST,InputClass,L"話しかける",WS_POPUP|WS_BORDER,
+            window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_TOPMOST,InputClass,T(L"話しかける",L"Talk"),WS_POPUP|WS_BORDER,
                                    0,0,w,h,owner,nullptr,GetModuleHandleW(nullptr),this);
             if(!window)return;
             NONCLIENTMETRICSW metrics{sizeof(metrics)};
@@ -482,7 +483,7 @@ namespace MikuMikuDesktopPerch
                                  window,nullptr,GetModuleHandleW(nullptr),nullptr);
             SendMessageW(edit,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);
             SendMessageW(edit,EM_SETLIMITTEXT,500,0);
-            SendMessageW(edit,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"話しかける（Enterで送る、Escで閉じる）"));
+            SendMessageW(edit,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"話しかける（Enterで送る、Escで閉じる）",L"Say something (Enter to send, Esc to close)")));
             SetWindowLongPtrW(edit,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(this));
             editDefault=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(edit,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(EditProc)));
         }

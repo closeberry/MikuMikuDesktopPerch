@@ -1,4 +1,5 @@
 #include "SettingsWindow.hpp"
+#include "Text.hpp"
 #include "LocalChat.hpp"
 #include "Voice.hpp"
 #include <commctrl.h>
@@ -30,7 +31,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
@@ -115,102 +116,105 @@ namespace MikuMikuDesktopPerch
             const Settings& s=state.choice.settings;
             const CharacterSettings& own=state.choice.mascot;
             int y=10;
-            Group(L"動き",y,128);
-            CheckBox(IdAuto,L"おまかせ行動（ひとりで歩き回る）",28,y+22,400,s.autoBehavior);
-            CheckBox(IdWindowMode,L"アクティブウィンドウに乗る",28,y+46,400,s.windowMode);
-            CheckBox(IdPhysics,L"物理演算（髪やスカートの揺れ）",28,y+70,228,s.physics);
-            Label(L"震え止め",262,y+70,60);
+            Group(T(L"動き",L"Motion"),y,128);
+            CheckBox(IdAuto,T(L"おまかせ行動（ひとりで歩き回る）",L"Auto behavior (walks around on her own)"),28,y+22,400,s.autoBehavior);
+            CheckBox(IdWindowMode,T(L"アクティブウィンドウに乗る",L"Ride on the active window"),28,y+46,400,s.windowMode);
+            CheckBox(IdPhysics,T(L"物理演算（髪やスカートの揺れ）",L"Physics (hair and skirt sway)"),28,y+70,228,s.physics);
+            Label(T(L"震え止め",L"Smoothing"),262,y+70,60);
             Combo(IdPhysicsFilter,326,y+68,110);
-            CheckBox(IdBlink,L"まばたき",28,y+94,120,s.blink);
-            CheckBox(IdBreath,L"呼吸",156,y+94,120,s.breath);
-            CheckBox(IdLookAt,L"マウスの方を見る",284,y+94,150,s.lookAtMouse);
+            CheckBox(IdBlink,T(L"まばたき",L"Blink"),28,y+94,120,s.blink);
+            CheckBox(IdBreath,T(L"呼吸",L"Breathe"),156,y+94,120,s.breath);
+            CheckBox(IdLookAt,T(L"マウスの方を見る",L"Look at the mouse"),284,y+94,150,s.lookAtMouse);
             y+=138;
-            Group(L"表示",y,156);
-            Label(L"大きさ",28,y+22,130);
+            Group(T(L"表示",L"Display"),y,156);
+            Label(T(L"大きさ",L"Size"),28,y+22,130);
             Combo(IdScale,170,y+22,120);
-            Label(L"輪郭線の太さ",28,y+50,130);
+            Label(T(L"言語",L"Language"),300,y+22,56);
+            Combo(IdLanguage,356,y+22,80);
+            Label(T(L"輪郭線の太さ",L"Outline width"),28,y+50,130);
             Combo(IdEdge,170,y+50,120);
-            CheckBox(IdTopmost,L"最前面に表示",28,y+78,200,s.topmost);
-            CheckBox(IdSelfShadow,L"セルフシャドウ（体に落ちる影）",250,y+78,190,s.selfShadow);
-            CheckBox(IdStartup,L"Windowsの起動時に起動",28,y+100,200,state.choice.startWithWindows);
-            CheckBox(IdUpdateCheck,L"新しいバージョンを確認する",250,y+100,190,s.updateCheck);
-            Label(L"太陽の位置（左右・高さ）",28,y+128,140);
+            CheckBox(IdTopmost,T(L"最前面に表示",L"Always on top"),28,y+78,200,s.topmost);
+            CheckBox(IdSelfShadow,T(L"セルフシャドウ（体に落ちる影）",L"Self-shadow"),250,y+78,190,s.selfShadow);
+            CheckBox(IdStartup,T(L"Windowsの起動時に起動",L"Start with Windows"),28,y+100,200,state.choice.startWithWindows);
+            CheckBox(IdUpdateCheck,T(L"新しいバージョンを確認する",L"Check for new versions"),250,y+100,190,s.updateCheck);
+            Label(T(L"太陽の位置（左右・高さ）",L"Sun (side, height)"),28,y+128,140);
             Slider(IdSunAzimuth,170,y+126,130,-180,180,s.lightAzimuth);
             Slider(IdSunElevation,306,y+126,130,5,90,s.lightElevation);
             y+=166;
-            Group(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",y,252);
-            Label(L"接続先",28,y+22,130);
+            Group(T(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",L"Talking (an LLM on this computer: Ollama, LM Studio, ...)"),y,252);
+            Label(T(L"接続先",L"Server"),28,y+22,130);
             Add(L"EDIT",s.chatEndpoint.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+22,266,24,IdChatEndpoint);
-            Label(L"モデル",28,y+52,130);
+            Label(T(L"モデル",L"Model"),28,y+52,130);
             Add(L"COMBOBOX",L"",CBS_DROPDOWN|CBS_AUTOHSCROLL|WS_VSCROLL|WS_TABSTOP,170,y+52,190,240,IdChatModel);
             SetDlgItemTextW(state.window,IdChatModel,s.chatModel.c_str());
-            Add(L"BUTTON",L"一覧を取得",BS_PUSHBUTTON|WS_TABSTOP,366,y+51,70,26,IdChatList);
-            Label(L"あなたの呼び名",28,y+82,130);
+            Add(L"BUTTON",T(L"一覧を取得",L"Get list"),BS_PUSHBUTTON|WS_TABSTOP,366,y+51,70,26,IdChatList);
+            Label(T(L"あなたの呼び名",L"Your name"),28,y+82,130);
             Add(L"EDIT",s.userName.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+82,190,24,IdUserName);
-            SendDlgItemMessageW(state.window,IdUserName,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"例: たろう"));
-            CheckBox(IdChatMemory,L"会話の内容を覚える",28,y+112,140,s.chatMemory);
-            Add(L"BUTTON",L"人物設定...",BS_PUSHBUTTON|WS_TABSTOP,170,y+110,110,26,IdPersona);
-            Add(L"BUTTON",L"記憶...",BS_PUSHBUTTON|WS_TABSTOP,286,y+110,110,26,IdMemory);
+            SendDlgItemMessageW(state.window,IdUserName,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"例: たろう",L"e.g. Alex")));
+            CheckBox(IdChatMemory,T(L"会話の内容を覚える",L"Remember chats"),28,y+112,140,s.chatMemory);
+            Add(L"BUTTON",T(L"人物設定...",L"Persona..."),BS_PUSHBUTTON|WS_TABSTOP,170,y+110,110,26,IdPersona);
+            Add(L"BUTTON",T(L"記憶...",L"Memory..."),BS_PUSHBUTTON|WS_TABSTOP,286,y+110,110,26,IdMemory);
             if(!state.choice.memory)EnableWindow(GetDlgItem(state.window,IdMemory),FALSE);
-            CheckBox(IdChatInitiative,L"ときどき自分から話しかける",28,y+138,200,s.chatInitiative);
-            Label(L"ひと言",262,y+138,60);
+            CheckBox(IdChatInitiative,T(L"ときどき自分から話しかける",L"Speak first now and then"),28,y+138,200,s.chatInitiative);
+            Label(T(L"ひと言",L"Remarks"),262,y+138,60);
             Combo(IdChatterMinutes,326,y+136,110);
-            Label(L"キャラクター同士のおしゃべり（2人以上のとき）",46,y+166,270);
+            Label(T(L"キャラクター同士のおしゃべり（2人以上のとき）",L"Characters chatting together (two or more)"),46,y+166,270);
             Combo(IdBanterMinutes,326,y+164,110);
             y+=28;
-            CheckBox(IdVoice,L"声で話す（VOICEVOX）",28,y+166,140,s.voice);
+            CheckBox(IdVoice,T(L"声で話す（VOICEVOX）",L"Voice (VOICEVOX)"),28,y+166,140,s.voice);
             Combo(IdVoiceList,170,y+164,128);
             {
                 HWND list=GetDlgItem(state.window,IdVoiceList);
-                const std::wstring label=own.voiceName.empty()?L"声 "+std::to_wstring(own.voiceSpeaker):own.voiceName;
+                const std::wstring label=own.voiceName.empty()?T(L"声 ",L"Voice ")+std::to_wstring(own.voiceSpeaker):own.voiceName;
                 const auto index=SendMessageW(list,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));
                 SendMessageW(list,CB_SETITEMDATA,index,own.voiceSpeaker);
                 SendMessageW(list,CB_SETCURSEL,index,0);
             }
-            Add(L"BUTTON",L"試聴",BS_PUSHBUTTON|WS_TABSTOP,304,y+163,56,26,IdVoiceSample);
-            Add(L"BUTTON",L"一覧を取得",BS_PUSHBUTTON|WS_TABSTOP,366,y+163,70,26,IdVoiceFetch);
+            Add(L"BUTTON",T(L"試聴",L"Listen"),BS_PUSHBUTTON|WS_TABSTOP,304,y+163,56,26,IdVoiceSample);
+            Add(L"BUTTON",T(L"一覧を取得",L"Get list"),BS_PUSHBUTTON|WS_TABSTOP,366,y+163,70,26,IdVoiceFetch);
             Combo(IdVoiceMode,46,y+192,120);
-            FillCombo(IdVoiceMode,{{L"エンジンを使う",0},{L"ファイルを直接使う",1}},s.voiceDirect?1:0,L"");
+            FillCombo(IdVoiceMode,{{T(L"エンジンを使う",L"Use the engine"),0},{T(L"ファイルを直接使う",L"Use its files"),1}},s.voiceDirect?1:0,L"");
             Add(L"EDIT",s.voiceFolder.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+192,190,24,IdVoiceFolder);
-            SendDlgItemMessageW(state.window,IdVoiceFolder,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"VOICEVOXのフォルダ"));
-            Add(L"BUTTON",L"参照...",BS_PUSHBUTTON|WS_TABSTOP,366,y+191,70,26,IdVoiceBrowse);
+            SendDlgItemMessageW(state.window,IdVoiceFolder,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"VOICEVOXのフォルダ",L"VOICEVOX folder")));
+            Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+191,70,26,IdVoiceBrowse);
             UpdateVoiceMode();
             y+=234;
-            Group(L"詳細（変更すると再起動します）",y,166);
-            Label(L"描画のfps",28,y+22,130);
+            Group(T(L"詳細（変更すると再起動します）",L"Advanced (changes restart the app)"),y,166);
+            Label(T(L"描画のfps",L"Drawing fps"),28,y+22,130);
             Combo(IdFps,170,y+22,120);
-            CheckBox(IdMotionBlur,L"モーションブラー",304,y+22,132,s.motionBlur);
-            Label(L"アンチエイリアス",28,y+50,130);
+            CheckBox(IdMotionBlur,T(L"モーションブラー",L"Motion blur"),304,y+22,132,s.motionBlur);
+            Label(T(L"アンチエイリアス",L"Antialiasing"),28,y+50,130);
             Combo(IdMsaa,170,y+50,120);
-            Label(L"テクスチャの最大サイズ",28,y+78,140);
+            Label(T(L"テクスチャの最大サイズ",L"Max texture size"),28,y+78,140);
             Combo(IdTexture,170,y+78,120);
-            Label(L"物理演算の更新",28,y+106,130);
+            Label(T(L"物理演算の更新",L"Physics rate"),28,y+106,130);
             Combo(IdPhysicsFps,170,y+106,120);
-            Label(L"反復回数",300,y+106,56);
+            Label(T(L"反復回数",L"Iterations"),300,y+106,56);
             Combo(IdPhysicsIterations,360,y+106,76);
-            Label(L"共有トゥーンのフォルダ",28,y+134,140);
+            Label(T(L"共有トゥーンのフォルダ",L"Shared toon folder"),28,y+134,140);
             Add(L"EDIT",s.toonDir.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+134,190,24,IdToonDir);
-            Add(L"BUTTON",L"参照...",BS_PUSHBUTTON|WS_TABSTOP,366,y+133,70,26,IdToonBrowse);
+            Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+133,70,26,IdToonBrowse);
             y+=176;
             Add(L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,276,y,82,28,IDOK);
-            Add(L"BUTTON",L"キャンセル",BS_PUSHBUTTON|WS_TABSTOP,366,y,82,28,IDCANCEL);
+            Add(L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,366,y,82,28,IDCANCEL);
 
             std::vector<std::pair<std::wstring,int>> scales;
             for(int p=Settings::MinScale;p<=Settings::MaxScale;p+=10)scales.push_back({std::to_wstring(p)+L"%",p});
             FillCombo(IdScale,scales,s.scale,std::to_wstring(s.scale)+L"%");
             const int edge=static_cast<int>(std::lround(s.edgeScale*100));
-            FillCombo(IdEdge,{{L"なし",0},{L"細い（0.5倍）",50},{L"やや細い（0.75倍）",75},{L"標準",100},{L"やや太い（1.25倍）",125},{L"太い（1.5倍）",150},{L"とても太い（2倍）",200}},
-                      edge,std::to_wstring(edge/100.0).substr(0,4)+L"倍");
-            FillCombo(IdFps,{{L"15",15},{L"20",20},{L"30（標準）",30},{L"45",45},{L"60",60}},s.fps,std::to_wstring(s.fps));
-            FillCombo(IdMsaa,{{L"なし",1},{L"2x",2},{L"4x（標準）",4},{L"8x",8}},s.msaa,std::to_wstring(s.msaa)+L"x");
-            FillCombo(IdTexture,{{L"512",512},{L"1024（標準）",1024},{L"2048",2048},{L"4096",4096},{L"縮小しない",0}},s.maxTextureSize,std::to_wstring(s.maxTextureSize));
-            FillCombo(IdPhysicsFps,{{L"30回/秒",30},{L"60回/秒（標準）",60},{L"90回/秒",90},{L"120回/秒",120}},s.physicsFps,std::to_wstring(s.physicsFps)+L"回/秒");
-            FillCombo(IdPhysicsFilter,{{L"なし",0},{L"弱",1},{L"中",2},{L"強（標準）",3}},s.physicsFilter,L"");
-            FillCombo(IdPhysicsIterations,{{L"10（標準）",10},{L"20",20},{L"30",30},{L"50",50}},s.physicsIterations,std::to_wstring(s.physicsIterations));
-            FillCombo(IdChatterMinutes,{{L"10分ごと",10},{L"20分ごと",20},{L"30分ごと",30},{L"45分ごと（標準）",45},{L"1時間ごと",60},{L"1時間半ごと",90},{L"2時間ごと",120}},
-                      s.chatterMinutes,std::to_wstring(s.chatterMinutes)+L"分ごと");
-            FillCombo(IdBanterMinutes,{{L"しない",0},{L"10分ごと",10},{L"20分ごと",20},{L"30分ごと（標準）",30},{L"45分ごと",45},{L"1時間ごと",60},{L"1時間半ごと",90}},
-                      s.banterMinutes,std::to_wstring(s.banterMinutes)+L"分ごと");
+            FillCombo(IdEdge,{{T(L"なし",L"None"),0},{T(L"細い（0.5倍）",L"Thin (0.5x)"),50},{T(L"やや細い（0.75倍）",L"Thinner (0.75x)"),75},{T(L"標準",L"Standard"),100},{T(L"やや太い（1.25倍）",L"Thicker (1.25x)"),125},{T(L"太い（1.5倍）",L"Thick (1.5x)"),150},{T(L"とても太い（2倍）",L"Very thick (2x)"),200}},
+                      edge,std::to_wstring(edge/100.0).substr(0,4)+T(L"倍",L"x"));
+            FillCombo(IdFps,{{L"15",15},{L"20",20},{T(L"30（標準）",L"30 (standard)"),30},{L"45",45},{L"60",60}},s.fps,std::to_wstring(s.fps));
+            FillCombo(IdMsaa,{{T(L"なし",L"None"),1},{L"2x",2},{T(L"4x（標準）",L"4x (standard)"),4},{L"8x",8}},s.msaa,std::to_wstring(s.msaa)+L"x");
+            FillCombo(IdTexture,{{L"512",512},{T(L"1024（標準）",L"1024 (standard)"),1024},{L"2048",2048},{L"4096",4096},{T(L"縮小しない",L"Do not shrink"),0}},s.maxTextureSize,std::to_wstring(s.maxTextureSize));
+            FillCombo(IdPhysicsFps,{{T(L"30回/秒",L"30/s"),30},{T(L"60回/秒（標準）",L"60/s (standard)"),60},{T(L"90回/秒",L"90/s"),90},{T(L"120回/秒",L"120/s"),120}},s.physicsFps,std::to_wstring(s.physicsFps)+T(L"回/秒",L"/s"));
+            FillCombo(IdPhysicsFilter,{{T(L"なし",L"None"),0},{T(L"弱",L"Weak"),1},{T(L"中",L"Medium"),2},{T(L"強（標準）",L"Strong"),3}},s.physicsFilter,L"");
+            FillCombo(IdPhysicsIterations,{{T(L"10（標準）",L"10"),10},{L"20",20},{L"30",30},{L"50",50}},s.physicsIterations,std::to_wstring(s.physicsIterations));
+            FillCombo(IdChatterMinutes,{{T(L"10分ごと",L"Every 10 min"),10},{T(L"20分ごと",L"Every 20 min"),20},{T(L"30分ごと",L"Every 30 min"),30},{T(L"45分ごと（標準）",L"Every 45 min"),45},{T(L"1時間ごと",L"Every hour"),60},{T(L"1時間半ごと",L"Every 1.5 hours"),90},{T(L"2時間ごと",L"Every 2 hours"),120}},
+                      s.chatterMinutes,Fmt(T(L"{0}分ごと",L"Every {0} min"),{std::to_wstring(s.chatterMinutes)}));
+            FillCombo(IdBanterMinutes,{{T(L"しない",L"Never"),0},{T(L"10分ごと",L"Every 10 min"),10},{T(L"20分ごと",L"Every 20 min"),20},{T(L"30分ごと（標準）",L"Every 30 min"),30},{T(L"45分ごと",L"Every 45 min"),45},{T(L"1時間ごと",L"Every hour"),60},{T(L"1時間半ごと",L"Every 1.5 hours"),90}},
+                      s.banterMinutes,Fmt(T(L"{0}分ごと",L"Every {0} min"),{std::to_wstring(s.banterMinutes)}));
+            FillCombo(IdLanguage,{{T(L"自動",L"Auto"),0},{L"日本語",1},{L"English",2}},s.language==L"ja"?1:s.language==L"en"?2:0,L"");
             UpdateInitiative();
         }
 
@@ -221,7 +225,7 @@ namespace MikuMikuDesktopPerch
             DWORD options=0;
             dialog->GetOptions(&options);
             dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM);
-            dialog->SetTitle(L"共有トゥーン（toon01.bmp〜toon10.bmp）のあるフォルダ");
+            dialog->SetTitle(T(L"共有トゥーン（toon01.bmp〜toon10.bmp）のあるフォルダ",L"The folder with the shared toons (toon01.bmp to toon10.bmp)"));
             if(FAILED(dialog->Show(state.window)))return;
             Microsoft::WRL::ComPtr<IShellItem> item;
             PWSTR path=nullptr;
@@ -255,7 +259,7 @@ namespace MikuMikuDesktopPerch
             DWORD options=0;
             dialog->GetOptions(&options);
             dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM);
-            dialog->SetTitle(L"VOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）");
+            dialog->SetTitle(T(L"VOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）",L"The folder VOICEVOX is installed in (where VOICEVOX.exe is)"));
             if(FAILED(dialog->Show(state.window)))return;
             Microsoft::WRL::ComPtr<IShellItem> item;
             PWSTR path=nullptr;
@@ -277,7 +281,7 @@ namespace MikuMikuDesktopPerch
             SetCursor(LoadCursorW(nullptr,IDC_ARROW));
             if(!error.empty())
             {
-                MessageBoxW(state.window,(error+L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。").c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
+                MessageBoxW(state.window,(error+T(L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。",L"\n\nStart VOICEVOX (or a compatible voice engine), then press it again.")).c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
                 return;
             }
             state.sample=std::move(wav);
@@ -293,8 +297,8 @@ namespace MikuMikuDesktopPerch
             SetCursor(LoadCursorW(nullptr,IDC_ARROW));
             if(!error.empty())
             {
-                const wchar_t* hint=CurrentVoiceSource().direct?L"\n\nVOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）を指定してください。"
-                                                              :L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。";
+                const wchar_t* hint=CurrentVoiceSource().direct?T(L"\n\nVOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）を指定してください。",L"\n\nChoose the folder VOICEVOX is installed in (where VOICEVOX.exe is).")
+                                                              :T(L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。",L"\n\nStart VOICEVOX (or a compatible voice engine), then press it again.");
                 MessageBoxW(state.window,(error+hint).c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
                 return;
             }
@@ -398,21 +402,22 @@ namespace MikuMikuDesktopPerch
             AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
             RECT owner{};
             GetWindowRect(state.window,&owner);
-            state.persona=CreateWindowExW(exStyle,PersonaClass,L"人物設定（このモデル）",style,owner.left+Px(20),owner.top+Px(60),
+            state.persona=CreateWindowExW(exStyle,PersonaClass,T(L"人物設定（このモデル）",L"Persona (this model)"),style,owner.left+Px(20),owner.top+Px(60),
                                           frame.right-frame.left,frame.bottom-frame.top,state.window,nullptr,instance,nullptr);
             if(!state.persona)return;
             const HWND p=state.persona;
-            AddTo(p,L"STATIC",L"名前",SS_LEFT,16,19,80,20);
+            AddTo(p,L"STATIC",T(L"名前",L"Name"),SS_LEFT,16,19,80,20);
             AddTo(p,L"EDIT",state.choice.character.name.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,100,16,344,24,IdPersonaName);
-            AddTo(p,L"STATIC",L"性格や話し方を自由に書いてください。返事が吹き出しに収まる短い話し言葉になるよう、アプリが指示を足します。",
+            AddTo(p,L"STATIC",T(L"性格や話し方を自由に書いてください。返事が吹き出しに収まる短い話し言葉になるよう、アプリが指示を足します。",
+                                    L"Write her personality and way of talking freely. The app adds instructions so replies stay short enough for the bubble."),
                   SS_LEFT,16,50,428,40);
             std::wstring text=state.choice.character.persona;
             for(size_t n=0;(n=text.find(L'\n',n))!=std::wstring::npos;n+=2)text.insert(n,1,L'\r');
             HWND editor=AddTo(p,L"EDIT",text.c_str(),ES_MULTILINE|ES_WANTRETURN|ES_AUTOVSCROLL|WS_VSCROLL|WS_BORDER|WS_TABSTOP,16,92,428,180,IdPersonaText);
             SendMessageW(editor,EM_SETLIMITTEXT,4000,0);
-            AddTo(p,L"BUTTON",L"既定に戻す",BS_PUSHBUTTON|WS_TABSTOP,16,286,100,28,IdPersonaReset);
+            AddTo(p,L"BUTTON",T(L"既定に戻す",L"Default"),BS_PUSHBUTTON|WS_TABSTOP,16,286,100,28,IdPersonaReset);
             AddTo(p,L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,272,286,82,28,IDOK);
-            AddTo(p,L"BUTTON",L"キャンセル",BS_PUSHBUTTON|WS_TABSTOP,362,286,82,28,IDCANCEL);
+            AddTo(p,L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,362,286,82,28,IDCANCEL);
             EnableWindow(state.window,FALSE);
             ShowWindow(p,SW_SHOWNORMAL);
             SetForegroundWindow(p);
@@ -446,14 +451,14 @@ namespace MikuMikuDesktopPerch
             SendMessageW(list,LB_SETTOPINDEX,(std::max)(0,top),0);
             SendMessageW(list,WM_SETREDRAW,TRUE,0);
             InvalidateRect(list,nullptr,TRUE);
-            const std::wstring count=std::to_wstring(state.choice.memory->Entries().size())+L"件";
+            const std::wstring count=Fmt(T(L"{0}件",L"{0} notes"),{std::to_wstring(state.choice.memory->Entries().size())});
             SetDlgItemTextW(state.memory,IdMemoryCount,count.c_str());
         }
 
         void SaveMemory()
         {
             if(state.choice.memory&&!state.choice.memory->Save())
-                MessageBoxW(state.memory,L"記憶を保存できませんでした。",L"MikuMikuDesktopPerch",MB_ICONERROR);
+                MessageBoxW(state.memory,T(L"記憶を保存できませんでした。",L"Could not save the memory."),L"MikuMikuDesktopPerch",MB_ICONERROR);
             FillMemoryList();
         }
 
@@ -501,7 +506,7 @@ namespace MikuMikuDesktopPerch
                 }
                 case IdMemoryClear:
                     if(memory&&!memory->Entries().empty()&&
-                       MessageBoxW(hwnd,L"このモデルの記憶をすべて削除します。よろしいですか？",L"MikuMikuDesktopPerch",MB_ICONWARNING|MB_OKCANCEL|MB_DEFBUTTON2)==IDOK)
+                       MessageBoxW(hwnd,T(L"このモデルの記憶をすべて削除します。よろしいですか？",L"Delete everything this model remembers?"),L"MikuMikuDesktopPerch",MB_ICONWARNING|MB_OKCANCEL|MB_DEFBUTTON2)==IDOK)
                     {
                         memory->Clear();
                         SaveMemory();
@@ -547,23 +552,25 @@ namespace MikuMikuDesktopPerch
             AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
             RECT owner{};
             GetWindowRect(state.window,&owner);
-            const std::wstring title=L"記憶（"+state.choice.character.name+L"）";
+            const std::wstring title=Fmt(T(L"記憶（{0}）",L"Memory ({0})"),{state.choice.character.name});
             state.memory=CreateWindowExW(exStyle,MemoryClass,title.c_str(),style,owner.left+Px(10),owner.top+Px(60),
                                          frame.right-frame.left,frame.bottom-frame.top,state.window,nullptr,instance,nullptr);
             if(!state.memory)return;
             const HWND m=state.memory;
-            AddTo(m,L"STATIC",L"会話から覚えたことです。次の会話から、話に関係のあるものを思い出します。削除や追加はすぐ保存されます"
-                              L"（このコンピューターの中だけに保存し、外部には送りません）。",
+            AddTo(m,L"STATIC",T(L"会話から覚えたことです。次の会話から、話に関係のあるものを思い出します。削除や追加はすぐ保存されます"
+                  L"（このコンピューターの中だけに保存し、外部には送りません）。",
+                  L"What she has learnt from your conversations; she recalls what fits the talk. Deleting and adding are saved at once "
+                  L"(only on this computer, never sent anywhere)."),
                   SS_LEFT,16,12,508,40);
             AddTo(m,L"LISTBOX",L"",LBS_EXTENDEDSEL|LBS_NOINTEGRALHEIGHT|LBS_NOTIFY|WS_VSCROLL|WS_HSCROLL|WS_BORDER|WS_TABSTOP,16,56,508,236,IdMemoryList);
             AddTo(m,L"STATIC",L"",SS_LEFT,16,298,120,20,IdMemoryCount);
-            AddTo(m,L"BUTTON",L"選んだものを削除",BS_PUSHBUTTON|WS_TABSTOP,296,296,130,28,IdMemoryDelete);
-            AddTo(m,L"BUTTON",L"すべて削除",BS_PUSHBUTTON|WS_TABSTOP,434,296,90,28,IdMemoryClear);
+            AddTo(m,L"BUTTON",T(L"選んだものを削除",L"Delete selected"),BS_PUSHBUTTON|WS_TABSTOP,296,296,130,28,IdMemoryDelete);
+            AddTo(m,L"BUTTON",T(L"すべて削除",L"Delete all"),BS_PUSHBUTTON|WS_TABSTOP,434,296,90,28,IdMemoryClear);
             HWND input=AddTo(m,L"EDIT",L"",ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,16,340,410,24,IdMemoryNew);
             SendMessageW(input,EM_SETLIMITTEXT,CharacterMemory::MaxLength,0);
-            SendMessageW(input,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"覚えてほしいこと（例: 話し相手はコーヒーが好き）"));
-            AddTo(m,L"BUTTON",L"追加",BS_PUSHBUTTON|WS_TABSTOP,434,338,90,28,IdMemoryAdd);
-            AddTo(m,L"BUTTON",L"閉じる",BS_PUSHBUTTON|WS_TABSTOP,434,380,90,28,IDCANCEL);
+            SendMessageW(input,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"覚えてほしいこと（例: 話し相手はコーヒーが好き）",L"Something to remember (e.g. The user likes coffee)")));
+            AddTo(m,L"BUTTON",T(L"追加",L"Add"),BS_PUSHBUTTON|WS_TABSTOP,434,338,90,28,IdMemoryAdd);
+            AddTo(m,L"BUTTON",T(L"閉じる",L"Close"),BS_PUSHBUTTON|WS_TABSTOP,434,380,90,28,IDCANCEL);
             FillMemoryList();
             HWND list=GetDlgItem(m,IdMemoryList);
             SendMessageW(list,LB_SETTOPINDEX,(std::max<LRESULT>)(0,SendMessageW(list,LB_GETCOUNT,0,0)-1),0);
@@ -618,6 +625,10 @@ namespace MikuMikuDesktopPerch
             s.chatterMinutes=ComboValue(IdChatterMinutes,s.chatterMinutes);
             s.banterMinutes=ComboValue(IdBanterMinutes,s.banterMinutes);
             s.updateCheck=Checked(IdUpdateCheck);
+            {
+                const int language=ComboValue(IdLanguage,0);
+                s.language=language==1?L"ja":language==2?L"en":L"";
+            }
             s.voice=Checked(IdVoice);
             {
                 const VoiceSource source=CurrentVoiceSource();
@@ -761,7 +772,7 @@ namespace MikuMikuDesktopPerch
         const RECT& work=monitor.rcWork;
         const int w=frame.right-frame.left,h=frame.bottom-frame.top;
         // Owned by the mascot's window: kept above it (it is topmost) and gone with it.
-        const std::wstring title=L"MikuMikuDesktopPerch の設定（"+current.character.name+L"）";
+        const std::wstring title=Fmt(T(L"MikuMikuDesktopPerch の設定（{0}）",L"MikuMikuDesktopPerch settings ({0})"),{current.character.name});
         state.window=CreateWindowExW(exStyle,ClassName,title.c_str(),style,
                                      work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,
                                      owner,nullptr,instance,nullptr);

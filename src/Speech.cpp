@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <cwctype>
 #include <mmsystem.h>
 
 #pragma comment(lib,"winmm.lib")
@@ -63,25 +64,76 @@ namespace MikuMikuDesktopPerch
         }
 
         bool IsPause(wchar_t c){return std::wstring(L"、。！？!?,.…\n").find(c)!=std::wstring::npos;}
+
+        bool IsLatin(wchar_t c){return (c>=L'A'&&c<=L'Z')||(c>=L'a'&&c<=L'z');}
+
+        // An English word as the mouth says it, roughly: each vowel sound (a vowel letter, a
+        // common pair of them, or y after a consonant) becomes one kana with that vowel, and a
+        // word ending in m, b or p closes the lips (ん). A silent final e is left out.
+        std::wstring EnglishWord(std::wstring w)
+        {
+            for(auto& c:w)c=static_cast<wchar_t>(std::towlower(c));
+            auto vowel=[](wchar_t c){return c==L'a'||c==L'e'||c==L'i'||c==L'o'||c==L'u';};
+            if(w.size()>2&&w.back()==L'e'&&!vowel(w[w.size()-2])&&std::any_of(w.begin(),w.end()-2,vowel))w.pop_back();
+            struct Sound {const wchar_t* letters;const wchar_t* kana;};
+            static constexpr Sound Pairs[]={{L"oo",L"う"},{L"ou",L"あう"},{L"ow",L"あう"},{L"oi",L"おい"},{L"oy",L"おい"},{L"ai",L"えい"},
+                                            {L"ay",L"えい"},{L"ee",L"い"},{L"ea",L"い"},{L"ie",L"い"},{L"ei",L"えい"},{L"ey",L"えい"},
+                                            {L"oa",L"おう"},{L"au",L"お"},{L"aw",L"お"},{L"ue",L"う"},{L"ew",L"う"},{L"ui",L"う"}};
+            std::wstring out;
+            for(size_t i=0;i<w.size();)
+            {
+                const auto pair=std::find_if(std::begin(Pairs),std::end(Pairs),[&](const Sound& p){return w.compare(i,2,p.letters)==0;});
+                if(pair!=std::end(Pairs)){out+=pair->kana;i+=2;continue;}
+                const wchar_t c=w[i++];
+                if(c==L'a')out+=L"あ";
+                else if(c==L'e')out+=L"え";
+                else if(c==L'i'||(c==L'y'&&i>1&&!vowel(w[i-2])))out+=L"い";
+                else if(c==L'o')out+=L"お";
+                else if(c==L'u')out+=L"う";
+            }
+            if(out.empty())return L"ん";   // hmm, shh
+            if(const wchar_t last=w.back();last==L'm'||last==L'b'||last==L'p')out+=L"ん";
+            return out;
+        }
+
+        // Japanese through the IME (or a guess without it).
+        std::wstring JapaneseReading(const std::wstring& text)
+        {
+            if(text.empty())return {};
+            if(IFELanguage* ime=Ime())
+            {
+                BSTR input=SysAllocStringLen(text.data(),static_cast<UINT>(text.size()));
+                BSTR reading=nullptr;
+                const HRESULT hr=ime->GetPhonetic(input,1,-1,&reading);
+                SysFreeString(input);
+                if(SUCCEEDED(hr)&&reading)
+                {
+                    std::wstring out(reading,SysStringLen(reading));
+                    SysFreeString(reading);
+                    if(!out.empty())return out;
+                }
+            }
+            return Guess(text);
+        }
     }
 
+    // English words are read from their letters (the IME would spell them out); the rest, in
+    // between, through the IME.
     std::wstring HiraganaReading(const std::wstring& text)
     {
-        if(text.empty())return {};
-        if(IFELanguage* ime=Ime())
+        std::wstring out,other;
+        auto flush=[&]{out+=JapaneseReading(other);other.clear();};
+        for(size_t i=0;i<text.size();)
         {
-            BSTR input=SysAllocStringLen(text.data(),static_cast<UINT>(text.size()));
-            BSTR reading=nullptr;
-            const HRESULT hr=ime->GetPhonetic(input,1,-1,&reading);
-            SysFreeString(input);
-            if(SUCCEEDED(hr)&&reading)
-            {
-                std::wstring out(reading,SysStringLen(reading));
-                SysFreeString(reading);
-                if(!out.empty())return out;
-            }
+            if(!IsLatin(text[i])){other+=text[i++];continue;}
+            size_t end=i;
+            while(end<text.size()&&(IsLatin(text[end])||(text[end]==L'\''&&end+1<text.size()&&IsLatin(text[end+1]))))++end;
+            flush();
+            out+=EnglishWord(text.substr(i,end-i));
+            i=end;
         }
-        return Guess(text);
+        flush();
+        return out;
     }
 
     // One WAV file at a time on a waveOut device of its own (the system mixes them).
@@ -219,7 +271,8 @@ namespace MikuMikuDesktopPerch
             dirty=true;
             return;
         }
-        // About 7.5 syllables a second; a comma pauses a little, a full stop longer.
+        // About 7.5 syllables a second (English about 5); a comma pauses a little, a full stop longer.
+        const bool english=std::count_if(chunk.begin(),chunk.end(),IsLatin)*3>static_cast<std::ptrdiff_t>(chunk.size());
         for(const auto& mora:SplitMorae(HiraganaReading(chunk)))
         {
             if(IsRestText(mora))
@@ -230,7 +283,7 @@ namespace MikuMikuDesktopPerch
             }
             if(!IsSupportedLyricToken(mora))continue;
             events.push_back({nextFrame,mora});
-            nextFrame+=4;
+            nextFrame+=english?6:4;
         }
         c.end=std::max(c.start+0.05,nextFrame/30.0);
         chunks.push_back(c);

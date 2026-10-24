@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "Memory.hpp"
+#include "Text.hpp"
 #include "Settings.hpp"
 #include <windows.h>
 #include <algorithm>
@@ -175,7 +176,8 @@ namespace MikuMikuDesktopPerch
     {
         auto line=[](const MemoryEntry& e){
             std::wstring when;
-            if(e.date.size()==10)when=std::to_wstring(std::stoi(e.date.substr(0,4)))+L"年"+
+            if(e.date.size()==10&&English())when=e.date+L": ";
+            else if(e.date.size()==10)when=std::to_wstring(std::stoi(e.date.substr(0,4)))+L"年"+
                                       std::to_wstring(std::stoi(e.date.substr(5,2)))+L"月"+
                                       std::to_wstring(std::stoi(e.date.substr(8,2)))+L"日：";
             return L"- "+when+e.text+L"\n";
