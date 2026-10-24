@@ -664,7 +664,7 @@ namespace MikuMikuDesktopPerch
             int lowerBody=-1,upperBodyRoot=-1;
             std::array<int,4> turnIK{-1,-1,-1,-1};
             int leftEye=-1,rightEye=-1;
-            std::uint32_t random=0x9E3779B9u;
+            std::uint32_t random=FreshSeed();
             float Random01(){random=random*1664525u+1013904223u;return (random>>8)*(1.0f/16777216.0f);}
         } proc;
 
@@ -681,6 +681,7 @@ namespace MikuMikuDesktopPerch
         void ResolveProceduralTargets()
         {
             proc.blinkMorph=FindMorph({L"まばたき",L"瞬き",L"blink",L"Blink"});
+            proc.nextBlink=1.0+4.0*proc.Random01();
             proc.eyeMorphs.clear();
             for(const auto& [name,closes]:std::initializer_list<std::pair<const wchar_t*,float>>{
                     {L"まばたき",1},{L"瞬き",1},{L"blink",1},{L"Blink",1},{L"笑い",1},{L"にっこり",1},{L"なごみ",1},{L"はぅ",1},

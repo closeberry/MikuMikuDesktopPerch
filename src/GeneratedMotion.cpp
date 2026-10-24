@@ -75,6 +75,9 @@ namespace MikuMikuDesktopPerch
         overrides.clear();
         initialized=false;
         activity=Activity::Idle;
+        // The first gesture and weight shift at a time of their own.
+        nextGestureAt=2.0+4.0*Random01();
+        weightHoldUntil=1.0+3.0*Random01();
 
         // Rest geometry in the frame the keys are authored in: T-stance arms already lowered.
         auto corrected=[&](int bone,FXMVECTOR v,bool point)->XMVECTOR{
@@ -252,6 +255,61 @@ namespace MikuMikuDesktopPerch
                 rig.gripReach=XMVectorGetX(XMVector3Length(XMVectorSubtract(restPos(wrist),restPos(rig.elbow[side]))))+palmLength+0.4f*fingerLength;
         }
         if(legs>0)rig.legLength=std::max(legLength/legs,0.1f);
+
+        // How far down the arms hang standing: as far as the hand stays clear of what is beside
+        // it at that height (hips, thighs, a skirt), measured on the model's own mesh, between
+        // 72° (as before: loose clothes at the sides, such as an open coat, do not push the arms
+        // out further) and 86° below horizontal. Narrow hips and no skirt let the arms hang
+        // straighter. Hair and the arms' own vertices do not count.
+        {
+            const int head=Find(pmx,{L"頭"});
+            auto under=[&](int bone,int ancestor){
+                for(int b=bone,guard=0;b>=0&&b<static_cast<int>(pmx.bones.size())&&guard<512;b=pmx.bones[b].parent,++guard)if(b==ancestor)return true;
+                return false;
+            };
+            std::vector<XMFLOAT3> body;
+            for(const auto& v:pmx.vertices)
+            {
+                int main=v.bone[0];
+                for(int k=1;k<4;++k)if(v.bone[k]>=0&&v.weight[k]>v.weight[0]&&v.weight[k]>0.5f)main=v.bone[k];
+                if(main<0||main>=static_cast<int>(pmx.bones.size())||(head>=0&&under(main,head)))continue;
+                if((rig.arm[0]>=0&&under(main,rig.arm[0]))||(rig.arm[1]>=0&&under(main,rig.arm[1])))continue;
+                body.push_back(v.position);
+            }
+            const float L=rig.legLength;
+            for(int side=0;side<2;++side)
+            {
+                rig.hangDegrees[side]=HangAngle/Deg;
+                const int wrist=rig.wrist[side];
+                const int tip=Find(pmx,{std::wstring(side==0?L"左":L"右")+L"中指３"});
+                if(rig.arm[side]<0||rig.elbow[side]<0||wrist<0||tip<0||body.empty())continue;
+                const XMVECTOR shoulder=restPos(rig.arm[side]);
+                const XMVECTOR armDir=XMVectorSubtract(restPos(rig.elbow[side]),shoulder);
+                const float rest=std::atan2(-XMVectorGetY(armDir),std::abs(XMVectorGetX(armDir)));
+                const float o=side==0?1.0f:-1.0f;   // the left side is +X
+                // The hand's inner side is the palm's surface (the palm faces the leg when hanging).
+                const float surface=std::max(0.0f,XMVectorGetX(XMVector3Dot(XMLoadFloat3(&rig.palmContact[side]),XMLoadFloat3(&rig.palmRestNormal[side]))));
+                const XMVECTOR wristRel=XMVectorSubtract(restPos(wrist),shoulder),tipRel=XMVectorSubtract(restPos(tip),shoulder);
+                float best=72.0f;
+                for(float degrees=86.0f;degrees>=72.0f;degrees-=1.0f)
+                {
+                    const XMVECTOR turn=XMQuaternionRotationRollPitchYaw(0,0,(degrees*Deg-rest)*(side==0?-1.0f:1.0f));
+                    const XMVECTOR w=XMVectorAdd(shoulder,XMVector3Rotate(wristRel,turn)),t=XMVectorAdd(shoulder,XMVector3Rotate(tipRel,turn));
+                    bool clear=true;
+                    for(float f=0;f<=1.0f&&clear;f+=0.25f)
+                    {
+                        const XMVECTOR p=XMVectorLerp(w,t,f);
+                        const float inner=o*XMVectorGetX(p)-surface,y=XMVectorGetY(p),z=XMVectorGetZ(p);
+                        for(const XMFLOAT3& b:body)
+                            if(std::abs(b.y-y)<0.03f*L&&std::abs(b.z-z)<0.08f*L&&o*b.x>inner-0.012f*L){clear=false;break;}
+                    }
+                    if(clear){best=degrees;break;}
+                }
+                rig.hangDegrees[side]=best;
+                rig.armLower[side]=(best*Deg-rest)*(side==0?-1.0f:1.0f);
+                XMStoreFloat3(&rig.hangElbow[side],XMVectorAdd(shoulder,XMVector3Rotate(armDir,XMQuaternionRotationRollPitchYaw(0,0,rig.armLower[side]))));
+            }
+        }
         for(int side=0;side<2;++side)
         {
             const std::wstring s=side==0?L"左":L"右";
@@ -309,7 +367,8 @@ namespace MikuMikuDesktopPerch
             L"elbowBendAxis L="+v(rig.elbowBendAxis[0])+L" R="+v(rig.elbowBendAxis[1])+L"\n"+
             L"elbowTwistAxis L="+v(rig.elbowTwistAxis[0])+L" R="+v(rig.elbowTwistAxis[1])+L"\n"+
             L"armTwistAxis L="+v(rig.armTwistAxis[0])+L" R="+v(rig.armTwistAxis[1])+L"\n"+
-            L"morphs smileEyes="+std::to_wstring(rig.smileEyes)+L" smileMouth="+std::to_wstring(rig.smileMouth)+L" wink="+std::to_wstring(rig.wink)+L"\n";
+            L"morphs smileEyes="+std::to_wstring(rig.smileEyes)+L" smileMouth="+std::to_wstring(rig.smileMouth)+L" wink="+std::to_wstring(rig.wink)+L"\n"+
+            L"hang L="+std::to_wstring(static_cast<int>(rig.hangDegrees[0]))+L" R="+std::to_wstring(static_cast<int>(rig.hangDegrees[1]))+L"\n";
     }
 
     void GeneratedMotion::SetActivity(Activity next,int dir)

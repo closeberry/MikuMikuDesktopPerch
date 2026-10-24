@@ -8,12 +8,23 @@
 #include "MascotModel.hpp"
 #include <DirectXMath.h>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <vector>
 
 import PMXLoader;
 
 namespace MikuMikuDesktopPerch
 {
+    // A random sequence of its own for each character (and each start): characters loaded
+    // together do not gesture, shift their weight or blink in step.
+    inline std::uint32_t FreshSeed()
+    {
+        static std::atomic<std::uint32_t> made{0};
+        const std::uint32_t seed=static_cast<std::uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count())^(0x9E3779B9u*++made);
+        return seed?seed:0x9E3779B9u;
+    }
+
     class GeneratedMotion
     {
     public:
@@ -112,6 +123,7 @@ namespace MikuMikuDesktopPerch
             std::array<DirectX::XMFLOAT3,2> armSwingAxis{},elbowBendAxis{};   // +angle moves the limb forward
             std::array<DirectX::XMFLOAT3,2> elbowTwistAxis{},armTwistAxis{};  // local X of ひじ, axis of 腕捩
             std::array<float,2> armLower{};    // roll that brings the rest-pose arm down to hang naturally
+            std::array<float,2> hangDegrees{};  // how far below horizontal that is (see Setup)
             std::array<float,2> armRaise{};    // roll that points the rest-pose arm straight up
             DirectX::XMFLOAT3 lowerPivot{};    // 下半身 rest position (the body's roll pivot)
             float shoulderY=14,armReach=6;     // shoulder height and shoulder-to-fingertip length
@@ -208,7 +220,7 @@ namespace MikuMikuDesktopPerch
         int reactionSide=0;
         float reactionWeight=0;
         std::vector<std::pair<int,float>> reactionMorphs;
-        std::uint32_t random=0x9E3779B9u;
+        std::uint32_t random=FreshSeed();
         std::array<float,2> clipSpeed{0,0};
         void ClipGaitKeys(const PMX::Pose& pose,std::vector<Key>& keys,double dt);
     };
