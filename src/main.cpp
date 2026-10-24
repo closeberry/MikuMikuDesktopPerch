@@ -3617,6 +3617,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     int snapshotScale=0;          // --scale <percent>: resize through the menu path after start-up
     std::wstring snapshotActivity;   // --activity walk|sit|grab|fall: hold that generated activity
     std::wstring snapshotGesture;    // --gesture hip|wave|peace|...: hold that standing gesture
+    // --clearance: step the gesture through its timeline (0.1 s a frame after 40 frames) and
+    // write how close the forearms and hands come to the body at each step.
+    bool snapshotClearance=false;
+    std::vector<std::array<float,3>> clearance;
+    std::vector<std::array<std::wstring,2>> clearanceBones;
     bool snapshotDoze=false;         // --doze: doze off from the start
     std::array<std::wstring,2> snapshotGait;   // --walk-motion / --run-motion <vmd>: use that gait motion
     std::optional<int> snapshotFps;           // --fps <n>: drawing rate for this run
@@ -3652,6 +3657,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--gesture"&&i+1<argc)
             {
                 snapshotGesture=argv[++i];
+            }
+            else if(arg==L"--clearance")
+            {
+                snapshotClearance=true;
             }
             else if(arg==L"--play-motion")
             {
@@ -3884,6 +3893,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         app.settings.characters.resize(1);
         if(!snapshotModel.empty())app.settings.characters[0].modelPath=snapshotModel;
         if(snapshotFps)app.settings.fps=*snapshotFps;
+        if(snapshotClearance)app.settings.physics=false;   // the same body every run, to compare
         if(snapshotBlur)app.settings.motionBlur=*snapshotBlur;
         if(snapshotIterations)app.settings.physicsIterations=*snapshotIterations;
         if(snapshotFilter)app.settings.physicsFilter=*snapshotFilter;
@@ -4174,6 +4184,20 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             UpdateChatBubble(m,dt);
             m.renderer.Render(m.model,app.settings.edgeScale);
         }
+        if(app.diagnostic&&snapshotClearance&&!snapshotGesture.empty())
+        {
+            // The pose drawn this frame was the gesture at the time set last frame.
+            static int frame=0;
+            if(frame>=40)
+            {
+                std::array<std::wstring,2> bones;
+                const auto c=app.mascots.front()->model.ArmClearance(&bones);
+                clearance.push_back({(frame-40)*0.1f,c[0],c[1]});
+                clearanceBones.push_back(bones);
+            }
+            ++frame;
+            if(frame>=40)app.mascots.front()->model.ForceGesture(snapshotGesture.substr(0,snapshotGesture.find(L'@'))+L"@"+std::to_wstring((frame-40)*0.1));
+        }
         if(app.diagnostic&&--snapshotFrames<=0)
         {
             Mascot& m=*app.mascots.front();
@@ -4184,6 +4208,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 fwprintf(info,L"model=%s\narmRest L=%.1f R=%.1f\narmCorrection L=%.1f R=%.1f\nwindow=%dx%d\n",
                          Own(m).modelPath.c_str(),rest[0],rest[1],fix[0],fix[1],m.windowSize.cx,m.windowSize.cy);
                 fwprintf(info,L"%s",m.model.DescribeRig().c_str());
+                for(size_t i=0;i<clearance.size();++i)
+                    fwprintf(info,L"clearance %.1f %.3f %.3f %s %s\n",clearance[i][0],clearance[i][1],clearance[i][2],
+                             clearanceBones[i][0].c_str(),clearanceBones[i][1].c_str());
                 fclose(info);
             }
             DestroyWindow(app.hwnd);

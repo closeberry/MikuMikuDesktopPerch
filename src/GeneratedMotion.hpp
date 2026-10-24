@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <vector>
 
 import PMXLoader;
@@ -17,11 +18,18 @@ import PMXLoader;
 namespace MikuMikuDesktopPerch
 {
     // A random sequence of its own for each character (and each start): characters loaded
-    // together do not gesture, shift their weight or blink in step.
+    // together do not gesture, shift their weight or blink in step. Diagnostics can fix the
+    // sequences with MIKUMIKUDESKTOPPERCH_SEED (to compare runs).
     inline std::uint32_t FreshSeed()
     {
         static std::atomic<std::uint32_t> made{0};
-        const std::uint32_t seed=static_cast<std::uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count())^(0x9E3779B9u*++made);
+        static const std::uint32_t fixed=[]{
+            char value[32]{};
+            size_t length=0;
+            return getenv_s(&length,value,"MIKUMIKUDESKTOPPERCH_SEED")==0&&length>1?static_cast<std::uint32_t>(std::strtoul(value,nullptr,10)):0u;
+        }();
+        const std::uint32_t seed=fixed?fixed*0x9E3779B9u+0x7F4A7C15u*++made:
+                                 static_cast<std::uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count())^(0x9E3779B9u*++made);
         return seed?seed:0x9E3779B9u;
     }
 
@@ -31,9 +39,12 @@ namespace MikuMikuDesktopPerch
         // Stand is the plain standing pose, taken as one gesture among the others.
         enum class Gesture {None,HandOnHip,Wave,Peace,HandsBehind,LookAtPalm,HandsFolded,Stretch,LookAround,HeadTilt,Stand,
                             TuckHair,Yawn,Think,Hum,Clap,LookFar,Cheeks,
+                            // Casual ones: nothing in particular, just moving a little.
+                            Dangle,SwingArm,ShakeHands,WristRoll,Fingers,ShoulderRoll,Shrug,Sigh,LookBack,LookDown,
+                            LookUp,Glance,NeckStretch,Nod,Drowse,Sway,Twist,Peek,Bounce,TapFoot,
                             // Click reactions only (never picked at random).
                             PatHead,Surprised,Curious,ShyNod};
-        static constexpr int GestureCount=17;
+        static constexpr int GestureCount=37;
 
         // T-stance correction of one side: keys are generated in the corrected (A-stance) frame.
         struct ArmRest
@@ -216,7 +227,9 @@ namespace MikuMikuDesktopPerch
         {
             static constexpr float lengths[GestureCount][2]={
                 {5,8},{2.6f,3.6f},{3,4},{5,8},{3,4.5f},{5,8},{5.5f,7},{4,5},{2.5f,3.5f},{3,6},
-                {3,4},{3.5f,4.5f},{4,6},{4,6},{2.5f,3.2f},{4,5.5f},{3,4}};
+                {3,4},{3.5f,4.5f},{4,6},{4,6},{2.5f,3.2f},{4,5.5f},{3,4},
+                {4,6},{3,4.5f},{2.2f,3},{3,4.5f},{3,4},{3,4},{2,2.6f},{3,4},{3,4.5f},{2.5f,4},
+                {2.5f,4},{2.5f,3.5f},{4.5f,6},{2,3},{4,6},{4,6},{3.5f,5},{2.5f,3.5f},{2.5f,4},{2.5f,3.5f}};
             if(static_cast<int>(g)>GestureCount)return {2.5f,2.5f};   // click reactions
             const auto& r=lengths[static_cast<int>(g)-1];
             return {r[0],r[1]};

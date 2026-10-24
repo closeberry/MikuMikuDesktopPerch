@@ -153,6 +153,9 @@ namespace MikuMikuDesktopPerch
         Activity CurrentActivity() const;
         bool CanSit() const;
         std::wstring DescribeRig() const;
+        // Diagnostics: the closest the forearm and hand (left, right) come to the rest of the
+        // body as posed now (its vertices, hair and arms aside), in model units.
+        std::array<float,2> ArmClearance(std::array<std::wstring,2>* nearestBone=nullptr) const;   // and the bones carrying the nearest vertices
         // World units センター has walked since the last call (positive = screen right).
         float TakeRootDelta();
         float RootOffset() const;

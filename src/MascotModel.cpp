@@ -1436,6 +1436,81 @@ namespace MikuMikuDesktopPerch
     Activity MascotModel::CurrentActivity() const {return impl->motion.CurrentActivity();}
     bool MascotModel::CanSit() const {return impl->motion.CanSit();}
     std::wstring MascotModel::DescribeRig() const {return impl->motion.Describe();}
+
+    std::array<float,2> MascotModel::ArmClearance(std::array<std::wstring,2>* nearestBone) const
+    {
+        using namespace DirectX;
+        const auto& m=*impl;
+        std::array<float,2> nearest{1e9f,1e9f};
+        if(!m.pmx||!m.solver||m.solver->boneMatrices.size()<m.pmx->bones.size())return nearest;
+        const auto& pmx=*m.pmx;
+        const auto& bones=m.solver->boneMatrices;
+        const int arm[2]={m.FindBone({L"左腕"}),m.FindBone({L"右腕"})};
+        const int elbow[2]={m.FindBone({L"左ひじ"}),m.FindBone({L"右ひじ"})};
+        const int wrist[2]={m.FindBone({L"左手首"}),m.FindBone({L"右手首"})};
+        const int tip[2]={m.FindBone({L"左中指３",L"左中指3",L"左中指１"}),m.FindBone({L"右中指３",L"右中指3",L"右中指１"})};
+        const int head=m.FindBone({L"頭"});
+        auto under=[&](int bone,int ancestor){
+            for(int b=bone,guard=0;ancestor>=0&&b>=0&&b<static_cast<int>(pmx.bones.size())&&guard<512;b=pmx.bones[b].parent,++guard)if(b==ancestor)return true;
+            return false;
+        };
+        // The body's vertices (every third), each carried by the bone that weighs most on it.
+        // What lies along an arm at rest (a sleeve or cuff on bones of its own) is the arm's.
+        auto alongArm=[&](const XMFLOAT3& position){
+            const XMVECTOR p=XMLoadFloat3(&position);
+            for(int side=0;side<2;++side)
+            {
+                const int chain[4]={arm[side],elbow[side],wrist[side],tip[side]};
+                if(chain[0]<0||chain[2]<0)continue;
+                const float reach=XMVectorGetX(XMVector3Length(XMVectorSubtract(XMLoadFloat3(&pmx.bones[chain[2]].position),XMLoadFloat3(&pmx.bones[chain[0]].position))));
+                for(int k=0;k<3;++k)
+                {
+                    if(chain[k]<0||chain[k+1]<0)continue;
+                    const XMVECTOR a=XMLoadFloat3(&pmx.bones[chain[k]].position),b=XMLoadFloat3(&pmx.bones[chain[k+1]].position);
+                    const XMVECTOR ab=XMVectorSubtract(b,a);
+                    const float f=std::clamp(XMVectorGetX(XMVector3Dot(XMVectorSubtract(p,a),ab))/std::max(1e-6f,XMVectorGetX(XMVector3LengthSq(ab))),0.0f,1.0f);
+                    if(XMVectorGetX(XMVector3Length(XMVectorSubtract(p,XMVectorAdd(a,XMVectorScale(ab,f)))))<0.15f*reach)return true;
+                }
+            }
+            return false;
+        };
+        static const PMX::PMXModel* cachedFor=nullptr;
+        static std::vector<std::pair<int,int>> body;   // vertex, bone
+        if(cachedFor!=&pmx)
+        {
+            cachedFor=&pmx;
+            body.clear();
+            for(size_t i=0;i<pmx.vertices.size();i+=3)
+            {
+                const auto& v=pmx.vertices[i];
+                int main=v.bone[0];
+                for(int k=1;k<4;++k)if(v.bone[k]>=0&&v.weight[k]>v.weight[0]&&v.weight[k]>0.5f)main=v.bone[k];
+                if(main<0||main>=static_cast<int>(pmx.bones.size())||under(main,head)||under(main,arm[0])||under(main,arm[1])||alongArm(v.position))continue;
+                body.push_back({static_cast<int>(i),main});
+            }
+        }
+        auto posed=[&](int bone,const XMFLOAT3& p){return XMVector3Transform(XMLoadFloat3(&p),XMMatrixTranspose(bones[bone]));};
+        std::vector<XMVECTOR> points;
+        points.reserve(body.size());
+        for(const auto& [v,bone]:body)points.push_back(posed(bone,pmx.vertices[v].position));
+        for(int side=0;side<2;++side)
+        {
+            if(elbow[side]<0||wrist[side]<0)continue;
+            const XMVECTOR e=posed(elbow[side],pmx.bones[elbow[side]].position);
+            const XMVECTOR w=posed(wrist[side],pmx.bones[wrist[side]].position);
+            const XMVECTOR t=tip[side]>=0?posed(tip[side],pmx.bones[tip[side]].position):w;
+            std::vector<XMVECTOR> probes;
+            for(float f=0.3f;f<=1.001f;f+=0.1f)probes.push_back(XMVectorLerp(e,w,f));
+            for(float f=0.25f;f<=1.001f;f+=0.25f)probes.push_back(XMVectorLerp(w,t,f));
+            int which=-1;
+            for(const XMVECTOR& p:probes)
+                for(size_t i=0;i<points.size();++i)
+                    if(const float d=XMVectorGetX(XMVector3LengthSq(XMVectorSubtract(p,points[i])));d<nearest[side]){nearest[side]=d;which=body[i].second;}
+            nearest[side]=std::sqrt(nearest[side]);
+            if(which>=0&&nearestBone)(*nearestBone)[side]=pmx.bones[which].name;
+        }
+        return nearest;
+    }
     float MascotModel::TakeRootDelta(){return impl->motion.TakeRootDelta();}
     float MascotModel::RootOffset() const {return impl->motion.RootOffset();}
     void MascotModel::Land(float impactSpeed){impl->motion.Land(impactSpeed);}

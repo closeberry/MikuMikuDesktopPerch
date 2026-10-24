@@ -627,7 +627,9 @@ namespace MikuMikuDesktopPerch
         {
         case Gesture::Wave:case Gesture::Peace:case Gesture::LookAtPalm:case Gesture::LookAround:case Gesture::HeadTilt:
         case Gesture::Stretch:case Gesture::TuckHair:case Gesture::Yawn:case Gesture::Think:case Gesture::Hum:
-        case Gesture::LookFar:case Gesture::Cheeks:
+        case Gesture::LookFar:case Gesture::Cheeks:case Gesture::SwingArm:case Gesture::WristRoll:case Gesture::Shrug:
+        case Gesture::Sigh:case Gesture::LookBack:case Gesture::LookDown:case Gesture::LookUp:case Gesture::Glance:
+        case Gesture::NeckStretch:case Gesture::Nod:case Gesture::Drowse:case Gesture::Peek:case Gesture::Bounce:
             return true;
         default:
             return false;
@@ -643,6 +645,11 @@ namespace MikuMikuDesktopPerch
             {L"look",Gesture::LookAround},{L"tilt",Gesture::HeadTilt},{L"stand",Gesture::Stand},
             {L"hair",Gesture::TuckHair},{L"yawn",Gesture::Yawn},{L"think",Gesture::Think},{L"hum",Gesture::Hum},
             {L"clap",Gesture::Clap},{L"far",Gesture::LookFar},{L"cheeks",Gesture::Cheeks},
+            {L"dangle",Gesture::Dangle},{L"swing",Gesture::SwingArm},{L"shake",Gesture::ShakeHands},{L"wrist",Gesture::WristRoll},
+            {L"fingers",Gesture::Fingers},{L"shoulders",Gesture::ShoulderRoll},{L"shrug",Gesture::Shrug},{L"sigh",Gesture::Sigh},
+            {L"back",Gesture::LookBack},{L"down",Gesture::LookDown},{L"up",Gesture::LookUp},{L"glance",Gesture::Glance},
+            {L"neck",Gesture::NeckStretch},{L"nod",Gesture::Nod},{L"drowse",Gesture::Drowse},{L"sway",Gesture::Sway},
+            {L"twist",Gesture::Twist},{L"peek",Gesture::Peek},{L"bounce",Gesture::Bounce},{L"tap",Gesture::TapFoot},
             {L"pat",Gesture::PatHead},{L"surprised",Gesture::Surprised},{L"curious",Gesture::Curious},{L"shynod",Gesture::ShyNod}};
     }
 
@@ -702,6 +709,44 @@ namespace MikuMikuDesktopPerch
             const XMVECTOR pivot=XMVectorSet(0,rig.headY-0.12f*L,S.z,0);
             return XMVectorAdd(pivot,XMVector3TransformNormal(XMVectorSubtract(p,pivot),XMMatrixRotationRollPitchYaw(pitch,yawAngle,0)));
         };
+        // For the casual gestures. An arm hanging from the shoulder as in the standing pose,
+        // swung forward (or back), rolled out from where it hangs (never in) and bent at the
+        // elbow: the hand stays out beside the hips as far as standing keeps it. A swing also
+        // rolls it out by half as much, so the hand passes outside what hangs at the hips
+        // (a pouch, a ribbon, the side of a skirt).
+        auto hang=[&](int side,float swing,float outward,float bend){
+            if(rig.arm[side]<0)return;
+            const float o=side==0?1.0f:-1.0f;
+            const float roll=std::max(outward,0.0f)+0.5f*std::abs(swing);
+            SetRotation(g,rig.arm[side],Then(Rotation(rig.armSwingAxis[side],swing),
+                                             XMQuaternionRotationRollPitchYaw(0,0,rig.armLower[side]+o*roll)));
+            if(rig.elbow[side]>=0)SetRotation(g,rig.elbow[side],Rotation(rig.elbowBendAxis[side],bend));
+        };
+        // The hand bent at the wrist: toward the palm (bend) and toward the thumb (sideways).
+        auto flex=[&](int side,float bend,float sideways){
+            if(rig.wrist[side]<0)return;
+            const XMVECTOR d=XMLoadFloat3(&rig.handRestDir[side]);
+            XMVECTOR n=XMLoadFloat3(&rig.palmRestNormal[side]);
+            n=XMVectorSubtract(n,XMVectorScale(d,XMVectorGetX(XMVector3Dot(n,d))));
+            if(XMVectorGetX(XMVector3LengthSq(n))<1e-8f)return;
+            n=XMVector3Normalize(n);
+            SetRotation(g,rig.wrist[side],Then(XMQuaternionRotationNormal(XMVector3Normalize(XMVector3Cross(d,n)),bend),
+                                               XMQuaternionRotationNormal(n,sideways)));
+        };
+        // A turn added to what the standing pose gives a bone (its lean and weight shift kept).
+        auto turn=[&](int bone,float pitch,float yawAngle,float roll){
+            if(bone<0)return;
+            auto& k=KeyOf(g,bone);
+            XMStoreFloat4(&k.rotation,XMQuaternionNormalize(XMQuaternionMultiply(XMLoadFloat4(&k.rotation),XMQuaternionRotationRollPitchYaw(pitch,yawAngle,roll))));
+        };
+        // Both shoulders up (and back): the arms go up and a little out with them.
+        auto shoulders=[&](float up,float back){
+            both([&](int side,float o){if(rig.shoulder[side]>=0)SetRotation(g,rig.shoulder[side],XMQuaternionRotationRollPitchYaw(0,-o*back,o*up));});
+        };
+        // The base standing arms (as Generate hangs them).
+        const float baseSway=1.5f*Deg*std::sin(XM_2PI*static_cast<float>(clock)/5.3f);
+        // Fading in after start and out before the end (for movements that keep going).
+        const float envelope=ramp(0.2f,0.6f)*(1.0f-ramp(len-1.0f,0.7f));
         switch(which)
         {
         case Gesture::HandOnHip:
@@ -931,6 +976,211 @@ namespace MikuMikuDesktopPerch
             face(rig.smileEyes,0.8f);
             face(rig.smileMouth,0.5f);
             break;
+        case Gesture::Dangle:
+        {
+            // The arms swinging loosely, one forward as the other goes back, the hands trailing.
+            const float phase=XM_2PI*a/1.3f,swing=9.0f*Deg*envelope*std::sin(phase);
+            both([&](int side,float o){
+                const float w=side==0?1.0f:-1.0f;
+                hang(side,w*swing,2.0f*Deg,(10.0f+4.0f*envelope*(0.5f+0.5f*std::sin(phase*w-0.6f)))*Deg);
+                flex(side,-w*7.0f*Deg*envelope*std::sin(phase-0.9f),0);
+            });
+            break;
+        }
+        case Gesture::SwingArm:
+        {
+            // One arm swung back and forth from the shoulder, idly, the eyes following it.
+            const float phase=XM_2PI*a/1.5f;
+            hang(s,(3.0f+13.0f*envelope*std::sin(phase))*Deg,3.0f*Deg,(12.0f+6.0f*envelope*(0.5f+0.5f*std::sin(phase-0.5f)))*Deg);
+            flex(s,-10.0f*Deg*envelope*std::sin(phase-1.0f),0);
+            neck(-10.0f*Deg*envelope,out*10.0f*Deg*envelope,0);
+            break;
+        }
+        case Gesture::ShakeHands:
+        {
+            // Shaking the hands out loosely beside the hips, forearms a little up, wrists flopping.
+            const float phase=XM_2PI*a*4.5f;
+            both([&](int side,float o){
+                const float shake=std::sin(phase+side*1.7f);
+                hang(side,6.0f*Deg*envelope,(6.0f+2.0f*shake*envelope)*Deg,(10.0f+25.0f*envelope+4.0f*shake*envelope)*Deg);
+                flex(side,28.0f*Deg*envelope*std::sin(phase+side*1.7f-1.2f),0);
+            });
+            break;
+        }
+        case Gesture::WristRoll:
+        {
+            // A hand brought up a little in front of the hip, the wrist turning round and round
+            // as if loosening it, glanced at.
+            const float phase=XM_2PI*a/0.9f;
+            hang(s,12.0f*Deg*envelope,6.0f*Deg,(10.0f+50.0f*envelope)*Deg);
+            flex(s,22.0f*Deg*envelope*std::sin(phase),18.0f*Deg*envelope*std::cos(phase));
+            neck(-14.0f*Deg*envelope,out*8.0f*Deg*envelope,0);
+            break;
+        }
+        case Gesture::Fingers:
+        {
+            // The fingers of both hands curling and opening one after another, absent-mindedly.
+            both([&](int side,float o){
+                std::array<float,4> curl{};
+                for(int f=0;f<4;++f)curl[f]=0.25f+0.2f*envelope*std::sin(XM_2PI*a/0.8f-f*0.7f-side*0.4f);
+                CurlFingers(g,side,curl);
+            });
+            break;
+        }
+        case Gesture::ShoulderRoll:
+        {
+            // Rolling the shoulders: up, back and down, twice, the head a little forward.
+            const float phase=XM_2PI*std::clamp((a-0.4f)/std::max(len-1.2f,0.5f),0.0f,1.0f)*2.0f;
+            shoulders(8.0f*Deg*envelope*(0.5f-0.5f*std::cos(phase)),7.0f*Deg*envelope*std::sin(phase));
+            both([&](int side,float o){hang(side,(side==0?baseSway:-baseSway),2.0f*Deg,10.0f*Deg);});
+            neck(-4.0f*Deg*envelope,0,0);
+            break;
+        }
+        case Gesture::Shrug:
+        {
+            // A small shrug: shoulders up, the forearms out a little, head on one side.
+            const float up=std::sin(XM_PI*std::clamp((a-0.2f)/std::max(len-0.6f,0.5f),0.0f,1.0f));
+            shoulders(12.0f*Deg*up,0);
+            both([&](int side,float o){hang(side,4.0f*Deg*up,8.0f*Deg*up,(10.0f+30.0f*up)*Deg);flex(side,-12.0f*Deg*up,0);});
+            neck(2.0f*Deg*up,0,-out*7.0f*Deg*up);
+            face(rig.smileMouth,0.3f*up);
+            break;
+        }
+        case Gesture::Sigh:
+        {
+            // A sigh: a breath in (shoulders and head up), then out (they drop, the head hangs
+            // a little, the eyes half closed).
+            const float in=ramp(0.2f,1.0f)*(1.0f-ramp(1.3f,0.9f)),outBreath=ramp(1.3f,0.9f)*(1.0f-ramp(len-1.0f,0.7f));
+            const float chest=(2.0f*in-1.5f*outBreath)*Deg;
+            shoulders(7.0f*Deg*in,0);
+            turn(rig.upperBody,chest,0,0);
+            both([&](int side,float o){hang(side,(side==0?baseSway:-baseSway)+chest,2.0f*Deg,10.0f*Deg);});
+            neck((5.0f*in-10.0f*outBreath)*Deg,0,0);
+            face(rig.eyesClosed,0.45f*outBreath);
+            break;
+        }
+        case Gesture::LookBack:
+        {
+            // Looking back over the shoulder: the chest turns a little, the head most of the way.
+            const float look=ramp(0.2f,0.8f)*(1.0f-ramp(len-1.0f,0.8f));
+            turn(rig.upperBody,0,out*16.0f*Deg*look,0);
+            turn(rig.lowerBody,0,out*4.0f*Deg*look,0);
+            neck(-3.0f*Deg*look,out*48.0f*Deg*look,0);
+            both([&](int side,float o){hang(side,(side==0?baseSway:-baseSway),4.0f*Deg*look,10.0f*Deg);});
+            break;
+        }
+        case Gesture::LookDown:
+        {
+            // Looking down at the feet (or the ground), the toes of one foot turning a little.
+            const float look=ramp(0.1f,0.7f)*(1.0f-ramp(len-0.9f,0.7f));
+            turn(rig.upperBody,-4.0f*Deg*look,0,0);
+            both([&](int side,float o){hang(side,(side==0?baseSway:-baseSway)-4.0f*Deg*look,2.0f*Deg,10.0f*Deg);});
+            neck(-30.0f*Deg*look,out*6.0f*Deg*std::sin(XM_2PI*a/3.0f)*look,0);
+            break;
+        }
+        case Gesture::LookUp:
+        {
+            // Looking up at the sky (or the ceiling), the head going from one side a little to
+            // the other.
+            const float look=ramp(0.1f,0.8f)*(1.0f-ramp(len-0.9f,0.7f));
+            turn(rig.upperBody,3.0f*Deg*look,0,0);
+            both([&](int side,float o){hang(side,(side==0?baseSway:-baseSway)+3.0f*Deg*look,2.0f*Deg,10.0f*Deg);});
+            neck(24.0f*Deg*look,out*12.0f*Deg*look*std::cos(XM_PI*u),0);
+            break;
+        }
+        case Gesture::Glance:
+        {
+            // Quick glances to one side and the other, as at a sound.
+            const float first=ramp(0.2f,0.25f)*(1.0f-ramp(0.9f,0.25f));
+            const float second=ramp(1.1f,0.25f)*(1.0f-ramp(1.8f,0.3f));
+            neck(-2.0f*Deg*(first+second),(out*28.0f*first-out*22.0f*second)*Deg,0);
+            break;
+        }
+        case Gesture::NeckStretch:
+        {
+            // Stretching the neck: the head leans slowly over to one side, then the other, then
+            // forward, the eyes shut.
+            const float k=std::clamp((a-0.3f)/std::max(len-1.0f,0.5f),0.0f,1.0f)*3.0f;
+            const float sideA=std::sin(XM_PI*std::clamp(k,0.0f,1.0f)),sideB=std::sin(XM_PI*std::clamp(k-1.0f,0.0f,1.0f)),fwd=std::sin(XM_PI*std::clamp(k-2.0f,0.0f,1.0f));
+            neck(-18.0f*Deg*fwd,0,(out*18.0f*sideA-out*18.0f*sideB)*Deg);
+            face(rig.eyesClosed,0.9f*std::max({sideA,sideB,fwd}));
+            break;
+        }
+        case Gesture::Nod:
+        {
+            // Small nods to herself, as if agreeing with a thought.
+            const float nods=std::max(0.0f,std::sin(XM_2PI*std::clamp((a-0.3f)/0.55f,0.0f,3.0f)));
+            neck(-7.0f*Deg*nods*envelope,0,-out*3.0f*Deg*envelope);
+            face(rig.smileMouth,0.3f*envelope);
+            break;
+        }
+        case Gesture::Drowse:
+        {
+            // Nodding off for a moment: the head slowly droops as the eyes close, then comes up
+            // with a start.
+            const float droop=Smooth(std::clamp((a-0.3f)/std::max(len-1.3f,0.5f),0.0f,1.0f))*(1.0f-ramp(len-0.9f,0.18f));
+            neck(-22.0f*Deg*droop,0,out*4.0f*Deg*droop);
+            turn(rig.upperBody,-3.0f*Deg*droop,0,0);
+            both([&](int side,float o){hang(side,(side==0?baseSway:-baseSway)-3.0f*Deg*droop,2.0f*Deg,10.0f*Deg);});
+            face(rig.eyesClosed,std::min(1.0f,1.3f*droop));
+            break;
+        }
+        case Gesture::Sway:
+        {
+            // Swaying gently from side to side from the waist, the arms hanging out a little
+            // more so they stay clear of the hips.
+            const float lean=3.5f*Deg*envelope*std::sin(XM_2PI*a/2.4f);
+            turn(rig.upperBody,0,0,lean);
+            turn(rig.lowerBody,0,0,-0.4f*lean);
+            neck(0,0,-0.6f*lean);
+            both([&](int side,float o){hang(side,(side==0?baseSway:-baseSway),(3.0f*Deg+1.5f*std::abs(lean)),10.0f*Deg);});
+            break;
+        }
+        case Gesture::Twist:
+        {
+            // Twisting the waist one way and the other, the arms swinging loosely after it.
+            const float phase=XM_2PI*a/2.2f,twist=11.0f*Deg*envelope*std::sin(phase);
+            turn(rig.upperBody,0,twist,0);
+            turn(rig.lowerBody,0,-0.25f*twist,0);
+            neck(0,-0.6f*twist,0);
+            both([&](int side,float o){hang(side,o*0.6f*twist,4.0f*Deg*envelope,(10.0f+5.0f*envelope)*Deg);});
+            break;
+        }
+        case Gesture::Peek:
+        {
+            // Leaning forward a little to peer at something, the arms going back a little.
+            const float lean=ramp(0.2f,0.7f)*(1.0f-ramp(len-0.9f,0.7f));
+            turn(rig.upperBody,-7.0f*Deg*lean,out*5.0f*Deg*lean,0);
+            neck(4.0f*Deg*lean,out*6.0f*Deg*lean,-out*5.0f*Deg*lean);
+            both([&](int side,float o){hang(side,-7.0f*Deg*lean,2.0f*Deg*lean,12.0f*Deg);});
+            break;
+        }
+        case Gesture::Bounce:
+        {
+            // Bouncing lightly at the knees as if to a tune, the head nodding along.
+            const float beat=0.5f-0.5f*std::cos(XM_2PI*a/0.6f);
+            auto& k=KeyOf(g,rig.groove);
+            k.position.y-=0.018f*L*beat*envelope;
+            neck(-4.0f*Deg*beat*envelope,0,0);
+            both([&](int side,float o){hang(side,(side==0?baseSway:-baseSway)+2.0f*Deg*beat*envelope,(2.0f+2.0f*beat*envelope)*Deg,(10.0f+6.0f*beat*envelope)*Deg);});
+            face(rig.smileMouth,0.3f*envelope);
+            break;
+        }
+        case Gesture::TapFoot:
+        {
+            // Tapping the toes of the foot that carries no weight (heel down), a few times.
+            const float shift=weightFrom+(weightTo-weightFrom)*Smooth(static_cast<float>(weightTime/std::max(weightDuration,1e-3)));
+            const int foot=shift>0.3f?1:shift<-0.3f?0:s;
+            const float tap=std::max(0.0f,std::sin(XM_2PI*a/0.5f))*envelope;
+            if(rig.legIK[foot]>=0)
+            {
+                auto& k=KeyOf(g,rig.legIK[foot]);
+                k.position.y+=0.012f*L*tap;
+                XMStoreFloat4(&k.rotation,XMQuaternionNormalize(XMQuaternionMultiply(XMQuaternionRotationRollPitchYaw(16.0f*Deg*tap,0,0),XMLoadFloat4(&k.rotation))));
+            }
+            neck(-3.0f*Deg*tap,0,0);
+            break;
+        }
         case Gesture::None:
             break;
         }
