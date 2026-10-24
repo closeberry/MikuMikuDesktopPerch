@@ -149,9 +149,10 @@ namespace MikuMikuDesktopPerch
         DirectX::XMVECTOR PalmOffset(int side,DirectX::FXMVECTOR fingers,DirectX::FXMVECTOR palm) const;
         // The shoulder's turn for the elbow at a point, as MotionTraceEditor makes it: from how
         // far the elbow is above (or below) and in front of (or behind) where it hangs.
-        DirectX::XMVECTOR ShoulderTurn(int side,DirectX::FXMVECTOR elbow) const;
-        // Put the wrist at a point, with the elbow toward pole (two-bone IK from the rest shoulder).
-        void ReachArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR wrist,DirectX::FXMVECTOR pole);
+        DirectX::XMVECTOR ShoulderTurn(int side,DirectX::FXMVECTOR elbow,float amount=1.0f) const;
+        // Put the wrist at a point, with the elbow toward pole (two-bone IK from the shoulder,
+        // which follows the arm; shoulder scales how much, 1 as MotionTraceEditor).
+        void ReachArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR wrist,DirectX::FXMVECTOR pole,float shoulder=1.0f);
         // Curl each finger but the thumb (0 straight .. 1 fully curled), index to little.
         void CurlFingers(std::vector<Key>& keys,int side,std::array<float,4> amount);
         void Gestures(std::vector<Key>& keys,double dt);

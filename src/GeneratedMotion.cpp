@@ -382,7 +382,7 @@ namespace MikuMikuDesktopPerch
         SetRotation(keys,rig.elbow[side],Rotation(rig.elbowBendAxis[side],bendAngle));
     }
 
-    void GeneratedMotion::ReachArm(std::vector<Key>& keys,int side,FXMVECTOR wrist,FXMVECTOR pole)
+    void GeneratedMotion::ReachArm(std::vector<Key>& keys,int side,FXMVECTOR wrist,FXMVECTOR pole,float shoulderAmount)
     {
         const float a=rig.upperArm,b=rig.forearm;
         // Two-bone IK from the arm's root: the elbow, and where the wrist gets to.
@@ -405,7 +405,7 @@ namespace MikuMikuDesktopPerch
         // root, so the hand still arrives where it was sent.
         if(const int shoulder=rig.shoulder[side];shoulder>=0&&slot[shoulder]>=0)
         {
-            const XMVECTOR turn=motionShoulders?XMLoadFloat4(&keys[slot[shoulder]].rotation):ShoulderTurn(side,elbow);
+            const XMVECTOR turn=motionShoulders?XMLoadFloat4(&keys[slot[shoulder]].rotation):ShoulderTurn(side,elbow,shoulderAmount);
             if(!motionShoulders)SetRotation(keys,shoulder,turn);
             const XMVECTOR pivot=XMLoadFloat3(&rig.claviclePos[side]);
             root=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(rest,pivot),turn));
@@ -414,7 +414,7 @@ namespace MikuMikuDesktopPerch
         AimArm(keys,side,XMVector3Normalize(XMVectorSubtract(elbow,root)),XMVector3Normalize(XMVectorSubtract(reached,elbow)));
     }
 
-    XMVECTOR GeneratedMotion::ShoulderTurn(int side,FXMVECTOR elbow) const
+    XMVECTOR GeneratedMotion::ShoulderTurn(int side,FXMVECTOR elbow,float amount) const
     {
         // MotionTraceEditor's automatic shoulder (ArmCorrectionCore): per upper-arm length the
         // elbow rises, 42° up (14° down when it is lower); per length it comes forward (and
@@ -425,8 +425,8 @@ namespace MikuMikuDesktopPerch
         const float inward=side==0?-XMVectorGetX(d):XMVectorGetX(d);   // the left side is +X
         const float up=XMVectorGetY(d)/upper;
         const float forward=(-XMVectorGetZ(d)+(inward>=0?0.65f:0.35f)*inward)/upper;
-        const float upDegrees=std::clamp(up*(up>=0?42.0f:14.0f),-15.0f,50.0f);
-        const float forwardDegrees=std::clamp(forward*(forward>=0?26.0f:18.0f),-20.0f,20.0f);
+        const float upDegrees=amount*std::clamp(up*(up>=0?42.0f:14.0f),-15.0f,50.0f);
+        const float forwardDegrees=amount*std::clamp(forward*(forward>=0?26.0f:18.0f),-20.0f,20.0f);
         // Turned about the axes that take the shoulder's line (clavicle to arm) up and forward.
         const XMVECTOR line=XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&rig.shoulderPos[side]),XMLoadFloat3(&rig.claviclePos[side])));
         auto toward=[&](FXMVECTOR target,float degrees){
@@ -576,7 +576,8 @@ namespace MikuMikuDesktopPerch
         {
             // A hand raised beside the head, waving side to side, with a smile.
             const float wave=std::sin(XM_2PI*1.8f*a);
-            ReachArm(g,s,XMVectorSet(S.x+out*(0.24f+0.07f*wave)*L,S.y+0.27f*L,S.z-0.10f*L,0),XMVectorSet(out,-1,0.3f,0));
+            // The elbow is about at shoulder height: a wave lifts the shoulder only a little.
+            ReachArm(g,s,XMVectorSet(S.x+out*(0.24f+0.07f*wave)*L,S.y+0.27f*L,S.z-0.10f*L,0),XMVectorSet(out,-1,0.3f,0),0.5f);
             CurlFingers(g,s,{0.05f,0.05f,0.05f,0.05f});
             neck(0,0,-out*5.0f*Deg);
             face(rig.smileEyes,1.0f);
