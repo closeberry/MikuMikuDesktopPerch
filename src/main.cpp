@@ -164,6 +164,9 @@ namespace
         double walkTargetX=0;         // screen x for the window centre
         double nextDecision=8;
         double roomCheckAt=0;         // next look at whether she stands on top of another character
+        // Talking with another character: the request now running is a line of that conversation.
+        bool banterLine=false;
+        float facing=0;               // radians the drawing is turned toward her partner (+: to screen left)
     };
 
     // A character to bring on (added, or its model changed) or to take off, done between
@@ -194,6 +197,22 @@ namespace
         Activity forcedRestPose=Activity::Idle;   // --rest-pose sit|hang (diagnostics)
         std::vector<std::unique_ptr<Mascot>> mascots;   // in the order of settings.characters
         std::vector<Change> changes;
+        // Two characters talking with each other (see UpdateBanter): the second comes over to
+        // the first, then they take turns, one line each, the first starting.
+        struct Banter
+        {
+            enum class Stage {None,Gathering,Talking} stage=Stage::None;
+            Mascot* first=nullptr;
+            Mascot* second=nullptr;
+            Mascot* speaker=nullptr;   // whose line is being said, or comes next
+            bool lineStarted=false;
+            int linesLeft=0;
+            std::wstring topic;
+            std::vector<std::pair<std::wstring,std::wstring>> lines;   // who said it, the line
+            double since=0,nextLineAt=0;
+        } banter;
+        double nextBanterAt=1200;     // the first some 20 minutes after start
+        bool banterRequested=false;   // --banter: one a few seconds after start (diagnostics)
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -201,6 +220,20 @@ namespace
     } app;
 
     CharacterSettings& Own(const Mascot& m){return app.settings.characters[m.slot];}
+
+    // Taking part in a conversation between characters (getting together for it, or talking).
+    bool InBanter(const Mascot& m)
+    {
+        return app.banter.stage!=App::Banter::Stage::None&&(&m==app.banter.first||&m==app.banter.second);
+    }
+
+    // The one she is talking with, while they talk.
+    Mascot* BanterPartner(const Mascot& m)
+    {
+        const auto& b=app.banter;
+        if(b.stage!=App::Banter::Stage::Talking)return nullptr;
+        return &m==b.first?b.second:&m==b.second?b.first:nullptr;
+    }
 
     void SaveWindowPosition(Mascot& m);
 
@@ -474,6 +507,7 @@ namespace
     // Also while it is due and on its way (standing up, warping): nothing else may start then.
     bool MotionBusy(Mascot& m)
     {
+        if(InBanter(m))return true;   // staying for the conversation
         if(m.model.Reacting())return true;   // answering a click
         // An idle motion plays to its end (or its loop's) before she walks off or sits down.
         if(m.model.CurrentActivity()==Activity::Idle&&!m.model.IdleMotionAtBreak())return true;
@@ -549,6 +583,7 @@ namespace
             return;
         }
         if(!m.model.HasMotion()||m.motionClosePending||(!m.motionRequested&&app.clock<m.nextMotionAt))return;
+        if(InBanter(m)&&!m.motionRequested)return;   // not in the middle of a conversation
         // Now and then (not when just opened): between idle motions, not in the middle of one.
         if(!m.motionRequested&&m.model.CurrentActivity()==Activity::Idle&&!m.model.IdleMotionAtBreak())return;
         if(m.place!=Place::Ground||m.travel!=Travel::None)return;
@@ -989,13 +1024,25 @@ namespace
         if((m.chat&&m.chat->Busy())||m.speech.Speaking()||m.bubble.Talking()||m.chatInput.IsOpen())
             m.lookAtViewerUntil=app.clock+2.5;
         const bool atViewer=app.clock<m.lookAtViewerUntil;
+        Mascot* partner=BanterPartner(m);
         // The opened motion leads the head itself while it plays.
-        if((!app.settings.lookAtMouse&&!atViewer)||m.model.Dozing()||a==Activity::Walk||a==Activity::Fall||m.model.MotionPlaying()||m.model.HeadBusy()||!m.model.HeadPosition(head))
+        if((!app.settings.lookAtMouse&&!atViewer&&!partner)||m.model.Dozing()||a==Activity::Walk||a==Activity::Fall||m.model.MotionPlaying()||m.model.HeadBusy()||!m.model.HeadPosition(head))
         {
             m.model.SetLookTarget(0,0,false);
             return;
         }
         const POINT h=m.renderer.Project(head);
+        // Talking with another character: at her face (the body is turned toward her too, see
+        // UpdateFacing, so the head turns only part of the way).
+        if(std::array<float,3> other{};partner&&partner->model.HeadPosition(other))
+        {
+            const POINT o=partner->renderer.Project(other);
+            const RECT r=FrameRect(*partner);
+            const float dx=static_cast<float>(r.left+o.x-(window.left+h.x)),dy=static_cast<float>(r.top+o.y-(window.top+h.y));
+            const float pitch=std::clamp(std::atan2(-dy,std::max(std::abs(dx),1.0f)),DirectX::XMConvertToRadians(-20.0f),DirectX::XMConvertToRadians(25.0f));
+            m.model.SetLookTarget(DirectX::XMConvertToRadians(dx>0?20.0f:-20.0f),pitch,true);
+            return;
+        }
         MONITORINFO monitor{sizeof(monitor)};
         GetMonitorInfoW(MonitorFromWindow(m.hwnd,MONITOR_DEFAULTTONEAREST),&monitor);
         const RECT& screen=monitor.rcMonitor;
@@ -1009,6 +1056,25 @@ namespace
         const float yaw=std::clamp(std::atan2(dx,distance),DirectX::XMConvertToRadians(-40.0f),DirectX::XMConvertToRadians(40.0f));
         const float pitch=std::clamp(std::atan2(-dy,distance),DirectX::XMConvertToRadians(-20.0f),DirectX::XMConvertToRadians(25.0f));
         m.model.SetLookTarget(yaw,pitch,atViewer||app.cursorIdle<LookIdleSeconds);
+    }
+
+    // Standing with a partner in a conversation, the whole drawing turns a little toward her
+    // (the model has no turn of its own when standing); otherwise it turns back. Display only,
+    // like the warp's spin, which has the drawing to itself meanwhile.
+    void UpdateFacing(Mascot& m,double dt)
+    {
+        if(m.place==Place::Warping)return;
+        float target=0;
+        if(Mascot* partner=BanterPartner(m);partner&&m.place==Place::Ground&&m.model.CurrentActivity()==Activity::Idle)
+            target=DirectX::XMConvertToRadians(CenterX(*partner)>CenterX(m)?-25.0f:25.0f);
+        if(m.place==Place::Held)target=m.facing=0;   // picked up: at once
+        if(target==0&&m.facing==0)return;
+        m.facing+=(target-m.facing)*static_cast<float>(1.0-std::exp(-dt/0.35));
+        if(std::abs(m.facing)<DirectX::XMConvertToRadians(0.2f)&&target==0)m.facing=0;
+        using namespace DirectX;
+        const ModelFrame frame=ModelFrameOf(m);
+        const XMVECTOR pivot=XMVectorSet(frame.cx+m.model.RootOffset(),0,frame.cz,0);
+        m.renderer.SetModelTransform(XMMatrixTranslationFromVector(XMVectorNegate(pivot))*XMMatrixRotationY(m.facing)*XMMatrixTranslationFromVector(pivot));
     }
 
     void SetClickThrough(Mascot& m,bool enabled);
@@ -1381,6 +1447,9 @@ namespace
         {L"笑顔",Expression::Smile},{L"驚き",Expression::Surprise},{L"困り",Expression::Troubled},{L"怒り",Expression::Angry},
         {L"悲しみ",Expression::Sad},{L"照れ",Expression::Shy},{L"普通",Expression::Neutral}};
 
+    void BeginReply(Mascot& m,std::vector<ChatMessage> messages);
+    void EndBanter(const wchar_t* why);
+
     // Ask for a reply to the conversation as it stands; query is what the memory is searched for.
     void StartReply(Mascot& m,const std::wstring& query)
     {
@@ -1410,6 +1479,12 @@ namespace
             L"この印は最初の1つだけで、ほかの所には書かないでください。\n"
             L"話し相手の発言が（ ）で囲まれているときは、実際の発言ではなく状況の説明です。その状況に合わせて、あなたから話しかけてください。"});
         messages.insert(messages.end(),m.conversation.begin(),m.conversation.end());
+        BeginReply(m,std::move(messages));
+    }
+
+    // A reply (or a line said to another character) starts streaming into her bubble.
+    void BeginReply(Mascot& m,std::vector<ChatMessage> messages)
+    {
         m.reply.clear();
         m.replyShown=0;
         m.speech.Reset();
@@ -1422,6 +1497,7 @@ namespace
 
     void Talk(Mascot& m,const std::wstring& text)
     {
+        if(InBanter(m))EndBanter(L"the user talks to one of them");
         if(!ChatReady(m,true))return;
         m.conversation.push_back({L"user",text});
         StartReply(m,text);
@@ -1477,6 +1553,7 @@ namespace
     void MaybeSpeakFirst()
     {
         if(!app.settings.chatInitiative||app.settings.chatModel.empty()||app.clock<8)return;
+        if(app.banter.stage!=App::Banter::Stage::None)return;
         const double idle=InputIdleSeconds();
         if(idle>=15*60&&app.awaySince<0)app.awaySince=app.clock-idle;
         std::vector<Mascot*> free;
@@ -1544,6 +1621,40 @@ namespace
         m.chatInput.Open(m.hwnd,{(r.left+r.right)/2,ground.y-static_cast<LONG>(ModelHeightPixels(m)*0.12)},[&m](const std::wstring& text){Talk(m,text);});
     }
 
+    // Show and say the reply as far as text goes (it only ever grows).
+    void Reveal(Mascot& m,const std::wstring& text)
+    {
+        if(text.size()<=m.replyShown)return;
+        m.bubble.Append(text.substr(m.replyShown));
+        m.speech.Add(text.substr(m.replyShown));
+        m.replyShown=text.size();
+    }
+
+    // A line said to another character is that character's line only. A name in front of it
+    // ("空：") and quotes around it go, and it ends at the first line break: small models go on
+    // to write the other one's line too. complete: the line has ended before the reply has.
+    std::wstring BanterLine(const Mascot& m,const std::wstring& clean,bool& complete)
+    {
+        complete=false;
+        std::wstring line=clean;
+        for(const wchar_t* separator:{L"：",L":"})
+        {
+            const std::wstring prefix=m.character.name+separator;
+            if(line.rfind(prefix,0)==0){line.erase(0,prefix.size());break;}
+            if(line.size()<prefix.size()&&prefix.rfind(line,0)==0)return {};   // may become one
+        }
+        line.erase(0,std::min(line.size(),line.find_first_not_of(L" 　")));
+        if(!line.empty()&&line[0]==L'「')
+        {
+            line.erase(0,1);
+            if(const size_t close=line.find(L'」');close!=std::wstring::npos){line.resize(close);complete=true;}
+        }
+        if(const size_t end=line.find_first_of(L"\r\n");end!=std::wstring::npos){line.resize(end);complete=true;}
+        return line;
+    }
+
+    void FinishBanterLine(Mascot& m,std::wstring line);
+
     void OnChatText(Mascot& m,std::wstring* text,int id)
     {
         std::unique_ptr<std::wstring> owned(text);
@@ -1559,13 +1670,21 @@ namespace
                     Trace(L"%.1f talk: feeling %s",app.clock,tag);
                     break;
                 }
-        const std::wstring clean=CleanReply(m.reply);
-        if(clean.size()>m.replyShown)
+        if(m.banterLine)
         {
-            m.bubble.Append(clean.substr(m.replyShown));
-            m.speech.Add(clean.substr(m.replyShown));
-            m.replyShown=clean.size();
+            bool complete=false;
+            const std::wstring line=BanterLine(m,CleanReply(m.reply),complete);
+            Reveal(m,line);
+            if(complete)
+            {
+                // The rest would be more than her line: stop the request here.
+                if(m.chat)m.chat->Cancel();
+                m.chatRequest=0;
+                FinishBanterLine(m,line);
+            }
+            return;
         }
+        Reveal(m,CleanReply(m.reply));
     }
 
     void OnChatDone(Mascot& m,std::wstring* error,int id)
@@ -1573,6 +1692,20 @@ namespace
         std::unique_ptr<std::wstring> owned(error);
         if(id!=m.chatRequest)return;
         Trace(L"%.1f talk: request %d done %s",app.clock,id,owned->c_str());
+        if(m.banterLine)
+        {
+            if(!owned->empty())
+            {
+                m.banterLine=false;
+                m.speech.Reset();
+                m.bubble.ShowNotice(*owned);
+                EndBanter(L"no reply");
+                return;
+            }
+            bool complete=false;
+            FinishBanterLine(m,BanterLine(m,CleanReply(m.reply+L"\n"),complete));
+            return;
+        }
         if(!owned->empty())
         {
             // Not answered: forget the question too, and say why.
@@ -1608,6 +1741,210 @@ namespace
         }
         else if(!m.conversation.empty()&&m.conversation.back().role==L"user")m.conversation.pop_back();
         m.bubble.Finish();
+    }
+
+    // ---- Characters talking with each other -----------------------------------------------
+
+    // What two characters may start talking about (the prompt adds the date and time).
+    constexpr const wchar_t* BanterTopics[]={
+        L"いまの季節や天気のこと",L"好きな食べ物やおやつのこと",L"最近気になっていること",L"休みの日にしてみたいこと",
+        L"デスクトップの上での暮らしのこと",L"このパソコンの持ち主（いつも話しかけてくれる人）のこと",
+        L"相手に前から聞いてみたかったこと",L"いまの時間帯にちなんだこと",L"好きな音楽や歌のこと",L"ちょっとした思い出話"};
+
+    // Someone is saying something, about to, or being talked to: nobody else starts talking.
+    bool AnyoneTalking()
+    {
+        return std::any_of(app.mascots.begin(),app.mascots.end(),[](const auto& m){
+            return (m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking();});
+    }
+
+    void EndBanter(const wchar_t* why)
+    {
+        auto& b=app.banter;
+        if(b.stage==App::Banter::Stage::None)return;
+        Trace(L"%.1f banter ends: %s",app.clock,why);
+        for(Mascot* m:{b.first,b.second})
+            if(m&&m->banterLine)
+            {
+                // A line still coming is dropped; what was shown of it fades out.
+                if(m->chat)m->chat->Cancel();
+                m->chatRequest=0;
+                m->banterLine=false;
+                m->speech.Finish();
+                m->bubble.Finish();
+            }
+        b=App::Banter{};
+    }
+
+    // The line has ended: the rest is shown and said, and it joins what they have said.
+    void FinishBanterLine(Mascot& m,std::wstring line)
+    {
+        Reveal(m,line);
+        m.speech.Finish();
+        m.bubble.Finish();
+        m.banterLine=false;
+        while(!line.empty()&&std::iswspace(line.back()))line.pop_back();
+        if(line.empty()){EndBanter(L"an empty line");return;}
+        app.banter.lines.push_back({m.character.name,line});
+        --app.banter.linesLeft;
+        Trace(L"%.1f banter: %s: %s",app.clock,m.character.name.c_str(),line.c_str());
+    }
+
+    // Free to talk: standing on a surface with nothing else to do.
+    bool FreeToTalk(Mascot& c)
+    {
+        return c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
+               !MotionBusy(c)&&!c.dozing&&!c.chatInput.IsOpen();
+    }
+
+    // Two characters free to talk get together: the second walks over to stand beside the
+    // first (on the side she comes from, if there is room), or warps there from another
+    // surface. False when no two can.
+    bool StartBanter()
+    {
+        std::vector<Mascot*> free;
+        for(const auto& owned:app.mascots)if(FreeToTalk(*owned))free.push_back(owned.get());
+        if(free.size()<2)return false;
+        auto pick=[&]{
+            const size_t i=std::min(free.size()-1,static_cast<size_t>(app.Random01()*free.size()));
+            Mascot* c=free[i];
+            free.erase(free.begin()+static_cast<std::ptrdiff_t>(i));
+            return c;
+        };
+        Mascot& first=*pick();
+        Mascot& second=*pick();
+        if(!ChatReady(first,false)||!ChatReady(second,false))return false;
+        double left,right;
+        SurfaceRange(first,left,right);
+        const double gap=(ModelHalfWidthPixels(first)+ModelHalfWidthPixels(second))*0.8;
+        const double side=CenterX(second)>=CenterX(first)?1:-1;
+        double x=CenterX(first)+side*gap;
+        if(x<left||x>right)x=CenterX(first)-side*gap;
+        if(x<left||x>right)return false;
+
+        auto& b=app.banter;
+        b=App::Banter{};
+        b.stage=App::Banter::Stage::Gathering;
+        b.first=&first;b.second=&second;
+        b.since=app.clock;
+        b.topic=BanterTopics[std::min(std::size(BanterTopics)-1,static_cast<size_t>(app.Random01()*std::size(BanterTopics)))];
+        b.linesLeft=4+static_cast<int>(app.Random01()*3);   // 4 to 6 lines
+        Trace(L"%.1f banter: %s and %s, %d lines about %s",app.clock,first.character.name.c_str(),second.character.name.c_str(),b.linesLeft,b.topic.c_str());
+        const bool sameSurface=second.surfaceWindow==first.surfaceWindow&&std::abs(FeetLine(second)-FeetLine(first))<4;
+        if(sameSurface)
+        {
+            const double distance=std::abs(x-CenterX(second));
+            if(distance>8)StartWalk(second,x,distance>ModelHeightPixels(second)?Activity::Run:Activity::Walk);
+        }
+        else
+        {
+            second.destinationWindow=first.surfaceWindow;
+            second.destinationLine=FeetLine(first);
+            second.destinationX=x;
+            second.restPoseAt=-1;
+            BeginWarp(second);
+        }
+        return true;
+    }
+
+    // One line of the conversation, by m: her persona and the partner's, what they have said
+    // so far, and what they talk about.
+    void SayBanterLine(Mascot& m)
+    {
+        auto& b=app.banter;
+        Mascot& partner=&m==b.first?*b.second:*b.first;
+        if(!ChatReady(m,false)){EndBanter(L"the LLM is not set up");return;}
+        const std::wstring& name=m.character.name;
+        const std::wstring& other=partner.character.name;
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        static constexpr const wchar_t* Days[]={L"日",L"月",L"火",L"水",L"木",L"金",L"土"};
+        wchar_t clock[64]{};
+        swprintf_s(clock,L"%d年%d月%d日（%s）%d時%02d分",now.wYear,now.wMonth,now.wDay,Days[now.wDayOfWeek%7],now.wHour,now.wMinute);
+        std::wstring otherPersona=partner.character.persona;
+        if(otherPersona.size()>400)otherPersona=otherPersona.substr(0,400)+L"…";
+        const std::wstring& user=app.settings.userName;
+        std::wstring remembered;
+        if(app.settings.chatMemory)
+            if(const std::wstring notes=m.memory.Recall(b.topic,600);!notes.empty())
+                remembered=L"\nこのパソコンの持ち主について、あなたが覚えていること（話に合うときだけ使ってください）：\n"+notes+L"\n";
+        std::vector<ChatMessage> messages;
+        messages.push_back({L"system",
+            L"あなたは「"+name+L"」です。\n"+m.character.persona+L"\n\n"
+            L"いま、デスクトップの上で、となりにいる「"+other+L"」とおしゃべりしています。「"+other+L"」は、こんな人です：\n"+otherPersona+L"\n\n"+
+            (user.empty()?std::wstring(L"このパソコンの持ち主（いつも二人に話しかけてくれる人）が、二人の様子を見ています。\n")
+                         :L"このパソコンの持ち主（いつも二人に話しかけてくれる人）の名前は「"+user+L"」で、二人の様子を見ています。\n")+
+            remembered+
+            L"いまは"+clock+L"です。おしゃべりのきっかけ："+b.topic+L"\n"
+            L"あなたのセリフは、あなたの頭上の吹き出しに表示されます。あなた（「"+name+L"」）のセリフを1つだけ、1〜2文の短い話し言葉で書いてください。"
+            L"「"+other+L"」のセリフ、名前、ト書き、（ ）書きは書かないでください。Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
+            L"セリフのいちばん最初に、そのときの気持ちを［笑顔］［驚き］［困り］［怒り］［悲しみ］［照れ］［普通］のどれか1つで書いてください（例：［笑顔］ねえ、聞いて！）。"});
+        std::wstring ask;
+        if(b.lines.empty())ask=L"あなたから「"+other+L"」に話しかけて、おしゃべりを始めてください。";
+        else
+        {
+            ask=L"ここまでの二人の会話：\n";
+            for(const auto& [who,said]:b.lines)ask+=who+L"："+said+L"\n";
+            ask+=L"\n「"+other+L"」の最後のセリフに続けて、「"+name+L"」の次のセリフを言ってください。";
+            if(b.linesLeft<=1)ask+=L"これで最後のひと言です。おしゃべりが自然に終わるように締めくくってください。";
+        }
+        messages.push_back({L"user",ask});
+        b.lineStarted=true;
+        m.banterLine=true;
+        BeginReply(m,std::move(messages));
+    }
+
+    // Now and then (every 20 to 40 minutes, with "speak first" on, while the user is at the
+    // computer) two characters talk with each other: they get together, then take turns, one
+    // line each, each said to its end before the reply. Anything that needs either of them
+    // (picking one up, talking to one, the input box) ends it.
+    void UpdateBanter()
+    {
+        using Stage=App::Banter::Stage;
+        auto& b=app.banter;
+        if(b.stage==Stage::None)
+        {
+            const bool due=app.banterRequested?app.clock>5:
+                           app.settings.chatInitiative&&app.clock>=app.nextBanterAt&&InputIdleSeconds()<90;
+            if(!due||app.mascots.size()<2||app.settings.chatModel.empty()||AnyoneTalking())return;
+            app.banterRequested=false;
+            app.nextBanterAt=app.clock+(StartBanter()?(20+app.Random01()*20)*60:60);
+            return;
+        }
+        Mascot& first=*b.first;
+        Mascot& second=*b.second;
+        for(Mascot* m:{&first,&second})
+        {
+            const bool coming=b.stage==Stage::Gathering&&m==&second&&(m->place==Place::Warping||m->place==Place::Jumping);
+            if(m->chatInput.IsOpen()||m->dozing||(m->place!=Place::Ground&&!coming)){EndBanter(L"one of them is needed elsewhere");return;}
+        }
+        if(b.stage==Stage::Gathering)
+        {
+            if(app.clock-b.since>20){EndBanter(L"they could not get together");return;}
+            auto settled=[](Mascot& c){
+                const Activity a=c.model.CurrentActivity();
+                return c.place==Place::Ground&&c.travel==Travel::None&&a!=Activity::Walk&&a!=Activity::Run;
+            };
+            if(!settled(first)||!settled(second))return;
+            b.stage=Stage::Talking;
+            b.speaker=&first;
+            b.nextLineAt=app.clock+0.6;
+            return;
+        }
+        // Walking off (the menu's walk) ends it too.
+        for(Mascot* m:{&first,&second})
+            if(const Activity a=m->model.CurrentActivity();a==Activity::Walk||a==Activity::Run){EndBanter(L"one of them walks off");return;}
+        Mascot& speaker=*b.speaker;
+        if(b.lineStarted)
+        {
+            if(speaker.banterLine||(speaker.chat&&speaker.chat->Busy())||speaker.speech.Speaking()||speaker.bubble.Talking())return;
+            b.lineStarted=false;
+            if(b.linesLeft<=0){EndBanter(L"they have finished");return;}
+            b.speaker=&speaker==&first?&second:&first;
+            b.nextLineAt=app.clock+0.7;
+            return;
+        }
+        if(app.clock>=b.nextLineAt)SayBanterLine(speaker);
     }
 
     // Once the conversation has paused (or grown long), ask the LLM what in it is worth
@@ -2042,6 +2379,7 @@ namespace
             }
             return 0;
         case WM_DESTROY:
+            EndBanter(L"quitting");
             for(const auto& m:app.mascots)
             {
                 Own(*m).x=static_cast<int>(m->windowX);
@@ -2147,6 +2485,7 @@ namespace
     // Between frames: bring on and take off the characters asked for.
     void ApplyChanges()
     {
+        if(!app.changes.empty())EndBanter(L"the characters change");
         for(const Change& change:std::exchange(app.changes,{}))
         {
             if(change.kind==Change::Remove)
@@ -2287,6 +2626,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if((arg==L"--walk-motion"||arg==L"--run-motion")&&i+1<argc)
             {
                 snapshotGait[arg==L"--walk-motion"?0:1]=argv[++i];
+            }
+            else if(arg==L"--banter")
+            {
+                app.banterRequested=true;   // two characters start talking a few seconds after start
             }
             else if(arg==L"--doze")
             {
@@ -2567,7 +2910,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.paused)continue;
 
         app.clock+=dt;
-        if(!forcedActivity)MaybeSpeakFirst();
+        if(!forcedActivity){MaybeSpeakFirst();UpdateBanter();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)
@@ -2706,6 +3049,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 m.lastPhysicsResets=resets;
             }
             UpdateSparks(m,dt);
+            UpdateFacing(m,dt);
             PlaceFrame(m);
             UpdateChatBubble(m,dt);
             m.renderer.Render(m.model,app.settings.edgeScale);
