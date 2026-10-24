@@ -999,11 +999,11 @@ namespace MikuMikuDesktopPerch
         case Gesture::ShakeHands:
         {
             // Shaking the hands out loosely beside the hips, forearms a little up, wrists flopping.
-            const float phase=XM_2PI*a*4.5f;
+            const float phase=XM_2PI*a*2.2f;
             both([&](int side,float o){
                 const float shake=std::sin(phase+side*1.7f);
                 hang(side,6.0f*Deg*envelope,(6.0f+2.0f*shake*envelope)*Deg,(10.0f+25.0f*envelope+4.0f*shake*envelope)*Deg);
-                flex(side,28.0f*Deg*envelope*std::sin(phase+side*1.7f-1.2f),0);
+                flex(side,32.0f*Deg*envelope*std::sin(phase+side*1.7f-1.2f),0);
             });
             break;
         }
