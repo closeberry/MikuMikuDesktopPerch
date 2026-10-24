@@ -23,8 +23,11 @@ VSOutput main(VSInput input)
     output.clipPrev = PreviousClip(input, clipPosition);
     output.clipPrev.xy += offset * output.clipPrev.w;
     clipPosition.xy += offset * clipPosition.w;
-    // A little behind the surface, so the outline never wins the depth test at creases.
-    clipPosition.z += 0.0005 * clipPosition.w;
+    // A little behind the surface, so the outline never wins the depth test at creases. The
+    // push is a fixed distance in view space (about 0.03 units: z/w grows by 0.03/w^2 for the
+    // 1..1000 projection, so z by 0.03/w); a fixed share of z/w would be a whole unit or more
+    // at the camera's distance and hide the outline behind the neck, the hair and the body.
+    clipPosition.z += 0.03 / clipPosition.w;
     output.position = clipPosition;
     output.clipNow = clipPosition;
     return output;
