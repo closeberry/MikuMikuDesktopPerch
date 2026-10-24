@@ -1380,6 +1380,8 @@ namespace
         const bool chatModelChanged=s.chatModel!=current.chatModel;
         current.chatModel=s.chatModel;
         current.chatMemory=s.chatMemory;
+        current.userName=s.userName;
+        current.chatInitiative=s.chatInitiative;
         // A shorter interval takes effect now, not after the old wait.
         if(s.chatterMinutes!=current.chatterMinutes)
         {
