@@ -67,6 +67,13 @@ namespace MikuMikuDesktopPerch
         int chatterMinutes=45;
         int banterMinutes=30;
         bool updateCheck=true;      // look for a newer release on GitHub now and then
+        // Like a secretary: today's reminders and to-dos told in the morning; a break suggested
+        // after so many minutes at the computer without one (0: never); focus mode's work and
+        // break lengths (minutes; every fourth break is three times as long).
+        bool morningSummary=true;
+        int restMinutes=60;
+        int focusMinutes=25;
+        int focusBreakMinutes=5;
         std::wstring language;      // "ja", "en", or empty: Windows' display language (see Text.hpp)
         // Speaking aloud through a VOICEVOX-compatible engine on this computer, in one of its voices.
         bool voice=false;

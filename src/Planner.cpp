@@ -179,6 +179,8 @@ namespace MikuMikuDesktopPerch
 
     std::int64_t Now(){return static_cast<std::int64_t>(std::time(nullptr));}
 
+    std::int64_t DayEnd(std::int64_t at){std::tm tm=Local(at);tm.tm_hour=tm.tm_min=tm.tm_sec=0;tm.tm_mday+=1;return Make(tm);}
+
     // ---- Keeping them --------------------------------------------------------------------
 
     void Planner::Load()
@@ -326,6 +328,14 @@ namespace MikuMikuDesktopPerch
 
         if(!loose)
         {
+            // Focus mode (work and breaks in turn).
+            if(find(LR"((集中モード|ポモドーロ)\s*(を|は)?\s*(終わ|おわ|止め|とめ|やめ|オフ|解除|ストップ|おしまい|切って))")||
+               find(LR"(\b(stop|end|quit|cancel|turn off|finish)\b.{0,12}\b(focus|pomodoro))"))
+            {r.kind=Kind::FocusStop;return r;}
+            if(find(LR"((集中モード|ポモドーロ)\s*(を)?\s*(始め|はじめ|開始|スタート|オン|入れ|いれ|やる|する|お願い|やりたい|したい))")||
+               find(LR"(^\s*(集中モード|ポモドーロ)\s*[!?。！]*\s*$)")||find(LR"(集中したい|集中する(から|ね|よ))")||
+               find(LR"(\b(start|begin|turn on|let'?s do)\b.{0,12}\b(focus|pomodoro))")||find(LR"(^\s*(focus mode|pomodoro)\s*[!.]*\s*$)"))
+            {r.kind=Kind::FocusStart;return r;}
             // Stopping timers.
             if(find(LR"((タイマー|アラーム)\s*(を|は)?\s*(止めて|とめて|止める|消して|けして|キャンセル|やめて|解除|ストップ|オフ|切って))")||
                find(LR"(\b(cancel|stop|clear|delete|turn off|kill)\b.{0,12}\b(timers?|alarms?)\b)"))
@@ -519,6 +529,9 @@ namespace MikuMikuDesktopPerch
         }
 
         if(loose)return r;
+        // Today's reminders and to-dos together.
+        if(find(LR"(今日の予定|今日やること|今日のやること|今日は何があ|今日なにがあ|\btoday'?s\s+(schedule|plan|agenda)\b|\bwhat('s| is| do i have)\b.{0,12}\btoday\b)"))
+        {r.kind=Kind::Today;return r;}
         // Asking what is set.
         if(std::regex_search(s,m,std::wregex(with(LR"(TODO\s*(?:は|を|って|に)?\s*(?:見せて|みせて|教えて|おしえて|一覧|ある\?|何|なに|確認|読んで|ちょうだい|は\?))"),flags))||
            std::regex_search(s,m,std::wregex(with(LR"(^\s*(?:今日の)?TODO\s*(?:は)?\s*\??\s*$)"),flags))||
@@ -547,7 +560,7 @@ namespace MikuMikuDesktopPerch
         const std::wstring s=Normalize(said);
         const auto flags=std::regex_constants::ECMAScript|std::regex_constants::icase;
         auto has=[&](const wchar_t* pattern){return std::regex_search(s,std::wregex(pattern,flags));};
-        if(has(LR"(タイマー|リマインド|リマインダー|アラーム|ToDo|To-Do|やること|やる事|タスク|\btimer|\bremind|\balarm|\bto-?do|\btasks?\b)"))return true;
+        if(has(LR"(タイマー|リマインド|リマインダー|アラーム|ToDo|To-Do|やること|やる事|タスク|集中モード|ポモドーロ|\bfocus mode|\bpomodoro|\btimer|\bremind|\balarm|\bto-?do|\btasks?\b)"))return true;
         const bool time=has(LR"(\d|分|時|秒|明日|あした|毎日|毎朝|毎晩|朝|夜|夕方|午前|午後|曜|\bminutes?\b|\bhours?\b|\btomorrow\b|\btonight\b|\bo'?clock\b|\bnoon\b|\b(am|pm)\b)");
         const bool ask=has(LR"(教え|おしえ|知らせ|しらせ|声かけ|声を?かけ|起こ|おこして|呼んで|言って|忘れ|\blet me know\b|\btell me\b|\bwake me\b|\bremember\b|\bdon'?t let me forget\b)");
         return time&&ask;
@@ -561,7 +574,8 @@ namespace MikuMikuDesktopPerch
         swprintf_s(clock,L"%04d-%02d-%02d (%s) %02d:%02d",t.tm_year+1900,t.tm_mon+1,t.tm_mday,Days[t.tm_wday%7],t.tm_hour,t.tm_min);
         if(English())return
             std::wstring(L"It is now ")+clock+L".\n"
-            L"If the message below asks to set a timer, to be reminded of something at a time, or to do something with the to-do list, "
+            L"If the message below asks to set a timer, to be reminded of something at a time, to do something with the to-do list, "
+            L"to hear today's plans (today), or to start or stop focus mode (work and breaks in turn), "
             L"answer with exactly one of these lines and nothing else. Otherwise answer only: none\n"
             L"timer <seconds> | <what to remind of, or nothing>\n"
             L"remind <YYYY-MM-DD HH:MM> | <what to remind of>\n"
@@ -571,11 +585,14 @@ namespace MikuMikuDesktopPerch
             L"todo-list\n"
             L"reminders\n"
             L"cancel-timers\n"
+            L"today\n"
+            L"focus-start\n"
+            L"focus-stop\n"
             L"none\n\n"
             L"Message: \""+said+L"\"";
         return
             std::wstring(L"いまは ")+clock+L" です。\n"
-            L"次の発言が、タイマー、時刻に知らせるリマインダー、やることリストの操作を頼んでいるなら、次のどれか1行だけを書いてください（ほかには何も書かないでください）。"
+            L"次の発言が、タイマー、時刻に知らせるリマインダー、やることリストの操作、今日の予定の確認（today）、集中モード（作業と休憩をくり返す）の開始や終了を頼んでいるなら、次のどれか1行だけを書いてください（ほかには何も書かないでください）。"
             L"頼んでいなければ none とだけ書いてください。\n"
             L"timer <秒数> | <知らせる内容（なければ空）>\n"
             L"remind <YYYY-MM-DD HH:MM> | <知らせる内容>\n"
@@ -585,6 +602,9 @@ namespace MikuMikuDesktopPerch
             L"todo-list\n"
             L"reminders\n"
             L"cancel-timers\n"
+            L"today\n"
+            L"focus-start\n"
+            L"focus-stop\n"
             L"none\n\n"
             L"発言：「"+said+L"」";
     }
@@ -638,6 +658,9 @@ namespace MikuMikuDesktopPerch
             if(head.rfind(L"todo-list",0)==0){r.kind=Kind::TodoList;return r;}
             if(head.rfind(L"reminders",0)==0){r.kind=Kind::AlarmList;return r;}
             if(head.rfind(L"cancel-timer",0)==0){r.kind=Kind::CancelTimers;return r;}
+            if(head.rfind(L"today",0)==0){r.kind=Kind::Today;return r;}
+            if(head.rfind(L"focus-start",0)==0){r.kind=Kind::FocusStart;return r;}
+            if(head.rfind(L"focus-stop",0)==0){r.kind=Kind::FocusStop;return r;}
             return {};   // the first line says it; anything else is not a command
         }
         return {};

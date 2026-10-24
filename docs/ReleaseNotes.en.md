@@ -7,6 +7,9 @@
 ### What's new
 
 - **Timers, reminders and to-dos**: ask a character things like "remind me in 5 minutes", "remind me at 3pm to call mom" or "add milk to my todo list". Works without an LLM; with one, the characters answer in their own words and understand other ways of asking. When it is time, a character tells you with a chime, and you can choose "Got it" or "Again in 5 min". "Timer" in the menu sets a timer at once, and "Reminders and to-dos..." shows, adds and deletes them. They survive exiting the app
+- **Morning summary**: when you start using the computer in the morning, a character tells you today's reminders and to-dos. Asking "what do I have today" does too
+- **Focus mode (pomodoro)**: 25 minutes of work and 5 of break in turn (lengths in the settings), with a character telling you at each turn. The characters do not start talking during work
+- **Break reminder**: after 60 minutes at the computer without a break (changeable in the settings), a character suggests a rest
 
 ## 1.2.0
 

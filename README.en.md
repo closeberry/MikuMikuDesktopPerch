@@ -36,7 +36,7 @@ The output goes to `bin\<Configuration>\MikuMikuDesktopPerch.exe`. The shaders (
 - Left click: the mascot reacts ("When clicked" below)
 - Left drag: move
 - Mouse wheel (over the mascot): change the size by 10% (up to grow, down to shrink; 50–600%)
-- Right click, or right click on the notification area icon: the menu (Talk, Timer, Reminders and to-dos, Open model, Add character, Take this character off, Motion (open, add or close the motion, idle motions, click motions, and walk and run motions), Ride on the active window, Walk left, Walk right, Settings, Exit)
+- Right click, or right click on the notification area icon: the menu (Talk, Timer, Focus mode, Reminders and to-dos, Open model, Add character, Take this character off, Motion (open, add or close the motion, idle motions, click motions, and walk and run motions), Ride on the active window, Walk left, Walk right, Settings, Exit)
 - Double click on the mascot or the notification area icon: Talk (the reaction to a click on the mascot starts after a short wait, until it is clear it is not a double click)
 - **Settings**: open with "Settings..." in the menu. Motion (auto behavior, ride on the active window, physics, blink, breathe, look at the mouse) and Display (size, language, outline width, always on top, self-shadow, sun position, start with Windows, check for new versions) take effect as soon as you press OK. Talking (server, model, your name, remember chats, persona) also takes effect at once (deleting and adding memories is saved at once in the memory window). Advanced (drawing fps, motion blur, antialiasing, max texture size, physics rate and iterations, shared toon folder) is read at startup, so when you change it the app asks whether to restart
 - Changing the size grows or shrinks the mascot around its feet
@@ -76,7 +76,7 @@ You can chat with an LLM running on this computer. The replies appear in a comic
 - The LLM only returns text; it is not allowed to touch files, run commands, or the like
 - Some character models restrict, in their terms, having an AI speak as that character. Check the model's terms of use and the character's guidelines
 
-## Timers, reminders and to-dos
+## Timers, reminders, to-dos and focus mode
 
 You can ask the characters for timers, reminders at a time, and a to-do list. **This works without an LLM** (common ways of asking are read, and answered with fixed lines). With an LLM set up, the characters answer in their own words, and the LLM reads requests put in other ways.
 
@@ -84,11 +84,14 @@ You can ask the characters for timers, reminders at a time, and a to-do list. **
   - Timers: "remind me in 10 minutes to check the oven", "set a timer for 5 minutes", "5 minute timer"
   - Reminders: "remind me at 3pm to call mom", "remind me tomorrow at 9 to send the report", "remind me every day at 8am to take my medicine", "remind me on friday at 6 pm to buy flowers". A time already gone today, with no day said, is taken as this afternoon's or tomorrow's
   - To-dos: "add milk to my todo list", "what's on my to-do list", "remove milk from my todo list", "I finished the report" (checked off when it names an item on the list)
-  - Others: "cancel the timer", "how much time is left", "show my reminders"
+  - Others: "cancel the timer", "how much time is left", "show my reminders", "what do I have today" (today's reminders and to-dos), "start focus mode", "stop focus mode"
   - Japanese works too (「5分後に教えて」「15時に会議って教えて」「やることに牛乳を追加」 and so on)
   - When the words are not one of those ways but mention a time and a request, the LLM (if set up) is asked to read the request. If it is not one, she just talks
 - **Menu**: "Timer" sets a 3–60 minute timer at once, and "Stop timers" stops them. "Reminders and to-dos..." opens the list window, where you can add (written like "3pm meeting", "25 min", "every day at 8am medicine"), delete, and check off
 - **When it is time**: a character with nothing else to do tells you with a chime (in her own words, with an LLM), and "Got it" and "Again in 5 min" appear at her feet. If someone is talking, she cuts in after a short wait. A dozing character wakes up to tell you. She stays put until you answer
+- **Morning summary**: with "Tell today's reminders and to-dos in the morning" on in the settings (the default), when you start using the computer in the morning (5 to 10 o'clock), a character says good morning and tells you today's reminders (timers aside) and to-dos. Once a day; in her own words with an LLM, otherwise in fixed words. On days with neither, there is just the usual morning greeting (with an LLM)
+- **Focus mode (pomodoro)**: starts with "Focus mode" in the menu or "start focus mode" in a talk. Work (25 minutes by default) and breaks (5 minutes by default) take turns, and a character tells you at each turn with a chime. Every fourth break is three times as long. During work, the characters do not start talking to you or to each other. Choosing it in the menu again, or "stop focus mode", ends it; it also ends by itself when you are away for 15 minutes in the middle of a work period. The lengths are under Assistant in the settings
+- **Break reminder**: after you use the computer without a break for the time set in "Suggest a break after using the PC for" (60 minutes by default; five minutes away counts as a break), a character suggests a short rest, and again after as long if you keep going. Not during focus mode, which has its own breaks. "Never" turns it off
 - **Saving**: timers, reminders and to-dos are saved in `%LOCALAPPDATA%\MikuMikuDesktopPerch\planner.txt` (UTF-8 text) and survive exiting the app (shared by all characters). Ones that came due while the app was not running are told at the next start ("it's past ..."; ones more than a day late are dropped). Nothing is sent anywhere
 
 ## Generated motions (experimental)
@@ -159,6 +162,9 @@ The first character's settings go in the `[Mascot]` section, together with the o
 | ChatterMinutes | 45 | The rough interval of remarks when speaking first (minutes; random within a third either way) |
 | BanterMinutes | 30 | The rough interval of characters chatting together (minutes; 0 for never) |
 | UpdateCheck | 1 | Check for new versions (GitHub releases) |
+| MorningSummary | 1 | Tell today's reminders and to-dos in the morning |
+| RestMinutes | 60 | Suggest a break after using the computer this long (minutes) without one (0 for never) |
+| FocusMinutes / FocusBreakMinutes | 25 / 5 | Focus mode's work and break lengths (minutes; every fourth break is three times as long) |
 | LastGreeting | empty | The day and part of the day of the last greeting (so it is not repeated in the same part; written automatically) |
 | Voice | 0 | Speak with a voice (VOICEVOX or the like) |
 | VoiceEndpoint | http://127.0.0.1:50021 | The voice engine's server (on this computer only) |

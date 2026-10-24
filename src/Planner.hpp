@@ -59,7 +59,7 @@ namespace MikuMikuDesktopPerch
     // What the user asked for, read from their words.
     struct PlanRequest
     {
-        enum class Kind {None,Timer,Remind,TodoAdd,TodoDone,TodoList,AlarmList,CancelTimers} kind=Kind::None;
+        enum class Kind {None,Timer,Remind,TodoAdd,TodoDone,TodoList,AlarmList,CancelTimers,Today,FocusStart,FocusStop} kind=Kind::None;
         std::int64_t due=0;     // Timer, Remind
         int seconds=0;          // Timer: its length
         bool daily=false;       // Remind every day
@@ -87,4 +87,5 @@ namespace MikuMikuDesktopPerch
     std::wstring DurationText(int seconds);
     std::wstring TimeText(std::int64_t at,std::int64_t now,bool daily=false);
     std::int64_t Now();
+    std::int64_t DayEnd(std::int64_t at);   // the next local midnight after at
 }

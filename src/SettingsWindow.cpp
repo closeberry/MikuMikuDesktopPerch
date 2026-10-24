@@ -31,7 +31,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
@@ -179,6 +179,14 @@ namespace MikuMikuDesktopPerch
             Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+191,70,26,IdVoiceBrowse);
             UpdateVoiceMode();
             y+=234;
+            Group(T(L"秘書（タイマー・リマインダー・やることは、メニューと会話から）",L"Assistant (timers, reminders and to-dos: from the menu or by talking)"),y,108);
+            CheckBox(IdMorningSummary,T(L"朝に、今日のリマインダーとやることを話す",L"Tell today's reminders and to-dos in the morning"),28,y+22,400,s.morningSummary);
+            Label(T(L"使い続けたら休憩をすすめる",L"Suggest a break after using the PC for"),28,y+50,290);
+            Combo(IdRestMinutes,326,y+48,110);
+            Label(T(L"集中モードの作業と休憩",L"Focus mode: work and break"),28,y+78,200);
+            Combo(IdFocusMinutes,220,y+76,104);
+            Combo(IdFocusBreakMinutes,332,y+76,104);
+            y+=118;
             Group(T(L"詳細（変更すると再起動します）",L"Advanced (changes restart the app)"),y,166);
             Label(T(L"描画のfps",L"Drawing fps"),28,y+22,130);
             Combo(IdFps,170,y+22,120);
@@ -210,6 +218,12 @@ namespace MikuMikuDesktopPerch
             FillCombo(IdPhysicsFps,{{T(L"30回/秒",L"30/s"),30},{T(L"60回/秒（標準）",L"60/s (standard)"),60},{T(L"90回/秒",L"90/s"),90},{T(L"120回/秒",L"120/s"),120}},s.physicsFps,std::to_wstring(s.physicsFps)+T(L"回/秒",L"/s"));
             FillCombo(IdPhysicsFilter,{{T(L"なし",L"None"),0},{T(L"弱",L"Weak"),1},{T(L"中",L"Medium"),2},{T(L"強（標準）",L"Strong"),3}},s.physicsFilter,L"");
             FillCombo(IdPhysicsIterations,{{T(L"10（標準）",L"10"),10},{L"20",20},{L"30",30},{L"50",50}},s.physicsIterations,std::to_wstring(s.physicsIterations));
+            FillCombo(IdRestMinutes,{{T(L"しない",L"Never"),0},{T(L"30分",L"30 min"),30},{T(L"45分",L"45 min"),45},{T(L"60分（標準）",L"60 min"),60},{T(L"90分",L"90 min"),90},{T(L"2時間",L"2 hours"),120}},
+                      s.restMinutes,Fmt(T(L"{0}分",L"{0} min"),{std::to_wstring(s.restMinutes)}));
+            FillCombo(IdFocusMinutes,{{T(L"作業15分",L"Work 15 min"),15},{T(L"作業20分",L"Work 20 min"),20},{T(L"作業25分（標準）",L"Work 25 min"),25},{T(L"作業30分",L"Work 30 min"),30},{T(L"作業45分",L"Work 45 min"),45},{T(L"作業50分",L"Work 50 min"),50},{T(L"作業60分",L"Work 60 min"),60}},
+                      s.focusMinutes,Fmt(T(L"作業{0}分",L"Work {0} min"),{std::to_wstring(s.focusMinutes)}));
+            FillCombo(IdFocusBreakMinutes,{{T(L"休憩3分",L"Break 3 min"),3},{T(L"休憩5分（標準）",L"Break 5 min"),5},{T(L"休憩10分",L"Break 10 min"),10},{T(L"休憩15分",L"Break 15 min"),15}},
+                      s.focusBreakMinutes,Fmt(T(L"休憩{0}分",L"Break {0} min"),{std::to_wstring(s.focusBreakMinutes)}));
             FillCombo(IdChatterMinutes,{{T(L"10分ごと",L"Every 10 min"),10},{T(L"20分ごと",L"Every 20 min"),20},{T(L"30分ごと",L"Every 30 min"),30},{T(L"45分ごと（標準）",L"Every 45 min"),45},{T(L"1時間ごと",L"Every hour"),60},{T(L"1時間半ごと",L"Every 1.5 hours"),90},{T(L"2時間ごと",L"Every 2 hours"),120}},
                       s.chatterMinutes,Fmt(T(L"{0}分ごと",L"Every {0} min"),{std::to_wstring(s.chatterMinutes)}));
             FillCombo(IdBanterMinutes,{{T(L"しない",L"Never"),0},{T(L"10分ごと",L"Every 10 min"),10},{T(L"20分ごと",L"Every 20 min"),20},{T(L"30分ごと（標準）",L"Every 30 min"),30},{T(L"45分ごと",L"Every 45 min"),45},{T(L"1時間ごと",L"Every hour"),60},{T(L"1時間半ごと",L"Every 1.5 hours"),90}},
@@ -625,6 +639,10 @@ namespace MikuMikuDesktopPerch
             s.chatterMinutes=ComboValue(IdChatterMinutes,s.chatterMinutes);
             s.banterMinutes=ComboValue(IdBanterMinutes,s.banterMinutes);
             s.updateCheck=Checked(IdUpdateCheck);
+            s.morningSummary=Checked(IdMorningSummary);
+            s.restMinutes=ComboValue(IdRestMinutes,s.restMinutes);
+            s.focusMinutes=ComboValue(IdFocusMinutes,s.focusMinutes);
+            s.focusBreakMinutes=ComboValue(IdFocusBreakMinutes,s.focusBreakMinutes);
             {
                 const int language=ComboValue(IdLanguage,0);
                 s.language=language==1?L"ja":language==2?L"en":L"";
@@ -760,10 +778,10 @@ namespace MikuMikuDesktopPerch
         SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,state.dpi);
         state.font=CreateFontIndirectW(&metrics.lfMessageFont);
 
-        // Client 460 x 810 logical pixels, centred on the screen the cursor is on.
+        // Client 460 x 928 logical pixels, centred on the screen the cursor is on.
         const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-        RECT frame{0,0,Px(460),Px(810)};
+        RECT frame{0,0,Px(460),Px(928)};
         AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
         POINT cursor{};
         GetCursorPos(&cursor);

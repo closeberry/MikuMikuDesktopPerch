@@ -42,7 +42,7 @@ namespace
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
-                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers};
+                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
@@ -242,6 +242,15 @@ namespace
         double ringingSince=-1,nextPlannerCheck=0;
         Mascot* alarmTeller=nullptr;
         ChoiceBox alarmChoice;
+        // Focus mode: work and breaks in turn (rounds: works finished; phaseEnd in Now() time).
+        struct Focus {bool on=false,resting=false;std::int64_t phaseEnd=0;int rounds=0;} focus;
+        // What a character has to tell that is not an alarm (focus mode's turns, a break due):
+        // told like one, without the answer box.
+        struct Notice {std::wstring line,facts;};
+        std::vector<Notice> notices;
+        double noticesSince=-1;
+        // Using the computer without a break (five minutes away counts as one).
+        double activeSince=-1,nextRestAt=-1;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -1258,6 +1267,9 @@ namespace
         const bool timing=std::any_of(app.planner.Alarms().begin(),app.planner.Alarms().end(),[](const Alarm& a){return a.timerSeconds>0;});
         AppendMenuW(timers,MF_STRING|(timing?0:MF_GRAYED),IdCancelTimers,T(L"タイマーを止める",L"Stop timers"));
         AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(timers),T(L"タイマー",L"Timer"));
+        AppendMenuW(menu,MF_STRING|(app.focus.on?MF_CHECKED:0),IdFocus,
+                    Fmt(T(L"集中モード（作業{0}分・休憩{1}分）",L"Focus mode ({0} min work, {1} min break)"),
+                        {std::to_wstring(app.settings.focusMinutes),std::to_wstring(app.settings.focusBreakMinutes)}).c_str());
         AppendMenuW(menu,MF_STRING,IdPlanner,T(L"予定とやること...",L"Reminders and to-dos..."));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         // A character's window goes away when its model changes or it is taken off, and the
@@ -1373,6 +1385,11 @@ namespace
         }
         if(s.updateCheck&&!current.updateCheck)app.nextUpdateCheck=app.clock+5;
         current.updateCheck=s.updateCheck;
+        current.morningSummary=s.morningSummary;
+        current.restMinutes=s.restMinutes;
+        // Focus mode's lengths take effect from its next turn.
+        current.focusMinutes=s.focusMinutes;
+        current.focusBreakMinutes=s.focusBreakMinutes;
         current.voiceDirect=s.voiceDirect;
         current.voiceFolder=s.voiceFolder;
         const bool voiceChanged=s.voice!=current.voice;
@@ -1677,9 +1694,12 @@ namespace
 
     // With several characters, one of them speaks: picked at random among those standing or
     // resting on a surface, and never while another one is talking (or being talked to).
+    bool TodaySummary(std::wstring& line,std::wstring& facts);
+
     void MaybeSpeakFirst()
     {
         if(!app.settings.chatInitiative||app.settings.chatModel.empty()||app.clock<8)return;
+        if(app.focus.on&&!app.focus.resting)return;   // focus mode: the user is working
         if(app.banter.stage!=App::Banter::Stage::None)return;
         const double idle=InputIdleSeconds();
         if(idle>=15*60&&app.awaySince<0)app.awaySince=app.clock-idle;
@@ -1711,7 +1731,10 @@ namespace
         {
             wchar_t key[40]{};
             swprintf_s(key,L"%04d-%02d-%02d %s",now.wYear,now.wMonth,now.wDay,slot);
-            if(app.settings.lastGreeting!=key)
+            // The morning's is today's plans, when there are any (MaybeMorningSummary).
+            std::wstring line,facts;
+            const bool summary=std::wstring(slot)==L"morning"&&app.settings.morningSummary&&TodaySummary(line,facts);
+            if(app.settings.lastGreeting!=key&&!summary)
             {
                 app.settings.lastGreeting=key;
                 app.settings.Save(app.settingsPath);
@@ -2064,7 +2087,8 @@ namespace
         {
             const bool due=app.banterRequested?app.clock>5:
                            app.settings.chatInitiative&&app.settings.banterMinutes>0&&app.clock>=app.nextBanterAt&&InputIdleSeconds()<90;
-            if(!due||app.mascots.size()<2||app.settings.chatModel.empty()||AnyoneTalking())return;
+            // Not while focus mode has the user working.
+            if(!due||app.mascots.size()<2||app.settings.chatModel.empty()||AnyoneTalking()||(app.focus.on&&!app.focus.resting))return;
             app.banterRequested=false;
             app.nextBanterAt=app.clock+(StartBanter()?Interval(std::max(app.settings.banterMinutes,1)):60);
             return;
@@ -2233,6 +2257,48 @@ namespace
         return when;
     }
 
+    // Today's reminders (timers aside) and the to-dos, as she says them and as facts for the
+    // LLM. False when there are none.
+    bool TodaySummary(std::wstring& line,std::wstring& facts)
+    {
+        const std::int64_t now=Now(),end=DayEnd(now);
+        std::vector<std::wstring> reminders,todos;
+        for(const Alarm& a:app.planner.Alarms())
+        {
+            if(a.timerSeconds>0||a.due>=end||reminders.size()>=6)continue;
+            const std::wstring when=TimeText(a.due,now);
+            if(English())reminders.push_back((a.text.empty()?std::wstring(L"a reminder"):Quoted(a.text))+L" at "+when);
+            else reminders.push_back(when+L"に"+(a.text.empty()?std::wstring(L"お知らせ"):Quoted(a.text)));
+        }
+        const auto& items=app.planner.Todos();
+        for(size_t i=0;i<items.size()&&i<5;++i)todos.push_back(Quoted(items[i].text));
+        if(items.size()>5)todos.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(items.size()-5)}));
+        if(reminders.empty()&&todos.empty())return false;
+        line.clear();
+        facts.clear();
+        if(!reminders.empty())
+        {
+            line+=Fmt(T(L"今日は、{0}があるよ。",L"Today you have {0}."),{Listing(reminders)});
+            facts+=Fmt(T(L"今日のリマインダー：{0}。",L"Today's reminders: {0}. "),{Listing(reminders)});
+        }
+        if(!todos.empty())
+        {
+            const std::wstring count=std::to_wstring(items.size());
+            line+=(line.empty()?L"":(English()?L" ":L""))+Fmt(T(L"やることは{0}件、{1}だよ。",L"You have {0} to-dos: {1}."),{count,Listing(todos)});
+            facts+=Fmt(T(L"やることリスト（{0}件）：{1}。",L"To-do list ({0}): {1}."),{count,Listing(todos)});
+        }
+        return true;
+    }
+
+    // Focus mode, as she says where it stands: "集中モードの作業中、あと12分".
+    std::wstring FocusState()
+    {
+        const auto& f=app.focus;
+        const std::int64_t left=std::max<std::int64_t>(60,(f.phaseEnd-Now()+59)/60*60);
+        return Fmt(f.resting?T(L"集中モードの休憩中、あと{0}",L"focus mode break, {0} left"):T(L"集中モードの作業中、あと{0}",L"focus mode work, {0} left"),
+                   {DurationText(static_cast<int>(left))});
+    }
+
     // Do what the user asked (said: their words; empty for the menu's quick timers). She says
     // what was done, in her own words when the LLM is there (the facts go to it in brackets);
     // lists are read out as they are.
@@ -2319,6 +2385,38 @@ namespace
             }
             if(alarms.size()>6)items.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(alarms.size()-6)}));
             line=Fmt(T(L"セットしているのは、{0}だよ。",L"Set: {0}."),{Listing(items,L"、")});
+            if(app.focus.on)line=FocusState()+T(L"。",L". ")+line;
+            break;
+        }
+        case Kind::Today:
+        {
+            own=false;
+            std::wstring facts;
+            if(!TodaySummary(line,facts))line=T(L"今日は、リマインダーもやることも入ってないよ。",L"Nothing for today: no reminders and no to-dos.");
+            if(app.focus.on)line=FocusState()+T(L"。",L". ")+line;
+            break;
+        }
+        case Kind::FocusStart:
+        {
+            auto& f=app.focus;
+            if(f.on){line=Fmt(T(L"もう集中モード中だよ（{0}）。",L"Focus mode is already on ({0})."),{FocusState()});own=false;break;}
+            f={true,false,now+app.settings.focusMinutes*60,0};
+            const std::wstring work=std::to_wstring(app.settings.focusMinutes),rest=std::to_wstring(app.settings.focusBreakMinutes);
+            line=Fmt(T(L"集中モード、始めるね。{0}分たったら声をかけるよ。がんばって！",L"Focus mode on. I'll tell you when {0} minutes are up. You can do it!"),{work});
+            news=Fmt(T(L"頼まれて、集中モード（{0}分の作業と{1}分の休憩をくり返す）を始めました。作業の間は話しかけません",
+                       L"You were asked to, and started focus mode ({0} minutes of work and {1} of break, in turn). You will not chat during work"),{work,rest});
+            break;
+        }
+        case Kind::FocusStop:
+        {
+            auto& f=app.focus;
+            if(!f.on){line=T(L"いまは集中モードじゃないよ。",L"Focus mode isn't on.");own=false;break;}
+            const int rounds=f.rounds;
+            f=App::Focus{};
+            app.activeSince=-1;   // its breaks were rests: the count of time at the computer starts again
+            line=rounds>0?Fmt(T(L"集中モード、おしまい。{0}回がんばったね。おつかれさま！",L"Focus mode off. {0} rounds done. Nice work!"),{std::to_wstring(rounds)})
+                         :T(L"集中モード、おしまい。おつかれさま！",L"Focus mode off. Nice work!");
+            news=Fmt(T(L"頼まれて、集中モードを終えました（作業{0}回）",L"You were asked to, and ended focus mode ({0} rounds of work)"),{std::to_wstring(rounds)});
             break;
         }
         case Kind::CancelTimers:
@@ -2395,6 +2493,23 @@ namespace
         SayFixed(*m,T(L"じゃあ、5分後にもう一度言うね。",L"Okay, I'll tell you again in 5 minutes."));
     }
 
+    // Who tells what has come due: a character free to talk, or, after a few seconds of
+    // waiting (waited), one busy too (she cuts in). Null for nobody yet.
+    Mascot* PickTeller(double waited)
+    {
+        if(waited<8&&AnyoneTalking())return nullptr;   // not over someone else at first
+        std::vector<Mascot*> free;
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& c=*owned;
+            if((&c==app.asker||&c==app.alarmTeller)&&waited<30)continue;
+            const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
+            if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
+        }
+        if(free.empty())return nullptr;
+        return free[std::min(free.size()-1,static_cast<size_t>(app.Random01()*free.size()))];
+    }
+
     // It is time: she says so (in her own words when the LLM is there), with a chime, and
     // わかった／5分後に under her until answered.
     void TellAlarms(Mascot& m,std::vector<Alarm> alarms)
@@ -2459,22 +2574,121 @@ namespace
                 SavePlanner();
             }
         }
+        if(!app.notices.empty()&&app.noticesSince<0)app.noticesSince=app.clock;
         // Just started: let the characters come on first.
-        if(app.ringing.empty()||app.updating||app.clock<5)return;
-        if(app.banter.stage!=App::Banter::Stage::None)EndBanter(L"an alarm");
-        const double waited=app.clock-app.ringingSince;
-        std::vector<Mascot*> free;
-        for(const auto& owned:app.mascots)
+        if(app.updating||app.clock<5)return;
+        if(!app.ringing.empty())
         {
-            Mascot& c=*owned;
-            if(&c==app.asker&&waited<30)continue;
-            const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
-            if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
+            if(app.banter.stage!=App::Banter::Stage::None)EndBanter(L"an alarm");
+            if(Mascot* m=PickTeller(app.clock-app.ringingSince))
+            {
+                TellAlarms(*m,std::exchange(app.ringing,{}));
+                app.ringingSince=-1;
+            }
+            return;
         }
-        if(free.empty())return;
-        Mascot& m=*free[std::min(free.size()-1,static_cast<size_t>(app.Random01()*free.size()))];
-        TellAlarms(m,std::exchange(app.ringing,{}));
-        app.ringingSince=-1;
+        if(!app.notices.empty())
+        {
+            if(app.banter.stage!=App::Banter::Stage::None)EndBanter(L"a notice");
+            if(Mascot* m=PickTeller(app.clock-app.noticesSince))
+            {
+                const App::Notice notice=app.notices.front();
+                app.notices.erase(app.notices.begin());
+                app.noticesSince=app.notices.empty()?-1:app.clock;
+                Trace(L"%.1f notice: %s",app.clock,notice.line.c_str());
+                if(m->dozing){m->dozing=false;m->model.SetDozing(false);}
+                if(ChatReady(*m,false))SpeakFirst(*m,notice.facts+T(L"。そのことを、あなたの言葉で伝えて",L". Tell them so, in your own words"),notice.line);
+                else SayFixed(*m,notice.line);
+                PlaySoundW(L"SystemNotification",nullptr,SND_ALIAS|SND_ASYNC|SND_NODEFAULT);
+            }
+        }
+    }
+
+    // Focus mode's turns: when a work ends, a break is suggested (every fourth one three times
+    // as long), and when the break ends, the next work starts. Away for a quarter of an hour
+    // in the middle of a work, it ends by itself.
+    void UpdateFocus()
+    {
+        auto& f=app.focus;
+        if(!f.on||app.diagnostic)return;
+        if(!f.resting&&InputIdleSeconds()>=15*60)
+        {
+            Trace(L"%.1f focus: ended (the user is away)",app.clock);
+            f=App::Focus{};
+            app.activeSince=-1;
+            return;
+        }
+        const std::int64_t now=Now();
+        if(now<f.phaseEnd)return;
+        const std::wstring work=std::to_wstring(app.settings.focusMinutes);
+        if(!f.resting)
+        {
+            ++f.rounds;
+            const bool longBreak=f.rounds%4==0;
+            const int minutes=app.settings.focusBreakMinutes*(longBreak?3:1);
+            f.resting=true;
+            f.phaseEnd=now+minutes*60;
+            const std::wstring rest=std::to_wstring(minutes),rounds=std::to_wstring(f.rounds);
+            app.notices.push_back({
+                longBreak?Fmt(T(L"{0}回がんばったね！{1}分、ゆっくり休憩しよう。",L"That's {0} rounds! Take a good {1}-minute break."),{rounds,rest})
+                         :Fmt(T(L"{0}分たったよ。{1}分休憩しよう！",L"{0} minutes are up. Time for a {1}-minute break!"),{work,rest}),
+                Fmt(T(L"集中モードで、{0}分の作業が終わりました（{1}回目）。{2}分の休憩をすすめて",L"In focus mode, {0} minutes of work are done (round {1}). Suggest a {2}-minute break"),{work,rounds,rest})});
+        }
+        else
+        {
+            f.resting=false;
+            f.phaseEnd=now+app.settings.focusMinutes*60;
+            app.notices.push_back({
+                Fmt(T(L"休憩おわり！また{0}分がんばろう。",L"Break's over! Another {0} minutes, let's go."),{work}),
+                Fmt(T(L"集中モードの休憩が終わりました。次の{0}分の作業を始めるよう、はげまして",L"The focus mode break is over. Cheer them on to start the next {0} minutes of work"),{work})});
+        }
+    }
+
+    // Long at the computer without a break (five minutes away counts as one): a break is
+    // suggested, then again after as long once more. Not in focus mode, which has its own.
+    void UpdateRest()
+    {
+        if(app.diagnostic)return;
+        const double idle=InputIdleSeconds();
+        if(idle>=5*60){app.activeSince=-1;return;}
+        if(app.activeSince<0){app.activeSince=app.clock-idle;app.nextRestAt=-1;}
+        const int every=app.settings.restMinutes;
+        if(every<=0||app.focus.on||app.paused)return;
+        const double due=app.nextRestAt>=0?app.nextRestAt:app.activeSince+every*60.0;
+        if(app.clock<due)return;
+        app.nextRestAt=app.clock+every*60.0;
+        const int used=static_cast<int>((app.clock-app.activeSince)/60+0.5)*60;
+        app.notices.push_back({
+            Fmt(T(L"{0}、休まずにパソコンを使ってるよ。少し休憩しない？目を休めたり、体を伸ばしたりしよう。",
+                  L"You've been at the computer for {0} without a break. How about a short rest? Rest your eyes, stretch a little."),{DurationText(used)}),
+            Fmt(T(L"話し相手が{0}ほど、休まずにパソコンを使い続けています。少し休憩するよう、やさしくすすめて",
+                  L"The person you talk with has been using the computer for about {0} without a break. Gently suggest a short rest"),{DurationText(used)})});
+    }
+
+    // The first morning greeting tells today's reminders and to-dos (with them, the greeting
+    // is this, in place of the usual one; without the LLM, in fixed words).
+    void MaybeMorningSummary()
+    {
+        if(!app.settings.morningSummary||app.clock<8||app.diagnostic||app.banter.stage!=App::Banter::Stage::None)return;
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        if(now.wHour<5||now.wHour>=10||InputIdleSeconds()>90)return;
+        wchar_t key[40]{};
+        swprintf_s(key,L"%04d-%02d-%02d morning",now.wYear,now.wMonth,now.wDay);
+        if(app.settings.lastGreeting==key)return;
+        std::wstring line,facts;
+        if(!TodaySummary(line,facts))return;   // the usual greeting, if any
+        Mascot* m=PickTeller(0);
+        if(!m)return;
+        app.settings.lastGreeting=key;
+        app.settings.Save(app.settingsPath);
+        app.nextChatterAt=std::max(app.nextChatterAt,app.clock+20*60);
+        Trace(L"%.1f morning: %s",app.clock,line.c_str());
+        if(ChatReady(*m,false))
+            SpeakFirst(*m,T(L"朝です。話し相手がパソコンを使い始めました。朝のあいさつをして、今日の予定を伝えて。",
+                            L"It is morning. The person you talk with has started using the computer. Say good morning, and tell them today's plans. ")+facts,
+                       T(L"おはよう！",L"Good morning! ")+line);
+        else SayFixed(*m,T(L"おはよう！",L"Good morning! ")+line);
     }
 
     // Once the conversation has paused (or grown long), ask the LLM what in it is worth
@@ -2635,9 +2849,10 @@ namespace
             ShowPlannerWindow(m.hwnd,app.planner);
             break;
         case IdCancelTimers:
+        case IdFocus:
         {
             PlanRequest r;
-            r.kind=PlanRequest::Kind::CancelTimers;
+            r.kind=id==IdCancelTimers?PlanRequest::Kind::CancelTimers:app.focus.on?PlanRequest::Kind::FocusStop:PlanRequest::Kind::FocusStart;
             DoPlan(m,r,{});
             break;
         }
@@ -3319,7 +3534,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             const std::string bytes=buffer.str();
             std::wstring all(static_cast<size_t>(MultiByteToWideChar(CP_UTF8,0,bytes.data(),static_cast<int>(bytes.size()),nullptr,0)),L'\0');
             MultiByteToWideChar(CP_UTF8,0,bytes.data(),static_cast<int>(bytes.size()),all.data(),static_cast<int>(all.size()));
-            static constexpr const wchar_t* Kinds[]={L"none",L"timer",L"remind",L"todo-add",L"todo-done",L"todo-list",L"alarm-list",L"cancel-timers"};
+            static constexpr const wchar_t* Kinds[]={L"none",L"timer",L"remind",L"todo-add",L"todo-done",L"todo-list",L"alarm-list",L"cancel-timers",L"today",L"focus-start",L"focus-stop"};
             const std::int64_t now=Now();
             std::wstringstream lines(all);
             if(FILE* out=nullptr;_wfopen_s(&out,argv[3],L"w, ccs=UTF-8")==0&&out)
@@ -3568,7 +3783,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.paused)continue;
 
         app.clock+=dt;
-        if(!forcedActivity){MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdatePlanner();}
+        if(!forcedActivity){MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)

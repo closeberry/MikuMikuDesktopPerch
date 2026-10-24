@@ -146,6 +146,10 @@ namespace MikuMikuDesktopPerch
         chatterMinutes=std::clamp(ReadInt(path,L"ChatterMinutes",chatterMinutes),5,600);
         banterMinutes=std::clamp(ReadInt(path,L"BanterMinutes",banterMinutes),0,600);
         updateCheck=ReadInt(path,L"UpdateCheck",updateCheck?1:0)!=0;
+        morningSummary=ReadInt(path,L"MorningSummary",morningSummary?1:0)!=0;
+        restMinutes=std::clamp(ReadInt(path,L"RestMinutes",restMinutes),0,600);
+        focusMinutes=std::clamp(ReadInt(path,L"FocusMinutes",focusMinutes),1,180);
+        focusBreakMinutes=std::clamp(ReadInt(path,L"FocusBreakMinutes",focusBreakMinutes),1,60);
         language=ReadString(path,L"Language",language);
         if(language!=L"ja"&&language!=L"en")language.clear();
         voice=ReadInt(path,L"Voice",voice?1:0)!=0;
@@ -200,6 +204,10 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"ChatterMinutes",std::to_wstring(chatterMinutes));
         WriteString(path,L"BanterMinutes",std::to_wstring(banterMinutes));
         WriteString(path,L"UpdateCheck",updateCheck?L"1":L"0");
+        WriteString(path,L"MorningSummary",morningSummary?L"1":L"0");
+        WriteString(path,L"RestMinutes",std::to_wstring(restMinutes));
+        WriteString(path,L"FocusMinutes",std::to_wstring(focusMinutes));
+        WriteString(path,L"FocusBreakMinutes",std::to_wstring(focusBreakMinutes));
         WriteString(path,L"Language",language);
         WriteString(path,L"Voice",voice?L"1":L"0");
         WriteString(path,L"VoiceEndpoint",voiceEndpoint);
