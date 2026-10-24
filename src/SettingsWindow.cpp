@@ -31,7 +31,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
@@ -45,6 +45,7 @@ namespace MikuMikuDesktopPerch
             SettingsChoice choice;
             std::function<void(const SettingsChoice&)> onApply;
             std::function<void(int,int)> onLight;
+            std::function<void()> onCheckUpdate;
             std::string sample;     // the sample voice playing (PlaySound reads it from here)
             int dpi=96;
         } state;
@@ -136,7 +137,8 @@ namespace MikuMikuDesktopPerch
             CheckBox(IdTopmost,T(L"最前面に表示",L"Always on top"),28,y+78,200,s.topmost);
             CheckBox(IdSelfShadow,T(L"セルフシャドウ（体に落ちる影）",L"Self-shadow"),250,y+78,190,s.selfShadow);
             CheckBox(IdStartup,T(L"Windowsの起動時に起動",L"Start with Windows"),28,y+100,200,state.choice.startWithWindows);
-            CheckBox(IdUpdateCheck,T(L"新しいバージョンを確認する",L"Check for new versions"),250,y+100,190,s.updateCheck);
+            CheckBox(IdUpdateCheck,T(L"更新を自動で確認",L"Check for updates"),250,y+100,112,s.updateCheck);
+            Add(L"BUTTON",T(L"今すぐ確認",L"Check now"),BS_PUSHBUTTON|WS_TABSTOP,366,y+97,70,24,IdUpdateNow);
             Label(T(L"太陽の位置（左右・高さ）",L"Sun (side, height)"),28,y+128,140);
             Slider(IdSunAzimuth,170,y+126,130,-180,180,s.lightAzimuth);
             Slider(IdSunElevation,306,y+126,130,5,90,s.lightElevation);
@@ -720,6 +722,9 @@ namespace MikuMikuDesktopPerch
                 case IdVoiceSample:
                     PlayVoiceSample();
                     return 0;
+                case IdUpdateNow:
+                    if(state.onCheckUpdate)state.onCheckUpdate();
+                    return 0;
                 case IdVoiceMode:
                     if(HIWORD(wParam)==CBN_SELCHANGE)UpdateVoiceMode();
                     return 0;
@@ -751,6 +756,7 @@ namespace MikuMikuDesktopPerch
                 if(state.font){DeleteObject(state.font);state.font=nullptr;}
                 state.onApply=nullptr;
                 state.onLight=nullptr;
+                state.onCheckUpdate=nullptr;
                 if(!state.sample.empty()){PlaySoundW(nullptr,nullptr,0);state.sample.clear();}
                 return 0;
             }
@@ -759,7 +765,7 @@ namespace MikuMikuDesktopPerch
     }
 
     void ShowSettingsWindow(HWND owner,const SettingsChoice& current,std::function<void(const SettingsChoice&)> onApply,
-                            std::function<void(int azimuth,int elevation)> onLight)
+                            std::function<void(int azimuth,int elevation)> onLight,std::function<void()> onCheckUpdate)
     {
         if(state.window)
         {
@@ -785,6 +791,7 @@ namespace MikuMikuDesktopPerch
         state.choice=current;
         state.onApply=std::move(onApply);
         state.onLight=std::move(onLight);
+        state.onCheckUpdate=std::move(onCheckUpdate);
         INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES};
         InitCommonControlsEx(&controls);
         state.dpi=static_cast<int>(GetDpiForSystem());

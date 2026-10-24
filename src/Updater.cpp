@@ -105,8 +105,10 @@ namespace MikuMikuDesktopPerch
             return hex;
         }
 
-        std::unique_ptr<Release> LatestNewer()
+        // failed: GitHub could not be asked, or its answer was not understood.
+        std::unique_ptr<Release> LatestNewer(bool& failed)
         {
+            failed=true;
             std::string body;
             if(!HttpsGet(LatestRelease,L"application/vnd.github+json",MaxApiBytes,body).empty())return nullptr;
             Json j;
@@ -114,6 +116,7 @@ namespace MikuMikuDesktopPerch
             const Json* tag=j.Member("tag_name");
             const Json* assets=j.Member("assets");
             if(!tag||tag->type!=Json::Type::String||!assets)return nullptr;
+            failed=false;
             auto release=std::make_unique<Release>();
             release->version=Wide(tag->text);
             if(!release->version.empty()&&(release->version[0]==L'v'||release->version[0]==L'V'))release->version.erase(0,1);
@@ -216,9 +219,10 @@ namespace MikuMikuDesktopPerch
     {
         if(busy.exchange(true))return;
         Start(std::thread([this]{
-            Release* found=LatestNewer().release();
+            bool failed=false;
+            Release* found=LatestNewer(failed).release();
             busy=false;
-            if(!PostMessageW(notify,CheckedMessage,reinterpret_cast<WPARAM>(found),0))delete found;
+            if(!PostMessageW(notify,CheckedMessage,reinterpret_cast<WPARAM>(found),failed?1:0))delete found;
         }));
     }
 

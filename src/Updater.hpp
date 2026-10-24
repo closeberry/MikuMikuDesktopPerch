@@ -30,7 +30,7 @@ namespace MikuMikuDesktopPerch
     {
     public:
         // Check is done: wParam is a heap-allocated Release* the receiver deletes (nullptr when
-        // there is nothing newer or GitHub could not be asked).
+        // there is nothing newer or GitHub could not be asked); lParam is 1 when it could not.
         static constexpr UINT CheckedMessage=WM_APP+30;
         // Download is done: wParam is a heap-allocated std::wstring* error (empty: ready to
         // install) the receiver deletes.

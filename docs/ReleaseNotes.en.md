@@ -2,6 +2,13 @@
 
 [日本語](ReleaseNotes.md)
 
+## Next version (unreleased)
+
+### Changes
+
+- When updating, the app restarts after the character has finished their line
+- A "Check now" button under Display in the settings checks for a new version at once and says so when this is the latest. The automatic check is now labeled "Check for updates"
+
 ## 1.2.2
 
 ### Fixes

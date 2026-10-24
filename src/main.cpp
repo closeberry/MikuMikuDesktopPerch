@@ -237,6 +237,10 @@ namespace
         Mascot* asker=nullptr;
         ChoiceBox updateChoice;
         bool updating=false;
+        bool manualCheck=false;        // "Check now" in the settings: tell the result either way
+        // Installed: the restart waits for the asker to finish her line (since when, and since
+        // when she has been quiet).
+        double installedAt=-1,quietSince=-1;
         // Timers, reminders and to-dos: those come due and not yet told, the one telling them
         // (she stays put until answered) with わかった／5分後に under her.
         Planner planner;
@@ -2228,11 +2232,49 @@ namespace
         app.updater->Check();
     }
 
-    void OnUpdateChecked(Release* found)
+    // "Check now" in the settings: ask GitHub at once, even with UpdateCheck off, and ask
+    // again about a version answered いいえ before.
+    void CheckForUpdateNow()
+    {
+        if(app.updating)return;
+        app.manualCheck=true;
+        app.declinedVersion.clear();
+        if(!app.updater)app.updater=std::make_unique<Updater>(app.hwnd);
+        app.updater->Check();   // already asking: that answer comes back the same way
+    }
+
+    void OnUpdateChecked(Release* found,bool failed)
     {
         std::unique_ptr<Release> owned(found);
-        Trace(L"%.1f update check: %s (this is %s)",app.clock,owned?owned->version.c_str():L"nothing newer",CurrentVersion().c_str());
+        Trace(L"%.1f update check: %s (this is %s)",app.clock,owned?owned->version.c_str():failed?L"failed":L"nothing newer",CurrentVersion().c_str());
         if(owned&&owned->version!=app.declinedVersion&&!app.updating)app.update=*owned;
+        if(!std::exchange(app.manualCheck,false)||owned)return;
+        // Asked from the settings: nothing newer (or no answer) is told in a message box over
+        // them; a newer version is asked about by a character as usual.
+        const std::wstring text=failed?T(L"新しいバージョンを確認できませんでした。インターネットへの接続を確かめてください。",
+                                         L"Could not check for a new version. Please check the internet connection.")
+                                      :Fmt(T(L"いまのバージョン（{0}）が最新です。",L"This version ({0}) is the latest."),{CurrentVersion()});
+        LetClicksThrough();
+        const HWND owner=SettingsWindowHandle()?SettingsWindowHandle():!app.mascots.empty()?app.mascots.front()->hwnd:app.hwnd;
+        MessageBoxW(owner,text.c_str(),L"MikuMikuDesktopPerch",failed?MB_ICONWARNING:MB_ICONINFORMATION);
+    }
+
+    // After installing: restart once the one who asked has finished her line (a moment after
+    // she goes quiet), or after 20 seconds at most.
+    void MaybeRestartAfterUpdate()
+    {
+        if(app.installedAt<0)return;
+        const Mascot* m=app.asker;
+        const bool talking=m&&(m->speech.Active()||m->speech.Speaking());
+        if(talking)app.quietSince=-1;
+        else if(app.quietSince<0)app.quietSince=app.clock;
+        if((app.quietSince>=0&&app.clock-app.quietSince>=0.8)||app.clock-app.installedAt>=20)
+        {
+            Trace(L"%.1f update: restarting",app.clock);
+            app.installedAt=-1;
+            app.restart=true;
+            DestroyWindow(app.hwnd);
+        }
     }
 
     // The new files are unpacked: put them in place and start again on the new exe.
@@ -2244,8 +2286,7 @@ namespace
         Trace(L"%.1f update: %s",app.clock,problem.empty()?L"installed":problem.c_str());
         if(problem.empty())
         {
-            app.restart=true;
-            DestroyWindow(app.hwnd);
+            app.installedAt=app.clock;
             return;
         }
         if(app.asker)SayFixed(*app.asker,T(L"ごめんね、更新できなかったみたい……",L"Sorry, the update didn't work..."));
@@ -3171,7 +3212,8 @@ namespace
             ShowSettingsWindow(m.hwnd,{app.settings,StartupRegistered(),Own(m),m.character,&m.memory},
                                [&m](const SettingsChoice& choice){ApplySettings(m,choice);},
                                [](int azimuth,int elevation){
-                                   for(const auto& each:app.mascots)each->renderer.SetLight(static_cast<float>(azimuth),static_cast<float>(elevation));});
+                                   for(const auto& each:app.mascots)each->renderer.SetLight(static_cast<float>(azimuth),static_cast<float>(elevation));},
+                               []{CheckForUpdateNow();});
             break;
         case IdExit:
             DestroyWindow(app.hwnd);
@@ -3370,7 +3412,7 @@ namespace
             }
             return 0;
         case Updater::CheckedMessage:
-            OnUpdateChecked(reinterpret_cast<Release*>(wParam));
+            OnUpdateChecked(reinterpret_cast<Release*>(wParam),lParam!=0);
             return 0;
         case Updater::DownloadedMessage:
             OnUpdateDownloaded(reinterpret_cast<std::wstring*>(wParam));
@@ -3986,6 +4028,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.paused)continue;
 
         app.clock+=dt;
+        MaybeRestartAfterUpdate();
+        if(app.restart)continue;   // quitting: the loop picks up WM_QUIT next
         if(!forcedActivity){MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
