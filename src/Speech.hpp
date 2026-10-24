@@ -22,9 +22,9 @@ namespace MikuMikuDesktopPerch
     class Speech
     {
     public:
-        Speech()=default;
-        Speech(Speech&&)=default;
-        Speech& operator=(Speech&&)=default;
+        Speech();
+        Speech(Speech&&) noexcept;
+        Speech& operator=(Speech&&) noexcept;
         ~Speech();   // stops a voice still playing (its sound lives here)
         void Reset();
         // voice(text) asks for a phrase to be voiced and returns the request id (empty: silent).
@@ -49,6 +49,10 @@ namespace MikuMikuDesktopPerch
         std::vector<Waiting> waiting;                      // phrases being voiced, in order
         struct Sound {std::string wav;double start=0,end=0;bool started=false;};
         std::vector<Sound> sounds;                         // voiced phrases, played at their time
+        // Its own output (not PlaySound, which the whole program shares): two characters can
+        // speak at once, and one stopping does not cut the other off.
+        struct Player;
+        std::unique_ptr<Player> player;
 
         struct Chunk {size_t chars=0;double start=0,end=0;};
         std::vector<Chunk> chunks;

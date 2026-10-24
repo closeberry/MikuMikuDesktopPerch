@@ -4,6 +4,8 @@
 #include <oleauto.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <mmsystem.h>
 
 #pragma comment(lib,"winmm.lib")
@@ -82,14 +84,66 @@ namespace MikuMikuDesktopPerch
         return Guess(text);
     }
 
-    Speech::~Speech()
+    // One WAV file at a time on a waveOut device of its own (the system mixes them).
+    struct Speech::Player
     {
-        if(!sounds.empty())PlaySoundW(nullptr,nullptr,0);
-    }
+        HWAVEOUT device=nullptr;
+        WAVEHDR header{};
+        std::string data;
+
+        ~Player(){Stop();}
+
+        void Stop()
+        {
+            if(!device)return;
+            waveOutReset(device);
+            waveOutUnprepareHeader(device,&header,sizeof(header));
+            waveOutClose(device);
+            device=nullptr;
+        }
+
+        // A RIFF WAVE file in memory (PCM, as the voice engines make it).
+        void Play(const std::string& wav)
+        {
+            Stop();
+            if(wav.size()<12||wav.compare(0,4,"RIFF")!=0||wav.compare(8,4,"WAVE")!=0)return;
+            WAVEFORMATEX format{};
+            bool haveFormat=false;
+            for(size_t at=12;at+8<=wav.size();)
+            {
+                std::uint32_t size=0;
+                std::memcpy(&size,wav.data()+at+4,4);
+                const size_t body=at+8;
+                if(body+size>wav.size())size=static_cast<std::uint32_t>(wav.size()-body);
+                if(wav.compare(at,4,"fmt ")==0&&size>=16)
+                {
+                    std::memcpy(&format,wav.data()+body,16);
+                    format.cbSize=0;
+                    haveFormat=true;
+                }
+                else if(wav.compare(at,4,"data")==0&&haveFormat)
+                {
+                    data.assign(wav,body,size);
+                    if(waveOutOpen(&device,WAVE_MAPPER,&format,0,0,CALLBACK_NULL)!=MMSYSERR_NOERROR){device=nullptr;return;}
+                    header={};
+                    header.lpData=data.data();
+                    header.dwBufferLength=static_cast<DWORD>(data.size());
+                    if(waveOutPrepareHeader(device,&header,sizeof(header))!=MMSYSERR_NOERROR||
+                       waveOutWrite(device,&header,sizeof(header))!=MMSYSERR_NOERROR)Stop();
+                    return;
+                }
+                at=body+size+(size&1);
+            }
+        }
+    };
+
+    Speech::Speech()=default;
+    Speech::Speech(Speech&&) noexcept=default;
+    Speech& Speech::operator=(Speech&&) noexcept=default;
+    Speech::~Speech()=default;   // the player stops what it plays
 
     void Speech::Reset()
     {
-        if(!sounds.empty())PlaySoundW(nullptr,nullptr,0);
         auto keep=std::move(voice);
         *this=Speech();
         voice=std::move(keep);
@@ -192,7 +246,8 @@ namespace MikuMikuDesktopPerch
             if(!s.started&&clock>=s.start)
             {
                 s.started=true;
-                PlaySoundW(reinterpret_cast<LPCWSTR>(s.wav.data()),nullptr,SND_MEMORY|SND_ASYNC|SND_NODEFAULT);
+                if(!player)player=std::make_unique<Player>();
+                player->Play(s.wav);
             }
         // Finished sounds can go (the one playing, and those after it, stay).
         while(sounds.size()>1&&sounds.front().started&&sounds[1].started)sounds.erase(sounds.begin());
