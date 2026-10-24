@@ -7,6 +7,7 @@
 ### Changes
 
 - When updating, the app restarts after the character has finished their line
+- "Gestures..." under Motion in the settings: check only the idle gestures (and built-in idle motions) to use. All are used by default, including ones added later
 - VMDs embedded in the exe can be played as one of the idle gestures (the means to add built-in idle motions; none are included yet)
 - Twenty casual idle gestures: dangling the arms, swinging one arm, shaking the hands loose, rolling a wrist, moving the fingers, rolling the shoulders, a shrug, a sigh, looking back, looking down at the feet, looking up, a quick glance, stretching the neck, nodding, nodding off for a moment, swaying, twisting the waist, peering forward, bouncing at the knees and tapping the toes. The arms only move forward, back and out from the standing pose, so the hands do not sink into the body on any model
 - A "Check now" button under Display in the settings checks for a new version at once and says so when this is the latest. The automatic check is now labeled "Check for updates"

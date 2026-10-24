@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "GeneratedMotion.hpp"
+#include "Text.hpp"
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -653,6 +654,27 @@ namespace MikuMikuDesktopPerch
             {L"pat",Gesture::PatHead},{L"surprised",Gesture::Surprised},{L"curious",Gesture::Curious},{L"shynod",Gesture::ShyNod}};
     }
 
+    std::vector<std::pair<std::wstring,std::wstring>> GeneratedMotion::IdleGestureList()
+    {
+        // Labels by gesture number (1..GestureCount).
+        static constexpr std::pair<const wchar_t*,const wchar_t*> labels[GestureCount]={
+            {L"腰に手を当てる",L"Hand on hip"},{L"手を振る",L"Wave"},{L"ピース",L"Peace sign"},{L"手を後ろで組む",L"Hands behind"},
+            {L"手のひらを見る",L"Look at a palm"},{L"手を前で重ねる",L"Hands together in front"},{L"伸び",L"Stretch"},
+            {L"きょろきょろ見回す",L"Look around"},{L"首をかしげる",L"Tilt the head"},{L"ただ立っている",L"Just stand"},
+            {L"髪を耳にかける",L"Tuck hair"},{L"あくび",L"Yawn"},{L"考える",L"Think"},{L"鼻歌",L"Hum"},{L"拍手",L"Clap"},
+            {L"遠くを見る",L"Look far away"},{L"ほっぺを押さえる",L"Hold the cheeks"},
+            {L"腕をぶらぶら",L"Dangle the arms"},{L"片腕を振る",L"Swing an arm"},{L"手を振ってほぐす",L"Shake the hands loose"},
+            {L"手首を回す",L"Roll a wrist"},{L"指を動かす",L"Move the fingers"},{L"肩を回す",L"Roll the shoulders"},
+            {L"肩をすくめる",L"Shrug"},{L"ため息",L"Sigh"},{L"振り返る",L"Look back"},{L"足もとを見る",L"Look down"},
+            {L"上を見る",L"Look up"},{L"ちらっと見る",L"Glance"},{L"首を伸ばす",L"Stretch the neck"},{L"うなずく",L"Nod"},
+            {L"一瞬うとうと",L"Nod off"},{L"体を揺らす",L"Sway"},{L"腰をひねる",L"Twist the waist"},{L"のぞき込む",L"Peer"},
+            {L"ひざでリズム",L"Bounce at the knees"},{L"つま先でトントン",L"Tap the toes"}};
+        std::vector<std::pair<std::wstring,std::wstring>> list(GestureCount);
+        for(const auto& [n,g]:GestureNames)
+            if(const int i=static_cast<int>(g);i>=1&&i<=GestureCount)list[i-1]={n,T(labels[i-1].first,labels[i-1].second)};
+        return list;
+    }
+
     bool GeneratedMotion::Emote(const std::wstring& name)
     {
         if(reaction!=Gesture::None||overrides.empty()||activity!=Activity::Idle)return false;
@@ -1199,11 +1221,15 @@ namespace MikuMikuDesktopPerch
             if(clock<nextGestureAt)return;
             if(reaction!=Gesture::None){nextGestureAt=clock+1.5;return;}
             // A built-in clip counts as one gesture more; it is played by the caller (over this
-            // layer, as the opened motion is), so no gesture here meanwhile.
-            const int choices=GestureCount+clipCount;
-            int pick;
-            do pick=1+static_cast<int>(Random01()*choices)%choices;
-            while((pick==recentGestures[0]||pick==recentGestures[1])&&choices>2);
+            // layer, as the opened motion is), so no gesture here meanwhile. Only the ones the
+            // user left on (all of them unless chosen otherwise); none: she just stands.
+            std::vector<int> open,fresh;
+            for(int p=1;p<=GestureCount+clipCount;++p)
+                if(!(p<static_cast<int>(disabledPicks.size())&&disabledPicks[p]))open.push_back(p);
+            if(open.empty()){nextGestureAt=clock+4.0;return;}
+            for(int p:open)if(p!=recentGestures[0]&&p!=recentGestures[1])fresh.push_back(p);
+            const auto& from=fresh.empty()?open:fresh;
+            const int pick=from[std::min(from.size()-1,static_cast<size_t>(Random01()*from.size()))];
             recentGestures={pick,recentGestures[0]};
             if(pick>GestureCount)
             {

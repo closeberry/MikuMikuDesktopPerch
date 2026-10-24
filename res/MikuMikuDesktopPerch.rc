@@ -35,3 +35,6 @@ END
 // Built-in idle clips: VMD motions played now and then among the gestures of the standing
 // pose. One line each, a name and the file under res\idle (credit the author in README):
 //   Stroll IDLECLIP "idle\\stroll.vmd"
+// Their labels for the settings (UTF-8 lines: name, tab, Japanese, tab, English); uncomment
+// with the first clip:
+// NAMES IDLECLIPNAMES "idle\\names.txt"

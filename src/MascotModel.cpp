@@ -168,19 +168,22 @@ namespace MikuMikuDesktopPerch
 
         constexpr double ResetBlendSeconds=0.5;   // ease of the simulated bones in a physics reset
 
-        // Built-in idle clips: the exe's resources of type IDLECLIP, written once to files under
-        // %TEMP% (the VMD loader reads files), then any VMD files diagnostics added.
+        // Built-in idle clips: the exe's resources of type IDLECLIP (by name, which the
+        // resource compiler upper-cases), written to files under %TEMP% (the VMD loader reads
+        // files), then any VMD files diagnostics added. Their labels come from the NAMES
+        // resource of type IDLECLIPNAMES (UTF-8 lines: name, tab, Japanese, tab, English).
+        struct ClipEntry {std::wstring key,path,japanese,english;};
         std::vector<std::wstring>& ExtraClipFiles(){static std::vector<std::wstring> files;return files;}
-        std::vector<std::wstring> BuiltinClipFiles()
+        std::vector<ClipEntry> BuiltinClipEntries()
         {
-            static const std::vector<std::wstring> embedded=[]{
-                std::vector<std::wstring> files;
+            static const std::vector<ClipEntry> embedded=[]{
+                std::vector<ClipEntry> files;
                 wchar_t temp[MAX_PATH]{};
                 if(!GetTempPathW(MAX_PATH,temp))return files;
                 const std::filesystem::path dir=std::filesystem::path(temp)/L"MikuMikuDesktopPerch"/L"idle";
                 std::error_code ignored;
                 std::filesystem::create_directories(dir,ignored);
-                struct Found {std::filesystem::path dir;std::vector<std::wstring>* files;} found{dir,&files};
+                struct Found {std::filesystem::path dir;std::vector<ClipEntry>* files;} found{dir,&files};
                 EnumResourceNamesW(nullptr,L"IDLECLIP",[](HMODULE module,LPCWSTR type,LPWSTR name,LONG_PTR param)->BOOL{
                     auto& f=*reinterpret_cast<Found*>(param);
                     const std::wstring id=IS_INTRESOURCE(name)?std::to_wstring(reinterpret_cast<ULONG_PTR>(name)):std::wstring(name);
@@ -190,22 +193,48 @@ namespace MikuMikuDesktopPerch
                     const DWORD size=info?SizeofResource(module,info):0;
                     if(!bytes||!size)return TRUE;
                     const std::filesystem::path file=f.dir/(id+L".vmd");
-                    std::error_code error;
-                    if(std::filesystem::file_size(file,error)!=size||error)
-                    {
-                        FILE* out=nullptr;
-                        if(_wfopen_s(&out,file.c_str(),L"wb")!=0||!out)return TRUE;
-                        const bool written=fwrite(bytes,1,size,out)==size;
-                        fclose(out);
-                        if(!written)return TRUE;
-                    }
-                    f.files->push_back(file.wstring());
+                    FILE* out=nullptr;
+                    if(_wfopen_s(&out,file.c_str(),L"wb")!=0||!out)return TRUE;
+                    const bool written=fwrite(bytes,1,size,out)==size;
+                    fclose(out);
+                    if(written)f.files->push_back({id,file.wstring(),id,id});
                     return TRUE;
                 },reinterpret_cast<LONG_PTR>(&found));
+                std::sort(files.begin(),files.end(),[](const ClipEntry& a,const ClipEntry& b){return a.key<b.key;});
+                // Labels.
+                if(const HRSRC info=FindResourceW(nullptr,L"NAMES",L"IDLECLIPNAMES"))
+                    if(const HGLOBAL data=LoadResource(nullptr,info))
+                        if(const char* text=static_cast<const char*>(LockResource(data)))
+                        {
+                            const int size=static_cast<int>(SizeofResource(nullptr,info));
+                            std::wstring all(static_cast<size_t>(MultiByteToWideChar(CP_UTF8,0,text,size,nullptr,0)),L'\0');
+                            MultiByteToWideChar(CP_UTF8,0,text,size,all.data(),static_cast<int>(all.size()));
+                            for(size_t start=0;start<all.size();)
+                            {
+                                size_t end=all.find(L'\n',start);
+                                if(end==std::wstring::npos)end=all.size();
+                                std::wstring line=all.substr(start,end-start);
+                                start=end+1;
+                                if(!line.empty()&&line.back()==L'\r')line.pop_back();
+                                if(!line.empty()&&line[0]==0xFEFF)line.erase(0,1);
+                                const size_t tab1=line.find(L'\t');
+                                if(line.empty()||line[0]==L'#'||tab1==std::wstring::npos)continue;
+                                const size_t tab2=line.find(L'\t',tab1+1);
+                                const std::wstring key=line.substr(0,tab1);
+                                const std::wstring japanese=line.substr(tab1+1,tab2==std::wstring::npos?std::wstring::npos:tab2-tab1-1);
+                                const std::wstring english=tab2==std::wstring::npos?japanese:line.substr(tab2+1);
+                                for(auto& e:files)
+                                    if(_wcsicmp(e.key.c_str(),key.c_str())==0){e.japanese=japanese;e.english=english.empty()?japanese:english;}
+                            }
+                        }
                 return files;
             }();
-            std::vector<std::wstring> files=embedded;
-            files.insert(files.end(),ExtraClipFiles().begin(),ExtraClipFiles().end());
+            std::vector<ClipEntry> files=embedded;
+            for(const auto& path:ExtraClipFiles())
+            {
+                const std::wstring stem=std::filesystem::path(path).stem().wstring();
+                files.push_back({stem,path,stem,stem});
+            }
             return files;
         }
     }
@@ -542,16 +571,34 @@ namespace MikuMikuDesktopPerch
         PMX::Pose idlePose,idlePreviousPose;
         std::mt19937 idleRandom{std::random_device{}()};
 
-        // The built-in idle clips (see BuiltinClipFiles); one that fails to load is left out.
+        // The built-in idle clips (see BuiltinClipEntries); one that fails to load is left out.
         std::vector<Clip> builtinClips;
+        std::vector<std::wstring> builtinKeys;
         void LoadBuiltinClips()
         {
             builtinClips.clear();
-            for(const auto& path:BuiltinClipFiles())
+            builtinKeys.clear();
+            for(const auto& entry:BuiltinClipEntries())
             {
                 std::vector<Clip> one;
-                if(std::wstring ignored;LoadClips({path},one,L"",ignored))builtinClips.push_back(std::move(one.front()));
+                if(std::wstring ignored;LoadClips({entry.path},one,L"",ignored))
+                {
+                    builtinClips.push_back(std::move(one.front()));
+                    builtinKeys.push_back(entry.key);
+                }
             }
+        }
+
+        // The user's choice of gestures and clips, as the picks the motion layer leaves out.
+        std::vector<std::wstring> disabledGestures;
+        void ApplyDisabledGestures()
+        {
+            auto off=[&](const std::wstring& key){return std::find(disabledGestures.begin(),disabledGestures.end(),key)!=disabledGestures.end();};
+            const auto gestures=GeneratedMotion::IdleGestureList();
+            std::vector<bool> disabled(1+gestures.size()+builtinKeys.size(),false);
+            for(size_t i=0;i<gestures.size();++i)disabled[1+i]=off(gestures[i].first);
+            for(size_t i=0;i<builtinKeys.size();++i)disabled[1+gestures.size()+i]=off(L"clip:"+builtinKeys[i]);
+            motion.SetDisabledPicks(std::move(disabled));
         }
 
         // Starts built-in clip n over the standing pose, as a gesture.
@@ -1206,6 +1253,20 @@ namespace MikuMikuDesktopPerch
     void MascotModel::AddIdleClipFile(const std::wstring& path){ExtraClipFiles().push_back(path);}
 
     int MascotModel::IdleClipCount() const {return static_cast<int>(impl->builtinClips.size());}
+
+    std::vector<std::pair<std::wstring,std::wstring>> MascotModel::IdleGestureChoices()
+    {
+        auto list=GeneratedMotion::IdleGestureList();
+        for(const auto& e:BuiltinClipEntries())
+            list.push_back({L"clip:"+e.key,Fmt(T(L"モーション：{0}",L"Motion: {0}"),{T(e.japanese.c_str(),e.english.c_str())})});
+        return list;
+    }
+
+    void MascotModel::SetDisabledGestures(const std::vector<std::wstring>& keys)
+    {
+        impl->disabledGestures=keys;
+        impl->ApplyDisabledGestures();
+    }
     int MascotModel::IdleClipPlays() const {return impl->builtinPlays;}
 
     bool MascotModel::SetIdleMotions(const std::vector<std::wstring>& paths,std::wstring& error)
@@ -1238,6 +1299,8 @@ namespace MikuMikuDesktopPerch
             next->pmx.reset(context.model);
             if(!next->LoadIdle(idleMotionPaths,error))return false;
             next->LoadBuiltinClips();
+            next->disabledGestures=impl->disabledGestures;
+            next->ApplyDisabledGestures();
         }
         catch(const std::exception& e)
         {

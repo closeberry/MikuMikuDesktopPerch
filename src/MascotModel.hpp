@@ -103,6 +103,10 @@ namespace MikuMikuDesktopPerch
         // (--idle-clip) before the models load.
         static void AddIdleClipFile(const std::wstring& path);
         int IdleClipCount() const;
+        // Every gesture and built-in clip that can be picked while standing: key ("clip:<name>"
+        // for a clip) and label. SetDisabledGestures leaves out those keys (kept across Load).
+        static std::vector<std::pair<std::wstring,std::wstring>> IdleGestureChoices();
+        void SetDisabledGestures(const std::vector<std::wstring>& keys);
         int IdleClipPlays() const;   // how many have started (diagnostics)
         void SetPhysics(bool enabled);
         // The drawing rate, which physics keeps in step with (one frame period per Update).

@@ -31,16 +31,18 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
+        constexpr wchar_t GesturesClass[]=L"MikuMikuDesktopPerchGestures";
 
         struct State
         {
             HWND window=nullptr;
             HWND persona=nullptr;   // the persona dialog, while open
             HWND memory=nullptr;    // the memory dialog, while open
+            HWND gestures=nullptr;  // the gesture choice, while open
             HFONT font=nullptr;
             SettingsChoice choice;
             std::function<void(const SettingsChoice&)> onApply;
@@ -118,7 +120,8 @@ namespace MikuMikuDesktopPerch
             const CharacterSettings& own=state.choice.mascot;
             int y=10;
             Group(T(L"動き",L"Motion"),y,128);
-            CheckBox(IdAuto,T(L"おまかせ行動（ひとりで歩き回る）",L"Auto behavior (walks around on her own)"),28,y+22,400,s.autoBehavior);
+            CheckBox(IdAuto,T(L"おまかせ行動（ひとりで歩き回る）",L"Auto behavior (walks around on her own)"),28,y+22,270,s.autoBehavior);
+            Add(L"BUTTON",T(L"しぐさを選ぶ...",L"Gestures..."),BS_PUSHBUTTON|WS_TABSTOP,316,y+18,120,26,IdGestures);
             CheckBox(IdWindowMode,T(L"アクティブウィンドウに乗る",L"Ride on the active window"),28,y+46,400,s.windowMode);
             CheckBox(IdPhysics,T(L"物理演算（髪やスカートの揺れ）",L"Physics (hair and skirt sway)"),28,y+70,228,s.physics);
             Label(T(L"震え止め",L"Smoothing"),262,y+70,60);
@@ -448,6 +451,113 @@ namespace MikuMikuDesktopPerch
             SetFocus(GetDlgItem(p,IdPersonaName));
         }
 
+        // The gesture choice: a checked list of the gestures and built-in idle motions picked
+        // while standing. OK keeps it in state.choice.settings.disabledGestures (saved with the
+        // settings); keys not in the list (a motion no longer built in) stay as they were.
+        void CloseGestures()
+        {
+            if(!state.gestures)return;
+            EnableWindow(state.window,TRUE);
+            DestroyWindow(state.gestures);
+            state.gestures=nullptr;
+            SetForegroundWindow(state.window);
+        }
+
+        void CheckAllGestures(HWND hwnd,bool on)
+        {
+            HWND list=GetDlgItem(hwnd,IdGestureList);
+            const int count=static_cast<int>(SendMessageW(list,LVM_GETITEMCOUNT,0,0));
+            for(int i=0;i<count;++i)ListView_SetCheckState(list,i,on);
+        }
+
+        LRESULT CALLBACK GesturesProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
+        {
+            switch(message)
+            {
+            case WM_COMMAND:
+                switch(LOWORD(wParam))
+                {
+                case IDOK:
+                {
+                    HWND list=GetDlgItem(hwnd,IdGestureList);
+                    auto& disabled=state.choice.settings.disabledGestures;
+                    std::erase_if(disabled,[](const std::wstring& key){
+                        return std::any_of(state.choice.gestures.begin(),state.choice.gestures.end(),[&](const auto& g){return g.first==key;});});
+                    for(size_t i=0;i<state.choice.gestures.size();++i)
+                        if(!ListView_GetCheckState(list,static_cast<int>(i)))disabled.push_back(state.choice.gestures[i].first);
+                    CloseGestures();
+                    return 0;
+                }
+                case IDCANCEL:
+                    CloseGestures();
+                    return 0;
+                case IdGestureAll:
+                    CheckAllGestures(hwnd,true);
+                    return 0;
+                case IdGestureNone:
+                    CheckAllGestures(hwnd,false);
+                    return 0;
+                }
+                break;
+            case WM_CLOSE:
+                CloseGestures();
+                return 0;
+            }
+            return DefWindowProcW(hwnd,message,wParam,lParam);
+        }
+
+        void OpenGestures()
+        {
+            if(state.gestures){SetForegroundWindow(state.gestures);return;}
+            static bool registered=false;
+            const HINSTANCE instance=GetModuleHandleW(nullptr);
+            if(!registered)
+            {
+                WNDCLASSEXW wc{sizeof(wc)};
+                wc.lpfnWndProc=GesturesProc;
+                wc.hInstance=instance;
+                wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+                wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
+                wc.lpszClassName=GesturesClass;
+                if(!RegisterClassExW(&wc))return;
+                registered=true;
+            }
+            const DWORD style=WS_CAPTION|WS_SYSMENU;
+            const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
+            RECT frame{0,0,Px(360),Px(520)};
+            AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
+            RECT owner{};
+            GetWindowRect(state.window,&owner);
+            state.gestures=CreateWindowExW(exStyle,GesturesClass,T(L"待機中のしぐさ",L"Idle gestures"),style,owner.left+Px(50),owner.top+Px(40),
+                                           frame.right-frame.left,frame.bottom-frame.top,state.window,nullptr,instance,nullptr);
+            if(!state.gestures)return;
+            const HWND p=state.gestures;
+            AddTo(p,L"STATIC",T(L"立っているときに、チェックしたものの中からランダムに選びます。",L"While standing, she picks at random among the checked ones."),
+                  SS_LEFT,16,12,328,36);
+            HWND list=AddTo(p,WC_LISTVIEWW,L"",LVS_REPORT|LVS_NOCOLUMNHEADER|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_BORDER|WS_TABSTOP,16,50,328,404,IdGestureList);
+            ListView_SetExtendedListViewStyle(list,LVS_EX_CHECKBOXES|LVS_EX_FULLROWSELECT);
+            LVCOLUMNW column{LVCF_WIDTH};
+            column.cx=Px(300);
+            ListView_InsertColumn(list,0,&column);
+            const auto& disabled=state.choice.settings.disabledGestures;
+            for(size_t i=0;i<state.choice.gestures.size();++i)
+            {
+                LVITEMW item{LVIF_TEXT};
+                item.iItem=static_cast<int>(i);
+                item.pszText=const_cast<wchar_t*>(state.choice.gestures[i].second.c_str());
+                ListView_InsertItem(list,&item);
+                ListView_SetCheckState(list,static_cast<int>(i),std::find(disabled.begin(),disabled.end(),state.choice.gestures[i].first)==disabled.end());
+            }
+            AddTo(p,L"BUTTON",T(L"すべて選ぶ",L"All"),BS_PUSHBUTTON|WS_TABSTOP,16,470,80,28,IdGestureAll);
+            AddTo(p,L"BUTTON",T(L"すべて外す",L"None"),BS_PUSHBUTTON|WS_TABSTOP,102,470,80,28,IdGestureNone);
+            AddTo(p,L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,198,470,70,28,IDOK);
+            AddTo(p,L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,274,470,70,28,IDCANCEL);
+            EnableWindow(state.window,FALSE);
+            ShowWindow(p,SW_SHOWNORMAL);
+            SetForegroundWindow(p);
+            SetFocus(list);
+        }
+
         // The memory dialog: what the character has learnt about the user, newest last.
         // Deleting and adding take effect (and are saved) at once.
         void FillMemoryList()
@@ -722,6 +832,9 @@ namespace MikuMikuDesktopPerch
                 case IdVoiceSample:
                     PlayVoiceSample();
                     return 0;
+                case IdGestures:
+                    OpenGestures();
+                    return 0;
                 case IdUpdateNow:
                     if(state.onCheckUpdate)state.onCheckUpdate();
                     return 0;
@@ -752,6 +865,7 @@ namespace MikuMikuDesktopPerch
             case WM_DESTROY:
                 if(state.persona){DestroyWindow(state.persona);state.persona=nullptr;}
                 if(state.memory){DestroyWindow(state.memory);state.memory=nullptr;}
+                if(state.gestures){DestroyWindow(state.gestures);state.gestures=nullptr;}
                 state.window=nullptr;
                 if(state.font){DeleteObject(state.font);state.font=nullptr;}
                 state.onApply=nullptr;
@@ -792,7 +906,7 @@ namespace MikuMikuDesktopPerch
         state.onApply=std::move(onApply);
         state.onLight=std::move(onLight);
         state.onCheckUpdate=std::move(onCheckUpdate);
-        INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES};
+        INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES|ICC_LISTVIEW_CLASSES};
         InitCommonControlsEx(&controls);
         state.dpi=static_cast<int>(GetDpiForSystem());
         NONCLIENTMETRICSW metrics{sizeof(metrics)};
@@ -822,7 +936,7 @@ namespace MikuMikuDesktopPerch
         SetFocus(GetDlgItem(state.window,IdAuto));
     }
 
-    HWND SettingsWindowHandle(){return state.persona?state.persona:state.memory?state.memory:state.window;}
+    HWND SettingsWindowHandle(){return state.persona?state.persona:state.memory?state.memory:state.gestures?state.gestures:state.window;}
 
     void RefreshMemoryWindow(){FillMemoryList();}
 }

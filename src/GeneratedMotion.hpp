@@ -74,6 +74,11 @@ namespace MikuMikuDesktopPerch
         // Built-in idle clips (VMDs in the exe) are picked among the gestures: count of them,
         // and the one picked since last asked (-1: none), which the caller then plays.
         void SetClipCount(int count){clipCount=std::max(count,0);}
+        // Picks left out (1..GestureCount: gestures, then the clips); empty: none.
+        void SetDisabledPicks(std::vector<bool> disabled){disabledPicks=std::move(disabled);}
+        // The gestures picked while standing (not the click reactions): key and label, in
+        // the order of their numbers 1..GestureCount.
+        static std::vector<std::pair<std::wstring,std::wstring>> IdleGestureList();
         int TakeClipRequest(){const int c=clipRequest;clipRequest=-1;return c;}
         bool HeadBusy() const;
         // The current gesture shows a face morph (smile, wink): blinking on top over-deforms it.
@@ -225,6 +230,7 @@ namespace MikuMikuDesktopPerch
         // The last two picks: a gesture's number, or GestureCount+1+n for built-in clip n.
         std::array<int,2> recentGestures{0,0};
         int clipCount=0,clipRequest=-1;
+        std::vector<bool> disabledPicks;
         int gestureSide=0;                   // 0 left hand, 1 right
         double gestureTime=0,gestureLength=0,nextGestureAt=2;
         double frozenAt=-1;                  // diagnostics: hold the gesture at this time

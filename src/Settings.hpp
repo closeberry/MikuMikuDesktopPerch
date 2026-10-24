@@ -67,6 +67,9 @@ namespace MikuMikuDesktopPerch
         int chatterMinutes=45;
         int banterMinutes=30;
         bool updateCheck=true;      // look for a newer release on GitHub now and then
+        // Idle gestures and built-in idle motions left out of the standing pose's picks, by
+        // key (hip, wave, ..., clip:<name>); everything else is used, new ones included.
+        std::vector<std::wstring> disabledGestures;
         // Like a secretary: today's reminders and to-dos told in the morning; a break suggested
         // after so many minutes at the computer without one (0: never); focus mode's work and
         // break lengths (minutes; every fourth break is three times as long).

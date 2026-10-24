@@ -18,6 +18,9 @@ namespace MikuMikuDesktopPerch
         // Its model's memory: the memory window edits it (and saves it) directly,
         // since notes keep arriving from conversations while the settings are open.
         CharacterMemory* memory=nullptr;
+        // The gestures and built-in idle motions to choose from (key, label); the choice is
+        // settings.disabledGestures.
+        std::vector<std::pair<std::wstring,std::wstring>> gestures;
     };
 
     // Open the settings window (or bring it forward if open) over owner, filled from current.

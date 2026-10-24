@@ -318,6 +318,7 @@ namespace
     {
         m.model.SetProcedural(app.settings.blink,app.settings.breath,app.settings.lookAtMouse);
         m.model.SetPhysicsFilter(app.settings.physicsFilter);
+        m.model.SetDisabledGestures(app.settings.disabledGestures);
         m.renderer.SetSelfShadow(app.settings.selfShadow);
         m.renderer.SetLight(static_cast<float>(app.settings.lightAzimuth),static_cast<float>(app.settings.lightElevation));
     }
@@ -1399,6 +1400,11 @@ namespace
         }
         if(s.updateCheck&&!current.updateCheck)app.nextUpdateCheck=app.clock+5;
         current.updateCheck=s.updateCheck;
+        if(s.disabledGestures!=current.disabledGestures)
+        {
+            current.disabledGestures=s.disabledGestures;
+            for(const auto& each:app.mascots)each->model.SetDisabledGestures(current.disabledGestures);
+        }
         current.morningSummary=s.morningSummary;
         current.restMinutes=s.restMinutes;
         // Focus mode's lengths take effect from its next turn.
@@ -3209,7 +3215,7 @@ namespace
             }
             break;
         case IdSettings:
-            ShowSettingsWindow(m.hwnd,{app.settings,StartupRegistered(),Own(m),m.character,&m.memory},
+            ShowSettingsWindow(m.hwnd,{app.settings,StartupRegistered(),Own(m),m.character,&m.memory,MascotModel::IdleGestureChoices()},
                                [&m](const SettingsChoice& choice){ApplySettings(m,choice);},
                                [](int azimuth,int elevation){
                                    for(const auto& each:app.mascots)each->renderer.SetLight(static_cast<float>(azimuth),static_cast<float>(elevation));},
@@ -3620,6 +3626,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     // --clearance: step the gesture through its timeline (0.1 s a frame after 40 frames) and
     // write how close the forearms and hands come to the body at each step.
     bool snapshotClearance=false;
+    std::wstring snapshotOnlyGestures;   // --only-gestures a,b,...: leave every other gesture out
     std::vector<std::array<float,3>> clearance;
     std::vector<std::array<std::wstring,2>> clearanceBones;
     bool snapshotDoze=false;         // --doze: doze off from the start
@@ -3661,6 +3668,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--idle-clip"&&i+1<argc)
             {
                 MascotModel::AddIdleClipFile(argv[++i]);   // tried as a built-in idle clip (clip<n> after the embedded ones)
+            }
+            else if(arg==L"--only-gestures"&&i+1<argc)
+            {
+                snapshotOnlyGestures=argv[++i];
             }
             else if(arg==L"--clearance")
             {
@@ -3898,6 +3909,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(!snapshotModel.empty())app.settings.characters[0].modelPath=snapshotModel;
         if(snapshotFps)app.settings.fps=*snapshotFps;
         if(snapshotClearance)app.settings.physics=false;   // the same body every run, to compare
+        if(!snapshotOnlyGestures.empty())
+        {
+            app.settings.disabledGestures.clear();
+            const std::wstring only=L","+snapshotOnlyGestures+L",";
+            for(const auto& [key,label]:MascotModel::IdleGestureChoices())
+                if(only.find(L","+key+L",")==std::wstring::npos)app.settings.disabledGestures.push_back(key);
+        }
         if(snapshotBlur)app.settings.motionBlur=*snapshotBlur;
         if(snapshotIterations)app.settings.physicsIterations=*snapshotIterations;
         if(snapshotFilter)app.settings.physicsFilter=*snapshotFilter;
@@ -4213,6 +4231,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                          Own(m).modelPath.c_str(),rest[0],rest[1],fix[0],fix[1],m.windowSize.cx,m.windowSize.cy);
                 fwprintf(info,L"%s",m.model.DescribeRig().c_str());
                 fwprintf(info,L"idle clips=%d played=%d\n",m.model.IdleClipCount(),m.model.IdleClipPlays());
+                for(const auto& [key,label]:MascotModel::IdleGestureChoices())
+                    if(key.rfind(L"clip:",0)==0)fwprintf(info,L"%s = %s\n",key.c_str(),label.c_str());
                 for(size_t i=0;i<clearance.size();++i)
                     fwprintf(info,L"clearance %.1f %.3f %.3f %s %s\n",clearance[i][0],clearance[i][1],clearance[i][2],
                              clearanceBones[i][0].c_str(),clearanceBones[i][1].c_str());
