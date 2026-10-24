@@ -1198,10 +1198,20 @@ namespace MikuMikuDesktopPerch
             gestureWeight=0;
             if(clock<nextGestureAt)return;
             if(reaction!=Gesture::None){nextGestureAt=clock+1.5;return;}
-            Gesture next;
-            do next=static_cast<Gesture>(1+static_cast<int>(Random01()*GestureCount)%GestureCount);
-            while(next==recentGestures[0]||next==recentGestures[1]);
-            recentGestures={next,recentGestures[0]};
+            // A built-in clip counts as one gesture more; it is played by the caller (over this
+            // layer, as the opened motion is), so no gesture here meanwhile.
+            const int choices=GestureCount+clipCount;
+            int pick;
+            do pick=1+static_cast<int>(Random01()*choices)%choices;
+            while((pick==recentGestures[0]||pick==recentGestures[1])&&choices>2);
+            recentGestures={pick,recentGestures[0]};
+            if(pick>GestureCount)
+            {
+                clipRequest=pick-GestureCount-1;
+                nextGestureAt=clock+1.5+Random01();
+                return;
+            }
+            const Gesture next=static_cast<Gesture>(pick);
             gesture=next;
             gestureSide=Random01()<0.5f?0:1;
             gestureTime=0;

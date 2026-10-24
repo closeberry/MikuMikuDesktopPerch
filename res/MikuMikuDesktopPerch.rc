@@ -31,3 +31,7 @@ BEGIN
         VALUE "Translation", 0x411, 1200
     END
 END
+
+// Built-in idle clips: VMD motions played now and then among the gestures of the standing
+// pose. One line each, a name and the file under res\idle (credit the author in README):
+//   Stroll IDLECLIP "idle\\stroll.vmd"

@@ -118,6 +118,7 @@ VMDを使わず、プログラムで生成する動きです。作法は [docs/M
 - **つままれる**：体を左ドラッグすると持ち上がり、脚がぶら下がって動きに遅れて揺れます。離すと落下して地面に着地し、ひざで衝撃を吸収します。持ち上げ中と落下中は、ウィンドウの加速度を物理演算に慣性として与えるので、落下中は髪やスカートがふわっと浮きます
 - **物理演算のリセット**：物理演算を止め、髪やスカートのボーンを今の形から元の形へ0.5秒かけてなめらかに戻し、剛体をその位置に置き直してから物理演算を再開します。立ち止まっている間、スカートや髪が普段の位置より大きく上に上がったまま（捲れたまま）1秒続いたときに自動で行います（6秒に1回まで。垂れ下がるのは普通なので、上向きのずれだけを見ます）。ワープのときと、座る・ぶら下がるから戻って床の下に剛体が残ったときにも行います
 - **おまかせ行動**：設定で有効にすると、15〜40秒ごとに、近くへ歩くかどうかを自分で決めます
+- **組み込みの待機モーション**：exeに埋め込んだVMDを、待機中のしぐさの一つとして、ほかのしぐさと同じようにランダムに選んで再生します（立ちポーズから0.7秒かけて入り、終わると0.7秒かけて戻ります）。待機モーションを設定しているときは使いません。歩き出したり持ち上げられたりすると、すぐに戻ります。いまはまだ組み込まれたものはありません（作者は下の「組み込みの待機モーションの作者」に記載します）
 - 座る・ぶら下がるにはグルーブボーンが必要です
 
 ## アクティブウィンドウモード
@@ -209,7 +210,7 @@ MikuMikuDesktopPerch.exe --snapshot out.png [frames]
 
 指定したフレーム数（既定は60）を描画したあと、最後のフレームを `out.png`（premultiplied BGRA）に保存して終了します。
 `--look <x> <y>` を付けると、視線追従用のカーソル位置をクライアント座標で固定できます。
-`--model <pmx>` で別のモデルを、`--scale <percent>` で大きさを指定できます。`--rest-pose sit|hang` でウィンドウ上の休憩ポーズを固定でき、`--walk <px>` で起動3秒後にその距離だけ歩かせられ（右が正）、`--click head|body` で起動1.5秒後に頭／体をクリックしたときの反応をさせられ、`--play-motion` で設定のモーションを起動直後に再生でき、`--gesture hip|wave|peace|behind|palm|folded|stretch|look|tilt|stand|hair|yawn|think|hum|clap|far|cheeks|dangle|swing|shake|wrist|fingers|shoulders|shrug|sigh|back|down|up|glance|neck|nod|drowse|sway|twist|peek|bounce|tap|pat|surprised|curious|shynod` で待機中のしぐさ（後ろの4つはクリックの反応）を固定でき（`stretch@3.5` のように秒数を付けると、動きのあるしぐさをその時点で止めて撮れます）、環境変数 `MIKUMIKUDESKTOPPERCH_LOG` にファイル名を設定すると行動の判断過程を書き出します。`--clearance` を `--gesture` と一緒に付けると、しぐさを0.1秒ずつ進めながら、前腕と手が体（髪と腕を除く頂点）にいちばん近づく距離と、その頂点のボーンを `out.png.txt` に書き出します（物理演算は切り、環境変数 `MIKUMIKUDESKTOPPERCH_SEED` に数を入れると重心移動などの乱数が毎回同じになるので、立ちポーズと比べられます）。`--activity walk|run|jump|sit|lie|hang|grab|fall` を付けると、その生成モーションを固定したまま撮影し、`--view-yaw <度>` でカメラを回り込ませて横から撮れます。診断用の起動では設定ファイル（ini）を書き換えず、同じ場所に `out.png.txt`（腕の角度、補正量、ウィンドウサイズ、エラー内容）を書き出します。
+`--model <pmx>` で別のモデルを、`--scale <percent>` で大きさを指定できます。`--rest-pose sit|hang` でウィンドウ上の休憩ポーズを固定でき、`--walk <px>` で起動3秒後にその距離だけ歩かせられ（右が正）、`--click head|body` で起動1.5秒後に頭／体をクリックしたときの反応をさせられ、`--play-motion` で設定のモーションを起動直後に再生でき、`--gesture hip|wave|peace|behind|palm|folded|stretch|look|tilt|stand|hair|yawn|think|hum|clap|far|cheeks|dangle|swing|shake|wrist|fingers|shoulders|shrug|sigh|back|down|up|glance|neck|nod|drowse|sway|twist|peek|bounce|tap|pat|surprised|curious|shynod` で待機中のしぐさ（後ろの4つはクリックの反応）を固定でき（`stretch@3.5` のように秒数を付けると、動きのあるしぐさをその時点で止めて撮れます）、環境変数 `MIKUMIKUDESKTOPPERCH_LOG` にファイル名を設定すると行動の判断過程を書き出します。`--clearance` を `--gesture` と一緒に付けると、しぐさを0.1秒ずつ進めながら、前腕と手が体（髪と腕を除く頂点）にいちばん近づく距離と、その頂点のボーンを `out.png.txt` に書き出します（物理演算は切り、環境変数 `MIKUMIKUDESKTOPPERCH_SEED` に数を入れると重心移動などの乱数が毎回同じになるので、立ちポーズと比べられます）。`--idle-clip <vmd>` を付けると、そのVMDを組み込みの待機モーションに加えて試せます（`--gesture clip0@5` のように番号と秒数で、その時点の姿勢を撮れます。番号は埋め込みのものの後に続きます。`--clearance` とも使えます）。`--activity walk|run|jump|sit|lie|hang|grab|fall` を付けると、その生成モーションを固定したまま撮影し、`--view-yaw <度>` でカメラを回り込ませて横から撮れます。診断用の起動では設定ファイル（ini）を書き換えず、同じ場所に `out.png.txt`（腕の角度、補正量、ウィンドウサイズ、エラー内容）を書き出します。
 `--calendar-test <in.ics> <out.txt>` で、iCalファイルにある今日から3日分の予定を、Googleカレンダーから読み込んだときと同じように書き出します。
 `--plan-test <in.txt> <out.txt>` で、in.txt（UTF-8）の1行ずつを、タイマー・リマインダー・やることの頼みとしてどう読み取るかを書き出します（行の先頭に `~` を付けると、一覧の画面で追加するときの読み方になります）。
 `--banter` で起動の5秒後にキャラクター同士のおしゃべりを始め、`--pretend-version <バージョン>` でこのexeをそのバージョンとみなして更新の確認から更新までを試せ（すぐに確認します）、`--reading <文> <out.txt>` で口パクに使う読みを書き出せます。
@@ -243,6 +244,17 @@ MikuMikuDesktopPerch.exe --check-list <list.txt> <out.tsv>
 - `res/`：アイコン（`MikuMikuDesktopPerch.ico`）とバージョン情報
 - `src/MascotRenderer.*`：D3D12の描画。GPUスキニング（BDEF1/2/4、SDEF。QDEFはBDEF4として扱います）、MMD標準に近いトゥーン・スフィア・輪郭線・セルフシャドウ（光の方向から見た深度のシャドウマップ。2048×2048、材質の「セルフ影マップ」「セルフ影」の指定に従い、影の部分はトゥーンの暗い色に。MMDと同じく、トゥーンのない材質には影を付けません）
 - `src/TextureLoader.*`：WIC（bmp/png/jpgなど）とTGAの読み込み、CPUでのミップマップ生成
+
+### 待機モーションを組み込むには
+
+1. VMDを `res\idle\` に置きます（標準のボーン名だけを使い、最初と最後は自然な立ち姿に近く、足の位置は動かさないか最後に戻したものが向いています）
+2. `res\MikuMikuDesktopPerch.rc` の末尾に `名前 IDLECLIP "idle\\ファイル名.vmd"` の1行を加えてビルドします
+3. 何体かのモデルで `--idle-clip` と `--clearance` を使い、手が体にめり込まないか確かめます
+4. 下の「組み込みの待機モーションの作者」に作者を加えます
+
+## 組み込みの待機モーションの作者
+
+（まだありません）
 
 ## 作者・連絡先
 

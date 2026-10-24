@@ -3658,6 +3658,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 snapshotGesture=argv[++i];
             }
+            else if(arg==L"--idle-clip"&&i+1<argc)
+            {
+                MascotModel::AddIdleClipFile(argv[++i]);   // tried as a built-in idle clip (clip<n> after the embedded ones)
+            }
             else if(arg==L"--clearance")
             {
                 snapshotClearance=true;
@@ -4208,6 +4212,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 fwprintf(info,L"model=%s\narmRest L=%.1f R=%.1f\narmCorrection L=%.1f R=%.1f\nwindow=%dx%d\n",
                          Own(m).modelPath.c_str(),rest[0],rest[1],fix[0],fix[1],m.windowSize.cx,m.windowSize.cy);
                 fwprintf(info,L"%s",m.model.DescribeRig().c_str());
+                fwprintf(info,L"idle clips=%d played=%d\n",m.model.IdleClipCount(),m.model.IdleClipPlays());
                 for(size_t i=0;i<clearance.size();++i)
                     fwprintf(info,L"clearance %.1f %.3f %.3f %s %s\n",clearance[i][0],clearance[i][1],clearance[i][2],
                              clearanceBones[i][0].c_str(),clearanceBones[i][1].c_str());

@@ -167,6 +167,47 @@ namespace MikuMikuDesktopPerch
         std::array<float,3> ToArray(const DirectX::XMFLOAT3& v){return {v.x,v.y,v.z};}
 
         constexpr double ResetBlendSeconds=0.5;   // ease of the simulated bones in a physics reset
+
+        // Built-in idle clips: the exe's resources of type IDLECLIP, written once to files under
+        // %TEMP% (the VMD loader reads files), then any VMD files diagnostics added.
+        std::vector<std::wstring>& ExtraClipFiles(){static std::vector<std::wstring> files;return files;}
+        std::vector<std::wstring> BuiltinClipFiles()
+        {
+            static const std::vector<std::wstring> embedded=[]{
+                std::vector<std::wstring> files;
+                wchar_t temp[MAX_PATH]{};
+                if(!GetTempPathW(MAX_PATH,temp))return files;
+                const std::filesystem::path dir=std::filesystem::path(temp)/L"MikuMikuDesktopPerch"/L"idle";
+                std::error_code ignored;
+                std::filesystem::create_directories(dir,ignored);
+                struct Found {std::filesystem::path dir;std::vector<std::wstring>* files;} found{dir,&files};
+                EnumResourceNamesW(nullptr,L"IDLECLIP",[](HMODULE module,LPCWSTR type,LPWSTR name,LONG_PTR param)->BOOL{
+                    auto& f=*reinterpret_cast<Found*>(param);
+                    const std::wstring id=IS_INTRESOURCE(name)?std::to_wstring(reinterpret_cast<ULONG_PTR>(name)):std::wstring(name);
+                    const HRSRC info=FindResourceW(module,name,type);
+                    const HGLOBAL data=info?LoadResource(module,info):nullptr;
+                    const void* bytes=data?LockResource(data):nullptr;
+                    const DWORD size=info?SizeofResource(module,info):0;
+                    if(!bytes||!size)return TRUE;
+                    const std::filesystem::path file=f.dir/(id+L".vmd");
+                    std::error_code error;
+                    if(std::filesystem::file_size(file,error)!=size||error)
+                    {
+                        FILE* out=nullptr;
+                        if(_wfopen_s(&out,file.c_str(),L"wb")!=0||!out)return TRUE;
+                        const bool written=fwrite(bytes,1,size,out)==size;
+                        fclose(out);
+                        if(!written)return TRUE;
+                    }
+                    f.files->push_back(file.wstring());
+                    return TRUE;
+                },reinterpret_cast<LONG_PTR>(&found));
+                return files;
+            }();
+            std::vector<std::wstring> files=embedded;
+            files.insert(files.end(),ExtraClipFiles().begin(),ExtraClipFiles().end());
+            return files;
+        }
     }
 
     struct MascotModel::Impl
@@ -395,6 +436,11 @@ namespace MikuMikuDesktopPerch
         double shotFrame=0;
         float shotWeight=0;
         bool shotActive=false,shotEnding=false,shotIsClick=false;
+        // A built-in idle clip playing as a gesture (not the user's opened motion), and the
+        // frame it is held at for diagnostics (-1: playing).
+        bool shotIsGesture=false;
+        double shotFrozen=-1;
+        int builtinPlays=0;   // how many built-in clips started (diagnostics)
 
         // A motion with a sampler of its own (no physics).
         struct Clip
@@ -496,6 +542,34 @@ namespace MikuMikuDesktopPerch
         PMX::Pose idlePose,idlePreviousPose;
         std::mt19937 idleRandom{std::random_device{}()};
 
+        // The built-in idle clips (see BuiltinClipFiles); one that fails to load is left out.
+        std::vector<Clip> builtinClips;
+        void LoadBuiltinClips()
+        {
+            builtinClips.clear();
+            for(const auto& path:BuiltinClipFiles())
+            {
+                std::vector<Clip> one;
+                if(std::wstring ignored;LoadClips({path},one,L"",ignored))builtinClips.push_back(std::move(one.front()));
+            }
+        }
+
+        // Starts built-in clip n over the standing pose, as a gesture.
+        void PlayBuiltinClip(int n,double frozenAt=-1)
+        {
+            if(n<0||n>=static_cast<int>(builtinClips.size()))return;
+            shotSource=builtinClips[n].sampler.get();
+            shotLast=builtinClips[n].vmd->lastFrame;
+            shotIsClick=false;
+            shotIsGesture=true;
+            ++builtinPlays;
+            shotFrame=0;
+            shotFrozen=frozenAt<0?-1:frozenAt*30.0;
+            if(shotFrozen>=0)shotWeight=1;
+            shotEnding=false;
+            shotActive=true;
+        }
+
         bool LoadIdle(const std::vector<std::wstring>& paths,std::wstring& error)
         {
             std::vector<Clip> clips;
@@ -590,8 +664,10 @@ namespace MikuMikuDesktopPerch
         void ApplyShot(double dt)
         {
             using namespace DirectX;
-            constexpr double FadeIn=0.3,FadeOut=0.45;
-            if(!shotEnding)
+            // A built-in clip eases in and out like a gesture.
+            const double FadeIn=shotIsGesture?0.7:0.3,FadeOut=shotIsGesture?0.7:0.45;
+            if(shotFrozen>=0){shotFrame=std::min(shotFrozen,static_cast<double>(shotLast));shotWeight=1;}
+            else if(!shotEnding)
             {
                 shotFrame+=dt*30.0;
                 if(shotFrame>=shotLast){shotFrame=shotLast;shotEnding=true;}
@@ -601,6 +677,7 @@ namespace MikuMikuDesktopPerch
             {
                 shotWeight=0;
                 shotActive=false;
+                shotIsGesture=false;
                 return;
             }
             shotSource->HiPose(shotPose,static_cast<float>(shotFrame),false,false);
@@ -1010,7 +1087,7 @@ namespace MikuMikuDesktopPerch
     bool MascotModel::SetMotion(const std::wstring& path,std::wstring& error)
     {
         auto& m=*impl;
-        if(!m.shotIsClick){m.shotActive=false;m.shotWeight=0;}
+        if(!m.shotIsClick){m.shotActive=false;m.shotWeight=0;m.shotIsGesture=false;}
         m.shotSampler.reset();
         m.shotVmd.reset();
         if(path.empty()||!m.pmx)return true;
@@ -1043,13 +1120,15 @@ namespace MikuMikuDesktopPerch
         m.shotSource=m.shotSampler.get();
         m.shotLast=m.shotVmd->lastFrame;
         m.shotIsClick=false;
+        m.shotIsGesture=false;
+        m.shotFrozen=-1;
         m.shotFrame=0;
         m.shotEnding=false;
         m.shotActive=true;
     }
 
     void MascotModel::StopMotion(){if(impl->shotActive)impl->shotEnding=true;}
-    bool MascotModel::MotionPlaying() const {return impl->shotActive&&!impl->shotIsClick;}
+    bool MascotModel::MotionPlaying() const {return impl->shotActive&&!impl->shotIsClick&&!impl->shotIsGesture;}
 
     bool MascotModel::SetClickMotions(const std::vector<std::wstring>& paths,std::wstring& error)
     {
@@ -1097,6 +1176,8 @@ namespace MikuMikuDesktopPerch
             m.shotSource=m.clickClips[pick].sampler.get();
             m.shotLast=m.clickClips[pick].vmd->lastFrame;
             m.shotIsClick=true;
+            m.shotIsGesture=false;
+            m.shotFrozen=-1;
             m.shotFrame=0;
             m.shotEnding=false;
             m.shotActive=true;
@@ -1108,8 +1189,24 @@ namespace MikuMikuDesktopPerch
     bool MascotModel::IdleMotionAtBreak() const {return impl->IdleAtBreak();}
 
     bool MascotModel::Reacting() const {return impl->motion.Reacting()||(impl->shotActive&&impl->shotIsClick);}
-    bool MascotModel::HeadBusy() const {return impl->motion.HeadBusy();}
-    bool MascotModel::ForceGesture(const std::wstring& name){return impl->motion.ForceGesture(name);}
+    bool MascotModel::HeadBusy() const {return impl->motion.HeadBusy()||(impl->shotActive&&impl->shotIsGesture);}
+    bool MascotModel::ForceGesture(const std::wstring& name)
+    {
+        if(name.rfind(L"clip",0)==0)
+        {
+            const auto at=name.find(L'@');
+            const int n=_wtoi(name.substr(4,at==std::wstring::npos?std::wstring::npos:at-4).c_str());
+            if(n<0||n>=static_cast<int>(impl->builtinClips.size()))return false;
+            impl->PlayBuiltinClip(n,at==std::wstring::npos?-1:_wtof(name.substr(at+1).c_str()));
+            return true;
+        }
+        return impl->motion.ForceGesture(name);
+    }
+
+    void MascotModel::AddIdleClipFile(const std::wstring& path){ExtraClipFiles().push_back(path);}
+
+    int MascotModel::IdleClipCount() const {return static_cast<int>(impl->builtinClips.size());}
+    int MascotModel::IdleClipPlays() const {return impl->builtinPlays;}
 
     bool MascotModel::SetIdleMotions(const std::vector<std::wstring>& paths,std::wstring& error)
     {
@@ -1140,6 +1237,7 @@ namespace MikuMikuDesktopPerch
             }
             next->pmx.reset(context.model);
             if(!next->LoadIdle(idleMotionPaths,error))return false;
+            next->LoadBuiltinClips();
         }
         catch(const std::exception& e)
         {
@@ -1649,7 +1747,13 @@ namespace MikuMikuDesktopPerch
         m.SampleGait(m.solver->solvedPose,dt);
         m.motion.SetGeneratedIdle(m.idleClips.empty());
         m.motion.SetGesturesAllowed(!m.shotActive);
+        m.motion.SetClipCount(static_cast<int>(m.builtinClips.size()));
         m.motion.Apply(m.solver->solvedPose,dt);
+        // A built-in clip the gestures picked starts over the standing pose; it lets go as soon
+        // as she stops standing there (walks, is picked up, ...) or an idle motion is set.
+        if(const int clip=m.motion.TakeClipRequest();clip>=0&&!m.shotActive&&m.motion.CurrentActivity()==Activity::Idle&&m.idleClips.empty())
+            m.PlayBuiltinClip(clip);
+        if(m.shotActive&&m.shotIsGesture&&m.shotFrozen<0&&(m.motion.CurrentActivity()!=Activity::Idle||!m.idleClips.empty()))m.shotEnding=true;
         // The opened motion goes over everything the motion layer made, standing pose included.
         if(m.shotActive)m.ApplyShot(dt);   // authored in the A-stance frame, so before correction
         m.ApplyArmCorrection(m.solver->solvedPose);

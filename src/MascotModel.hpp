@@ -96,7 +96,14 @@ namespace MikuMikuDesktopPerch
         bool MotionPlaying() const; // true until fully blended out
         // A gesture of the generated standing pose leads the head (look-at should pause).
         bool HeadBusy() const;
-        bool ForceGesture(const std::wstring& name);   // diagnostics
+        // diagnostics; "clip<n>" (or "clip<n>@seconds", frozen there) plays built-in clip n
+        bool ForceGesture(const std::wstring& name);
+        // Built-in idle clips: VMDs in the exe (resources of type IDLECLIP), played now and then
+        // among the gestures of the generated standing pose. Diagnostics can add VMD files
+        // (--idle-clip) before the models load.
+        static void AddIdleClipFile(const std::wstring& path);
+        int IdleClipCount() const;
+        int IdleClipPlays() const;   // how many have started (diagnostics)
         void SetPhysics(bool enabled);
         // The drawing rate, which physics keeps in step with (one frame period per Update).
         void SetFrameRate(int fps);
