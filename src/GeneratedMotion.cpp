@@ -277,6 +277,9 @@ namespace MikuMikuDesktopPerch
                 body.push_back(v.position);
             }
             const float L=rig.legLength;
+            // Kept (a few thousand of them) to keep hands out of the body in gestures.
+            const size_t step=std::max<size_t>(1,body.size()/6000);
+            for(size_t i=0;i<body.size();i+=step)rig.body.push_back(body[i]);
             for(int side=0;side<2;++side)
             {
                 rig.hangDegrees[side]=HangAngle/Deg;
@@ -441,8 +444,45 @@ namespace MikuMikuDesktopPerch
         SetRotation(keys,rig.elbow[side],Rotation(rig.elbowBendAxis[side],bendAngle));
     }
 
-    void GeneratedMotion::ReachArm(std::vector<Key>& keys,int side,FXMVECTOR wrist,FXMVECTOR pole,float shoulderAmount)
+    float GeneratedMotion::IntoBody(FXMVECTOR point,float margin) const
     {
+        const float L=rig.legLength,x=XMVectorGetX(point),y=XMVectorGetY(point),z=XMVectorGetZ(point);
+        // The body's front at that point: the most forward of its surface around it.
+        float front=1e9f;
+        for(const XMFLOAT3& b:rig.body)
+            if(std::abs(b.x-x)<0.035f*L&&std::abs(b.y-y)<0.035f*L&&b.z<front)front=b.z;
+        if(front>=1e8f)return 0.0f;
+        // Only what is in front of the body's back half counts (an arm behind the back is not in it).
+        return std::max(0.0f,z-(front-margin));
+    }
+
+    void GeneratedMotion::ReachArm(std::vector<Key>& keys,int side,FXMVECTOR wristTarget,FXMVECTOR pole,float shoulderAmount,bool clear)
+    {
+        // Kept clear of the body: the forearm (and the hand beyond the wrist) is checked against
+        // the body's front, and the wrist moved forward by the most any of it is in; twice, as
+        // moving the wrist moves the elbow too.
+        XMVECTOR wrist=wristTarget;
+        if(clear&&!rig.body.empty())
+            for(int pass=0;pass<2;++pass)
+            {
+                std::vector<Key> trial=keys;
+                XMVECTOR elbow=XMVectorZero(),reached=wrist;
+                ReachArm(trial,side,wrist,pole,shoulderAmount,false);
+                // Where the elbow went: from the arm's key and the shoulder's.
+                {
+                    const XMVECTOR sh=rig.shoulder[side]>=0&&slot[rig.shoulder[side]]>=0?XMLoadFloat4(&trial[slot[rig.shoulder[side]]].rotation):XMQuaternionIdentity();
+                    const XMVECTOR arm=XMQuaternionMultiply(XMLoadFloat4(&trial[slot[rig.arm[side]]].rotation),sh);
+                    XMVECTOR root=XMLoadFloat3(&rig.shoulderPos[side]);
+                    if(rig.shoulder[side]>=0){const XMVECTOR pivot=XMLoadFloat3(&rig.claviclePos[side]);root=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(root,pivot),sh));}
+                    elbow=XMVectorAdd(root,XMVector3Rotate(XMVectorScale(XMLoadFloat3(&rig.armRestDir[side]),rig.upperArm),arm));
+                }
+                const XMVECTOR along=XMVectorSubtract(reached,elbow);
+                float push=0;
+                for(float f=0.3f;f<=1.45f;f+=0.15f)
+                    push=std::max(push,IntoBody(XMVectorAdd(elbow,XMVectorScale(along,f)),0.045f*rig.legLength));
+                if(push<=0.002f*rig.legLength)break;
+                wrist=XMVectorSubtract(wrist,XMVectorSet(0,0,push,0));
+            }
         const float a=rig.upperArm,b=rig.forearm;
         // Two-bone IK from the arm's root: the elbow, and where the wrist gets to.
         auto solve=[&](FXMVECTOR root,XMVECTOR& elbow,XMVECTOR& reached){
@@ -754,7 +794,7 @@ namespace MikuMikuDesktopPerch
             // the head tilted and turned a little up.
             ReachArm(g,s,withHead(XMVectorSet(out*0.03f*L,rig.headY-0.10f*L,faceZ-0.12f*L,0),5.0f*Deg,out*8.0f*Deg),XMVectorSet(out*0.3f,-1,0,0),0.5f);
             CurlFingers(g,s,{0.5f,0.6f,0.8f,0.8f});
-            ReachArm(g,1-s,XMVectorSet(out*0.10f*L,S.y-0.34f*L,S.z-0.22f*L,0),XMVectorSet(-out*0.6f,-1,0.4f,0));
+            ReachArm(g,1-s,XMVectorSet(out*0.10f*L,S.y-0.34f*L,S.z-0.22f*L,0),XMVectorSet(-out*0.6f,-1,0.4f,0),1.0f,true);
             CurlFingers(g,1-s,{0.3f,0.3f,0.35f,0.35f});
             neck(5.0f*Deg,out*8.0f*Deg,-out*9.0f*Deg+out*3.0f*Deg*std::sin(XM_2PI*a/3.0f));
             break;

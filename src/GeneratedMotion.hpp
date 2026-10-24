@@ -124,6 +124,9 @@ namespace MikuMikuDesktopPerch
             std::array<DirectX::XMFLOAT3,2> elbowTwistAxis{},armTwistAxis{};  // local X of ひじ, axis of 腕捩
             std::array<float,2> armLower{};    // roll that brings the rest-pose arm down to hang naturally
             std::array<float,2> hangDegrees{};  // how far below horizontal that is (see Setup)
+            // The body's surface at rest (some of its vertices; hair and arms aside), for keeping
+            // a hand or forearm out of it.
+            std::vector<DirectX::XMFLOAT3> body;
             std::array<float,2> armRaise{};    // roll that points the rest-pose arm straight up
             DirectX::XMFLOAT3 lowerPivot{};    // 下半身 rest position (the body's roll pivot)
             float shoulderY=14,armReach=6;     // shoulder height and shoulder-to-fingertip length
@@ -164,7 +167,12 @@ namespace MikuMikuDesktopPerch
         DirectX::XMVECTOR ShoulderTurn(int side,DirectX::FXMVECTOR elbow,float amount=1.0f) const;
         // Put the wrist at a point, with the elbow toward pole (two-bone IK from the shoulder,
         // which follows the arm; shoulder scales how much, 1 as MotionTraceEditor).
-        void ReachArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR wrist,DirectX::FXMVECTOR pole,float shoulder=1.0f);
+        // clear: the forearm and hand are kept in front of the body (the wrist is moved forward
+        // as far as needed).
+        void ReachArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR wrist,DirectX::FXMVECTOR pole,float shoulder=1.0f,bool clear=false);
+        // How far forward (toward -Z) a point must go to be margin in front of the body's
+        // surface (0 when it already is, or nothing of the body is there).
+        float IntoBody(DirectX::FXMVECTOR point,float margin) const;
         // Curl each finger but the thumb (0 straight .. 1 fully curled), index to little.
         void CurlFingers(std::vector<Key>& keys,int side,std::array<float,4> amount);
         void Gestures(std::vector<Key>& keys,double dt);
