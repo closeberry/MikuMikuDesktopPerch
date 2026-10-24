@@ -7,7 +7,7 @@
 namespace MikuMikuDesktopPerch
 {
     // What the settings window edits: the settings file's values, plus starting with Windows
-    // (kept in the registry, not in the file). The size, the voice, the persona and the memory
+    // (kept in the registry, not in the file). The voice, the persona and the memory
     // are those of one character on the desktop (the one whose menu opened the window).
     struct SettingsChoice
     {

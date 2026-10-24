@@ -82,7 +82,6 @@ namespace MikuMikuDesktopPerch
             c.clickMotionPaths=ReadList(path,L"ClickMotion",section);
             c.walkMotionPath=ReadString(path,L"WalkMotion",c.walkMotionPath,section);
             c.runMotionPath=ReadString(path,L"RunMotion",c.runMotionPath,section);
-            c.scale=std::clamp(ReadInt(path,L"Scale",c.scale,section),Settings::MinScale,Settings::MaxScale);
             c.x=ReadInt(path,L"X",c.x,section);
             c.voiceSpeaker=ReadInt(path,L"VoiceSpeaker",c.voiceSpeaker,section);
             c.voiceName=ReadString(path,L"VoiceName",c.voiceName,section);
@@ -96,7 +95,6 @@ namespace MikuMikuDesktopPerch
             WriteList(path,L"ClickMotion",c.clickMotionPaths,section);
             WriteString(path,L"WalkMotion",c.walkMotionPath,section);
             WriteString(path,L"RunMotion",c.runMotionPath,section);
-            WriteString(path,L"Scale",std::to_wstring(c.scale),section);
             WriteString(path,L"X",std::to_wstring(c.x),section);
             WriteString(path,L"VoiceSpeaker",std::to_wstring(c.voiceSpeaker),section);
             WriteString(path,L"VoiceName",c.voiceName,section);
@@ -117,6 +115,7 @@ namespace MikuMikuDesktopPerch
         }
         toonDir=ReadString(path,L"ToonDir",toonDir);
         windowHeight=std::clamp(ReadInt(path,L"Height",windowHeight),100,4000);
+        scale=std::clamp(ReadInt(path,L"Scale",scale),MinScale,MaxScale);
         // Version 1 files were written when the default size was twice today's: halve them once.
         if(ReadInt(path,L"SizeVersion",1)<2&&GetPrivateProfileIntW(Section,L"Height",-1,path.c_str())>0)
             windowHeight=std::max(windowHeight/2,100);
@@ -169,6 +168,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"ToonDir",toonDir);
         WriteString(path,L"Height",std::to_wstring(windowHeight));
         WriteString(path,L"SizeVersion",L"2");
+        WriteString(path,L"Scale",std::to_wstring(scale));
         WriteString(path,L"Fps",std::to_wstring(fps));
         WriteString(path,L"MotionBlur",motionBlur?L"1":L"0");
         WriteString(path,L"Physics",physics?L"1":L"0");

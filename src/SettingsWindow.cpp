@@ -182,7 +182,7 @@ namespace MikuMikuDesktopPerch
 
             std::vector<std::pair<std::wstring,int>> scales;
             for(int p=Settings::MinScale;p<=Settings::MaxScale;p+=10)scales.push_back({std::to_wstring(p)+L"%",p});
-            FillCombo(IdScale,scales,own.scale,std::to_wstring(own.scale)+L"%");
+            FillCombo(IdScale,scales,s.scale,std::to_wstring(s.scale)+L"%");
             const int edge=static_cast<int>(std::lround(s.edgeScale*100));
             FillCombo(IdEdge,{{L"なし",0},{L"細い（0.5倍）",50},{L"やや細い（0.75倍）",75},{L"標準",100},{L"やや太い（1.25倍）",125},{L"太い（1.5倍）",150},{L"とても太い（2倍）",200}},
                       edge,std::to_wstring(edge/100.0).substr(0,4)+L"倍");
@@ -564,7 +564,7 @@ namespace MikuMikuDesktopPerch
             s.blink=Checked(IdBlink);
             s.breath=Checked(IdBreath);
             s.lookAtMouse=Checked(IdLookAt);
-            own.scale=ComboValue(IdScale,own.scale);
+            s.scale=ComboValue(IdScale,s.scale);
             s.edgeScale=ComboValue(IdEdge,static_cast<int>(std::lround(s.edgeScale*100)))/100.0f;
             s.topmost=Checked(IdTopmost);
             s.selfShadow=Checked(IdSelfShadow);

@@ -163,6 +163,7 @@ namespace
         // Ground behaviour.
         double walkTargetX=0;         // screen x for the window centre
         double nextDecision=8;
+        double roomCheckAt=0;         // next look at whether she stands on top of another character
     };
 
     // A character to bring on (added, or its model changed) or to take off, done between
@@ -310,7 +311,7 @@ namespace
         if(!m.renderer.Resize(static_cast<unsigned>(size.cx),static_cast<unsigned>(size.cy),error))
         {
             m.extent=previous;
-            WindowSizeFor(m,Own(m).scale);
+            WindowSizeFor(m,app.settings.scale);
             return false;
         }
         m.windowSize=size;
@@ -347,7 +348,7 @@ namespace
             const Extent grown{std::min(std::max(e.halfWidth,need.halfWidth*1.15f),1.6f*frame.height),
                                std::min(std::max(e.top,need.top+0.05f*frame.height),frame.top+0.8f*frame.height),
                                std::max(std::min(e.bottom,need.bottom-0.05f*frame.height),-0.6f*frame.height)};
-            ApplyFrame(m,Own(m).scale,grown);
+            ApplyFrame(m,app.settings.scale,grown);
             m.extentCalm=0;
         }
         else
@@ -359,7 +360,7 @@ namespace
                                  std::min(base.bottom,need.bottom-0.05f*frame.height)};
             const bool tooLarge=e.halfWidth>desired.halfWidth*1.1f||e.top>desired.top+0.1f*frame.height||e.bottom<desired.bottom-0.1f*frame.height;
             m.extentCalm=tooLarge?m.extentCalm+elapsed:0;
-            if(m.extentCalm>=4.0){ApplyFrame(m,Own(m).scale,desired);m.extentCalm=0;}
+            if(m.extentCalm>=4.0){ApplyFrame(m,app.settings.scale,desired);m.extentCalm=0;}
         }
     }
 
@@ -433,16 +434,21 @@ namespace
 
     double ModelHeightPixels(Mascot& m){return ModelFrameOf(m).top*m.pixelsPerUnit;}
 
-    // Scale around the feet: the model's ground point stays where it is on screen.
-    void ApplyScale(Mascot& m,int percent)
+    // Scale around the feet: each model's ground point stays where it is on screen. The size
+    // is the same for every character (models of different heights keep their proportions).
+    void ApplyScale(int percent)
     {
-        if(!ApplyFrame(m,percent,m.extent))
-        {
-            ShowMessage(L"ウィンドウの大きさを変更できませんでした。",MB_ICONERROR);
-            return;
-        }
-        Own(m).scale=percent;
-        SaveWindowPosition(m);
+        const int previous=app.settings.scale;
+        for(size_t i=0;i<app.mascots.size();++i)
+            if(Mascot& m=*app.mascots[i];!ApplyFrame(m,percent,m.extent))
+            {
+                for(size_t j=0;j<i;++j)ApplyFrame(*app.mascots[j],previous,app.mascots[j]->extent);
+                ShowMessage(L"ウィンドウの大きさを変更できませんでした。",MB_ICONERROR);
+                return;
+            }
+        app.settings.scale=percent;
+        for(const auto& m:app.mascots)Own(*m).x=static_cast<int>(m->windowX);
+        app.settings.Save(app.settingsPath);
     }
 
     double ModelHalfWidthPixels(Mascot& m){return ModelFrameOf(m).width*0.5*m.pixelsPerUnit;}
@@ -590,10 +596,45 @@ namespace
             const double distance=(120+app.Random01()*380)*(app.Random01()<0.5f?-1:1);
             double target=CenterX(m)+distance;
             if(target<left||target>right)target=CenterX(m)-distance;
+            target=FreeSpot(m,std::clamp(target,left,right),FeetLine(m),left,right);
             Trace(L"%.1f auto walk to %.0f",app.clock,target);
             StartWalk(m,target);
         }
         m.nextDecision=app.clock+15+app.Random01()*25;
+    }
+
+    // Standing still on top of another character (dropped there, or both came to the same
+    // place): step aside to free room on the same surface. When both could move, the one added
+    // later does; one in the middle of something moves once it is done.
+    void MakeRoom(Mascot& m)
+    {
+        if(app.clock<m.roomCheckAt)return;
+        m.roomCheckAt=app.clock+0.5;
+        auto still=[](Mascot& c){
+            const Activity a=c.model.CurrentActivity();
+            return c.place==Place::Ground&&c.travel==Travel::None&&a!=Activity::Walk&&a!=Activity::Run&&a!=Activity::Jump;
+        };
+        auto movable=[](Mascot& c){
+            return c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
+                   !MotionBusy(c)&&!c.dozing&&!c.chatInput.IsOpen();
+        };
+        if(!movable(m))return;
+        const double line=FeetLine(m);
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& other=*owned;
+            if(&other==&m||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
+            if(std::abs(CenterX(other)-CenterX(m))>=(ModelHalfWidthPixels(m)+ModelHalfWidthPixels(other))*0.6)continue;
+            if(movable(other)&&other.slot>m.slot)continue;   // that one steps aside instead
+            double left,right;
+            SurfaceRange(m,left,right);
+            const double target=FreeSpot(m,CenterX(m),line,left,right);
+            if(std::abs(target-CenterX(m))<8)return;   // no room on this surface
+            Trace(L"%.1f character %zu makes room: to %.0f",app.clock,m.slot,target);
+            StartWalk(m,target,std::abs(target-CenterX(m))>ModelHeightPixels(m)?Activity::Run:Activity::Walk);
+            if(m.surfaceWindow)m.restPoseAt=-2;   // rest again where the walk ends
+            return;
+        }
     }
 
     // ---- Active-window mode -------------------------------------------------------------
@@ -1247,7 +1288,7 @@ namespace
         current.physicsFps=s.physicsFps;
         current.physicsIterations=s.physicsIterations;
         current.toonDir=s.toonDir;
-        if(choice.mascot.scale!=Own(m).scale)ApplyScale(m,choice.mascot.scale);
+        if(s.scale!=current.scale)ApplyScale(s.scale);
         current.Save(app.settingsPath);
         if(restart&&ShowMessage(L"詳細の設定は、再起動すると反映されます。\n今すぐ再起動しますか？",MB_ICONQUESTION|MB_YESNO)==IDYES)
         {
@@ -1918,8 +1959,8 @@ namespace
             while(m.wheelDelta<=-WHEEL_DELTA){m.wheelDelta+=WHEEL_DELTA;--steps;}
             if(steps!=0)
             {
-                const int percent=std::clamp(Own(m).scale+steps*10,Settings::MinScale,Settings::MaxScale);
-                if(percent!=Own(m).scale)ApplyScale(m,percent);
+                const int percent=std::clamp(app.settings.scale+steps*10,Settings::MinScale,Settings::MaxScale);
+                if(percent!=app.settings.scale)ApplyScale(percent);
             }
             return 0;
         }
@@ -2040,7 +2081,7 @@ namespace
         }
 
         m.extent=BaseExtent(m);
-        const SIZE size=WindowSizeFor(m,own.scale);
+        const SIZE size=WindowSizeFor(m,app.settings.scale);
         RECT work{};
         SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
         // Placed where it was; a new one at the bottom right, to the left of those before it.
@@ -2475,7 +2516,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     // Event-driven: called on the message loop whenever another window takes the foreground.
     HWINEVENTHOOK foregroundHook=SetWinEventHook(EVENT_SYSTEM_FOREGROUND,EVENT_SYSTEM_FOREGROUND,nullptr,OnForegroundChanged,
                                                  0,0,WINEVENT_OUTOFCONTEXT|WINEVENT_SKIPOWNPROCESS);
-    if(snapshotScale>0)ApplyScale(first,std::clamp(snapshotScale/10*10,Settings::MinScale,Settings::MaxScale));
+    if(snapshotScale>0)ApplyScale(std::clamp(snapshotScale/10*10,Settings::MinScale,Settings::MaxScale));
 
     // Frame pacing: a periodic high-resolution timer wakes the loop; messages wake it too.
     HANDLE timer=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_ALL_ACCESS);
@@ -2603,6 +2644,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     if(reached)StopGroundActivity(m);
                 }
                 UpdateAutoBehavior(m);
+            MakeRoom(m);
                 MaybeMemorize(m);
                 UpdateDozing(m);
                 UpdateFeeling(m);
