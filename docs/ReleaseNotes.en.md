@@ -2,6 +2,12 @@
 
 [日本語](ReleaseNotes.md)
 
+## Next version (unreleased)
+
+### What's new
+
+- **Timers, reminders and to-dos**: ask a character things like "remind me in 5 minutes", "remind me at 3pm to call mom" or "add milk to my todo list". Works without an LLM; with one, the characters answer in their own words and understand other ways of asking. When it is time, a character tells you with a chime, and you can choose "Got it" or "Again in 5 min". "Timer" in the menu sets a timer at once, and "Reminders and to-dos..." shows, adds and deletes them. They survive exiting the app
+
 ## 1.2.0
 
 ### What's new

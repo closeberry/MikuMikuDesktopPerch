@@ -9,10 +9,13 @@
 #include "Speech.hpp"
 #include "SettingsWindow.hpp"
 #include "Surfaces.hpp"
+#include "Planner.hpp"
+#include "PlannerWindow.hpp"
 #include "Updater.hpp"
 #include "Text.hpp"
 #include <windows.h>
 #include <windowsx.h>
+#include <mmsystem.h>
 #include <shellapi.h>
 #include <commdlg.h>
 #include <filesystem>
@@ -39,7 +42,8 @@ namespace
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
-                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter};
+                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers};
+    constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
     constexpr float Gravity=98.0f;          // world units/s², the same as the physics world
@@ -168,6 +172,14 @@ namespace
         double roomCheckAt=0;         // next look at whether she stands on top of another character
         // Talking with another character: the request now running is a line of that conversation.
         bool banterLine=false;
+        // A timer, reminder or to-do request the words alone did not make clear, being read by
+        // the LLM (planSaid: what the user said).
+        std::unique_ptr<LocalChat> planChat;
+        int planRequest=0;
+        std::wstring planReply,planSaid;
+        // What she says instead if the LLM cannot put it in her own words (a request done, an
+        // alarm): the news must reach the user either way.
+        std::wstring fallbackLine;
     };
 
     // A character to bring on (added, or its model changed) or to take off, done between
@@ -223,6 +235,13 @@ namespace
         Mascot* asker=nullptr;
         ChoiceBox updateChoice;
         bool updating=false;
+        // Timers, reminders and to-dos: those come due and not yet told, the one telling them
+        // (she stays put until answered) with わかった／5分後に under her.
+        Planner planner;
+        std::vector<Alarm> ringing,told;
+        double ringingSince=-1,nextPlannerCheck=0;
+        Mascot* alarmTeller=nullptr;
+        ChoiceBox alarmChoice;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -520,7 +539,7 @@ namespace
     // Also while it is due and on its way (standing up, warping): nothing else may start then.
     bool MotionBusy(Mascot& m)
     {
-        if(InBanter(m)||&m==app.asker)return true;   // staying for the conversation, or for an answer
+        if(InBanter(m)||&m==app.asker||&m==app.alarmTeller)return true;   // staying for the conversation, or for an answer
         if(m.model.Reacting())return true;   // answering a click
         // An idle motion plays to its end (or its loop's) before she walks off or sits down.
         if(m.model.CurrentActivity()==Activity::Idle&&!m.model.IdleMotionAtBreak())return true;
@@ -1187,7 +1206,8 @@ namespace
     // put back on top now and then).
     void RaiseAnswerBox()
     {
-        if(HWND box=app.updateChoice.Handle())SetWindowPos(box,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        for(HWND box:{app.updateChoice.Handle(),app.alarmChoice.Handle()})
+            if(box)SetWindowPos(box,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
     }
 
     bool IsMascotWindow(HWND window)
@@ -1231,6 +1251,14 @@ namespace
         // Things used often stay here; switches and display options are in the settings window.
         HMENU menu=CreatePopupMenu();
         AppendMenuW(menu,MF_STRING,IdTalk,T(L"話しかける...",L"Talk..."));
+        HMENU timers=CreatePopupMenu();
+        for(const int minutes:{3,5,10,15,25,30,60})
+            AppendMenuW(timers,MF_STRING,IdTimerMinutes+minutes,Fmt(T(L"{0}分",L"{0} minutes"),{std::to_wstring(minutes)}).c_str());
+        AppendMenuW(timers,MF_SEPARATOR,0,nullptr);
+        const bool timing=std::any_of(app.planner.Alarms().begin(),app.planner.Alarms().end(),[](const Alarm& a){return a.timerSeconds>0;});
+        AppendMenuW(timers,MF_STRING|(timing?0:MF_GRAYED),IdCancelTimers,T(L"タイマーを止める",L"Stop timers"));
+        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(timers),T(L"タイマー",L"Timer"));
+        AppendMenuW(menu,MF_STRING,IdPlanner,T(L"予定とやること...",L"Reminders and to-dos..."));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         // A character's window goes away when its model changes or it is taken off, and the
         // settings window belongs to one: not while that is open.
@@ -1470,7 +1498,10 @@ namespace
     {
         if(app.settings.chatModel.empty())
         {
-            if(tell)m.bubble.ShowNotice(T(L"設定の「会話」で、使うモデルを選んでください（Ollama などを起動してから「一覧を取得」）。",L"Choose a model under Talking in the settings (start Ollama or the like, then press Get list)."));
+            if(tell)m.bubble.ShowNotice(T(L"設定の「会話」で、使うモデルを選んでください（Ollama などを起動してから「一覧を取得」）。\n"
+                                          L"タイマーやリマインダー、やることは、LLMなしでも頼めます（例：「5分後に教えて」「15時に会議って教えて」「やることに牛乳を追加」）。",
+                                          L"Choose a model under Talking in the settings (start Ollama or the like, then press Get list).\n"
+                                          L"Timers, reminders and to-dos work without it (e.g. \"remind me in 5 minutes\", \"remind me at 3pm to call mom\", \"add milk to my todo list\")."));
             return false;
         }
         if(const auto problem=CheckLocalEndpoint(app.settings.chatEndpoint);!problem.empty())
@@ -1510,6 +1541,7 @@ namespace
 
     void BeginReply(Mascot& m,std::vector<ChatMessage> messages);
     void EndBanter(const wchar_t* why);
+    void SayFixed(Mascot& m,const std::wstring& text);
 
     // The date and time for the LLM, in the language in use.
     std::wstring NowText()
@@ -1584,18 +1616,24 @@ namespace
         Trace(L"%.1f talk: request %d",app.clock,m.chatRequest);
     }
 
+    bool HandlePlan(Mascot& m,const std::wstring& said);
+
     void Talk(Mascot& m,const std::wstring& text)
     {
         if(InBanter(m))EndBanter(L"the user talks to one of them");
+        m.fallbackLine.clear();
+        if(HandlePlan(m,text))return;
         if(!ChatReady(m,true))return;
         m.conversation.push_back({L"user",text});
         StartReply(m,text);
     }
 
     // She speaks first: situation says why (it goes in as a stage direction in brackets).
-    void SpeakFirst(Mascot& m,const std::wstring& situation)
+    // fallback: said as it is if the LLM does not answer.
+    void SpeakFirst(Mascot& m,const std::wstring& situation,const std::wstring& fallback={})
     {
         if(!ChatReady(m,false))return;
+        m.fallbackLine=fallback;
         Trace(L"%.1f speak first: %s",app.clock,situation.c_str());
         m.conversation.push_back({L"user",English()?L"("+situation+L")":L"（"+situation+L"）"});
         StartReply(m,situation);
@@ -1798,12 +1836,14 @@ namespace
         }
         if(!owned->empty())
         {
-            // Not answered: forget the question too, and say why.
+            // Not answered: forget the question too, and say why (or what she had to say).
             if(!m.conversation.empty()&&m.conversation.back().role==L"user")m.conversation.pop_back();
             m.speech.Reset();
+            if(!m.fallbackLine.empty()){SayFixed(m,std::wstring(m.fallbackLine));return;}
             m.bubble.ShowNotice(*owned);
             return;
         }
+        m.fallbackLine.clear();
         std::wstring clean=CleanReply(m.reply+L"\n");
         while(!clean.empty()&&std::iswspace(clean.back()))clean.pop_back();
         const size_t start=clean.find_first_not_of(L" \t\r\n");
@@ -2070,6 +2110,7 @@ namespace
     // Something of the app's own, said in her bubble (and voice) like a reply, without the LLM.
     void SayFixed(Mascot& m,const std::wstring& text)
     {
+        m.fallbackLine.clear();
         if(m.chat)m.chat->Cancel();
         m.chatRequest=0;
         m.banterLine=false;
@@ -2162,6 +2203,278 @@ namespace
         app.update.reset();
         app.asker=nullptr;
         app.updating=false;
+    }
+
+    // ---- Timers, reminders and to-dos -----------------------------------------------------
+
+    void SavePlanner()
+    {
+        if(!app.diagnostic)app.planner.Save();
+        RefreshPlannerWindow();
+    }
+
+    std::wstring Quoted(const std::wstring& text){return English()?L"\""+text+L"\"":L"「"+text+L"」";}
+
+    std::wstring Listing(const std::vector<std::wstring>& items,const wchar_t* japaneseSeparator=L"、")
+    {
+        std::wstring out;
+        for(size_t i=0;i<items.size();++i){if(i)out+=English()?L", ":japaneseSeparator;out+=items[i];}
+        return out;
+    }
+
+    // A reminder's time to go after a verb: "15時" (に added by the sentence) / "at 3:00 PM",
+    // "tomorrow at 9:00 AM", "on Fri, Oct 30 at 6:00 PM".
+    std::wstring AtTime(std::int64_t at,std::int64_t now,bool daily)
+    {
+        const std::wstring when=TimeText(at,now,daily);
+        if(!English())return when;
+        if(!when.empty()&&std::iswdigit(when[0]))return L"at "+when;
+        if(when.find(L", ")!=std::wstring::npos)return L"on "+when;
+        return when;
+    }
+
+    // Do what the user asked (said: their words; empty for the menu's quick timers). She says
+    // what was done, in her own words when the LLM is there (the facts go to it in brackets);
+    // lists are read out as they are.
+    void DoPlan(Mascot& m,const PlanRequest& r,const std::wstring& said)
+    {
+        using Kind=PlanRequest::Kind;
+        const std::int64_t now=Now();
+        std::wstring line,news;
+        bool own=true;
+        switch(r.kind)
+        {
+        case Kind::Timer:
+        case Kind::Remind:
+        {
+            Alarm a;
+            a.due=r.due;
+            a.timerSeconds=r.kind==Kind::Timer?r.seconds:0;
+            a.daily=r.daily;
+            a.text=r.text;
+            if(!app.planner.AddAlarm(a)){line=T(L"ごめんね、もうこれ以上は覚えきれないよ。",L"Sorry, I can't keep track of any more.");own=false;break;}
+            const std::wstring what=r.text.empty()?std::wstring():Quoted(r.text);
+            if(r.kind==Kind::Timer)
+            {
+                const std::wstring length=DurationText(r.seconds);
+                line=what.empty()?Fmt(T(L"{0}たったら知らせるね。",L"Okay, I'll let you know in {0}."),{length})
+                                 :Fmt(T(L"{0}たったら、{1}って知らせるね。",L"Okay, in {0} I'll remind you: {1}."),{length,what});
+                news=Fmt(T(L"頼まれて、{0}のタイマーをセットしました",L"You were asked to, and set a {0} timer"),{length});
+            }
+            else
+            {
+                const std::wstring when=AtTime(r.due,now,r.daily);
+                line=what.empty()?Fmt(T(L"{0}になったら知らせるね。",L"Okay, I'll let you know {0}."),{when})
+                                 :Fmt(T(L"{0}に、{1}って知らせるね。",L"Okay, I'll remind you {0}: {1}."),{when,what});
+                news=Fmt(T(L"頼まれて、{0}に知らせるリマインダーをセットしました",L"You were asked to, and set a reminder for {0}"),{when});
+            }
+            if(!what.empty())news+=Fmt(T(L"（知らせる内容：{0}）",L" (about: {0})"),{what});
+            break;
+        }
+        case Kind::TodoAdd:
+            if(!app.planner.AddTodo(r.text,TodayDate())){line=T(L"ごめんね、やることがいっぱいで、もう入らないよ。",L"Sorry, the to-do list is full.");own=false;break;}
+            line=Fmt(T(L"{0}を、やることに入れておいたよ（いま{1}件）。",L"Added {0} to your to-do list ({1} in all)."),{Quoted(r.text),std::to_wstring(app.planner.Todos().size())});
+            news=Fmt(T(L"頼まれて、やることリストに{0}を追加しました（全部で{1}件）",L"You were asked to, and added {0} to the to-do list ({1} in all)"),{Quoted(r.text),std::to_wstring(app.planner.Todos().size())});
+            break;
+        case Kind::TodoDone:
+        {
+            const int id=app.planner.FindTodo(r.text);
+            const auto& todos=app.planner.Todos();
+            const auto item=std::find_if(todos.begin(),todos.end(),[id](const TodoItem& t){return t.id==id;});
+            if(item==todos.end()){line=Fmt(T(L"やることに{0}は見つからなかったよ。",L"I couldn't find {0} on your to-do list."),{Quoted(r.text)});own=false;break;}
+            const std::wstring text=item->text;
+            app.planner.RemoveTodo(id);
+            line=Fmt(T(L"{0}、済みにしたよ。おつかれさま！",L"Checked off {0}. Nice work!"),{Quoted(text)});
+            news=Fmt(T(L"話し相手がやることリストの{0}を済ませたので、リストから外しました",L"They finished {0} on their to-do list, so you took it off the list"),{Quoted(text)});
+            break;
+        }
+        case Kind::TodoList:
+        {
+            own=false;
+            const auto& todos=app.planner.Todos();
+            if(todos.empty()){line=T(L"いま、やることは入ってないよ。",L"Your to-do list is empty.");break;}
+            std::vector<std::wstring> items;
+            for(size_t i=0;i<todos.size()&&i<10;++i)items.push_back(Quoted(todos[i].text));
+            if(todos.size()>10)items.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(todos.size()-10)}));
+            line=Fmt(T(L"やることは{0}件。{1}だよ。",L"You have {0} to-dos: {1}."),{std::to_wstring(todos.size()),Listing(items)});
+            break;
+        }
+        case Kind::AlarmList:
+        {
+            own=false;
+            const auto& alarms=app.planner.Alarms();
+            if(alarms.empty()){line=T(L"いまセットしているタイマーやリマインダーはないよ。",L"No timers or reminders are set.");break;}
+            std::vector<std::wstring> items;
+            for(size_t i=0;i<alarms.size()&&i<6;++i)
+            {
+                const Alarm& a=alarms[i];
+                const std::wstring what=a.text.empty()?std::wstring():(English()?L" ":L"の")+Quoted(a.text);
+                if(a.timerSeconds>0)
+                {
+                    const std::int64_t left=std::max<std::int64_t>(1,a.due-now);
+                    const int shown=static_cast<int>(left>=60?(left+59)/60*60:left);
+                    items.push_back(Fmt(T(L"{0}のタイマー{1}（あと{2}）",L"a {0} timer{1} ({2} left)"),{DurationText(a.timerSeconds),what,DurationText(shown)}));
+                }
+                else items.push_back(Fmt(T(L"{0}{1}",L"{0}{1}"),{TimeText(a.due,now,a.daily),what}));
+            }
+            if(alarms.size()>6)items.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(alarms.size()-6)}));
+            line=Fmt(T(L"セットしているのは、{0}だよ。",L"Set: {0}."),{Listing(items,L"、")});
+            break;
+        }
+        case Kind::CancelTimers:
+        {
+            const int stopped=app.planner.RemoveTimers();
+            const bool ringing=app.alarmChoice.IsOpen();
+            if(ringing){app.alarmChoice.Close();app.told.clear();app.alarmTeller=nullptr;}
+            line=stopped?T(L"タイマーを止めたよ。",L"I stopped the timer."):ringing?T(L"わかった、止めたよ。",L"Okay, stopped."):T(L"動いているタイマーはないよ。",L"There's no timer running.");
+            news=T(L"頼まれて、タイマーを止めました",L"You were asked to, and stopped the timer");
+            own=stopped>0;
+            break;
+        }
+        case Kind::None:
+            return;
+        }
+        SavePlanner();
+        Trace(L"%.1f plan: %d %s",app.clock,static_cast<int>(r.kind),line.c_str());
+        if(said.empty()||!own||!ChatReady(m,false)){SayFixed(m,line);return;}
+        m.fallbackLine=line;
+        m.conversation.push_back({L"user",said+L"\n"+(English()?L"(":L"（")+news+
+                                  T(L"。引き受けたことを、あなたの言葉で短く伝えてください）",L". Tell them so, briefly, in your own words.)")});
+        StartReply(m,said);
+    }
+
+    // A timer, reminder or to-do request in what the user said: read without the LLM, or,
+    // when the words might be one put another way, by the LLM first (the bubble's dots run
+    // meanwhile). False: just talk.
+    bool HandlePlan(Mascot& m,const std::wstring& said)
+    {
+        PlanRequest r=ReadPlanRequest(said,Now());
+        if(r.kind==PlanRequest::Kind::TodoDone&&!r.sure&&!app.planner.FindTodo(r.text))r.kind=PlanRequest::Kind::None;
+        if(r.kind!=PlanRequest::Kind::None){DoPlan(m,r,said);return true;}
+        if(!MightBePlanRequest(said)||!ChatReady(m,false))return false;
+        if(!m.planChat)m.planChat=std::make_unique<LocalChat>(m.hwnd);
+        if(m.chat)m.chat->Cancel();
+        m.chatRequest=0;
+        m.speech.Reset();
+        if(m.voice)m.voice->CancelAll();
+        m.planSaid=said;
+        m.planReply.clear();
+        m.planRequest=m.planChat->Start(app.settings.chatEndpoint,app.settings.chatModel,{
+            {L"system",T(L"あなたは依頼を命令に直す係です。指示された形だけで答えます。",L"You turn requests into commands. You answer only in the form asked.")},
+            {L"user",PlanCommandPrompt(said,Now())}});
+        m.bubble.Begin(m.character.name);
+        Trace(L"%.1f plan: asking the LLM (request %d)",app.clock,m.planRequest);
+        return true;
+    }
+
+    void OnPlanDone(Mascot& m,const std::wstring& error)
+    {
+        const std::wstring said=std::exchange(m.planSaid,{});
+        const PlanRequest r=error.empty()?ReadPlanCommand(CleanReply(m.planReply+L"\n"),Now()):PlanRequest{};
+        Trace(L"%.1f plan: the LLM says %s",app.clock,error.empty()?m.planReply.c_str():error.c_str());
+        if(r.kind!=PlanRequest::Kind::None){DoPlan(m,r,said);return;}
+        if(!ChatReady(m,true))return;
+        m.conversation.push_back({L"user",said});
+        StartReply(m,said);
+    }
+
+    void OnAlarmAnswer(bool gotIt)
+    {
+        Mascot* m=std::exchange(app.alarmTeller,nullptr);
+        const std::vector<Alarm> told=std::exchange(app.told,{});
+        if(gotIt||!m)return;
+        // Again in five minutes: each comes back as a reminder at that time.
+        for(Alarm a:told)
+        {
+            a.due=Now()+5*60;
+            a.daily=false;
+            a.timerSeconds=0;
+            app.planner.AddAlarm(a);
+        }
+        SavePlanner();
+        SayFixed(*m,T(L"じゃあ、5分後にもう一度言うね。",L"Okay, I'll tell you again in 5 minutes."));
+    }
+
+    // It is time: she says so (in her own words when the LLM is there), with a chime, and
+    // わかった／5分後に under her until answered.
+    void TellAlarms(Mascot& m,std::vector<Alarm> alarms)
+    {
+        const std::int64_t now=Now();
+        std::vector<std::wstring> lines,facts;
+        for(const Alarm& a:alarms)
+        {
+            const std::wstring clock=TimeText(a.due,a.due);
+            const std::wstring what=a.text.empty()?std::wstring():Quoted(a.text);
+            if(now-a.due>120)
+            {
+                lines.push_back(what.empty()?Fmt(T(L"{0}の時間、過ぎちゃってたよ。",L"It's past {0}, the time you asked me about."),{clock})
+                                            :Fmt(T(L"{0}の{1}、時間を過ぎちゃってたよ。",L"It's past {0}: {1}."),{clock,what}));
+                facts.push_back(Fmt(T(L"頼まれていた{0}の知らせの時間を、アプリが起動していなかったので過ぎてしまいました",L"The {0} reminder you were asked for went by while the app was not running"),{clock}));
+            }
+            else if(a.timerSeconds>0)
+            {
+                const std::wstring length=DurationText(a.timerSeconds);
+                lines.push_back(what.empty()?Fmt(T(L"{0}たったよ！時間だよ。",L"Time's up! It's been {0}."),{length})
+                                            :Fmt(T(L"時間だよ！{1}（{0}たったよ）",L"Time's up! {1} ({0} have passed)."),{length,what}));
+                facts.push_back(Fmt(T(L"頼まれていた{0}のタイマーの時間になりました",L"The {0} timer you were asked to set is up"),{length}));
+            }
+            else
+            {
+                lines.push_back(what.empty()?Fmt(T(L"{0}になったよ！",L"It's {0}!"),{clock})
+                                            :Fmt(T(L"{0}だよ。{1}の時間だよ！",L"It's {0}. Time for {1}!"),{clock,what}));
+                facts.push_back(Fmt(T(L"頼まれていた{0}になりました",L"It is {0}, the time you were asked to tell them"),{clock}));
+            }
+            if(!what.empty())facts.back()+=Fmt(T(L"（知らせる内容：{0}）",L" (about: {0})"),{what});
+        }
+        std::wstring line;
+        for(const auto& each:lines)line+=(line.empty()||!English()?L"":L" ")+each;
+        Trace(L"%.1f alarm: %s",app.clock,line.c_str());
+        if(m.dozing){m.dozing=false;m.model.SetDozing(false);}
+        if(ChatReady(m,false))
+            SpeakFirst(m,Listing(facts,L"。")+T(L"。そのことを、あなたの言葉で知らせて",L". Tell them so, in your own words"),line);
+        else SayFixed(m,line);
+        PlaySoundW(L"SystemNotification",nullptr,SND_ALIAS|SND_ASYNC|SND_NODEFAULT);
+        app.alarmChoice.Close();
+        app.told=std::move(alarms);
+        app.alarmTeller=&m;
+        const RECT r=FrameRect(m);
+        const POINT ground=GroundPointOnScreen(m);
+        app.alarmChoice.Open(m.hwnd,{(r.left+r.right)/2,ground.y-static_cast<LONG>(ModelHeightPixels(m)*0.12)},
+                             T(L"わかった",L"Got it"),T(L"5分後にもう一度",L"Again in 5 min"),OnAlarmAnswer);
+    }
+
+    // Once a second: what has come due is told by a character free to talk; one busy is
+    // interrupted after a few seconds of waiting (a talk between two ends at once).
+    void UpdatePlanner()
+    {
+        if(app.diagnostic||app.mascots.empty())return;
+        if(app.clock>=app.nextPlannerCheck)
+        {
+            app.nextPlannerCheck=app.clock+1;
+            std::vector<Alarm> due=app.planner.TakeDue(Now());
+            if(!due.empty())
+            {
+                app.ringing.insert(app.ringing.end(),due.begin(),due.end());
+                if(app.ringingSince<0)app.ringingSince=app.clock;
+                SavePlanner();
+            }
+        }
+        // Just started: let the characters come on first.
+        if(app.ringing.empty()||app.updating||app.clock<5)return;
+        if(app.banter.stage!=App::Banter::Stage::None)EndBanter(L"an alarm");
+        const double waited=app.clock-app.ringingSince;
+        std::vector<Mascot*> free;
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& c=*owned;
+            if(&c==app.asker&&waited<30)continue;
+            const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
+            if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
+        }
+        if(free.empty())return;
+        Mascot& m=*free[std::min(free.size()-1,static_cast<size_t>(app.Random01()*free.size()))];
+        TellAlarms(m,std::exchange(app.ringing,{}));
+        app.ringingSince=-1;
     }
 
     // Once the conversation has paused (or grown long), ask the LLM what in it is worth
@@ -2304,11 +2617,30 @@ namespace
 
     void OnCommand(Mascot& m,UINT id)
     {
+        if(id>IdTimerMinutes&&id<=IdTimerMinutes+120)
+        {
+            PlanRequest r;
+            r.kind=PlanRequest::Kind::Timer;
+            r.seconds=static_cast<int>(id-IdTimerMinutes)*60;
+            r.due=Now()+r.seconds;
+            DoPlan(m,r,{});
+            return;
+        }
         switch(id)
         {
         case IdTalk:
             OpenChatInput(m);
             break;
+        case IdPlanner:
+            ShowPlannerWindow(m.hwnd,app.planner);
+            break;
+        case IdCancelTimers:
+        {
+            PlanRequest r;
+            r.kind=PlanRequest::Kind::CancelTimers;
+            DoPlan(m,r,{});
+            break;
+        }
         case IdOpenModel:
         {
             auto path=OpenFileDialog(m.hwnd,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),Own(m).modelPath);
@@ -2557,6 +2889,12 @@ namespace
             return 0;
         }
         case LocalChat::TextMessage:
+            if(m.planRequest&&static_cast<int>(lParam)==m.planRequest)
+            {
+                std::unique_ptr<std::wstring> text(reinterpret_cast<std::wstring*>(wParam));
+                if(m.planReply.size()<2000)m.planReply+=*text;
+                return 0;
+            }
             if(m.memoryRequest&&static_cast<int>(lParam)==m.memoryRequest)
             {
                 std::unique_ptr<std::wstring> text(reinterpret_cast<std::wstring*>(wParam));
@@ -2570,6 +2908,13 @@ namespace
             m.speech.Voiced(static_cast<int>(lParam),reinterpret_cast<VoiceClip*>(wParam));
             return 0;
         case LocalChat::DoneMessage:
+            if(m.planRequest&&static_cast<int>(lParam)==m.planRequest)
+            {
+                std::unique_ptr<std::wstring> error(reinterpret_cast<std::wstring*>(wParam));
+                m.planRequest=0;
+                OnPlanDone(m,*error);
+                return 0;
+            }
             if(m.memoryRequest&&static_cast<int>(lParam)==m.memoryRequest)
             {
                 std::unique_ptr<std::wstring> error(reinterpret_cast<std::wstring*>(wParam));
@@ -2598,6 +2943,7 @@ namespace
         }
         m.chat.reset();
         m.memoryChat.reset();
+        m.planChat.reset();
         m.speech.SetVoice(nullptr);
         m.voice.reset();
         m.chatInput.Close();
@@ -2635,6 +2981,7 @@ namespace
         case WM_DESTROY:
             EndBanter(L"quitting");
             app.updateChoice.Close();
+            app.alarmChoice.Close();
             for(const auto& m:app.mascots)
             {
                 Own(*m).x=static_cast<int>(m->windowX);
@@ -2745,6 +3092,8 @@ namespace
             EndBanter(L"the characters change");
             // The one asking about the update may go: ask again later.
             if(app.asker&&!app.updating){app.updateChoice.Close();app.asker=nullptr;}
+            // So may the one telling the time: taken as heard.
+            if(app.alarmTeller){app.alarmChoice.Close();app.alarmTeller=nullptr;app.told.clear();}
         }
         for(const Change& change:std::exchange(app.changes,{}))
         {
@@ -2960,6 +3309,37 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return 0;
         }
+        // --plan-test <in.txt> <out.txt>: how each line (UTF-8) is read as a timer, reminder or
+        // to-do request, without the LLM.
+        if(argc>=4&&std::wstring(argv[1])==L"--plan-test")
+        {
+            std::ifstream in(std::filesystem::path(argv[2]),std::ios::binary);
+            std::stringstream buffer;
+            buffer<<in.rdbuf();
+            const std::string bytes=buffer.str();
+            std::wstring all(static_cast<size_t>(MultiByteToWideChar(CP_UTF8,0,bytes.data(),static_cast<int>(bytes.size()),nullptr,0)),L'\0');
+            MultiByteToWideChar(CP_UTF8,0,bytes.data(),static_cast<int>(bytes.size()),all.data(),static_cast<int>(all.size()));
+            static constexpr const wchar_t* Kinds[]={L"none",L"timer",L"remind",L"todo-add",L"todo-done",L"todo-list",L"alarm-list",L"cancel-timers"};
+            const std::int64_t now=Now();
+            std::wstringstream lines(all);
+            if(FILE* out=nullptr;_wfopen_s(&out,argv[3],L"w, ccs=UTF-8")==0&&out)
+            {
+                for(std::wstring line;std::getline(lines,line);)
+                {
+                    if(!line.empty()&&line.back()==L'\r')line.pop_back();
+                    if(line.empty())continue;
+                    const bool loose=line.rfind(L"~",0)==0;
+                    const PlanRequest r=ReadPlanRequest(loose?line.substr(1):line,now,loose);
+                    SetLanguage(std::any_of(line.begin(),line.end(),[](wchar_t c){return c>=0x3040;})?L"ja":L"en");
+                    fwprintf(out,L"%s\t%s\t%s\t%s\t%s%s\t[%s]\n",line.c_str(),Kinds[static_cast<int>(r.kind)],
+                             r.due?TimeText(r.due,now,r.daily).c_str():L"",r.seconds?DurationText(r.seconds).c_str():L"",
+                             r.daily?L"daily":L"",r.sure?L"":L"unsure",r.text.c_str());
+                }
+                fclose(out);
+            }
+            LocalFree(argv);
+            return 0;
+        }
         const bool reading=argc>=4&&std::wstring(argv[1])==L"--reading";
         const std::wstring text=reading?argv[2]:L"",outPath=reading?argv[3]:L"";
         LocalFree(argv);
@@ -3034,6 +3414,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.settings.Load(app.settingsPath);
     SetLanguage(app.settings.language);
     app.diagnostic=!snapshotPath.empty();
+    if(!app.diagnostic)app.planner.Load();
     if(app.diagnostic)
     {
         // Diagnostic runs must not overwrite the user's settings, and show the first character only.
@@ -3158,6 +3539,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         {
             if(msg.message==WM_QUIT){running=false;break;}
             if(const HWND settings=SettingsWindowHandle();settings&&IsDialogMessageW(settings,&msg))continue;
+            if(const HWND planner=PlannerWindowHandle();planner&&IsDialogMessageW(planner,&msg))continue;
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -3186,7 +3568,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.paused)continue;
 
         app.clock+=dt;
-        if(!forcedActivity){MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();}
+        if(!forcedActivity){MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)

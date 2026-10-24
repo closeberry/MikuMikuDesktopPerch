@@ -36,7 +36,7 @@ The output goes to `bin\<Configuration>\MikuMikuDesktopPerch.exe`. The shaders (
 - Left click: the mascot reacts ("When clicked" below)
 - Left drag: move
 - Mouse wheel (over the mascot): change the size by 10% (up to grow, down to shrink; 50–600%)
-- Right click, or right click on the notification area icon: the menu (Talk, Open model, Add character, Take this character off, Motion (open, add or close the motion, idle motions, click motions, and walk and run motions), Ride on the active window, Walk left, Walk right, Settings, Exit)
+- Right click, or right click on the notification area icon: the menu (Talk, Timer, Reminders and to-dos, Open model, Add character, Take this character off, Motion (open, add or close the motion, idle motions, click motions, and walk and run motions), Ride on the active window, Walk left, Walk right, Settings, Exit)
 - Double click on the mascot or the notification area icon: Talk (the reaction to a click on the mascot starts after a short wait, until it is clear it is not a double click)
 - **Settings**: open with "Settings..." in the menu. Motion (auto behavior, ride on the active window, physics, blink, breathe, look at the mouse) and Display (size, language, outline width, always on top, self-shadow, sun position, start with Windows, check for new versions) take effect as soon as you press OK. Talking (server, model, your name, remember chats, persona) also takes effect at once (deleting and adding memories is saved at once in the memory window). Advanced (drawing fps, motion blur, antialiasing, max texture size, physics rate and iterations, shared toon folder) is read at startup, so when you change it the app asks whether to restart
 - Changing the size grows or shrinks the mascot around its feet
@@ -75,6 +75,21 @@ You can chat with an LLM running on this computer. The replies appear in a comic
 - The bubble is a comic-style design with a soft shadow, a gradient outline, a curved tail and the character's name tag; it fades in softly and fades out. While waiting for a reply, three dots bounce in turn
 - The LLM only returns text; it is not allowed to touch files, run commands, or the like
 - Some character models restrict, in their terms, having an AI speak as that character. Check the model's terms of use and the character's guidelines
+
+## Timers, reminders and to-dos
+
+You can ask the characters for timers, reminders at a time, and a to-do list. **This works without an LLM** (common ways of asking are read, and answered with fixed lines). With an LLM set up, the characters answer in their own words, and the LLM reads requests put in other ways.
+
+- **Asking** (in the "Talk" input box):
+  - Timers: "remind me in 10 minutes to check the oven", "set a timer for 5 minutes", "5 minute timer"
+  - Reminders: "remind me at 3pm to call mom", "remind me tomorrow at 9 to send the report", "remind me every day at 8am to take my medicine", "remind me on friday at 6 pm to buy flowers". A time already gone today, with no day said, is taken as this afternoon's or tomorrow's
+  - To-dos: "add milk to my todo list", "what's on my to-do list", "remove milk from my todo list", "I finished the report" (checked off when it names an item on the list)
+  - Others: "cancel the timer", "how much time is left", "show my reminders"
+  - Japanese works too (「5分後に教えて」「15時に会議って教えて」「やることに牛乳を追加」 and so on)
+  - When the words are not one of those ways but mention a time and a request, the LLM (if set up) is asked to read the request. If it is not one, she just talks
+- **Menu**: "Timer" sets a 3–60 minute timer at once, and "Stop timers" stops them. "Reminders and to-dos..." opens the list window, where you can add (written like "3pm meeting", "25 min", "every day at 8am medicine"), delete, and check off
+- **When it is time**: a character with nothing else to do tells you with a chime (in her own words, with an LLM), and "Got it" and "Again in 5 min" appear at her feet. If someone is talking, she cuts in after a short wait. A dozing character wakes up to tell you. She stays put until you answer
+- **Saving**: timers, reminders and to-dos are saved in `%LOCALAPPDATA%\MikuMikuDesktopPerch\planner.txt` (UTF-8 text) and survive exiting the app (shared by all characters). Ones that came due while the app was not running are told at the next start ("it's past ..."; ones more than a day late are dropped). Nothing is sent anywhere
 
 ## Generated motions (experimental)
 
@@ -180,6 +195,7 @@ MikuMikuDesktopPerch.exe --snapshot out.png [frames]
 Draws the given number of frames (60 by default), then saves the last frame to `out.png` (premultiplied BGRA) and exits.
 With `--look <x> <y>`, the cursor position for gaze tracking can be fixed in client coordinates.
 `--model <pmx>` chooses another model and `--scale <percent>` the size. `--rest-pose sit|hang` fixes the resting pose on a window; `--walk <px>` makes it walk that far 3 seconds after starting (right is positive); `--click head|body` makes it react to a click on the head / body 1.5 seconds after starting; `--play-motion` plays the motion in the settings right after starting; `--gesture hip|wave|peace|behind|palm|folded|stretch|look|tilt|stand|hair|yawn|think|hum|clap|far|cheeks|pat|surprised|curious|shynod` fixes an idle gesture (the last four are click reactions) (with seconds, such as `stretch@3.5`, a moving gesture is stopped at that moment for the shot); and setting the environment variable `MIKUMIKUDESKTOPPERCH_LOG` to a file name writes out how behavior was decided. `--activity walk|run|jump|sit|lie|hang|grab|fall` shoots with that generated motion fixed, and `--view-yaw <degrees>` turns the camera around to shoot from the side. Diagnostic runs do not rewrite the settings file (ini), and write `out.png.txt` (the arm angle, correction, window size, and errors) next to the output.
+`--plan-test <in.txt> <out.txt>` writes how each line of in.txt (UTF-8) is read as a timer, reminder or to-do request (a line starting with `~` is read as typed in the list window).
 `--banter` starts the characters chatting together 5 seconds after starting; `--pretend-version <version>` treats this exe as that version, to try the whole update from the check to the install (it checks at once); and `--reading <text> <out.txt>` writes out the reading used for lip-sync.
 `--voice-test <VOICEVOX folder> <voice ID> <out.wav>` speaks one sentence using VOICEVOX's files directly (the result in `out.wav.txt`); `--light <side> <height>` sets the sun's position; `--self-shadow 0|1` switches self-shadow; `--doze` shoots the dozing look; and `--walk-motion <vmd>` and `--run-motion <vmd>` set walk and run motions.
 
@@ -203,6 +219,8 @@ Loads the models listed in `list.txt` (UTF-8, one PMX path per line) one by one 
 - `src/Memory.*`: each model's long memory (saving, removing duplicates, picking ones related to the talk)
 - `src/ChatWindows.*`: the speech bubbles (GDI+), the input box, and the yes/no choices
 - `src/Speech.*`: the reading of replies (Japanese through the IME, English from spelling), the lip-sync timeline, and playing the voice (an output of its own for each character)
+- `src/Planner.*`: keeping timers, reminders and to-dos, and reading requests for them (the common ways of asking in Japanese and English, and the form the LLM is asked to answer in)
+- `src/PlannerWindow.*`: the list window for reminders and to-dos
 - `src/Updater.*`: checking GitHub releases, downloading (SHA-256 check, unpacking, version check), and replacing the files
 - `src/Text.*`: switching the language (Japanese / English) and choosing the wording
 - `res/`: the icon (`MikuMikuDesktopPerch.ico`) and version information
