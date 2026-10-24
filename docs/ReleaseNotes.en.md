@@ -2,7 +2,7 @@
 
 [日本語](ReleaseNotes.md)
 
-## Next version (unreleased)
+## 1.2.1
 
 ### What's new
 
@@ -12,6 +12,23 @@
 - **Morning summary**: when you start using the computer in the morning, a character tells you today's reminders and to-dos. Asking "what do I have today" does too
 - **Focus mode (pomodoro)**: 25 minutes of work and 5 of break in turn (lengths in the settings), with a character telling you at each turn. The characters do not start talking during work
 - **Break reminder**: after 60 minutes at the computer without a break (changeable in the settings), a character suggests a rest
+
+### Motion improvements
+
+- **Hands together**: in the clap the palms face each other and meet, neither staying apart nor going through each other, whatever the model's shoulder width, standing pose (T-stance or A-stance) or hand thickness. When the lowered hands are held together in front, the elbows and hands no longer sink into the body
+- **Shoulders**: raising an arm in a gesture moves the shoulder too, by the same formula as MotionTraceEditor's automatic shoulder; gently in gestures that bring a hand up to the face (the wave, the peace sign and so on). Over a motion the user registered, the shoulder is left as the motion has it
+- **Arms in the standing pose**: how far the arms hang is set from each model's build (a skirt, the shoulder width and so on), as low as they go without the hands sinking into the body
+- **Each character on its own timing**: with several characters, gestures, blinks and weight shifts come at each one's own random times, so they no longer strike the same pose together
+- **Thinking pose**: the lowered hand no longer sinks into the body and sits a little outward
+- **Yawn**: the palm of the hand brought to the mouth faces the mouth. The mouth is found on each model from its あ morph
+
+### Fixes
+
+- The user's name and "Speak first" in the settings were not saved and came back empty the next time; fixed
+
+### Settings file
+
+- New keys: `MorningSummary`, `RestMinutes`, `FocusMinutes`, `FocusBreakMinutes`, `CalendarAddress` (stored encrypted) and `CalendarLeadMinutes`. Reminders and to-dos are kept in `%LOCALAPPDATA%\MikuMikuDesktopPerch\planner.txt`
 
 ## 1.2.0
 
