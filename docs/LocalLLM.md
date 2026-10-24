@@ -1,5 +1,7 @@
 # ローカルLLMの導入（Gemma 4 E4B）
 
+[English](LocalLLM.en.md)
+
 MikuMikuDesktopPerch の「話しかける」は、このコンピューターで動くLLMのサーバーに話しかけます。ここでは、日本語の受け答えが自然な Google の **Gemma 4 E4B**（Apache 2.0 ライセンス）を使えるようにする手順をまとめます。
 
 方法は2つあります。どちらか片方で十分です。
