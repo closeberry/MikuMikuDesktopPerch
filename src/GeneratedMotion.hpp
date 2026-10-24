@@ -98,6 +98,13 @@ namespace MikuMikuDesktopPerch
             // hand's rest direction (wrist to the middle finger) and its palm's facing.
             std::array<int,2> wrist{-1,-1},handTwist{-1,-1};
             std::array<DirectX::XMFLOAT3,2> handRestDir{},palmRestNormal{};
+            // Where the palm touches another (the middle of its surface), from the wrist at rest,
+            // measured on the model's own hand.
+            std::array<DirectX::XMFLOAT3,2> palmContact{};
+            // 肩: it follows the arm (ShoulderTurn). Its pivot, and the elbow of the arm hanging
+            // naturally (where the shoulder is at rest).
+            std::array<int,2> shoulder{-1,-1};
+            std::array<DirectX::XMFLOAT3,2> claviclePos{},hangElbow{};
             std::array<DirectX::XMFLOAT3,2> ankleRest{},hipRest{};
             // The toe tip relative to the ankle at rest: how far forward and how far down it
             // is (the foot rolls over it when the heel comes up).
@@ -136,6 +143,13 @@ namespace MikuMikuDesktopPerch
         // faces palm (model space): the turn about the forearm's length goes to 手捩, the rest
         // to 手首 (all of it to 手首 on a model without 手捩).
         void AimHand(std::vector<Key>& keys,int side,DirectX::FXMVECTOR fingers,DirectX::FXMVECTOR palm);
+        // The hand's turn in model space for that aim, and the wrist-to-palm-contact offset it
+        // gives (so a palm, not the wrist, can be put on a point).
+        DirectX::XMVECTOR HandTurn(int side,DirectX::FXMVECTOR fingers,DirectX::FXMVECTOR palm) const;
+        DirectX::XMVECTOR PalmOffset(int side,DirectX::FXMVECTOR fingers,DirectX::FXMVECTOR palm) const;
+        // The shoulder's turn for the elbow at a point, as MotionTraceEditor makes it: from how
+        // far the elbow is above (or below) and in front of (or behind) where it hangs.
+        DirectX::XMVECTOR ShoulderTurn(int side,DirectX::FXMVECTOR elbow) const;
         // Put the wrist at a point, with the elbow toward pole (two-bone IK from the rest shoulder).
         void ReachArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR wrist,DirectX::FXMVECTOR pole);
         // Curl each finger but the thumb (0 straight .. 1 fully curled), index to little.
@@ -163,6 +177,9 @@ namespace MikuMikuDesktopPerch
         float landDepth=0;
         bool initialized=false;
         bool generatedIdle=false;
+        // Under the user's own motion (a click reaction over an idle VMD), the shoulders are the
+        // motion's: they do not follow the arm (ShoulderTurn is not used).
+        bool motionShoulders=false;
         bool gesturesAllowed=true;
         Gesture gesture=Gesture::None;
         std::array<Gesture,2> recentGestures{Gesture::None,Gesture::None};

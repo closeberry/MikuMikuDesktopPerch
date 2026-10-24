@@ -59,6 +59,14 @@ namespace MikuMikuDesktopPerch
         XMVECTOR Rotation(const XMFLOAT3& axis,float angle){return XMQuaternionRotationNormal(XMLoadFloat3(&axis),angle);}
         // Row-vector convention used by PoseSolver: rotate by a, then by b.
         XMVECTOR Then(FXMVECTOR a,FXMVECTOR b){return XMQuaternionMultiply(a,b);}
+
+        // A hand's frame: along its fingers, its palm's facing (made square to them), and the third.
+        XMMATRIX HandFrame(FXMVECTOR along,FXMVECTOR facing)
+        {
+            const XMVECTOR x=XMVector3Normalize(along);
+            const XMVECTOR y=XMVector3Normalize(XMVectorSubtract(facing,XMVectorScale(x,XMVectorGetX(XMVector3Dot(facing,x)))));
+            return XMMATRIX{x,y,XMVector3Cross(x,y),XMVectorSet(0,0,0,1)};
+        }
     }
 
     void GeneratedMotion::Setup(const PMX::PMXModel& pmx,const std::array<ArmRest,2>& arms)
@@ -148,6 +156,13 @@ namespace MikuMikuDesktopPerch
                 // +Z roll raises the +X (left) arm, so the left arm is lowered with a negative roll.
                 rig.armLower[side]=(HangAngle-rest)*(side==0?-1.0f:1.0f);
                 rig.armRaise[side]=(XM_PIDIV2+rest)*(side==0?1.0f:-1.0f);
+                XMStoreFloat3(&rig.hangElbow[side],XMVectorAdd(restPos(rig.arm[side]),
+                              XMVector3Rotate(armDir,XMQuaternionRotationRollPitchYaw(0,0,rig.armLower[side]))));
+                if(const int shoulder=Find(pmx,{s+L"肩"});shoulder>=0)
+                {
+                    rig.shoulder[side]=shoulder;
+                    XMStoreFloat3(&rig.claviclePos[side],restPos(shoulder));
+                }
                 const float upper=XMVectorGetX(XMVector3Length(armDir));
                 const float fore=wrist>=0?XMVectorGetX(XMVector3Length(XMVectorSubtract(restPos(wrist),restPos(rig.elbow[side])))):upper;
                 rig.armReach=upper+fore+0.35f*fore;   // hand length roughly a third of the forearm
@@ -197,6 +212,31 @@ namespace MikuMikuDesktopPerch
             rig.handTwist[side]=Find(pmx,{s+L"手捩"});
             XMStoreFloat3(&rig.handRestDir[side],XMVector3Normalize(XMVectorSubtract(restPos(middle1),restPos(wrist))));
             XMStoreFloat3(&rig.palmRestNormal[side],XMVector3Normalize(palm));
+            {
+                // The palm's middle: part way from the wrist to the knuckles, out on the palm's
+                // surface. The surface is the farthest the hand's own vertices (those the wrist
+                // mostly moves) reach on the palm side there; without them, a guess from the
+                // width of the hand.
+                const XMVECTOR at=restPos(wrist),n=XMVector3Normalize(palm);
+                const XMVECTOR knuckles=XMVectorSubtract(XMVectorScale(XMVectorAdd(restPos(index1),restPos(little1)),0.5f),at);
+                const XMVECTOR middle=XMVectorScale(knuckles,0.6f);
+                const XMVECTOR d=XMVector3Normalize(knuckles);
+                const float reach=XMVectorGetX(XMVector3Length(knuckles));
+                float surface=-1e9f;
+                for(const auto& v:pmx.vertices)
+                {
+                    bool mine=false;
+                    for(int k=0;k<4;++k)if(v.bone[k]==wrist&&(v.weightType==0?k==0:v.weight[k]>=0.5f))mine=true;
+                    if(!mine)continue;
+                    const XMVECTOR rel=XMVectorSubtract(corrected(wrist,XMLoadFloat3(&v.position),true),at);
+                    const float along=XMVectorGetX(XMVector3Dot(rel,d));
+                    if(along<0.2f*reach||along>1.0f*reach)continue;
+                    surface=std::max(surface,XMVectorGetX(XMVector3Dot(rel,n)));
+                }
+                const float width=XMVectorGetX(XMVector3Length(XMVectorSubtract(restPos(little1),restPos(index1))));
+                if(surface<=-1e8f||surface>width)surface=0.25f*width;
+                XMStoreFloat3(&rig.palmContact[side],XMVectorAdd(middle,XMVectorScale(n,surface-XMVectorGetX(XMVector3Dot(middle,n)))));
+            }
             for(const wchar_t* finger:{L"人指",L"中指",L"薬指",L"小指"})
                 for(int joint=0;joint<3;++joint)
                 {
@@ -335,24 +375,77 @@ namespace MikuMikuDesktopPerch
         b0=XMVector3Normalize(XMVectorSubtract(b0,XMVectorScale(a0,XMVectorGetX(XMVector3Dot(a0,b0)))));
         const XMMATRIX from{a0,b0,XMVector3Cross(a0,b0),XMVectorSet(0,0,0,1)};
         const XMMATRIX to{upper,bendAxis,XMVector3Cross(upper,bendAxis),XMVectorSet(0,0,0,1)};
-        SetRotation(keys,rig.arm[side],XMQuaternionRotationMatrix(XMMatrixTranspose(from)*to));
+        // That is the arm's turn in model space; its key is under the shoulder's turn.
+        XMVECTOR shoulder=XMQuaternionIdentity();
+        if(const int bone=rig.shoulder[side];bone>=0&&slot[bone]>=0)shoulder=XMLoadFloat4(&keys[slot[bone]].rotation);
+        SetRotation(keys,rig.arm[side],XMQuaternionMultiply(XMQuaternionRotationMatrix(XMMatrixTranspose(from)*to),XMQuaternionInverse(shoulder)));
         SetRotation(keys,rig.elbow[side],Rotation(rig.elbowBendAxis[side],bendAngle));
     }
 
     void GeneratedMotion::ReachArm(std::vector<Key>& keys,int side,FXMVECTOR wrist,FXMVECTOR pole)
     {
         const float a=rig.upperArm,b=rig.forearm;
-        const XMVECTOR shoulder=XMLoadFloat3(&rig.shoulderPos[side]);
-        XMVECTOR toWrist=XMVectorSubtract(wrist,shoulder);
-        const float d=std::clamp(XMVectorGetX(XMVector3Length(toWrist)),std::abs(a-b)+0.01f,a+b-0.01f);
-        const XMVECTOR dir=XMVector3Normalize(toWrist);
-        XMVECTOR side3=XMVectorSubtract(pole,XMVectorScale(dir,XMVectorGetX(XMVector3Dot(pole,dir))));
-        if(XMVectorGetX(XMVector3LengthSq(side3))<1e-8f)side3=XMVectorSet(0,-1,0,0);
-        side3=XMVector3Normalize(side3);
-        const float cosA=std::clamp((a*a+d*d-b*b)/(2*a*d),-1.0f,1.0f);
-        const XMVECTOR elbow=XMVectorAdd(shoulder,XMVectorAdd(XMVectorScale(dir,a*cosA),XMVectorScale(side3,a*std::sqrt(1-cosA*cosA))));
-        const XMVECTOR reached=XMVectorAdd(shoulder,XMVectorScale(dir,d));
-        AimArm(keys,side,XMVector3Normalize(XMVectorSubtract(elbow,shoulder)),XMVector3Normalize(XMVectorSubtract(reached,elbow)));
+        // Two-bone IK from the arm's root: the elbow, and where the wrist gets to.
+        auto solve=[&](FXMVECTOR root,XMVECTOR& elbow,XMVECTOR& reached){
+            const XMVECTOR toWrist=XMVectorSubtract(wrist,root);
+            const float d=std::clamp(XMVectorGetX(XMVector3Length(toWrist)),std::abs(a-b)+0.01f,a+b-0.01f);
+            const XMVECTOR dir=XMVector3Normalize(toWrist);
+            XMVECTOR side3=XMVectorSubtract(pole,XMVectorScale(dir,XMVectorGetX(XMVector3Dot(pole,dir))));
+            if(XMVectorGetX(XMVector3LengthSq(side3))<1e-8f)side3=XMVectorSet(0,-1,0,0);
+            side3=XMVector3Normalize(side3);
+            const float cosA=std::clamp((a*a+d*d-b*b)/(2*a*d),-1.0f,1.0f);
+            elbow=XMVectorAdd(root,XMVectorAdd(XMVectorScale(dir,a*cosA),XMVectorScale(side3,a*std::sqrt(1-cosA*cosA))));
+            reached=XMVectorAdd(root,XMVectorScale(dir,d));
+        };
+        const XMVECTOR rest=XMLoadFloat3(&rig.shoulderPos[side]);
+        XMVECTOR root=rest,elbow,reached;
+        solve(root,elbow,reached);
+        // The shoulder follows where the elbow goes (or, under the user's motion, stays as the
+        // motion has it); the arm is then solved again from where the shoulder has carried its
+        // root, so the hand still arrives where it was sent.
+        if(const int shoulder=rig.shoulder[side];shoulder>=0&&slot[shoulder]>=0)
+        {
+            const XMVECTOR turn=motionShoulders?XMLoadFloat4(&keys[slot[shoulder]].rotation):ShoulderTurn(side,elbow);
+            if(!motionShoulders)SetRotation(keys,shoulder,turn);
+            const XMVECTOR pivot=XMLoadFloat3(&rig.claviclePos[side]);
+            root=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(rest,pivot),turn));
+            solve(root,elbow,reached);
+        }
+        AimArm(keys,side,XMVector3Normalize(XMVectorSubtract(elbow,root)),XMVector3Normalize(XMVectorSubtract(reached,elbow)));
+    }
+
+    XMVECTOR GeneratedMotion::ShoulderTurn(int side,FXMVECTOR elbow) const
+    {
+        // MotionTraceEditor's automatic shoulder (ArmCorrectionCore): per upper-arm length the
+        // elbow rises, 42° up (14° down when it is lower); per length it comes forward (and
+        // 0.65 of its move toward the body's middle, 0.35 away), 26° forward (18° back).
+        // At most 50° up, 15° down and 20° either way.
+        const float upper=std::max(rig.upperArm,1e-4f);
+        const XMVECTOR d=XMVectorSubtract(elbow,XMLoadFloat3(&rig.hangElbow[side]));
+        const float inward=side==0?-XMVectorGetX(d):XMVectorGetX(d);   // the left side is +X
+        const float up=XMVectorGetY(d)/upper;
+        const float forward=(-XMVectorGetZ(d)+(inward>=0?0.65f:0.35f)*inward)/upper;
+        const float upDegrees=std::clamp(up*(up>=0?42.0f:14.0f),-15.0f,50.0f);
+        const float forwardDegrees=std::clamp(forward*(forward>=0?26.0f:18.0f),-20.0f,20.0f);
+        // Turned about the axes that take the shoulder's line (clavicle to arm) up and forward.
+        const XMVECTOR line=XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&rig.shoulderPos[side]),XMLoadFloat3(&rig.claviclePos[side])));
+        auto toward=[&](FXMVECTOR target,float degrees){
+            const XMVECTOR axis=XMVector3Cross(line,target);
+            if(XMVectorGetX(XMVector3LengthSq(axis))<1e-8f)return XMQuaternionIdentity();
+            return XMQuaternionRotationNormal(XMVector3Normalize(axis),degrees*Deg);
+        };
+        return XMQuaternionMultiply(toward(XMVectorSet(0,1,0,0),upDegrees),toward(XMVectorSet(0,0,-1,0),forwardDegrees));
+    }
+
+    XMVECTOR GeneratedMotion::HandTurn(int side,FXMVECTOR fingers,FXMVECTOR palm) const
+    {
+        return XMQuaternionRotationMatrix(XMMatrixTranspose(HandFrame(XMLoadFloat3(&rig.handRestDir[side]),XMLoadFloat3(&rig.palmRestNormal[side])))*
+                                          HandFrame(fingers,palm));
+    }
+
+    XMVECTOR GeneratedMotion::PalmOffset(int side,FXMVECTOR fingers,FXMVECTOR palm) const
+    {
+        return XMVector3Rotate(XMLoadFloat3(&rig.palmContact[side]),HandTurn(side,fingers,palm));
     }
 
     void GeneratedMotion::AimHand(std::vector<Key>& keys,int side,FXMVECTOR fingers,FXMVECTOR palm)
@@ -360,17 +453,12 @@ namespace MikuMikuDesktopPerch
         const int wrist=rig.wrist[side];
         if(wrist<0||slot[wrist]<0||rig.arm[side]<0||rig.elbow[side]<0)return;
         auto turn=[&](int bone){return bone>=0&&slot[bone]>=0?XMLoadFloat4(&keys[slot[bone]].rotation):XMQuaternionIdentity();};
-        // The forearm's turn in model space (shoulder and 上半身2 are held at rest).
-        const XMVECTOR forearm=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(turn(rig.elbow[side]),turn(rig.armTwist[side])),
-                                                                         turn(rig.arm[side])),turn(rig.upperBody));
-        auto frame=[](FXMVECTOR along,FXMVECTOR facing){
-            const XMVECTOR x=XMVector3Normalize(along);
-            const XMVECTOR y=XMVector3Normalize(XMVectorSubtract(facing,XMVectorScale(x,XMVectorGetX(XMVector3Dot(facing,x)))));
-            return XMMATRIX{x,y,XMVector3Cross(x,y),XMVectorSet(0,0,0,1)};
-        };
+        // The forearm's turn in model space (上半身2 is held at rest).
+        const XMVECTOR forearm=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(
+            turn(rig.elbow[side]),turn(rig.armTwist[side])),turn(rig.arm[side])),turn(rig.shoulder[side])),turn(rig.upperBody));
         // Where the hand points with the wrist at rest, and the turn from there to the aim.
-        const XMMATRIX now=frame(XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[side]),forearm),XMVector3Rotate(XMLoadFloat3(&rig.palmRestNormal[side]),forearm));
-        const XMVECTOR aim=XMQuaternionRotationMatrix(XMMatrixTranspose(now)*frame(fingers,palm));
+        const XMMATRIX now=HandFrame(XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[side]),forearm),XMVector3Rotate(XMLoadFloat3(&rig.palmRestNormal[side]),forearm));
+        const XMVECTOR aim=XMQuaternionRotationMatrix(XMMatrixTranspose(now)*HandFrame(fingers,palm));
         // The same turn as the wrist's own (in the forearm's frame).
         XMVECTOR hand=XMQuaternionNormalize(XMQuaternionMultiply(XMQuaternionMultiply(forearm,aim),XMQuaternionInverse(forearm)));
         if(const int twist=rig.handTwist[side];twist>=0&&slot[twist]>=0)
@@ -625,9 +713,12 @@ namespace MikuMikuDesktopPerch
             // A few small claps in front of the chest, smiling.
             const float beat=0.5f+0.5f*std::cos(XM_2PI*2.4f*std::max(a-0.6f,0.0f));
             // Palms facing each other, fingers up and a little forward.
+            // The palms (measured on the model's hands) meet at the middle, whatever the build.
             both([&](int side,float o){
-                ReachArm(g,side,XMVectorSet(o*(0.048f+0.07f*beat)*L,S.y-0.16f*L,S.z-0.30f*L,0),XMVectorSet(o,-1,0.5f,0));
-                AimHand(g,side,XMVectorSet(o*0.1f,0.8f,-0.6f,0),XMVectorSet(-o,0,0,0));
+                const XMVECTOR fingers=XMVectorSet(o*0.1f,0.8f,-0.6f,0),palm=XMVectorSet(-o,0,0,0);
+                const XMVECTOR contact=XMVectorSet(o*(0.004f+0.07f*beat)*L,S.y-0.16f*L,S.z-0.30f*L,0);
+                ReachArm(g,side,XMVectorSubtract(contact,PalmOffset(side,fingers,palm)),XMVectorSet(o,-1,0.5f,0));
+                AimHand(g,side,fingers,palm);
                 CurlFingers(g,side,{0.08f,0.08f,0.1f,0.12f});
             });
             neck(-3.0f*Deg,0,0);
@@ -1152,6 +1243,7 @@ namespace MikuMikuDesktopPerch
         fadeTime+=dt;
 
         std::vector<Key> target(overrides.size());
+        motionShoulders=activity==Activity::Idle&&!generatedIdle;
         if(activity==Activity::Idle&&!generatedIdle)
         {
             for(size_t i=0;i<overrides.size();++i)
