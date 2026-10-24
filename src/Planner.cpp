@@ -179,6 +179,38 @@ namespace MikuMikuDesktopPerch
 
     std::int64_t Now(){return static_cast<std::int64_t>(std::time(nullptr));}
 
+    std::wstring DateOf(std::int64_t at)
+    {
+        const std::tm t=Local(at);
+        wchar_t text[16]{};
+        swprintf_s(text,L"%04d-%02d-%02d",t.tm_year+1900,t.tm_mon+1,t.tm_mday);
+        return text;
+    }
+
+    std::wstring DayText(const std::wstring& date,std::int64_t now)
+    {
+        int y=0,m=0,d=0;
+        if(swscanf_s(date.c_str(),L"%d-%d-%d",&y,&m,&d)!=3)return date;
+        if(date==DateOf(now))return T(L"今日",L"today");
+        if(date==DateOf(AddDays(now,1)))return T(L"明日",L"tomorrow");
+        std::tm tm{};
+        tm.tm_year=y-1900;tm.tm_mon=m-1;tm.tm_mday=d;tm.tm_hour=12;
+        const std::tm t=Local(Make(tm));
+        wchar_t text[48]{};
+        if(English())
+        {
+            static constexpr const wchar_t* Days[]={L"Sun",L"Mon",L"Tue",L"Wed",L"Thu",L"Fri",L"Sat"};
+            static constexpr const wchar_t* Months[]={L"Jan",L"Feb",L"Mar",L"Apr",L"May",L"Jun",L"Jul",L"Aug",L"Sep",L"Oct",L"Nov",L"Dec"};
+            swprintf_s(text,L"%s, %s %d",Days[t.tm_wday%7],Months[t.tm_mon%12],t.tm_mday);
+        }
+        else
+        {
+            static constexpr const wchar_t* Days[]={L"日",L"月",L"火",L"水",L"木",L"金",L"土"};
+            swprintf_s(text,L"%d月%d日（%s）",t.tm_mon+1,t.tm_mday,Days[t.tm_wday%7]);
+        }
+        return text;
+    }
+
     std::int64_t DayEnd(std::int64_t at){std::tm tm=Local(at);tm.tm_hour=tm.tm_min=tm.tm_sec=0;tm.tm_mday+=1;return Make(tm);}
 
     // ---- Keeping them --------------------------------------------------------------------
@@ -217,8 +249,9 @@ namespace MikuMikuDesktopPerch
             }
             else if(f[0]==L"todo"&&f.size()>=3&&todos.size()<MaxTodos)
             {
+                // todo, added, text, due, told (the last two since deadlines came in)
                 const std::wstring text=Tidy(f[2]);
-                if(!text.empty())todos.push_back({nextId++,text,f[1]});
+                if(!text.empty())todos.push_back({nextId++,text,f[1],f.size()>=4?f[3]:L"",f.size()>=5?f[4]:L""});
             }
         }
         Sort();
@@ -231,7 +264,7 @@ namespace MikuMikuDesktopPerch
         std::wstring all;
         for(const auto& a:alarms)
             all+=L"alarm\t"+std::to_wstring(a.due)+L"\t"+std::to_wstring(a.timerSeconds)+L"\t"+(a.daily?L"1":L"0")+L"\t"+a.text+L"\n";
-        for(const auto& t:todos)all+=L"todo\t"+t.added+L"\t"+t.text+L"\n";
+        for(const auto& t:todos)all+=L"todo\t"+t.added+L"\t"+t.text+L"\t"+t.due+L"\t"+t.told+L"\n";
         const auto temp=path.wstring()+L".tmp";
         {
             std::ofstream out(temp,std::ios::binary|std::ios::trunc);
@@ -258,15 +291,20 @@ namespace MikuMikuDesktopPerch
 
     int Planner::RemoveTimers(){return static_cast<int>(std::erase_if(alarms,[](const Alarm& a){return a.timerSeconds>0;}));}
 
-    int Planner::AddTodo(const std::wstring& text,const std::wstring& date)
+    int Planner::AddTodo(const std::wstring& text,const std::wstring& date,const std::wstring& due)
     {
         const std::wstring t=Tidy(text);
         if(t.empty()||todos.size()>=MaxTodos)return 0;
-        todos.push_back({nextId++,t,date});
+        todos.push_back({nextId++,t,date,due,{}});
         return todos.back().id;
     }
 
     void Planner::RemoveTodo(int id){std::erase_if(todos,[id](const TodoItem& t){return t.id==id;});}
+
+    void Planner::SetTodoTold(int id,const std::wstring& date)
+    {
+        for(auto& t:todos)if(t.id==id)t.told=date;
+    }
 
     int Planner::FindTodo(const std::wstring& words) const
     {
@@ -313,6 +351,66 @@ namespace MikuMikuDesktopPerch
 
     // ---- Reading requests ----------------------------------------------------------------
 
+    namespace
+    {
+        // The day a few words name ("金曜", "来週の月曜", "10月30日", "明日", "next friday",
+        // "oct 30"), as YYYY-MM-DD; empty when they name none.
+        std::wstring DayFromWords(const std::wstring& w,std::int64_t now)
+        {
+            const auto flags=std::regex_constants::ECMAScript|std::regex_constants::icase;
+            std::wsmatch d;
+            auto has=[&](const wchar_t* pattern){return std::regex_search(w,d,std::wregex(pattern,flags));};
+            const std::tm today=Local(now);
+            int offset=-1;
+            if(has(LR"(明後日|あさって|day after tomorrow)"))offset=2;
+            else if(has(LR"(明日|あした|あす|tomorrow)"))offset=1;
+            else if(has(LR"(今日|きょう|today|tonight)"))offset=0;
+            else if(has(LR"((\d{1,2})\s*月\s*(\d{1,2})\s*日)")||has(LR"((\d{1,2})/(\d{1,2}))")||has(LR"((jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}))"))
+            {
+                const int month=std::iswdigit(d[1].str()[0])?_wtoi(d[1].str().c_str()):Month(d[1].str());
+                const int day=_wtoi(d[2].str().c_str());
+                if(month<1||month>12||day<1||day>31)return {};
+                std::tm at=today;
+                at.tm_mon=month-1;at.tm_mday=day;at.tm_hour=12;at.tm_min=at.tm_sec=0;
+                if(DateOf(Make(at))<DateOf(now)){at.tm_year+=1;}   // a day gone by this year is next year's
+                return DateOf(Make(at));
+            }
+            else if(has(LR"((来週|今週)?の?\s*(月|火|水|木|金|土|日)曜)")||has(LR"((next\s+|this\s+)?\b(sun|mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?)(?:day)?\b)"))
+            {
+                const int wd=Weekday(d[2].str());
+                if(wd<0)return {};
+                const std::wstring which=d[1].str();
+                if(which.find(L"来週")!=std::wstring::npos||_wcsnicmp(which.c_str(),L"next",4)==0)
+                    offset=7-(today.tm_wday+6)%7+(wd+6)%7;
+                else offset=(wd-today.tm_wday+7)%7;
+            }
+            if(offset<0)return {};
+            return DateOf(AddDays(now,offset));
+        }
+    }
+
+    bool ReadDeadline(std::wstring& text,std::int64_t now,std::wstring& date)
+    {
+        std::wstring s=Normalize(text);
+        const auto flags=std::regex_constants::ECMAScript|std::regex_constants::icase;
+        constexpr const wchar_t* Day=LR"((今日|きょう|明日|あした|あす|明後日|あさって|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}/\d{1,2}|(?:来週|今週)?の?\s*[月火水木金土日]曜日?))";
+        const std::wstring patterns[]={
+            std::wstring(Day)+LR"(\s*(?:中に|中|までに|までで|まで|迄に|迄))",
+            std::wstring(LR"((?:締め切り|締切|しめきり|期限)\s*(?:は|が|:)?\s*)")+Day+LR"((?:まで)?)",
+            LR"(\b(?:due\s+by|due|by|before|until)\s+(?:on\s+|the\s+)?(today|tonight|tomorrow|day after tomorrow|(?:next\s+|this\s+)?(?:sun|mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?)(?:day)?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?|\d{1,2}/\d{1,2})\b)"};
+        for(const auto& pattern:patterns)
+        {
+            std::wsmatch m;
+            if(!std::regex_search(s,m,std::wregex(pattern,flags)))continue;
+            const std::wstring day=DayFromWords(m[1].str(),now);
+            if(day.empty())continue;
+            date=day;
+            text=Tidy(s.substr(0,static_cast<size_t>(m.position(0)))+L" "+s.substr(static_cast<size_t>(m.position(0)+m.length(0))));
+            return true;
+        }
+        return false;
+    }
+
     PlanRequest ReadPlanRequest(const std::wstring& said,std::int64_t now,bool loose)
     {
         PlanRequest r;
@@ -341,17 +439,24 @@ namespace MikuMikuDesktopPerch
                find(LR"(\b(cancel|stop|clear|delete|turn off|kill)\b.{0,12}\b(timers?|alarms?)\b)"))
             {r.kind=Kind::CancelTimers;return r;}
 
-            // Adding to the to-do list.
-            if(std::regex_search(s,m,std::wregex(with(LR"(TODO\s*(?:に|へ)\s*(.+?)\s*(?:を|って|と)?\s*(?:追加|入れて|いれて|入れと|足して|たして|登録|加えて|書いて|メモ))"),flags))||
-               std::regex_search(s,m,std::wregex(with(LR"(^(.+?)\s*(?:を|って|と|も)\s*TODO\s*(?:に|へ)\s*(?:追加|入れ|いれ|足し|たし|登録|加え|書い|メモ))"),flags))||
-               std::regex_search(s,m,std::wregex(with(LR"(^\s*TODO\s*[:：]\s*(.+)$)"),flags))||
-               find(LR"(\badd\s+(.+?)\s+to\s+(?:my\s+|the\s+)?(?:to-?do|task)s?(?:\s*list)?\b)")||
-               find(LR"(\bput\s+(.+?)\s+on\s+(?:my\s+|the\s+)?(?:to-?do\s*|task\s*)?list\b)")||
-               find(LR"(^\s*(?:to-?do|task)\s*:\s*(.+)$)"))
+            // Adding to the to-do list, with a deadline if one is said (taken out first: it may
+            // sit anywhere, "金曜までにレポートをやることに追加").
             {
-                r.text=ItemWords(m[1].str());
-                if(japanese)r.text=ItemWords(TrimJapanese(r.text));
-                if(!r.text.empty()){r.kind=Kind::TodoAdd;return r;}
+                std::wstring u=s,deadline;
+                if(std::regex_search(s,std::wregex(LR"((ToDo|To-Do|やること|やる事|タスク|\bto-?do|\btask))",flags)))ReadDeadline(u,now,deadline);
+                auto in=[&](const std::wstring& pattern){return std::regex_search(u,m,std::wregex(pattern,flags));};
+                if(in(with(LR"(TODO\s*(?:に|へ)\s*(.+?)\s*(?:を|って|と)?\s*(?:追加|入れて|いれて|入れと|足して|たして|登録|加えて|書いて|メモ))"))||
+                   in(with(LR"(^(.+?)\s*(?:を|って|と|も)\s*TODO\s*(?:に|へ)\s*(?:追加|入れ|いれ|足し|たし|登録|加え|書い|メモ))"))||
+                   in(with(LR"(^\s*TODO\s*[:：]\s*(.+)$)"))||
+                   in(LR"(\badd\s+(.+?)\s+to\s+(?:my\s+|the\s+)?(?:to-?do|task)s?(?:\s*list)?\b)")||
+                   in(LR"(\bput\s+(.+?)\s+on\s+(?:my\s+|the\s+)?(?:to-?do\s*|task\s*)?list\b)")||
+                   in(LR"(^\s*(?:to-?do|task)\s*:\s*(.+)$)"))
+                {
+                    r.text=ItemWords(m[1].str());
+                    r.text=japanese?ItemWords(TrimJapanese(r.text)):TrimEnglish(r.text);
+                    r.deadline=deadline;
+                    if(!r.text.empty()){r.kind=Kind::TodoAdd;return r;}
+                }
             }
             // Taking an item off it.
             if(std::regex_search(s,m,std::wregex(with(LR"(TODO\s*(?:から|の)\s*(.+?)\s*(?:を|は)?\s*(?:消して|けして|削除|外して|はずして|済み|完了|チェック))"),flags))||
@@ -580,7 +685,7 @@ namespace MikuMikuDesktopPerch
             L"timer <seconds> | <what to remind of, or nothing>\n"
             L"remind <YYYY-MM-DD HH:MM> | <what to remind of>\n"
             L"daily <HH:MM> | <what to remind of>\n"
-            L"todo-add | <the task>\n"
+            L"todo-add | <the task> | <its deadline as YYYY-MM-DD, or nothing>\n"
             L"todo-done | <the task that is done>\n"
             L"todo-list\n"
             L"reminders\n"
@@ -597,7 +702,7 @@ namespace MikuMikuDesktopPerch
             L"timer <秒数> | <知らせる内容（なければ空）>\n"
             L"remind <YYYY-MM-DD HH:MM> | <知らせる内容>\n"
             L"daily <HH:MM> | <知らせる内容>\n"
-            L"todo-add | <やること>\n"
+            L"todo-add | <やること> | <期限の日 YYYY-MM-DD（なければ空）>\n"
             L"todo-done | <済んだやること>\n"
             L"todo-list\n"
             L"reminders\n"
@@ -653,7 +758,23 @@ namespace MikuMikuDesktopPerch
                 r.kind=Kind::Remind;r.due=t;r.daily=daily;
                 return r;
             }
-            if(head.rfind(L"todo-add",0)==0){if(text.empty())return {};r.kind=Kind::TodoAdd;return r;}
+            if(head.rfind(L"todo-add",0)==0)
+            {
+                if(const size_t bar=text.find(L'|');bar!=std::wstring::npos)
+                {
+                    int y=0,mo=0,d=0;
+                    if(swscanf_s(text.c_str()+bar+1,L" %d-%d-%d",&y,&mo,&d)==3&&y>=2000&&mo>=1&&mo<=12&&d>=1&&d<=31)
+                    {
+                        wchar_t date[16]{};
+                        swprintf_s(date,L"%04d-%02d-%02d",y,mo,d);
+                        r.deadline=date;
+                    }
+                    r.text=ItemWords(text.substr(0,bar));
+                }
+                if(r.text.empty())return {};
+                r.kind=Kind::TodoAdd;
+                return r;
+            }
             if(head.rfind(L"todo-done",0)==0){if(text.empty())return {};r.kind=Kind::TodoDone;return r;}
             if(head.rfind(L"todo-list",0)==0){r.kind=Kind::TodoList;return r;}
             if(head.rfind(L"reminders",0)==0){r.kind=Kind::AlarmList;return r;}

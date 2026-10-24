@@ -62,7 +62,13 @@ namespace MikuMikuDesktopPerch
             }
             Fill(IdAlarmList,rows);
             rows.clear();
-            for(const auto& t:state.planner->Todos())rows.push_back({t.text,t.id});
+            const std::wstring today=DateOf(now);
+            for(const auto& t:state.planner->Todos())
+            {
+                std::wstring line=t.text;
+                if(!t.due.empty())line+=t.due<today?T(L"　（期限切れ）",L"  (overdue)"):Fmt(T(L"　（{0}まで）",L"  (due {0})"),{DayText(t.due,now)});
+                rows.push_back({line,t.id});
+            }
             Fill(IdTodoList,rows);
         }
 
@@ -120,8 +126,9 @@ namespace MikuMikuDesktopPerch
 
         void AddTodo()
         {
-            const std::wstring typed=Typed(IdTodoNew);
-            if(state.planner&&state.planner->AddTodo(typed,TodayDate()))
+            std::wstring typed=Typed(IdTodoNew),deadline;
+            ReadDeadline(typed,Now(),deadline);   // "金曜までにレポート"
+            if(state.planner&&state.planner->AddTodo(typed,TodayDate(),deadline))
             {
                 SetDlgItemTextW(state.window,IdTodoNew,L"");
                 Save();
@@ -235,7 +242,7 @@ namespace MikuMikuDesktopPerch
         Add(L"LISTBOX",L"",LBS_EXTENDEDSEL|LBS_NOINTEGRALHEIGHT|LBS_NOTIFY|WS_VSCROLL|WS_BORDER|WS_TABSTOP,16,294,448,150,IdTodoList);
         HWND todoInput=Add(L"EDIT",L"",ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,16,454,330,24,IdTodoNew);
         SendMessageW(todoInput,EM_SETLIMITTEXT,Planner::MaxText,0);
-        SendMessageW(todoInput,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"例: 牛乳を買う",L"e.g. Buy milk")));
+        SendMessageW(todoInput,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"例: 牛乳を買う / 金曜までにレポート",L"e.g. Buy milk / report by friday")));
         Add(L"BUTTON",T(L"追加",L"Add"),BS_PUSHBUTTON|WS_TABSTOP,354,452,110,28,IdTodoAdd);
         Add(L"BUTTON",T(L"選んだものを済みにする",L"Mark selected done"),BS_PUSHBUTTON|WS_TABSTOP,284,486,180,28,IdTodoDone);
 

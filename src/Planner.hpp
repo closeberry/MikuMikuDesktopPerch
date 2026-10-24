@@ -24,6 +24,8 @@ namespace MikuMikuDesktopPerch
         int id=0;
         std::wstring text;
         std::wstring added;      // YYYY-MM-DD
+        std::wstring due;        // YYYY-MM-DD it is due by (empty: no deadline)
+        std::wstring told;       // YYYY-MM-DD its deadline was last told (once a day)
     };
 
     class Planner
@@ -40,8 +42,9 @@ namespace MikuMikuDesktopPerch
         int AddAlarm(Alarm alarm);          // returns its id (0: too many)
         void RemoveAlarm(int id);
         int RemoveTimers();                 // takes off every timer; returns how many there were
-        int AddTodo(const std::wstring& text,const std::wstring& date);   // 0: blank or too many
+        int AddTodo(const std::wstring& text,const std::wstring& date,const std::wstring& due={});   // 0: blank or too many
         void RemoveTodo(int id);
+        void SetTodoTold(int id,const std::wstring& date);
         // The to-do item the words point at (its text in them, or they in its text), or 0.
         int FindTodo(const std::wstring& words) const;
 
@@ -67,12 +70,17 @@ namespace MikuMikuDesktopPerch
         // TodoDone said in passing ("宿題終わった"): only a request when it names an item on
         // the list (otherwise it is just talk).
         bool sure=true;
+        std::wstring deadline;  // TodoAdd: the day it is due by (YYYY-MM-DD), if said
     };
 
     // Reads a timer, a reminder or a to-do request out of what the user said, without the LLM
     // (Japanese and English, the common ways of putting them). loose: the words are only a
     // time and what to remind of (typed in the list window), no "tell me" needed.
     PlanRequest ReadPlanRequest(const std::wstring& said,std::int64_t now,bool loose=false);
+
+    // A deadline in the words of a to-do item ("金曜までに", "10月30日まで", "by friday"): taken
+    // out of text, with the day it means (YYYY-MM-DD). False when there is none.
+    bool ReadDeadline(std::wstring& text,std::int64_t now,std::wstring& date);
 
     // The words might be such a request put some other way (worth asking the LLM about).
     bool MightBePlanRequest(const std::wstring& said);
@@ -88,4 +96,7 @@ namespace MikuMikuDesktopPerch
     std::wstring TimeText(std::int64_t at,std::int64_t now,bool daily=false);
     std::int64_t Now();
     std::int64_t DayEnd(std::int64_t at);   // the next local midnight after at
+    std::wstring DateOf(std::int64_t at);   // YYYY-MM-DD, local
+    // A day (YYYY-MM-DD) in words: "今日", "明日", "10月30日（金）" / "today", "Fri, Oct 30".
+    std::wstring DayText(const std::wstring& date,std::int64_t now);
 }

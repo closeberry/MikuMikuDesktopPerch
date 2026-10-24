@@ -2257,6 +2257,45 @@ namespace
         return when;
     }
 
+    // The to-dos, those due soonest first (then the rest in the order they came).
+    std::vector<const TodoItem*> TodosBySoonest()
+    {
+        std::vector<const TodoItem*> items;
+        for(const auto& t:app.planner.Todos())items.push_back(&t);
+        std::stable_sort(items.begin(),items.end(),[](const TodoItem* a,const TodoItem* b){
+            if(a->due.empty()!=b->due.empty())return b->due.empty();
+            return a->due<b->due;});
+        return items;
+    }
+
+    // A to-do item as she says it: 「レポート」（金曜まで） / "report" (due Fri, Oct 30).
+    std::wstring TodoLabel(const TodoItem& t,std::int64_t now)
+    {
+        std::wstring label=Quoted(t.text);
+        if(t.due.empty())return label;
+        if(t.due<DateOf(now))return label+T(L"（期限切れ）",L" (overdue)");
+        return label+Fmt(T(L"（{0}まで）",L" (due {0})"),{DayText(t.due,now)});
+    }
+
+    // The to-dos due by tomorrow (or overdue) not yet told about today.
+    std::vector<const TodoItem*> DeadlinesToTell(std::int64_t now)
+    {
+        const std::wstring today=DateOf(now),tomorrow=DateOf(DayEnd(now)+3600);
+        std::vector<const TodoItem*> items;
+        for(const TodoItem* t:TodosBySoonest())
+            if(!t->due.empty()&&t->due<=tomorrow&&t->told!=today)items.push_back(t);
+        return items;
+    }
+
+    void MarkDeadlinesTold(std::int64_t now)
+    {
+        const std::wstring today=DateOf(now);
+        std::vector<int> ids;
+        for(const TodoItem* t:DeadlinesToTell(now))ids.push_back(t->id);
+        for(const int id:ids)app.planner.SetTodoTold(id,today);
+        if(!ids.empty())SavePlanner();
+    }
+
     // Today's reminders (timers aside) and the to-dos, as she says them and as facts for the
     // LLM. False when there are none.
     bool TodaySummary(std::wstring& line,std::wstring& facts)
@@ -2270,8 +2309,8 @@ namespace
             if(English())reminders.push_back((a.text.empty()?std::wstring(L"a reminder"):Quoted(a.text))+L" at "+when);
             else reminders.push_back(when+L"に"+(a.text.empty()?std::wstring(L"お知らせ"):Quoted(a.text)));
         }
-        const auto& items=app.planner.Todos();
-        for(size_t i=0;i<items.size()&&i<5;++i)todos.push_back(Quoted(items[i].text));
+        const auto items=TodosBySoonest();
+        for(size_t i=0;i<items.size()&&i<5;++i)todos.push_back(TodoLabel(*items[i],now));
         if(items.size()>5)todos.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(items.size()-5)}));
         if(reminders.empty()&&todos.empty())return false;
         line.clear();
@@ -2338,10 +2377,23 @@ namespace
             break;
         }
         case Kind::TodoAdd:
-            if(!app.planner.AddTodo(r.text,TodayDate())){line=T(L"ごめんね、やることがいっぱいで、もう入らないよ。",L"Sorry, the to-do list is full.");own=false;break;}
-            line=Fmt(T(L"{0}を、やることに入れておいたよ（いま{1}件）。",L"Added {0} to your to-do list ({1} in all)."),{Quoted(r.text),std::to_wstring(app.planner.Todos().size())});
-            news=Fmt(T(L"頼まれて、やることリストに{0}を追加しました（全部で{1}件）",L"You were asked to, and added {0} to the to-do list ({1} in all)"),{Quoted(r.text),std::to_wstring(app.planner.Todos().size())});
+        {
+            if(!app.planner.AddTodo(r.text,TodayDate(),r.deadline)){line=T(L"ごめんね、やることがいっぱいで、もう入らないよ。",L"Sorry, the to-do list is full.");own=false;break;}
+            const std::wstring count=std::to_wstring(app.planner.Todos().size());
+            if(r.deadline.empty())
+            {
+                line=Fmt(T(L"{0}を、やることに入れておいたよ（いま{1}件）。",L"Added {0} to your to-do list ({1} in all)."),{Quoted(r.text),count});
+                news=Fmt(T(L"頼まれて、やることリストに{0}を追加しました（全部で{1}件）",L"You were asked to, and added {0} to the to-do list ({1} in all)"),{Quoted(r.text),count});
+            }
+            else
+            {
+                const std::wstring day=DayText(r.deadline,now);
+                line=Fmt(T(L"{0}を、{1}までのやることに入れておいたよ。近くなったら知らせるね（いま{2}件）。",L"Added {0} to your to-do list, due {1}. I'll remind you when it's close ({2} in all)."),{Quoted(r.text),day,count});
+                news=Fmt(T(L"頼まれて、やることリストに{0}を、期限{1}で追加しました（全部で{2}件）。期限の前日と当日に知らせます",
+                           L"You were asked to, and added {0} to the to-do list, due {1} ({2} in all). You will remind them the day before and on the day"),{Quoted(r.text),day,count});
+            }
             break;
+        }
         case Kind::TodoDone:
         {
             const int id=app.planner.FindTodo(r.text);
@@ -2357,10 +2409,10 @@ namespace
         case Kind::TodoList:
         {
             own=false;
-            const auto& todos=app.planner.Todos();
+            const auto todos=TodosBySoonest();
             if(todos.empty()){line=T(L"いま、やることは入ってないよ。",L"Your to-do list is empty.");break;}
             std::vector<std::wstring> items;
-            for(size_t i=0;i<todos.size()&&i<10;++i)items.push_back(Quoted(todos[i].text));
+            for(size_t i=0;i<todos.size()&&i<10;++i)items.push_back(TodoLabel(*todos[i],now));
             if(todos.size()>10)items.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(todos.size()-10)}));
             line=Fmt(T(L"やることは{0}件。{1}だよ。",L"You have {0} to-dos: {1}."),{std::to_wstring(todos.size()),Listing(items)});
             break;
@@ -2393,6 +2445,7 @@ namespace
             own=false;
             std::wstring facts;
             if(!TodaySummary(line,facts))line=T(L"今日は、リマインダーもやることも入ってないよ。",L"Nothing for today: no reminders and no to-dos.");
+            MarkDeadlinesTold(now);
             if(app.focus.on)line=FocusState()+T(L"。",L". ")+line;
             break;
         }
@@ -2665,6 +2718,25 @@ namespace
                   L"The person you talk with has been using the computer for about {0} without a break. Gently suggest a short rest"),{DurationText(used)})});
     }
 
+    // To-dos due tomorrow, today or already: told once a day, when the user is at the computer
+    // (in the morning, the morning summary tells them; in focus mode, at a break).
+    void UpdateDeadlines()
+    {
+        if(app.diagnostic||app.clock<20||!app.notices.empty())return;
+        SYSTEMTIME local{};
+        GetLocalTime(&local);
+        if(local.wHour<7||(app.settings.morningSummary&&local.wHour<10)||InputIdleSeconds()>90||(app.focus.on&&!app.focus.resting))return;
+        const std::int64_t now=Now();
+        const auto items=DeadlinesToTell(now);
+        if(items.empty())return;
+        std::vector<std::wstring> labels;
+        for(const TodoItem* t:items)labels.push_back(TodoLabel(*t,now));
+        MarkDeadlinesTold(now);
+        app.notices.push_back({
+            Fmt(T(L"やることの期限が近いよ。{0}。",L"Deadlines coming up: {0}."),{Listing(labels)}),
+            Fmt(T(L"やることリストの期限が近づいています：{0}。忘れないよう知らせて",L"Deadlines on the to-do list are close: {0}. Remind them so they don't forget"),{Listing(labels)})});
+    }
+
     // The first morning greeting tells today's reminders and to-dos (with them, the greeting
     // is this, in place of the usual one; without the LLM, in fixed words).
     void MaybeMorningSummary()
@@ -2684,6 +2756,7 @@ namespace
         app.settings.Save(app.settingsPath);
         app.nextChatterAt=std::max(app.nextChatterAt,app.clock+20*60);
         Trace(L"%.1f morning: %s",app.clock,line.c_str());
+        MarkDeadlinesTold(Now());
         if(ChatReady(*m,false))
             SpeakFirst(*m,T(L"朝です。話し相手がパソコンを使い始めました。朝のあいさつをして、今日の予定を伝えて。",
                             L"It is morning. The person you talk with has started using the computer. Say good morning, and tell them today's plans. ")+facts,
@@ -3546,9 +3619,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     const bool loose=line.rfind(L"~",0)==0;
                     const PlanRequest r=ReadPlanRequest(loose?line.substr(1):line,now,loose);
                     SetLanguage(std::any_of(line.begin(),line.end(),[](wchar_t c){return c>=0x3040;})?L"ja":L"en");
-                    fwprintf(out,L"%s\t%s\t%s\t%s\t%s%s\t[%s]\n",line.c_str(),Kinds[static_cast<int>(r.kind)],
+                    fwprintf(out,L"%s\t%s\t%s\t%s\t%s%s\t[%s]%s\n",line.c_str(),Kinds[static_cast<int>(r.kind)],
                              r.due?TimeText(r.due,now,r.daily).c_str():L"",r.seconds?DurationText(r.seconds).c_str():L"",
-                             r.daily?L"daily":L"",r.sure?L"":L"unsure",r.text.c_str());
+                             r.daily?L"daily":L"",r.sure?L"":L"unsure",r.text.c_str(),r.deadline.empty()?L"":(L" due "+r.deadline).c_str());
                 }
                 fclose(out);
             }
@@ -3783,7 +3856,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.paused)continue;
 
         app.clock+=dt;
-        if(!forcedActivity){MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdatePlanner();}
+        if(!forcedActivity){MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdateDeadlines();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)
