@@ -4,8 +4,10 @@
 
 namespace MikuMikuDesktopPerch
 {
-    // MikuMikuDesktopPerch.ini next to the executable (UTF-16LE so Japanese paths survive).
-    struct Settings
+    // What belongs to one character on the desktop: its model, its motions, its size and
+    // place, and its voice. Character 1 is kept in the [Mascot] section (where a single
+    // mascot's settings always were), characters 2 to 4 in [Mascot2] .. [Mascot4].
+    struct CharacterSettings
     {
         std::wstring modelPath;
         std::wstring motionPath;      // played once when opened, then now and then
@@ -18,11 +20,21 @@ namespace MikuMikuDesktopPerch
         // Walking and running in place (looped, made to be moved by 全ての親) to use instead of
         // the generated gait; empty: generated.
         std::wstring walkMotionPath,runMotionPath;
+        int scale=100;              // percent, 10% steps from the menu
+        int x=-1;                   // -1: place at the bottom right of the work area
+        int voiceSpeaker=3;
+        std::wstring voiceName;     // the voice's name as the engine gave it (for the settings window)
+    };
+
+    // MikuMikuDesktopPerch.ini next to the executable (UTF-16LE so Japanese paths survive).
+    struct Settings
+    {
+        static constexpr int MaxCharacters=4;
+        // At least one; the first is the one the app started with.
+        std::vector<CharacterSettings> characters{CharacterSettings{}};
         std::wstring toonDir;       // folder holding toon01.bmp..toon10.bmp (MMD's Data folder)
         static constexpr int MinScale=50,MaxScale=600;
         int windowHeight=300;       // logical pixels at 96 DPI, at 100% scale
-        int scale=100;              // percent, 10% steps from the menu
-        int x=-1,y=-1;              // -1: place at bottom-right of the work area
         int fps=30;
         bool motionBlur=false;      // smear what moves, so low frame rates look smoother
         bool physics=true;
@@ -55,8 +67,6 @@ namespace MikuMikuDesktopPerch
         bool voiceDirect=false;     // VOICEVOX's files used directly (voiceFolder), not its engine
         std::wstring voiceFolder;   // where VOICEVOX is installed
         std::wstring voiceEndpoint=L"http://127.0.0.1:50021";
-        int voiceSpeaker=3;
-        std::wstring voiceName;     // the voice's name as the engine gave it (for the settings window)
         std::wstring lastGreeting;  // the last time-of-day greeting (date and slot), so a restart does not repeat it
 
         static std::wstring DefaultPath();

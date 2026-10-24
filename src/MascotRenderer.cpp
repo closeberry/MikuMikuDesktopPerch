@@ -109,15 +109,11 @@ namespace MikuMikuDesktopPerch
         if(fenceEvent)CloseHandle(fenceEvent);
     }
 
-    bool MascotRenderer::Initialize(HWND window,unsigned w,unsigned h,int msaa,bool blur,std::wstring& error)
+    std::shared_ptr<MascotRenderer::Gpu> MascotRenderer::SharedGpu(std::wstring& error)
     {
-        hwnd=window;
-        windowWidth=std::max(1u,w);windowHeight=std::max(1u,h);
-        width=std::max(1u,static_cast<unsigned>(std::lround(windowWidth*resolutionScale)));
-        height=std::max(1u,static_cast<unsigned>(std::lround(windowHeight*resolutionScale)));
-        motionBlur=blur;
-        bufferWidth=width+width/4;bufferHeight=height+height/4;
-        swapWidth=windowWidth+windowWidth/4;swapHeight=windowHeight+windowHeight/4;
+        static std::weak_ptr<Gpu> shared;
+        if(auto existing=shared.lock())return existing;
+        auto gpu=std::make_shared<Gpu>();
         HRESULT hr;
 #if defined(_DEBUG)
         {
@@ -128,19 +124,38 @@ namespace MikuMikuDesktopPerch
 #else
         const UINT factoryFlags=0;
 #endif
-        if(FAILED(hr=CreateDXGIFactory2(factoryFlags,IID_PPV_ARGS(&factory)))){error=HrText(L"DXGI factory",hr);return false;}
+        if(FAILED(hr=CreateDXGIFactory2(factoryFlags,IID_PPV_ARGS(&gpu->factory)))){error=HrText(L"DXGI factory",hr);return nullptr;}
 
         // A mascot should stay off the discrete GPU when an integrated one exists.
         ComPtr<IDXGIAdapter1> adapter;
-        for(UINT i=0;factory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_MINIMUM_POWER,IID_PPV_ARGS(&adapter))!=DXGI_ERROR_NOT_FOUND;++i)
+        for(UINT i=0;gpu->factory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_MINIMUM_POWER,IID_PPV_ARGS(&adapter))!=DXGI_ERROR_NOT_FOUND;++i)
         {
             DXGI_ADAPTER_DESC1 desc{};
             adapter->GetDesc1(&desc);
             if(desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE){adapter.Reset();continue;}
-            if(SUCCEEDED(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&device)))){adapterName=desc.Description;break;}
+            if(SUCCEEDED(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&gpu->device)))){gpu->adapterName=desc.Description;break;}
             adapter.Reset();
         }
-        if(!device){error=L"D3D12 に対応した GPU が見つかりません。";return false;}
+        if(!gpu->device){error=L"D3D12 に対応した GPU が見つかりません。";return nullptr;}
+        shared=gpu;
+        return gpu;
+    }
+
+    bool MascotRenderer::Initialize(HWND window,unsigned w,unsigned h,int msaa,bool blur,std::wstring& error)
+    {
+        hwnd=window;
+        windowWidth=std::max(1u,w);windowHeight=std::max(1u,h);
+        width=std::max(1u,static_cast<unsigned>(std::lround(windowWidth*resolutionScale)));
+        height=std::max(1u,static_cast<unsigned>(std::lround(windowHeight*resolutionScale)));
+        motionBlur=blur;
+        bufferWidth=width+width/4;bufferHeight=height+height/4;
+        swapWidth=windowWidth+windowWidth/4;swapHeight=windowHeight+windowHeight/4;
+        HRESULT hr;
+        gpu=SharedGpu(error);
+        if(!gpu)return false;
+        factory=gpu->factory;
+        device=gpu->device;
+        adapterName=gpu->adapterName;
 
         D3D12_COMMAND_QUEUE_DESC queueDesc{};
         queueDesc.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;

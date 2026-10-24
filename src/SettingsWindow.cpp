@@ -104,6 +104,7 @@ namespace MikuMikuDesktopPerch
         void Build()
         {
             const Settings& s=state.choice.settings;
+            const CharacterSettings& own=state.choice.mascot;
             int y=10;
             Group(L"動き",y,128);
             CheckBox(IdAuto,L"おまかせ行動（ひとりで歩き回る）",28,y+22,400,s.autoBehavior);
@@ -146,9 +147,9 @@ namespace MikuMikuDesktopPerch
             Combo(IdVoiceList,170,y+164,128);
             {
                 HWND list=GetDlgItem(state.window,IdVoiceList);
-                const std::wstring label=s.voiceName.empty()?L"声 "+std::to_wstring(s.voiceSpeaker):s.voiceName;
+                const std::wstring label=own.voiceName.empty()?L"声 "+std::to_wstring(own.voiceSpeaker):own.voiceName;
                 const auto index=SendMessageW(list,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));
-                SendMessageW(list,CB_SETITEMDATA,index,s.voiceSpeaker);
+                SendMessageW(list,CB_SETITEMDATA,index,own.voiceSpeaker);
                 SendMessageW(list,CB_SETCURSEL,index,0);
             }
             Add(L"BUTTON",L"試聴",BS_PUSHBUTTON|WS_TABSTOP,304,y+163,56,26,IdVoiceSample);
@@ -181,7 +182,7 @@ namespace MikuMikuDesktopPerch
 
             std::vector<std::pair<std::wstring,int>> scales;
             for(int p=Settings::MinScale;p<=Settings::MaxScale;p+=10)scales.push_back({std::to_wstring(p)+L"%",p});
-            FillCombo(IdScale,scales,s.scale,std::to_wstring(s.scale)+L"%");
+            FillCombo(IdScale,scales,own.scale,std::to_wstring(own.scale)+L"%");
             const int edge=static_cast<int>(std::lround(s.edgeScale*100));
             FillCombo(IdEdge,{{L"なし",0},{L"細い（0.5倍）",50},{L"やや細い（0.75倍）",75},{L"標準",100},{L"やや太い（1.25倍）",125},{L"太い（1.5倍）",150},{L"とても太い（2倍）",200}},
                       edge,std::to_wstring(edge/100.0).substr(0,4)+L"倍");
@@ -248,7 +249,7 @@ namespace MikuMikuDesktopPerch
         // The chosen voice says a short line.
         void PlayVoiceSample()
         {
-            const int speaker=ComboValue(IdVoiceList,state.choice.settings.voiceSpeaker);
+            const int speaker=ComboValue(IdVoiceList,state.choice.mascot.voiceSpeaker);
             SetCursor(LoadCursorW(nullptr,IDC_WAIT));
             PlaySoundW(nullptr,nullptr,0);
             std::string wav;
@@ -278,7 +279,7 @@ namespace MikuMikuDesktopPerch
                 return;
             }
             HWND list=GetDlgItem(state.window,IdVoiceList);
-            const int current=ComboValue(IdVoiceList,state.choice.settings.voiceSpeaker);
+            const int current=ComboValue(IdVoiceList,state.choice.mascot.voiceSpeaker);
             SendMessageW(list,CB_RESETCONTENT,0,0);
             for(const auto& [name,id]:voices)
             {
@@ -556,13 +557,14 @@ namespace MikuMikuDesktopPerch
         {
             SettingsChoice c=state.choice;
             Settings& s=c.settings;
+            CharacterSettings& own=c.mascot;
             s.autoBehavior=Checked(IdAuto);
             s.windowMode=Checked(IdWindowMode);
             s.physics=Checked(IdPhysics);
             s.blink=Checked(IdBlink);
             s.breath=Checked(IdBreath);
             s.lookAtMouse=Checked(IdLookAt);
-            s.scale=ComboValue(IdScale,s.scale);
+            own.scale=ComboValue(IdScale,own.scale);
             s.edgeScale=ComboValue(IdEdge,static_cast<int>(std::lround(s.edgeScale*100)))/100.0f;
             s.topmost=Checked(IdTopmost);
             s.selfShadow=Checked(IdSelfShadow);
@@ -599,7 +601,7 @@ namespace MikuMikuDesktopPerch
                 s.voiceDirect=source.direct;
                 s.voiceFolder=source.folder;
             }
-            s.voiceSpeaker=ComboValue(IdVoiceList,s.voiceSpeaker);
+            own.voiceSpeaker=ComboValue(IdVoiceList,own.voiceSpeaker);
             {
                 HWND list=GetDlgItem(state.window,IdVoiceList);
                 const auto index=SendMessageW(list,CB_GETCURSEL,0,0);
@@ -609,7 +611,7 @@ namespace MikuMikuDesktopPerch
                     std::wstring name(length+1,L'\0');
                     SendMessageW(list,CB_GETLBTEXT,index,reinterpret_cast<LPARAM>(name.data()));
                     name.resize(length);
-                    s.voiceName=name;
+                    own.voiceName=name;
                 }
             }
             return c;
@@ -733,7 +735,8 @@ namespace MikuMikuDesktopPerch
         const RECT& work=monitor.rcWork;
         const int w=frame.right-frame.left,h=frame.bottom-frame.top;
         // Owned by the mascot's window: kept above it (it is topmost) and gone with it.
-        state.window=CreateWindowExW(exStyle,ClassName,L"MikuMikuDesktopPerch の設定",style,
+        const std::wstring title=L"MikuMikuDesktopPerch の設定（"+current.character.name+L"）";
+        state.window=CreateWindowExW(exStyle,ClassName,title.c_str(),style,
                                      work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,
                                      owner,nullptr,instance,nullptr);
         if(!state.window)return;

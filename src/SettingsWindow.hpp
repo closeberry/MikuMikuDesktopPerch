@@ -7,13 +7,15 @@
 namespace MikuMikuDesktopPerch
 {
     // What the settings window edits: the settings file's values, plus starting with Windows
-    // (kept in the registry, not in the file).
+    // (kept in the registry, not in the file). The size, the voice, the persona and the memory
+    // are those of one character on the desktop (the one whose menu opened the window).
     struct SettingsChoice
     {
         Settings settings;
         bool startWithWindows=false;
-        CharacterProfile character;   // of the current model
-        // The current model's memory: the memory window edits it (and saves it) directly,
+        CharacterSettings mascot;     // that character's own settings (settings.characters is not edited)
+        CharacterProfile character;   // of its model
+        // Its model's memory: the memory window edits it (and saves it) directly,
         // since notes keep arriving from conversations while the settings are open.
         CharacterMemory* memory=nullptr;
     };

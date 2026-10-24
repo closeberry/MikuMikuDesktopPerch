@@ -9,13 +9,15 @@
 #include <DirectXMath.h>
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace MikuMikuDesktopPerch
 {
     // D3D12 renderer that draws one PMX model into a premultiplied-alpha
-    // DirectComposition swap chain, so the window is per-pixel transparent.
+    // DirectComposition swap chain, so the window is per-pixel transparent. One renderer per
+    // window; the renderers of a process share the GPU device.
     class MascotRenderer
     {
     public:
@@ -110,6 +112,16 @@ namespace MikuMikuDesktopPerch
         UINT sampleCount=1;
         std::wstring adapterName;
 
+        // The GPU device, shared by every renderer in the process (one per character): each
+        // character's own device would hold its own copy of the driver's state.
+        struct Gpu
+        {
+            Microsoft::WRL::ComPtr<IDXGIFactory6> factory;
+            Microsoft::WRL::ComPtr<ID3D12Device> device;
+            std::wstring adapterName;
+        };
+        static std::shared_ptr<Gpu> SharedGpu(std::wstring& error);
+        std::shared_ptr<Gpu> gpu;
         Microsoft::WRL::ComPtr<IDXGIFactory6> factory;
         Microsoft::WRL::ComPtr<ID3D12Device> device;
         Microsoft::WRL::ComPtr<ID3D12CommandQueue> queue;
