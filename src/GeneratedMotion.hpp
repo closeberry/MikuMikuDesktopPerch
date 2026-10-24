@@ -131,6 +131,10 @@ namespace MikuMikuDesktopPerch
             DirectX::XMFLOAT3 lowerPivot{};    // 下半身 rest position (the body's roll pivot)
             float shoulderY=14,armReach=6;     // shoulder height and shoulder-to-fingertip length
             float headY=16;                    // 頭 rest height
+            // The mouth at rest (the middle of what the あ morph moves, at the front of the lips),
+            // when the model has that morph.
+            DirectX::XMFLOAT3 mouth{};
+            bool hasMouth=false;
             std::array<DirectX::XMFLOAT3,2> armRestDir{};   // rest direction of the upper arm
             float upperArm=3,foreArm=3;        // shoulder to elbow, elbow to fingertips
             float gripReach=3;                 // elbow to the middle of a curled grip

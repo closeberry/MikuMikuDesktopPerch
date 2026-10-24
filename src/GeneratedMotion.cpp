@@ -346,6 +346,45 @@ namespace MikuMikuDesktopPerch
         }
         if(const int head=Find(pmx,{L"頭"});head>=0)rig.headY=XMVectorGetY(restPos(head));
         else rig.headY=rig.shoulderY+0.25f*rig.legLength;
+        // The mouth: where the vertices the あ morph moves are (their middle, weighted by how far
+        // each moves), at the front of the lips. A group morph is followed to the vertex morphs
+        // it is made of.
+        if(rig.mouthOpen>=0)
+        {
+            XMVECTOR sum=XMVectorZero();
+            float weight=0,front=1e9f;
+            auto gather=[&](auto&& self,int index,float ratio,int depth)->void{
+                if(index<0||index>=static_cast<int>(pmx.morphs.size())||depth>4||ratio<=0)return;
+                const auto& morph=pmx.morphs[index];
+                if(morph.kind==0)
+                {
+                    const auto* group=reinterpret_cast<const PMX::PMXGroupMorphOffset*>(morph.offsets.data());
+                    for(int j=0;j<morph.offsetCount;++j)self(self,group[j].morph,ratio*group[j].ratio,depth+1);
+                    return;
+                }
+                if(morph.kind!=1)return;
+                const auto* offsets=reinterpret_cast<const PMX::PMXVertexMorphOffset*>(morph.offsets.data());
+                for(int j=0;j<morph.offsetCount;++j)
+                {
+                    const int v=offsets[j].vertex;
+                    if(v<0||v>=static_cast<int>(pmx.vertices.size()))continue;
+                    const float moved=ratio*XMVectorGetX(XMVector3Length(XMLoadFloat3(&offsets[j].offset)));
+                    if(moved<1e-4f)continue;
+                    const XMVECTOR p=XMLoadFloat3(&pmx.vertices[v].position);
+                    sum=XMVectorAdd(sum,XMVectorScale(p,moved));
+                    weight+=moved;
+                    front=std::min(front,XMVectorGetZ(p));
+                }
+            };
+            gather(gather,rig.mouthOpen,1.0f,0);
+            if(weight>0)
+            {
+                XMVECTOR mouth=XMVectorScale(sum,1.0f/weight);
+                mouth=XMVectorSetZ(mouth,front);
+                XMStoreFloat3(&rig.mouth,mouth);
+                rig.hasMouth=true;
+            }
+        }
         (void)hipHeight;
 
         for(const auto* name:{L"センター",L"上半身2",L"頭",L"左肩",L"右肩",L"左手首",L"右手首",L"左手捩",L"右手捩",
@@ -778,11 +817,19 @@ namespace MikuMikuDesktopPerch
         }
         case Gesture::Yawn:
         {
-            // A yawn: the mouth opens wide behind the back of a hand, eyes shut, head back a
+            // A yawn: the mouth opens wide behind a hand, eyes shut, head back a
             // little, then a small blink of relief.
             const float open=std::sin(XM_PI*std::clamp((a-0.5f)/std::max(len-1.6f,0.5f),0.0f,1.0f));
-            ReachArm(g,s,XMVectorSet(out*0.05f*L,rig.headY-0.08f*L,faceZ-0.14f*L,0),XMVectorSet(out,-1,0.1f,0),0.5f);
-            CurlFingers(g,s,{0.15f,0.15f,0.2f,0.25f});
+            // The palm over the mouth (just in front of the lips, moving with the head as it goes
+            // back), fingers across it toward the other side.
+            {
+                const XMVECTOR lips=rig.hasMouth?XMLoadFloat3(&rig.mouth):XMVectorSet(0,rig.headY,faceZ,0);
+                const XMVECTOR mouth=withHead(XMVectorSubtract(lips,XMVectorSet(0,0.03f*L,0.025f*L,0)),8.0f*Deg*open,0);
+                const XMVECTOR fingers=XMVectorSet(-out*0.95f,0.08f,-0.15f,0),palm=XMVectorSet(out*0.2f,0.05f,1,0);
+                ReachArm(g,s,XMVectorSubtract(mouth,PalmOffset(s,fingers,palm)),XMVectorSet(out,-1,0.1f,0),0.5f);
+                AimHand(g,s,fingers,palm);
+            }
+            CurlFingers(g,s,{0.1f,0.1f,0.12f,0.15f});
             SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(3.0f*Deg*open,0,0));
             neck(8.0f*Deg*open,0,-out*4.0f*Deg);
             face(rig.mouthOpen,0.9f*open);
