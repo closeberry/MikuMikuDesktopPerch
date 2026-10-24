@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "Settings.hpp"
 #include "Text.hpp"
+#include "Calendar.hpp"
 #include <windows.h>
 #include <filesystem>
 #include <fstream>
@@ -150,6 +151,10 @@ namespace MikuMikuDesktopPerch
         restMinutes=std::clamp(ReadInt(path,L"RestMinutes",restMinutes),0,600);
         focusMinutes=std::clamp(ReadInt(path,L"FocusMinutes",focusMinutes),1,180);
         focusBreakMinutes=std::clamp(ReadInt(path,L"FocusBreakMinutes",focusBreakMinutes),1,60);
+        // Encrypted for this Windows user; one written in by hand is encrypted at the next save.
+        const std::wstring calendar=ReadString(path,L"CalendarAddress",{});
+        calendarAddress=calendar.rfind(L"dpapi:",0)==0?UnprotectText(calendar):calendar;
+        calendarLeadMinutes=std::clamp(ReadInt(path,L"CalendarLeadMinutes",calendarLeadMinutes),0,120);
         language=ReadString(path,L"Language",language);
         if(language!=L"ja"&&language!=L"en")language.clear();
         voice=ReadInt(path,L"Voice",voice?1:0)!=0;
@@ -208,6 +213,8 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"RestMinutes",std::to_wstring(restMinutes));
         WriteString(path,L"FocusMinutes",std::to_wstring(focusMinutes));
         WriteString(path,L"FocusBreakMinutes",std::to_wstring(focusBreakMinutes));
+        WriteString(path,L"CalendarAddress",calendarAddress.empty()?std::wstring():ProtectText(calendarAddress));
+        WriteString(path,L"CalendarLeadMinutes",std::to_wstring(calendarLeadMinutes));
         WriteString(path,L"Language",language);
         WriteString(path,L"Voice",voice?L"1":L"0");
         WriteString(path,L"VoiceEndpoint",voiceEndpoint);

@@ -100,6 +100,7 @@
     <ClCompile Include="src\TextureLoader.cpp" />
     <ClCompile Include="src\Planner.cpp" />
     <ClCompile Include="src\PlannerWindow.cpp" />
+    <ClCompile Include="src\Calendar.cpp" />
     <ClCompile Include="src\Updater.cpp" />
     <ClCompile Include="src\Text.cpp" />
     <ClCompile Include="external\DirectXTK12\Src\SimpleMath.cpp" />
@@ -111,6 +112,7 @@
     <ClInclude Include="src\MascotModel.hpp" />
     <ClInclude Include="src\Planner.hpp" />
     <ClInclude Include="src\PlannerWindow.hpp" />
+    <ClInclude Include="src\Calendar.hpp" />
     <ClInclude Include="src\Updater.hpp" />
     <ClInclude Include="src\Text.hpp" />
     <ClInclude Include="src\ChatWindows.hpp" />

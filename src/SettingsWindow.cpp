@@ -31,7 +31,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
@@ -179,14 +179,20 @@ namespace MikuMikuDesktopPerch
             Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+191,70,26,IdVoiceBrowse);
             UpdateVoiceMode();
             y+=234;
-            Group(T(L"秘書（タイマー・リマインダー・やることは、メニューと会話から）",L"Assistant (timers, reminders and to-dos: from the menu or by talking)"),y,108);
+            Group(T(L"秘書（タイマー・リマインダー・やることは、メニューと会話から）",L"Assistant (timers, reminders and to-dos: from the menu or by talking)"),y,164);
             CheckBox(IdMorningSummary,T(L"朝に、今日のリマインダーとやることを話す",L"Tell today's reminders and to-dos in the morning"),28,y+22,400,s.morningSummary);
             Label(T(L"使い続けたら休憩をすすめる",L"Suggest a break after using the PC for"),28,y+50,290);
             Combo(IdRestMinutes,326,y+48,110);
             Label(T(L"集中モードの作業と休憩",L"Focus mode: work and break"),28,y+78,200);
             Combo(IdFocusMinutes,220,y+76,104);
             Combo(IdFocusBreakMinutes,332,y+76,104);
-            y+=118;
+            // The calendar's address is a secret: shown as dots.
+            Label(T(L"Googleカレンダー",L"Google Calendar"),28,y+106,140);
+            Add(L"EDIT",s.calendarAddress.c_str(),ES_AUTOHSCROLL|ES_PASSWORD|WS_BORDER|WS_TABSTOP,170,y+104,266,24,IdCalendarAddress);
+            SendDlgItemMessageW(state.window,IdCalendarAddress,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"iCal形式の非公開アドレス",L"Secret address in iCal format")));
+            Label(T(L"カレンダーの予定の前に知らせる",L"Tell me before calendar events"),28,y+134,290);
+            Combo(IdCalendarLead,326,y+132,110);
+            y+=174;
             Group(T(L"詳細（変更すると再起動します）",L"Advanced (changes restart the app)"),y,166);
             Label(T(L"描画のfps",L"Drawing fps"),28,y+22,130);
             Combo(IdFps,170,y+22,120);
@@ -218,6 +224,8 @@ namespace MikuMikuDesktopPerch
             FillCombo(IdPhysicsFps,{{T(L"30回/秒",L"30/s"),30},{T(L"60回/秒（標準）",L"60/s (standard)"),60},{T(L"90回/秒",L"90/s"),90},{T(L"120回/秒",L"120/s"),120}},s.physicsFps,std::to_wstring(s.physicsFps)+T(L"回/秒",L"/s"));
             FillCombo(IdPhysicsFilter,{{T(L"なし",L"None"),0},{T(L"弱",L"Weak"),1},{T(L"中",L"Medium"),2},{T(L"強（標準）",L"Strong"),3}},s.physicsFilter,L"");
             FillCombo(IdPhysicsIterations,{{T(L"10（標準）",L"10"),10},{L"20",20},{L"30",30},{L"50",50}},s.physicsIterations,std::to_wstring(s.physicsIterations));
+            FillCombo(IdCalendarLead,{{T(L"しない",L"Never"),0},{T(L"5分前",L"5 min before"),5},{T(L"10分前（標準）",L"10 min before"),10},{T(L"15分前",L"15 min before"),15},{T(L"30分前",L"30 min before"),30}},
+                      s.calendarLeadMinutes,Fmt(T(L"{0}分前",L"{0} min before"),{std::to_wstring(s.calendarLeadMinutes)}));
             FillCombo(IdRestMinutes,{{T(L"しない",L"Never"),0},{T(L"30分",L"30 min"),30},{T(L"45分",L"45 min"),45},{T(L"60分（標準）",L"60 min"),60},{T(L"90分",L"90 min"),90},{T(L"2時間",L"2 hours"),120}},
                       s.restMinutes,Fmt(T(L"{0}分",L"{0} min"),{std::to_wstring(s.restMinutes)}));
             FillCombo(IdFocusMinutes,{{T(L"作業15分",L"Work 15 min"),15},{T(L"作業20分",L"Work 20 min"),20},{T(L"作業25分（標準）",L"Work 25 min"),25},{T(L"作業30分",L"Work 30 min"),30},{T(L"作業45分",L"Work 45 min"),45},{T(L"作業50分",L"Work 50 min"),50},{T(L"作業60分",L"Work 60 min"),60}},
@@ -644,6 +652,12 @@ namespace MikuMikuDesktopPerch
             s.focusMinutes=ComboValue(IdFocusMinutes,s.focusMinutes);
             s.focusBreakMinutes=ComboValue(IdFocusBreakMinutes,s.focusBreakMinutes);
             {
+                std::wstring address(2048,L'\0');
+                address.resize(static_cast<size_t>(GetDlgItemTextW(state.window,IdCalendarAddress,address.data(),static_cast<int>(address.size()))));
+                s.calendarAddress=trim(address);
+            }
+            s.calendarLeadMinutes=ComboValue(IdCalendarLead,s.calendarLeadMinutes);
+            {
                 const int language=ComboValue(IdLanguage,0);
                 s.language=language==1?L"ja":language==2?L"en":L"";
             }
@@ -778,10 +792,10 @@ namespace MikuMikuDesktopPerch
         SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,state.dpi);
         state.font=CreateFontIndirectW(&metrics.lfMessageFont);
 
-        // Client 460 x 928 logical pixels, centred on the screen the cursor is on.
+        // Client 460 x 984 logical pixels, centred on the screen the cursor is on.
         const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-        RECT frame{0,0,Px(460),Px(928)};
+        RECT frame{0,0,Px(460),Px(984)};
         AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
         POINT cursor{};
         GetCursorPos(&cursor);

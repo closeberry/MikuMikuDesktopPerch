@@ -74,6 +74,10 @@ namespace MikuMikuDesktopPerch
         int restMinutes=60;
         int focusMinutes=25;
         int focusBreakMinutes=5;
+        // Google Calendar's secret address in iCal format (empty: not used; kept encrypted in
+        // the file, see Calendar.hpp), and how many minutes before an event she says so (0: never).
+        std::wstring calendarAddress;
+        int calendarLeadMinutes=10;
         std::wstring language;      // "ja", "en", or empty: Windows' display language (see Text.hpp)
         // Speaking aloud through a VOICEVOX-compatible engine on this computer, in one of its voices.
         bool voice=false;

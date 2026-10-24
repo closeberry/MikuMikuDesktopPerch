@@ -9,6 +9,7 @@
 #include "Speech.hpp"
 #include "SettingsWindow.hpp"
 #include "Surfaces.hpp"
+#include "Calendar.hpp"
 #include "Planner.hpp"
 #include "PlannerWindow.hpp"
 #include "Updater.hpp"
@@ -30,6 +31,7 @@
 #include <cwctype>
 #include <fstream>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string_view>
 
@@ -251,6 +253,12 @@ namespace
         double noticesSince=-1;
         // Using the computer without a break (five minutes away counts as one).
         double activeSince=-1,nextRestAt=-1;
+        // Google Calendar (with its address set): today's and the next two days' events, read
+        // every half hour, and those already told about before they start.
+        std::unique_ptr<CalendarFeed> calendar;
+        std::vector<CalendarEvent> events;
+        std::set<std::wstring> eventsTold;
+        double nextCalendarFetch=15;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -1390,6 +1398,23 @@ namespace
         // Focus mode's lengths take effect from its next turn.
         current.focusMinutes=s.focusMinutes;
         current.focusBreakMinutes=s.focusBreakMinutes;
+        current.calendarLeadMinutes=s.calendarLeadMinutes;
+        if(s.calendarAddress!=current.calendarAddress)
+        {
+            if(const std::wstring problem=s.calendarAddress.empty()?std::wstring():CheckCalendarAddress(s.calendarAddress);!problem.empty())
+                ShowMessage(problem,MB_ICONWARNING);   // the old address stays
+            else
+            {
+                current.calendarAddress=s.calendarAddress;
+                app.events.clear();
+                if(!current.calendarAddress.empty())
+                {
+                    if(!app.calendar)app.calendar=std::make_unique<CalendarFeed>(app.hwnd);
+                    app.calendar->Fetch(current.calendarAddress,true);
+                    app.nextCalendarFetch=app.clock+30*60;
+                }
+            }
+        }
         current.voiceDirect=s.voiceDirect;
         current.voiceFolder=s.voiceFolder;
         const bool voiceChanged=s.voice!=current.voice;
@@ -2257,6 +2282,26 @@ namespace
         return when;
     }
 
+    // A calendar event as she says it: 10時から「打ち合わせ」, 明日の10時から…, 終日「誕生日」 /
+    // "meeting" at 10:00 AM, "birthday" (all day).
+    std::wstring EventLabel(const CalendarEvent& e,std::int64_t now)
+    {
+        const bool today=e.start<DayEnd(now);
+        if(e.allDay)
+            return English()?Quoted(e.title)+(today?L" (all day)":L" (all day, "+DayText(DateOf(e.start),now)+L")")
+                            :(today?std::wstring():DayText(DateOf(e.start),now)+L"、")+L"終日"+Quoted(e.title);
+        return English()?Quoted(e.title)+L" "+AtTime(e.start,now,false):TimeText(e.start,now)+L"から"+Quoted(e.title);
+    }
+
+    // The calendar's events not yet over, starting before until.
+    std::vector<std::wstring> EventLabels(std::int64_t now,std::int64_t until,size_t most)
+    {
+        std::vector<std::wstring> labels;
+        for(const CalendarEvent& e:app.events)
+            if(e.end>now&&e.start<until&&labels.size()<most)labels.push_back(EventLabel(e,now));
+        return labels;
+    }
+
     // The to-dos, those due soonest first (then the rest in the order they came).
     std::vector<const TodoItem*> TodosBySoonest()
     {
@@ -2312,12 +2357,18 @@ namespace
         const auto items=TodosBySoonest();
         for(size_t i=0;i<items.size()&&i<5;++i)todos.push_back(TodoLabel(*items[i],now));
         if(items.size()>5)todos.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(items.size()-5)}));
-        if(reminders.empty()&&todos.empty())return false;
+        const std::vector<std::wstring> calendar=EventLabels(now,end,6);
+        if(reminders.empty()&&todos.empty()&&calendar.empty())return false;
         line.clear();
         facts.clear();
+        if(!calendar.empty())
+        {
+            line+=Fmt(T(L"カレンダーには、{0}があるよ。",L"On your calendar today: {0}."),{Listing(calendar)});
+            facts+=Fmt(T(L"今日のカレンダーの予定：{0}。",L"Today's calendar: {0}. "),{Listing(calendar)});
+        }
         if(!reminders.empty())
         {
-            line+=Fmt(T(L"今日は、{0}があるよ。",L"Today you have {0}."),{Listing(reminders)});
+            line+=(line.empty()?L"":(English()?L" ":L""))+Fmt(T(L"今日は、{0}があるよ。",L"Today you have {0}."),{Listing(reminders)});
             facts+=Fmt(T(L"今日のリマインダー：{0}。",L"Today's reminders: {0}. "),{Listing(reminders)});
         }
         if(!todos.empty())
@@ -2421,7 +2472,14 @@ namespace
         {
             own=false;
             const auto& alarms=app.planner.Alarms();
-            if(alarms.empty()){line=T(L"いまセットしているタイマーやリマインダーはないよ。",L"No timers or reminders are set.");break;}
+            const std::vector<std::wstring> calendar=EventLabels(now,DayEnd(DayEnd(now)+3600),6);
+            const std::wstring onCalendar=calendar.empty()?std::wstring():Fmt(T(L"カレンダーには、{0}があるよ。",L"On your calendar: {0}."),{Listing(calendar)});
+            if(alarms.empty())
+            {
+                line=onCalendar.empty()?T(L"いまセットしているタイマーやリマインダーはないよ。",L"No timers or reminders are set."):onCalendar;
+                if(app.focus.on)line=FocusState()+T(L"。",L". ")+line;
+                break;
+            }
             std::vector<std::wstring> items;
             for(size_t i=0;i<alarms.size()&&i<6;++i)
             {
@@ -2437,6 +2495,7 @@ namespace
             }
             if(alarms.size()>6)items.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(alarms.size()-6)}));
             line=Fmt(T(L"セットしているのは、{0}だよ。",L"Set: {0}."),{Listing(items,L"、")});
+            if(!onCalendar.empty())line+=(English()?L" ":L"")+onCalendar;
             if(app.focus.on)line=FocusState()+T(L"。",L". ")+line;
             break;
         }
@@ -2735,6 +2794,54 @@ namespace
         app.notices.push_back({
             Fmt(T(L"やることの期限が近いよ。{0}。",L"Deadlines coming up: {0}."),{Listing(labels)}),
             Fmt(T(L"やることリストの期限が近づいています：{0}。忘れないよう知らせて",L"Deadlines on the to-do list are close: {0}. Remind them so they don't forget"),{Listing(labels)})});
+    }
+
+    // Every half hour (with its address set), the calendar is read again; a few minutes before
+    // an event (not all-day ones), she says so.
+    void UpdateCalendar()
+    {
+        if(app.diagnostic||app.settings.calendarAddress.empty())return;
+        if(app.clock>=app.nextCalendarFetch)
+        {
+            app.nextCalendarFetch=app.clock+30*60;
+            if(!app.calendar)app.calendar=std::make_unique<CalendarFeed>(app.hwnd);
+            app.calendar->Fetch(app.settings.calendarAddress,false);
+        }
+        const int lead=app.settings.calendarLeadMinutes;
+        if(lead<=0)return;
+        const std::int64_t now=Now();
+        for(const CalendarEvent& e:app.events)
+        {
+            if(e.allDay||e.start<=now||e.start-now>lead*60||app.eventsTold.count(e.key))continue;
+            app.eventsTold.insert(e.key);
+            const std::wstring minutes=std::to_wstring(std::max<std::int64_t>(1,(e.start-now+30)/60));
+            app.notices.push_back({
+                Fmt(T(L"あと{0}分で{1}だよ（{2}から）。",L"{1} starts in {0} minutes ({2})."),{minutes,Quoted(e.title),TimeText(e.start,now)}),
+                Fmt(T(L"カレンダーの予定{0}が、あと{1}分（{2}）で始まります。そのことを知らせて",L"The calendar event {0} starts in {1} minutes ({2}). Let them know"),{Quoted(e.title),minutes,TimeText(e.start,now)})});
+        }
+    }
+
+    void OnCalendarFetched(CalendarResult* fetched)
+    {
+        std::unique_ptr<CalendarResult> result(fetched);
+        if(app.settings.calendarAddress.empty())return;   // taken off meanwhile
+        // Never the address in the log: only what came of it.
+        Trace(L"%.1f calendar: %s",app.clock,result->error.empty()?(std::to_wstring(result->events.size())+L" events").c_str():result->error.c_str());
+        if(!result->error.empty())
+        {
+            if(result->report)ShowMessage(T(L"Googleカレンダーを読み込めませんでした。\n\n",L"Could not read Google Calendar.\n\n")+result->error,MB_ICONWARNING);
+            return;   // the events read last time stay
+        }
+        app.events=std::move(result->events);
+        if(result->report)
+        {
+            const std::int64_t now=Now();
+            const size_t soon=EventLabels(now,DayEnd(DayEnd(now)+3600),1000).size();
+            app.notices.push_back({
+                Fmt(T(L"Googleカレンダーを読み込んだよ。今日と明日の予定は{0}件だね。",L"I've read your Google Calendar: {0} events today and tomorrow."),{std::to_wstring(soon)}),
+                Fmt(T(L"話し相手のGoogleカレンダーを読み込めるようになりました（今日と明日の予定は{0}件）。これからは予定の前に知らせます",
+                      L"You can now read their Google Calendar ({0} events today and tomorrow). From now on you will tell them before events"),{std::to_wstring(soon)})});
+        }
     }
 
     // The first morning greeting tells today's reminders and to-dos (with them, the greeting
@@ -3266,6 +3373,9 @@ namespace
         case Updater::DownloadedMessage:
             OnUpdateDownloaded(reinterpret_cast<std::wstring*>(wParam));
             return 0;
+        case CalendarFeed::FetchedMessage:
+            OnCalendarFetched(reinterpret_cast<CalendarResult*>(wParam));
+            return 0;
         case WM_DESTROY:
             EndBanter(L"quitting");
             app.updateChoice.Close();
@@ -3597,6 +3707,24 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return 0;
         }
+        // --calendar-test <in.ics> <out.txt>: the events an iCal file has from today for three
+        // days, as they would be read from Google Calendar.
+        if(argc>=4&&std::wstring(argv[1])==L"--calendar-test")
+        {
+            std::ifstream in(std::filesystem::path(argv[2]),std::ios::binary);
+            std::stringstream buffer;
+            buffer<<in.rdbuf();
+            const std::int64_t now=Now(),from=DayEnd(now)-24*60*60;
+            SetLanguage(L"ja");
+            if(FILE* out=nullptr;_wfopen_s(&out,argv[3],L"w, ccs=UTF-8")==0&&out)
+            {
+                for(const CalendarEvent& e:ReadCalendar(buffer.str(),from,DayEnd(DayEnd(DayEnd(now)+3600)+3600)))
+                    fwprintf(out,L"%s\t%s\t%s\n",(DayText(DateOf(e.start),now)+L" "+TimeText(e.start,e.start)).c_str(),e.allDay?L"all-day":L"",e.title.c_str());
+                fclose(out);
+            }
+            LocalFree(argv);
+            return 0;
+        }
         // --plan-test <in.txt> <out.txt>: how each line (UTF-8) is read as a timer, reminder or
         // to-do request, without the LLM.
         if(argc>=4&&std::wstring(argv[1])==L"--plan-test")
@@ -3856,7 +3984,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.paused)continue;
 
         app.clock+=dt;
-        if(!forcedActivity){MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdateDeadlines();UpdatePlanner();}
+        if(!forcedActivity){MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)
