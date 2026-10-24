@@ -2,6 +2,12 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.2.2
+
+### Fixes
+
+- Outlines were drawn only around the model's silhouette; the ones inside it (where the face meets the neck, inside the ears, where arms and clothes overlap) were missing. Fixed
+
 ## 1.2.1
 
 ### What's new
