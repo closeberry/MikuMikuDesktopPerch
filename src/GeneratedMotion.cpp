@@ -586,7 +586,8 @@ namespace MikuMikuDesktopPerch
         }
         case Gesture::Peace:
             // A peace sign beside the face, head tilted toward it, with a wink.
-            ReachArm(g,s,XMVectorSet(out*0.30f*L,rig.headY+0.02f*L,S.z-0.16f*L,0),XMVectorSet(out,-1,0.3f,0));
+            // A hand up at the face lifts the shoulder only a little (half), as in the wave.
+            ReachArm(g,s,XMVectorSet(out*0.30f*L,rig.headY+0.02f*L,S.z-0.16f*L,0),XMVectorSet(out,-1,0.3f,0),0.5f);
             CurlFingers(g,s,{0.0f,0.0f,1.0f,1.0f});
             neck(0,0,-out*8.0f*Deg);
             face(rig.wink,1.0f);
@@ -671,7 +672,7 @@ namespace MikuMikuDesktopPerch
             // Tucking the hair behind the ear: the hand comes up beside the head and strokes
             // back and down, the head tilting a little the other way, eyes lowered.
             const float stroke=ramp(0.8f,1.4f);
-            ReachArm(g,s,XMVectorSet(out*(0.17f+0.02f*stroke)*L,rig.headY+(0.10f-0.06f*stroke)*L,S.z-(0.10f-0.12f*stroke)*L,0),XMVectorSet(out,-1,0.2f,0));
+            ReachArm(g,s,XMVectorSet(out*(0.17f+0.02f*stroke)*L,rig.headY+(0.10f-0.06f*stroke)*L,S.z-(0.10f-0.12f*stroke)*L,0),XMVectorSet(out,-1,0.2f,0),0.5f);
             CurlFingers(g,s,{0.15f,0.15f,0.25f,0.35f});
             neck(-6.0f*Deg,-out*6.0f*Deg,out*6.0f*Deg);
             break;
@@ -681,7 +682,7 @@ namespace MikuMikuDesktopPerch
             // A yawn: the mouth opens wide behind the back of a hand, eyes shut, head back a
             // little, then a small blink of relief.
             const float open=std::sin(XM_PI*std::clamp((a-0.5f)/std::max(len-1.6f,0.5f),0.0f,1.0f));
-            ReachArm(g,s,XMVectorSet(out*0.05f*L,rig.headY-0.08f*L,faceZ-0.14f*L,0),XMVectorSet(out,-1,0.1f,0));
+            ReachArm(g,s,XMVectorSet(out*0.05f*L,rig.headY-0.08f*L,faceZ-0.14f*L,0),XMVectorSet(out,-1,0.1f,0),0.5f);
             CurlFingers(g,s,{0.15f,0.15f,0.2f,0.25f});
             SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(3.0f*Deg*open,0,0));
             neck(8.0f*Deg*open,0,-out*4.0f*Deg);
@@ -692,7 +693,7 @@ namespace MikuMikuDesktopPerch
         case Gesture::Think:
             // Thinking: a hand at the chin, the other arm across the front holding that elbow,
             // the head tilted and turned a little up.
-            ReachArm(g,s,withHead(XMVectorSet(out*0.03f*L,rig.headY-0.10f*L,faceZ-0.12f*L,0),5.0f*Deg,out*8.0f*Deg),XMVectorSet(out*0.3f,-1,0,0));
+            ReachArm(g,s,withHead(XMVectorSet(out*0.03f*L,rig.headY-0.10f*L,faceZ-0.12f*L,0),5.0f*Deg,out*8.0f*Deg),XMVectorSet(out*0.3f,-1,0,0),0.5f);
             CurlFingers(g,s,{0.5f,0.6f,0.8f,0.8f});
             ReachArm(g,1-s,XMVectorSet(out*0.10f*L,S.y-0.34f*L,S.z-0.22f*L,0),XMVectorSet(-out*0.6f,-1,0.4f,0));
             CurlFingers(g,1-s,{0.3f,0.3f,0.35f,0.35f});
@@ -732,7 +733,7 @@ namespace MikuMikuDesktopPerch
             // hand is held at the temple, as in a salute, its fingers over the brow.
         {
             const float scan=out*18.0f*Deg*std::sin(XM_PI*(u-0.5f));
-            ReachArm(g,s,withHead(XMVectorSet(out*0.18f*L,rig.headY+0.10f*L,faceZ-0.05f*L,0),6.0f*Deg,scan),XMVectorSet(out,-0.15f,-0.3f,0));
+            ReachArm(g,s,withHead(XMVectorSet(out*0.18f*L,rig.headY+0.10f*L,faceZ-0.05f*L,0),6.0f*Deg,scan),XMVectorSet(out,-0.15f,-0.3f,0),0.5f);
             CurlFingers(g,s,{0.05f,0.05f,0.1f,0.15f});
             neck(6.0f*Deg,scan,0);
         }
@@ -740,7 +741,7 @@ namespace MikuMikuDesktopPerch
         case Gesture::Cheeks:
             // Both hands on the cheeks with a happy smile, the head rocking a little.
             both([&](int side,float o){
-                ReachArm(g,side,XMVectorSet(o*0.14f*L,rig.headY-0.04f*L,faceZ-0.04f*L,0),XMVectorSet(o,-1,0.1f,0));
+                ReachArm(g,side,XMVectorSet(o*0.14f*L,rig.headY-0.04f*L,faceZ-0.04f*L,0),XMVectorSet(o,-1,0.1f,0),0.5f);
                 CurlFingers(g,side,{0.1f,0.1f,0.15f,0.2f});
             });
             neck(-4.0f*Deg,0,7.0f*Deg*std::sin(XM_2PI*a/2.2f));
