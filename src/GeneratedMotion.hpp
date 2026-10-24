@@ -93,8 +93,11 @@ namespace MikuMikuDesktopPerch
             // shift (センター rotation, 上半身2, shoulders, head, wrists, toes) does not leak in.
             std::vector<int> neutral;
             std::array<int,2> leg{-1,-1},knee{-1,-1},ankle{-1,-1},legIK{-1,-1};
-            // 手首 and 手捩 are never written: the layer leaves the wrist to the VMD.
             std::array<int,2> arm{-1,-1},elbow{-1,-1},armTwist{-1,-1};
+            // 手首 and 手捩: held at rest, except where a gesture aims the hand (AimHand). The
+            // hand's rest direction (wrist to the middle finger) and its palm's facing.
+            std::array<int,2> wrist{-1,-1},handTwist{-1,-1};
+            std::array<DirectX::XMFLOAT3,2> handRestDir{},palmRestNormal{};
             std::array<DirectX::XMFLOAT3,2> ankleRest{},hipRest{};
             // The toe tip relative to the ankle at rest: how far forward and how far down it
             // is (the foot rolls over it when the heel comes up).
@@ -129,6 +132,10 @@ namespace MikuMikuDesktopPerch
         // Point the upper arm along upper and the forearm along fore (unit vectors, model space):
         // the upper arm turns about its own length so the elbow bends in the plane of the two.
         void AimArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR upper,DirectX::FXMVECTOR fore);
+        // Turn the hand (after the arm is placed) so its fingers point along fingers and its palm
+        // faces palm (model space): the turn about the forearm's length goes to 手捩, the rest
+        // to 手首 (all of it to 手首 on a model without 手捩).
+        void AimHand(std::vector<Key>& keys,int side,DirectX::FXMVECTOR fingers,DirectX::FXMVECTOR palm);
         // Put the wrist at a point, with the elbow toward pole (two-bone IK from the rest shoulder).
         void ReachArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR wrist,DirectX::FXMVECTOR pole);
         // Curl each finger but the thumb (0 straight .. 1 fully curled), index to little.

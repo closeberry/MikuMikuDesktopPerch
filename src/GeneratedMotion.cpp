@@ -193,6 +193,10 @@ namespace MikuMikuDesktopPerch
             const XMVECTOR moved=XMVector3Rotate(along,XMQuaternionRotationNormal(axis,0.3f));
             if(XMVectorGetX(XMVector3Dot(moved,palm))<0)axis=XMVectorNegate(axis);
             XMStoreFloat3(&rig.fingerCurlAxis[side],axis);
+            rig.wrist[side]=wrist;
+            rig.handTwist[side]=Find(pmx,{s+L"手捩"});
+            XMStoreFloat3(&rig.handRestDir[side],XMVector3Normalize(XMVectorSubtract(restPos(middle1),restPos(wrist))));
+            XMStoreFloat3(&rig.palmRestNormal[side],XMVector3Normalize(palm));
             for(const wchar_t* finger:{L"人指",L"中指",L"薬指",L"小指"})
                 for(int joint=0;joint<3;++joint)
                 {
@@ -351,6 +355,37 @@ namespace MikuMikuDesktopPerch
         AimArm(keys,side,XMVector3Normalize(XMVectorSubtract(elbow,shoulder)),XMVector3Normalize(XMVectorSubtract(reached,elbow)));
     }
 
+    void GeneratedMotion::AimHand(std::vector<Key>& keys,int side,FXMVECTOR fingers,FXMVECTOR palm)
+    {
+        const int wrist=rig.wrist[side];
+        if(wrist<0||slot[wrist]<0||rig.arm[side]<0||rig.elbow[side]<0)return;
+        auto turn=[&](int bone){return bone>=0&&slot[bone]>=0?XMLoadFloat4(&keys[slot[bone]].rotation):XMQuaternionIdentity();};
+        // The forearm's turn in model space (shoulder and 上半身2 are held at rest).
+        const XMVECTOR forearm=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(turn(rig.elbow[side]),turn(rig.armTwist[side])),
+                                                                         turn(rig.arm[side])),turn(rig.upperBody));
+        auto frame=[](FXMVECTOR along,FXMVECTOR facing){
+            const XMVECTOR x=XMVector3Normalize(along);
+            const XMVECTOR y=XMVector3Normalize(XMVectorSubtract(facing,XMVectorScale(x,XMVectorGetX(XMVector3Dot(facing,x)))));
+            return XMMATRIX{x,y,XMVector3Cross(x,y),XMVectorSet(0,0,0,1)};
+        };
+        // Where the hand points with the wrist at rest, and the turn from there to the aim.
+        const XMMATRIX now=frame(XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[side]),forearm),XMVector3Rotate(XMLoadFloat3(&rig.palmRestNormal[side]),forearm));
+        const XMVECTOR aim=XMQuaternionRotationMatrix(XMMatrixTranspose(now)*frame(fingers,palm));
+        // The same turn as the wrist's own (in the forearm's frame).
+        XMVECTOR hand=XMQuaternionNormalize(XMQuaternionMultiply(XMQuaternionMultiply(forearm,aim),XMQuaternionInverse(forearm)));
+        if(const int twist=rig.handTwist[side];twist>=0&&slot[twist]>=0)
+        {
+            // The part about the forearm's length is 手捩's (MMD's wrist does not twist).
+            const XMVECTOR axis=XMVector3Normalize(XMLoadFloat3(&rig.elbowTwistAxis[side]));
+            const XMVECTOR along=XMVectorScale(axis,XMVectorGetX(XMVector3Dot(hand,axis)));
+            XMVECTOR t=XMVectorSelect(XMVectorSplatW(hand),along,XMVectorSelectControl(1,1,1,0));
+            t=XMVectorGetX(XMVector4LengthSq(t))<1e-8f?XMQuaternionIdentity():XMQuaternionNormalize(t);
+            SetRotation(keys,twist,t);
+            hand=XMQuaternionNormalize(XMQuaternionMultiply(hand,XMQuaternionInverse(t)));
+        }
+        SetRotation(keys,wrist,hand);
+    }
+
     void GeneratedMotion::CurlFingers(std::vector<Key>& keys,int side,std::array<float,4> amount)
     {
         static constexpr float full[3]={70.0f*Deg,90.0f*Deg,60.0f*Deg};
@@ -481,8 +516,14 @@ namespace MikuMikuDesktopPerch
             neck(-28.0f*Deg,-out*10.0f*Deg,0);
             break;
         case Gesture::HandsFolded:
-            // Hands lowered and held together in front.
-            both([&](int side,float o){ReachArm(g,side,XMVectorSet(o*0.03f*L,hipY-0.12f*L,hipZ-0.13f*L,0),XMVectorSet(o,-0.2f,0.6f,0));CurlFingers(g,side,{0.35f,0.35f,0.4f,0.4f});});
+            // Hands lowered and held together in front, clear of the body: elbows a little out,
+            // palms toward the body, fingers toward the other side, the right hand over the left.
+            both([&](int side,float o){
+                const float over=side==1?0.03f:0.0f;
+                ReachArm(g,side,XMVectorSet(o*0.05f*L,hipY-0.06f*L,hipZ-0.24f*L-over*L,0),XMVectorSet(o,-0.3f,0.35f,0));
+                AimHand(g,side,XMVectorSet(-o,-0.45f,-0.15f,0),XMVectorSet(0,0.15f,1,0));
+                CurlFingers(g,side,{0.25f,0.25f,0.3f,0.3f});
+            });
             neck(-4.0f*Deg,0,0);
             break;
         case Gesture::Stretch:
@@ -583,9 +624,11 @@ namespace MikuMikuDesktopPerch
         {
             // A few small claps in front of the chest, smiling.
             const float beat=0.5f+0.5f*std::cos(XM_2PI*2.4f*std::max(a-0.6f,0.0f));
+            // Palms facing each other, fingers up and a little forward.
             both([&](int side,float o){
-                ReachArm(g,side,XMVectorSet(o*(0.045f+0.07f*beat)*L,S.y-0.14f*L,S.z-0.30f*L,0),XMVectorSet(o,-1,0.5f,0));
-                CurlFingers(g,side,{0.1f,0.1f,0.15f,0.2f});
+                ReachArm(g,side,XMVectorSet(o*(0.048f+0.07f*beat)*L,S.y-0.16f*L,S.z-0.30f*L,0),XMVectorSet(o,-1,0.5f,0));
+                AimHand(g,side,XMVectorSet(o*0.1f,0.8f,-0.6f,0),XMVectorSet(-o,0,0,0));
+                CurlFingers(g,side,{0.08f,0.08f,0.1f,0.12f});
             });
             neck(-3.0f*Deg,0,0);
             face(rig.smileEyes,0.9f);
