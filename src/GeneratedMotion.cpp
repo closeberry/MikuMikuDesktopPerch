@@ -790,11 +790,11 @@ namespace MikuMikuDesktopPerch
             break;
         }
         case Gesture::Think:
-            // Thinking: a hand at the chin, the other arm across the front holding that elbow,
+            // Thinking: a hand at the chin, the other hand resting at the middle of the waist with its elbow a little out,
             // the head tilted and turned a little up.
             ReachArm(g,s,withHead(XMVectorSet(out*0.03f*L,rig.headY-0.10f*L,faceZ-0.12f*L,0),5.0f*Deg,out*8.0f*Deg),XMVectorSet(out*0.3f,-1,0,0),0.5f);
             CurlFingers(g,s,{0.5f,0.6f,0.8f,0.8f});
-            ReachArm(g,1-s,XMVectorSet(out*0.10f*L,S.y-0.34f*L,S.z-0.22f*L,0),XMVectorSet(-out*0.6f,-1,0.4f,0),1.0f,true);
+            ReachArm(g,1-s,XMVectorSet(-out*0.03f*L,S.y-0.34f*L,S.z-0.22f*L,0),XMVectorSet(-out,-0.35f,0.25f,0),1.0f,true);
             CurlFingers(g,1-s,{0.3f,0.3f,0.35f,0.35f});
             neck(5.0f*Deg,out*8.0f*Deg,-out*9.0f*Deg+out*3.0f*Deg*std::sin(XM_2PI*a/3.0f));
             break;
