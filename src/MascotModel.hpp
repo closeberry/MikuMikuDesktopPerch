@@ -126,8 +126,16 @@ namespace MikuMikuDesktopPerch
         // Desired look direction in radians: yaw > 0 turns toward screen right, pitch > 0 looks up.
         // active=false lets the head ease back to the motion's own pose.
         void SetLookTarget(float yaw,float pitch,bool active);
+        // Turn standing in place toward screen left (yaw > 0) or right, in radians: the hips
+        // and the upper body turn, and the feet are set down turned with them (leg IK), so she
+        // faces someone beside her. Eased in and out; only while standing (otherwise it eases
+        // back to 0 quickly).
+        void SetTurn(float yaw);
         // World position of the head bone from the latest solve; false if the model has none.
         bool HeadPosition(std::array<float,3>& position) const;
+        // Between the eyes (左目 and 右目, or the one there is) from the latest solve; the head
+        // bone when there is neither.
+        bool EyePosition(std::array<float,3>& position) const;
         // World-space bounds of all bone origins from the latest solve (hair bones included).
         bool BoneBounds(std::array<float,3>& lo,std::array<float,3>& hi) const;
         // The same for 下半身 and the leg bones only (what covers a window when sitting on it).

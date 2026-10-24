@@ -9,6 +9,7 @@
 #include "Speech.hpp"
 #include "SettingsWindow.hpp"
 #include "Surfaces.hpp"
+#include "Updater.hpp"
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
@@ -166,7 +167,6 @@ namespace
         double roomCheckAt=0;         // next look at whether she stands on top of another character
         // Talking with another character: the request now running is a line of that conversation.
         bool banterLine=false;
-        float facing=0;               // radians the drawing is turned toward her partner (+: to screen left)
     };
 
     // A character to bring on (added, or its model changed) or to take off, done between
@@ -192,7 +192,7 @@ namespace
         double cursorIdle=0;
         float viewYaw=0;          // --view-yaw: camera orbit for diagnostic snapshots
         // Speaking first: when the next word of her own is due, and whether the user is away.
-        double nextChatterAt=1500;
+        double nextChatterAt=-1;   // set from the chosen interval at start
         double awaySince=-1;
         Activity forcedRestPose=Activity::Idle;   // --rest-pose sit|hang (diagnostics)
         std::vector<std::unique_ptr<Mascot>> mascots;   // in the order of settings.characters
@@ -211,8 +211,17 @@ namespace
             std::vector<std::pair<std::wstring,std::wstring>> lines;   // who said it, the line
             double since=0,nextLineAt=0;
         } banter;
-        double nextBanterAt=1200;     // the first some 20 minutes after start
+        double nextBanterAt=-1;       // set from the chosen interval at start
         bool banterRequested=false;   // --banter: one a few seconds after start (diagnostics)
+        // Updates (with UpdateCheck on): a newer release found and not yet answered, the one
+        // asking the user about it (she stays put until answered), and the answer box.
+        std::unique_ptr<Updater> updater;
+        double nextUpdateCheck=20;
+        std::optional<Release> update;
+        std::wstring declinedVersion;   // answered いいえ: not asked again this run
+        Mascot* asker=nullptr;
+        ChoiceBox updateChoice;
+        bool updating=false;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -220,6 +229,9 @@ namespace
     } app;
 
     CharacterSettings& Own(const Mascot& m){return app.settings.characters[m.slot];}
+
+    // Now and then, about every so many minutes: a third sooner or later at random.
+    double Interval(int minutes){return minutes*60.0*(2.0/3.0+app.Random01()*2.0/3.0);}
 
     // Taking part in a conversation between characters (getting together for it, or talking).
     bool InBanter(const Mascot& m)
@@ -507,7 +519,7 @@ namespace
     // Also while it is due and on its way (standing up, warping): nothing else may start then.
     bool MotionBusy(Mascot& m)
     {
-        if(InBanter(m))return true;   // staying for the conversation
+        if(InBanter(m)||&m==app.asker)return true;   // staying for the conversation, or for an answer
         if(m.model.Reacting())return true;   // answering a click
         // An idle motion plays to its end (or its loop's) before she walks off or sits down.
         if(m.model.CurrentActivity()==Activity::Idle&&!m.model.IdleMotionAtBreak())return true;
@@ -1032,14 +1044,15 @@ namespace
             return;
         }
         const POINT h=m.renderer.Project(head);
-        // Talking with another character: at her face (the body is turned toward her too, see
-        // UpdateFacing, so the head turns only part of the way).
-        if(std::array<float,3> other{};partner&&partner->model.HeadPosition(other))
+        // Talking with another character: eye to eye. The body is turned toward her (see
+        // UpdateFacing), so the head turns only part of the way sideways; up or down, neck and
+        // head tilt toward her eyes from one's own, so a taller one looks down at a smaller.
+        if(std::array<float,3> mine{},theirs{};partner&&m.model.EyePosition(mine)&&partner->model.EyePosition(theirs))
         {
-            const POINT o=partner->renderer.Project(other);
+            const POINT a=m.renderer.Project(mine),b=partner->renderer.Project(theirs);
             const RECT r=FrameRect(*partner);
-            const float dx=static_cast<float>(r.left+o.x-(window.left+h.x)),dy=static_cast<float>(r.top+o.y-(window.top+h.y));
-            const float pitch=std::clamp(std::atan2(-dy,std::max(std::abs(dx),1.0f)),DirectX::XMConvertToRadians(-20.0f),DirectX::XMConvertToRadians(25.0f));
+            const float dx=static_cast<float>(r.left+b.x-(window.left+a.x)),dy=static_cast<float>(r.top+b.y-(window.top+a.y));
+            const float pitch=std::clamp(std::atan2(-dy,std::max(std::abs(dx),1.0f)),DirectX::XMConvertToRadians(-30.0f),DirectX::XMConvertToRadians(30.0f));
             m.model.SetLookTarget(DirectX::XMConvertToRadians(dx>0?20.0f:-20.0f),pitch,true);
             return;
         }
@@ -1058,23 +1071,14 @@ namespace
         m.model.SetLookTarget(yaw,pitch,atViewer||app.cursorIdle<LookIdleSeconds);
     }
 
-    // Standing with a partner in a conversation, the whole drawing turns a little toward her
-    // (the model has no turn of its own when standing); otherwise it turns back. Display only,
-    // like the warp's spin, which has the drawing to itself meanwhile.
-    void UpdateFacing(Mascot& m,double dt)
+    // Standing with a partner in a conversation, she turns in place a little toward her (hips,
+    // upper body and feet: see MascotModel::SetTurn); otherwise she turns back.
+    void UpdateFacing(Mascot& m)
     {
-        if(m.place==Place::Warping)return;
         float target=0;
-        if(Mascot* partner=BanterPartner(m);partner&&m.place==Place::Ground&&m.model.CurrentActivity()==Activity::Idle)
+        if(Mascot* partner=BanterPartner(m);partner&&m.place==Place::Ground)
             target=DirectX::XMConvertToRadians(CenterX(*partner)>CenterX(m)?-25.0f:25.0f);
-        if(m.place==Place::Held)target=m.facing=0;   // picked up: at once
-        if(target==0&&m.facing==0)return;
-        m.facing+=(target-m.facing)*static_cast<float>(1.0-std::exp(-dt/0.35));
-        if(std::abs(m.facing)<DirectX::XMConvertToRadians(0.2f)&&target==0)m.facing=0;
-        using namespace DirectX;
-        const ModelFrame frame=ModelFrameOf(m);
-        const XMVECTOR pivot=XMVectorSet(frame.cx+m.model.RootOffset(),0,frame.cz,0);
-        m.renderer.SetModelTransform(XMMatrixTranslationFromVector(XMVectorNegate(pivot))*XMMatrixRotationY(m.facing)*XMMatrixTranslationFromVector(pivot));
+        m.model.SetTurn(target);
     }
 
     void SetClickThrough(Mascot& m,bool enabled);
@@ -1178,6 +1182,13 @@ namespace
     // Clicking the taskbar raises it above other topmost windows, mascot included. Put the
     // mascot back on top, but never over shell overlays (Start menu, flyouts, notifications),
     // which are topmost windows of their own when they take the foreground.
+    // The update question's answer box stays over the characters (topmost as well, they are
+    // put back on top now and then).
+    void RaiseAnswerBox()
+    {
+        if(HWND box=app.updateChoice.Handle())SetWindowPos(box,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+    }
+
     bool IsMascotWindow(HWND window)
     {
         return std::any_of(app.mascots.begin(),app.mascots.end(),[&](const auto& m){return m->hwnd==window;});
@@ -1197,6 +1208,7 @@ namespace
         for(const auto& m:app.mascots)
             if(m->hwnd&&!m->behindSurface)
                 SetWindowPos(m->hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER);
+        RaiseAnswerBox();
     }
 
     void CALLBACK OnForegroundChanged(HWINEVENTHOOK,DWORD,HWND,LONG,LONG,DWORD,DWORD)
@@ -1319,6 +1331,19 @@ namespace
         const bool chatModelChanged=s.chatModel!=current.chatModel;
         current.chatModel=s.chatModel;
         current.chatMemory=s.chatMemory;
+        // A shorter interval takes effect now, not after the old wait.
+        if(s.chatterMinutes!=current.chatterMinutes)
+        {
+            current.chatterMinutes=s.chatterMinutes;
+            app.nextChatterAt=std::min(app.nextChatterAt,app.clock+Interval(s.chatterMinutes));
+        }
+        if(s.banterMinutes!=current.banterMinutes)
+        {
+            current.banterMinutes=s.banterMinutes;
+            if(s.banterMinutes>0)app.nextBanterAt=std::min(app.nextBanterAt,app.clock+Interval(s.banterMinutes));
+        }
+        if(s.updateCheck&&!current.updateCheck)app.nextUpdateCheck=app.clock+5;
+        current.updateCheck=s.updateCheck;
         current.voiceDirect=s.voiceDirect;
         current.voiceFolder=s.voiceFolder;
         const bool voiceChanged=s.voice!=current.voice;
@@ -1597,7 +1622,7 @@ namespace
         }
         if(app.clock>=app.nextChatterAt)
         {
-            app.nextChatterAt=app.clock+(30+app.Random01()*30)*60;
+            app.nextChatterAt=app.clock+Interval(app.settings.chatterMinutes);
             SpeakFirst(anyone(),L"特に用事はないけれど、話し相手に何かひと言話しかけたくなりました。覚えていることや、いまの時間帯・季節にちなんだ話題で");
         }
     }
@@ -1905,10 +1930,10 @@ namespace
         if(b.stage==Stage::None)
         {
             const bool due=app.banterRequested?app.clock>5:
-                           app.settings.chatInitiative&&app.clock>=app.nextBanterAt&&InputIdleSeconds()<90;
+                           app.settings.chatInitiative&&app.settings.banterMinutes>0&&app.clock>=app.nextBanterAt&&InputIdleSeconds()<90;
             if(!due||app.mascots.size()<2||app.settings.chatModel.empty()||AnyoneTalking())return;
             app.banterRequested=false;
-            app.nextBanterAt=app.clock+(StartBanter()?(20+app.Random01()*20)*60:60);
+            app.nextBanterAt=app.clock+(StartBanter()?Interval(std::max(app.settings.banterMinutes,1)):60);
             return;
         }
         Mascot& first=*b.first;
@@ -1945,6 +1970,104 @@ namespace
             return;
         }
         if(app.clock>=b.nextLineAt)SayBanterLine(speaker);
+    }
+
+    // ---- Updates -------------------------------------------------------------------------
+
+    // Something of the app's own, said in her bubble (and voice) like a reply, without the LLM.
+    void SayFixed(Mascot& m,const std::wstring& text)
+    {
+        if(m.chat)m.chat->Cancel();
+        m.chatRequest=0;
+        m.banterLine=false;
+        m.reply.clear();
+        m.replyShown=0;
+        m.speech.Reset();
+        m.replyFeelingSet=false;
+        if(m.voice)m.voice->CancelAll();
+        m.bubble.Begin(m.character.name);
+        Reveal(m,text);
+        m.speech.Finish();
+        m.bubble.Finish();
+    }
+
+    void OnUpdateAnswer(bool yes)
+    {
+        if(!app.asker||!app.update)return;
+        Mascot& m=*app.asker;
+        if(!yes)
+        {
+            Trace(L"%.1f update %s: declined",app.clock,app.update->version.c_str());
+            SayFixed(m,L"わかった。また今度ね。");
+            app.declinedVersion=app.update->version;
+            app.update.reset();
+            app.asker=nullptr;
+            return;
+        }
+        Trace(L"%.1f update %s: downloading",app.clock,app.update->version.c_str());
+        SayFixed(m,L"じゃあ、更新するね。終わったら、すぐに戻ってくるよ。");
+        app.updating=true;
+        app.updater->Download(*app.update);
+    }
+
+    // A newer release, not yet answered: one of the characters free to talk tells the user and
+    // asks whether to update now (in her own words when the LLM is set up), with はい／いいえ
+    // under her. Not over someone talking, nor while the user is away.
+    void MaybeAskUpdate()
+    {
+        if(!app.update||app.asker||app.updating||app.banter.stage!=App::Banter::Stage::None)return;
+        if(AnyoneTalking()||InputIdleSeconds()>=90)return;
+        std::vector<Mascot*> free;
+        for(const auto& owned:app.mascots)if(FreeToTalk(*owned))free.push_back(owned.get());
+        if(free.empty())return;
+        Mascot& m=*free[std::min(free.size()-1,static_cast<size_t>(app.Random01()*free.size()))];
+        app.asker=&m;
+        const std::wstring& version=app.update->version;
+        Trace(L"%.1f update %s: asking",app.clock,version.c_str());
+        if(ChatReady(m,false))
+            SpeakFirst(m,L"このアプリ（MikuMikuDesktopPerch）の新しいバージョン"+version+L"が出ました。話し相手にそのことを伝えて、いま更新するかどうかを聞いて");
+        else SayFixed(m,L"MikuMikuDesktopPerch の新しいバージョン（"+version+L"）が出てるよ。いま更新する？");
+        const RECT r=FrameRect(m);
+        const POINT ground=GroundPointOnScreen(m);
+        app.updateChoice.Open(m.hwnd,{(r.left+r.right)/2,ground.y-static_cast<LONG>(ModelHeightPixels(m)*0.12)},
+                              L"はい（更新する）",L"いいえ",OnUpdateAnswer);
+    }
+
+    // Now and then (shortly after start, then once a day) ask GitHub for a newer release.
+    void MaybeCheckForUpdate()
+    {
+        if(!app.settings.updateCheck||app.diagnostic||app.updating||app.update||app.clock<app.nextUpdateCheck)return;
+        app.nextUpdateCheck=app.clock+24*60*60;
+        if(!app.updater)app.updater=std::make_unique<Updater>(app.hwnd);
+        app.updater->Check();
+    }
+
+    void OnUpdateChecked(Release* found)
+    {
+        std::unique_ptr<Release> owned(found);
+        Trace(L"%.1f update check: %s (this is %s)",app.clock,owned?owned->version.c_str():L"nothing newer",CurrentVersion().c_str());
+        if(owned&&owned->version!=app.declinedVersion&&!app.updating)app.update=*owned;
+    }
+
+    // The new files are unpacked: put them in place and start again on the new exe.
+    void OnUpdateDownloaded(std::wstring* error)
+    {
+        std::unique_ptr<std::wstring> owned(error);
+        std::wstring problem=*owned;
+        if(problem.empty())problem=Updater::Install();
+        Trace(L"%.1f update: %s",app.clock,problem.empty()?L"installed":problem.c_str());
+        if(problem.empty())
+        {
+            app.restart=true;
+            DestroyWindow(app.hwnd);
+            return;
+        }
+        if(app.asker)SayFixed(*app.asker,L"ごめんね、更新できなかったみたい……");
+        ShowMessage(L"更新できませんでした。\n\n"+problem,MB_ICONWARNING);
+        app.declinedVersion=app.update?app.update->version:std::wstring();
+        app.update.reset();
+        app.asker=nullptr;
+        app.updating=false;
     }
 
     // Once the conversation has paused (or grown long), ask the LLM what in it is worth
@@ -2023,6 +2146,21 @@ namespace
         }
         m.speech.Tick(dt);
         if(m.speech.Active())m.bubble.SetReveal(m.speech.RevealedChars());
+        // Clear of the other characters (head to feet, about a shoulder's width each way) and
+        // of their bubbles that came up earlier (a later one makes room, never both).
+        std::vector<RECT> avoid;
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& other=*owned;
+            if(&other==&m)continue;
+            const RECT f=FrameRect(other);
+            const double unit=ModelHeightPixels(other),cx=CenterX(other);
+            LONG top=f.top;
+            if(std::array<float,3> head{};other.model.HeadPosition(head))top=f.top+other.renderer.Project(head).y-static_cast<LONG>(unit*0.12);
+            avoid.push_back({static_cast<LONG>(cx-unit*0.18),top,static_cast<LONG>(cx+unit*0.18),static_cast<LONG>(FeetLine(other))});
+            if(RECT bubble{};other.bubble.Placed(bubble)&&other.bubble.Age()>m.bubble.Age())avoid.push_back(bubble);
+        }
+        m.bubble.SetAvoid(std::move(avoid));
         const RECT r=FrameRect(m);
         const double unit=ModelHeightPixels(m);
         POINT anchor{(r.left+r.right)/2,r.top};
@@ -2252,6 +2390,7 @@ namespace
                     m.model.SetActivity(Activity::Grabbed);
                     // Picked up: over the other characters.
                     if(app.settings.topmost)SetWindowPos(m.hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER);
+                    RaiseAnswerBox();
                 }
                 if(m.place==Place::Held)MoveWindowTo(m,cursor.x-m.dragOffset.x,cursor.y-m.dragOffset.y);
             }
@@ -2378,8 +2517,15 @@ namespace
                 ShowMenu(*app.mascots.front(),p);
             }
             return 0;
+        case Updater::CheckedMessage:
+            OnUpdateChecked(reinterpret_cast<Release*>(wParam));
+            return 0;
+        case Updater::DownloadedMessage:
+            OnUpdateDownloaded(reinterpret_cast<std::wstring*>(wParam));
+            return 0;
         case WM_DESTROY:
             EndBanter(L"quitting");
+            app.updateChoice.Close();
             for(const auto& m:app.mascots)
             {
                 Own(*m).x=static_cast<int>(m->windowX);
@@ -2485,7 +2631,12 @@ namespace
     // Between frames: bring on and take off the characters asked for.
     void ApplyChanges()
     {
-        if(!app.changes.empty())EndBanter(L"the characters change");
+        if(!app.changes.empty())
+        {
+            EndBanter(L"the characters change");
+            // The one asking about the update may go: ask again later.
+            if(app.asker&&!app.updating){app.updateChoice.Close();app.asker=nullptr;}
+        }
         for(const Change& change:std::exchange(app.changes,{}))
         {
             if(change.kind==Change::Remove)
@@ -2626,6 +2777,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if((arg==L"--walk-motion"||arg==L"--run-motion")&&i+1<argc)
             {
                 snapshotGait[arg==L"--walk-motion"?0:1]=argv[++i];
+            }
+            else if(arg==L"--pretend-version"&&i+1<argc)
+            {
+                PretendVersion(argv[++i]);   // an update to the latest release is offered (and checked at once)
+                app.nextUpdateCheck=5;
             }
             else if(arg==L"--banter")
             {
@@ -2825,6 +2981,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         app.settings.characters.erase(app.settings.characters.begin()+static_cast<std::ptrdiff_t>(slot));
     }
     app.settings.Save(app.settingsPath);
+    app.nextChatterAt=Interval(app.settings.chatterMinutes);
+    app.nextBanterAt=Interval(std::max(app.settings.banterMinutes,1));
+    if(!app.diagnostic)Updater::CleanUp();
 
     // Diagnostics act on the first character.
     Mascot& first=*app.mascots.front();
@@ -2910,7 +3069,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.paused)continue;
 
         app.clock+=dt;
-        if(!forcedActivity){MaybeSpeakFirst();UpdateBanter();}
+        if(!forcedActivity){MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)
@@ -3049,7 +3208,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 m.lastPhysicsResets=resets;
             }
             UpdateSparks(m,dt);
-            UpdateFacing(m,dt);
+            UpdateFacing(m);
             PlaceFrame(m);
             UpdateChatBubble(m,dt);
             m.renderer.Render(m.model,app.settings.edgeScale);

@@ -657,6 +657,12 @@ namespace MikuMikuDesktopPerch
             bool doubleBlink=false;
             float targetYaw=0,targetPitch=0,yaw=0,pitch=0;
             bool lookActive=false;
+            // Turning in place (SetTurn): the bones turned, and the leg and toe IK targets set
+            // down turned with them about the point between the feet.
+            float turnTarget=0,turn=0;
+            int lowerBody=-1,upperBodyRoot=-1;
+            std::array<int,4> turnIK{-1,-1,-1,-1};
+            int leftEye=-1,rightEye=-1;
             std::uint32_t random=0x9E3779B9u;
             float Random01(){random=random*1664525u+1013904223u;return (random>>8)*(1.0f/16777216.0f);}
         } proc;
@@ -710,6 +716,12 @@ namespace MikuMikuDesktopPerch
             proc.neck=FindBone({L"首"});
             proc.head=FindBone({L"頭"});
             proc.eyes=FindBone({L"両目"});
+            proc.lowerBody=FindBone({L"下半身"});
+            proc.upperBodyRoot=FindBone({L"上半身"});
+            proc.turnIK={FindBone({L"左足ＩＫ",L"左足IK"}),FindBone({L"右足ＩＫ",L"右足IK"}),
+                         FindBone({L"左つま先ＩＫ",L"左つま先IK"}),FindBone({L"右つま先ＩＫ",L"右つま先IK"})};
+            proc.leftEye=FindBone({L"左目"});
+            proc.rightEye=FindBone({L"右目"});
         }
 
         // Multiply an extra rotation (row-vector convention, applied after the key) into a bone key.
@@ -720,6 +732,42 @@ namespace MikuMikuDesktopPerch
             const auto key=DirectX::XMLoadFloat4(&r);
             const auto extra=DirectX::XMQuaternionRotationRollPitchYaw(pitch,yaw,roll);
             DirectX::XMStoreFloat4(&r,DirectX::XMQuaternionNormalize(DirectX::XMQuaternionMultiply(key,extra)));
+        }
+
+        // Turning in place (see SetTurn), over whatever pose the motion layers made: the hips
+        // (下半身) and the upper body (上半身, unless it hangs from the hips) turn about the
+        // vertical, and the leg IK targets (and toe IK targets not carried by them) are moved
+        // and turned about the point between the feet, so the legs follow without twisting.
+        void ApplyTurn(PMX::Pose& pose,double dt)
+        {
+            using namespace DirectX;
+            const bool standing=motion.CurrentActivity()==Activity::Idle&&!shotActive;
+            const float target=standing?proc.turnTarget:0.0f;
+            proc.turn+=(target-proc.turn)*static_cast<float>(1.0-std::exp(-dt/(standing?0.35:0.12)));
+            if(std::abs(proc.turn)<1e-4f&&target==0.0f){proc.turn=0;return;}
+            if(proc.lowerBody<0||proc.turnIK[0]<0||proc.turnIK[1]<0)return;
+            const auto& bones=pmx->bones;
+            AddRotation(pose,proc.lowerBody,0,proc.turn,0);
+            if(proc.upperBodyRoot>=0&&bones[proc.upperBodyRoot].parent!=proc.lowerBody)AddRotation(pose,proc.upperBodyRoot,0,proc.turn,0);
+            auto target3=[&](int bone){
+                const auto& rest=bones[bone].position;
+                const auto& offset=pose.boneKeys[bone].position;
+                return XMVectorSet(rest.x+offset.x,rest.y+offset.y,rest.z+offset.z,0);
+            };
+            const XMVECTOR centre=XMVectorMultiply(XMVectorAdd(target3(proc.turnIK[0]),target3(proc.turnIK[1])),XMVectorSet(0.5f,0,0.5f,0));
+            const XMVECTOR yaw=XMQuaternionRotationRollPitchYaw(0,proc.turn,0);
+            for(const int bone:proc.turnIK)
+            {
+                if(bone<0||static_cast<size_t>(bone)>=pose.boneKeys.size())continue;
+                const int parent=bones[bone].parent;
+                if(std::find(proc.turnIK.begin(),proc.turnIK.end(),parent)!=proc.turnIK.end())continue;   // carried by its parent
+                const XMVECTOR from=XMVectorMultiply(XMVectorSubtract(target3(bone),centre),XMVectorSet(1,0,1,0));
+                const XMVECTOR moved=XMVectorSubtract(XMVector3Rotate(from,yaw),from);
+                auto& offset=pose.boneKeys[bone].position;
+                offset.x+=XMVectorGetX(moved);
+                offset.z+=XMVectorGetZ(moved);
+                AddRotation(pose,bone,0,proc.turn,0);
+            }
         }
 
         float BlinkWeight(double dt)
@@ -1478,6 +1526,26 @@ namespace MikuMikuDesktopPerch
     std::uint32_t MascotModel::PhysicsResets() const {return impl->physicsResets;}
     const std::wstring& MascotModel::PhysicsResetReason() const {return impl->resetReason;}
 
+    void MascotModel::SetTurn(float yaw){impl->proc.turnTarget=yaw;}
+
+    bool MascotModel::EyePosition(std::array<float,3>& position) const
+    {
+        const auto& m=*impl;
+        if(!m.solver)return false;
+        float sum[3]{};
+        int count=0;
+        for(const int eye:{m.proc.leftEye,m.proc.rightEye})
+        {
+            if(eye<0||static_cast<size_t>(eye)>=m.solver->boneMatrices.size())continue;
+            const auto world=DirectX::XMVector3Transform(DirectX::XMLoadFloat3(&m.pmx->bones[eye].position),DirectX::XMMatrixTranspose(m.solver->boneMatrices[eye]));
+            sum[0]+=DirectX::XMVectorGetX(world);sum[1]+=DirectX::XMVectorGetY(world);sum[2]+=DirectX::XMVectorGetZ(world);
+            ++count;
+        }
+        if(count==0)return HeadPosition(position);
+        position={sum[0]/count,sum[1]/count,sum[2]/count};
+        return true;
+    }
+
     bool MascotModel::HeadPosition(std::array<float,3>& position) const
     {
         const auto& m=*impl;
@@ -1509,6 +1577,7 @@ namespace MikuMikuDesktopPerch
         if(m.shotActive)m.ApplyShot(dt);   // authored in the A-stance frame, so before correction
         m.ApplyArmCorrection(m.solver->solvedPose);
         m.ApplyProcedural(m.solver->solvedPose,dt);
+        m.ApplyTurn(m.solver->solvedPose,dt);
         if(m.resetBlend>=0){m.BlendPhysicsBones(dt);m.filterPrimed=false;}
         m.solver->PoseMining(m.solver->solvedPose);
         m.continuous=true;

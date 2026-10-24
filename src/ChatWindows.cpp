@@ -17,6 +17,7 @@ namespace MikuMikuDesktopPerch
     {
         constexpr wchar_t BubbleClass[]=L"MikuMikuDesktopPerchBubble";
         constexpr wchar_t InputClass[]=L"MikuMikuDesktopPerchInput";
+        constexpr wchar_t ChoiceClass[]=L"MikuMikuDesktopPerchChoice";
 
         float Scale(){return static_cast<float>(GetDpiForSystem())/96.0f;}
 
@@ -73,7 +74,7 @@ namespace MikuMikuDesktopPerch
     void SpeechBubble::Show()
     {
         // Pop in again only when it was gone or going.
-        if(!visible||fading)clock=0;
+        if(!visible||fading){clock=0;placed={};}
         visible=true;
         fading=false;
         fade=0;
@@ -205,13 +206,41 @@ namespace MikuMikuDesktopPerch
             by=static_cast<float>(anchor.y);
             if(bx+w>work.right-margin){side=Side::Left;bx=static_cast<float>(anchor.x-headHalfWidth)-tail-w;}
         }
+        // Over someone else (another character, an older bubble): slide sideways, keeping the
+        // head under the bubble's bottom edge so the tail still starts above it. The place
+        // with the least covered, nearest to centred, wins.
+        const float baseHalf=11*s;
+        if(side==Side::Above&&!avoid.empty())
+        {
+            auto covered=[&](float x){
+                float area=0;
+                for(const RECT& a:avoid)
+                {
+                    const float w0=std::min(x+w,static_cast<float>(a.right))-std::max(x,static_cast<float>(a.left));
+                    const float h0=std::min(by+h,static_cast<float>(a.bottom))-std::max(by-tagH/2,static_cast<float>(a.top));
+                    if(w0>0&&h0>0)area+=w0*h0;
+                }
+                return area;
+            };
+            const float lo=anchor.x-(w-radius-baseHalf),hi=anchor.x-radius-baseHalf;
+            std::vector<float> candidates{bx,lo,hi};
+            for(const RECT& a:avoid){candidates.push_back(a.left-margin-w);candidates.push_back(a.right+margin);}
+            float best=bx,bestArea=covered(bx);
+            for(float x:candidates)
+            {
+                x=std::clamp(x,std::min(lo,hi),std::max(lo,hi));
+                const float area=covered(x);
+                if(area<bestArea-1||(area<=bestArea+1&&std::abs(x-(anchor.x-w/2))<std::abs(best-(anchor.x-w/2)))){best=x;bestArea=area;}
+            }
+            bx=best;
+        }
         bx=std::clamp(bx,work.left+margin,std::max(work.left+margin,work.right-margin-w));
         by=std::clamp(by,work.top+margin+tagH/2,std::max(work.top+margin+tagH/2,work.bottom-margin-h));
+        placed={static_cast<LONG>(bx),static_cast<LONG>(by-tagH/2),static_cast<LONG>(bx+w),static_cast<LONG>(by+h)};
 
         // The tail: a curved comic tail from the nearest edge of the bubble to the head. Its
         // base reaches into the body so the fill hides the seam.
         PointF tip,a1,a2,b1,b2,base1,base2;
-        const float baseHalf=11*s;
         if(side==Side::Above)
         {
             const float x=std::clamp(static_cast<float>(anchor.x),bx+radius+baseHalf,bx+w-radius-baseHalf);
@@ -365,6 +394,68 @@ namespace MikuMikuDesktopPerch
         DeleteDC(memory);
         ReleaseDC(nullptr,screen);
         if(!IsWindowVisible(window))SetWindowPos(window,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW);
+    }
+
+    ChoiceBox::~ChoiceBox(){Close();}
+
+    void ChoiceBox::Open(HWND owner,POINT bottomCentre,const std::wstring& yes,const std::wstring& no,std::function<void(bool)> choose)
+    {
+        Close();
+        onChoose=std::move(choose);
+        if(!Register(ChoiceClass,Proc,reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1)))return;
+        const float s=Scale();
+        const int buttonW=static_cast<int>(120*s),buttonH=static_cast<int>(32*s),gap=static_cast<int>(8*s);
+        const int w=buttonW*2+gap*3,h=buttonH+gap*2;
+        window=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_TOPMOST|WS_EX_NOACTIVATE,ChoiceClass,L"",WS_POPUP|WS_BORDER,
+                               0,0,w,h,owner,nullptr,GetModuleHandleW(nullptr),this);
+        if(!window)return;
+        NONCLIENTMETRICSW metrics{sizeof(metrics)};
+        SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,GetDpiForSystem());
+        metrics.lfMessageFont.lfHeight=static_cast<LONG>(metrics.lfMessageFont.lfHeight*1.15f);
+        font=CreateFontIndirectW(&metrics.lfMessageFont);
+        RECT client{};
+        GetClientRect(window,&client);
+        const int top=(client.bottom-buttonH)/2;
+        for(int i=0;i<2;++i)
+        {
+            HWND button=CreateWindowExW(0,L"BUTTON",(i==0?yes:no).c_str(),WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+                                        gap+i*(buttonW+gap),top,buttonW,buttonH,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(i==0?IDYES:IDNO)),
+                                        GetModuleHandleW(nullptr),nullptr);
+            SendMessageW(button,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);
+        }
+        MONITORINFO monitor{sizeof(monitor)};
+        GetMonitorInfoW(MonitorFromPoint(bottomCentre,MONITOR_DEFAULTTONEAREST),&monitor);
+        const RECT& work=monitor.rcWork;
+        const int x=std::clamp(static_cast<int>(bottomCentre.x)-w/2,static_cast<int>(work.left),static_cast<int>(work.right)-w);
+        const int y=std::clamp(static_cast<int>(bottomCentre.y)-h,static_cast<int>(work.top),static_cast<int>(work.bottom)-h);
+        SetWindowPos(window,HWND_TOPMOST,x,y,w,h,SWP_SHOWWINDOW|SWP_NOACTIVATE);
+    }
+
+    void ChoiceBox::Close()
+    {
+        if(window){HWND w=window;window=nullptr;DestroyWindow(w);}
+        if(font){DeleteObject(font);font=nullptr;}
+    }
+
+    LRESULT CALLBACK ChoiceBox::Proc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
+    {
+        auto* self=reinterpret_cast<ChoiceBox*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+        switch(message)
+        {
+        case WM_NCCREATE:
+            SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
+            break;
+        case WM_COMMAND:
+            if(self&&self->window==hwnd&&(LOWORD(wParam)==IDYES||LOWORD(wParam)==IDNO))
+            {
+                auto choose=std::move(self->onChoose);
+                self->Close();
+                if(choose)choose(LOWORD(wParam)==IDYES);
+                return 0;
+            }
+            break;
+        }
+        return DefWindowProcW(hwnd,message,wParam,lParam);
     }
 
     ChatInput::~ChatInput(){Close();}

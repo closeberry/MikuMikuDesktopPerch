@@ -29,7 +29,8 @@ namespace MikuMikuDesktopPerch
             IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdPhysicsIterations,IdPhysicsFilter,IdToonDir,IdToonBrowse,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
-            IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount
+            IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
@@ -101,6 +102,14 @@ namespace MikuMikuDesktopPerch
 
         void UpdateVoiceMode();
 
+        // How often only matters while speaking first is on.
+        void UpdateInitiative()
+        {
+            const bool on=Checked(IdChatInitiative);
+            EnableWindow(GetDlgItem(state.window,IdChatterMinutes),on);
+            EnableWindow(GetDlgItem(state.window,IdBanterMinutes),on);
+        }
+
         void Build()
         {
             const Settings& s=state.choice.settings;
@@ -123,12 +132,13 @@ namespace MikuMikuDesktopPerch
             Combo(IdEdge,170,y+50,120);
             CheckBox(IdTopmost,L"最前面に表示",28,y+78,200,s.topmost);
             CheckBox(IdSelfShadow,L"セルフシャドウ（体に落ちる影）",250,y+78,190,s.selfShadow);
-            CheckBox(IdStartup,L"Windowsの起動時に起動",28,y+100,300,state.choice.startWithWindows);
+            CheckBox(IdStartup,L"Windowsの起動時に起動",28,y+100,200,state.choice.startWithWindows);
+            CheckBox(IdUpdateCheck,L"新しいバージョンを確認する",250,y+100,190,s.updateCheck);
             Label(L"太陽の位置（左右・高さ）",28,y+128,140);
             Slider(IdSunAzimuth,170,y+126,130,-180,180,s.lightAzimuth);
             Slider(IdSunElevation,306,y+126,130,5,90,s.lightElevation);
             y+=166;
-            Group(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",y,224);
+            Group(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",y,252);
             Label(L"接続先",28,y+22,130);
             Add(L"EDIT",s.chatEndpoint.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+22,266,24,IdChatEndpoint);
             Label(L"モデル",28,y+52,130);
@@ -142,7 +152,12 @@ namespace MikuMikuDesktopPerch
             Add(L"BUTTON",L"人物設定...",BS_PUSHBUTTON|WS_TABSTOP,170,y+110,110,26,IdPersona);
             Add(L"BUTTON",L"記憶...",BS_PUSHBUTTON|WS_TABSTOP,286,y+110,110,26,IdMemory);
             if(!state.choice.memory)EnableWindow(GetDlgItem(state.window,IdMemory),FALSE);
-            CheckBox(IdChatInitiative,L"ときどき自分から話しかける（あいさつ、おかえり、ひと言）",28,y+138,410,s.chatInitiative);
+            CheckBox(IdChatInitiative,L"ときどき自分から話しかける",28,y+138,200,s.chatInitiative);
+            Label(L"ひと言",262,y+138,60);
+            Combo(IdChatterMinutes,326,y+136,110);
+            Label(L"キャラクター同士のおしゃべり（2人以上のとき）",46,y+166,270);
+            Combo(IdBanterMinutes,326,y+164,110);
+            y+=28;
             CheckBox(IdVoice,L"声で話す（VOICEVOX）",28,y+166,140,s.voice);
             Combo(IdVoiceList,170,y+164,128);
             {
@@ -192,6 +207,11 @@ namespace MikuMikuDesktopPerch
             FillCombo(IdPhysicsFps,{{L"30回/秒",30},{L"60回/秒（標準）",60},{L"90回/秒",90},{L"120回/秒",120}},s.physicsFps,std::to_wstring(s.physicsFps)+L"回/秒");
             FillCombo(IdPhysicsFilter,{{L"なし",0},{L"弱",1},{L"中",2},{L"強（標準）",3}},s.physicsFilter,L"");
             FillCombo(IdPhysicsIterations,{{L"10（標準）",10},{L"20",20},{L"30",30},{L"50",50}},s.physicsIterations,std::to_wstring(s.physicsIterations));
+            FillCombo(IdChatterMinutes,{{L"10分ごと",10},{L"20分ごと",20},{L"30分ごと",30},{L"45分ごと（標準）",45},{L"1時間ごと",60},{L"1時間半ごと",90},{L"2時間ごと",120}},
+                      s.chatterMinutes,std::to_wstring(s.chatterMinutes)+L"分ごと");
+            FillCombo(IdBanterMinutes,{{L"しない",0},{L"10分ごと",10},{L"20分ごと",20},{L"30分ごと（標準）",30},{L"45分ごと",45},{L"1時間ごと",60},{L"1時間半ごと",90}},
+                      s.banterMinutes,std::to_wstring(s.banterMinutes)+L"分ごと");
+            UpdateInitiative();
         }
 
         void BrowseToonDir()
@@ -595,6 +615,9 @@ namespace MikuMikuDesktopPerch
             s.userName=trim(user);
             s.chatMemory=Checked(IdChatMemory);
             s.chatInitiative=Checked(IdChatInitiative);
+            s.chatterMinutes=ComboValue(IdChatterMinutes,s.chatterMinutes);
+            s.banterMinutes=ComboValue(IdBanterMinutes,s.banterMinutes);
+            s.updateCheck=Checked(IdUpdateCheck);
             s.voice=Checked(IdVoice);
             {
                 const VoiceSource source=CurrentVoiceSource();
@@ -656,6 +679,9 @@ namespace MikuMikuDesktopPerch
                     return 0;
                 case IdVoiceMode:
                     if(HIWORD(wParam)==CBN_SELCHANGE)UpdateVoiceMode();
+                    return 0;
+                case IdChatInitiative:
+                    if(HIWORD(wParam)==BN_CLICKED)UpdateInitiative();
                     return 0;
                 case IdVoiceBrowse:
                     BrowseVoiceFolder();
@@ -723,10 +749,10 @@ namespace MikuMikuDesktopPerch
         SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,state.dpi);
         state.font=CreateFontIndirectW(&metrics.lfMessageFont);
 
-        // Client 460 x 782 logical pixels, centred on the screen the cursor is on.
+        // Client 460 x 810 logical pixels, centred on the screen the cursor is on.
         const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-        RECT frame{0,0,Px(460),Px(782)};
+        RECT frame{0,0,Px(460),Px(810)};
         AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
         POINT cursor{};
         GetCursorPos(&cursor);

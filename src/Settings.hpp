@@ -62,6 +62,11 @@ namespace MikuMikuDesktopPerch
         std::wstring userName;      // what the mascot calls the user (empty: no name)
         bool chatMemory=true;       // remember things from conversations (per model, on this computer)
         bool chatInitiative=true;   // greet, welcome back and now and then say something first
+        // With chatInitiative: about how often (minutes, varied by a third either way) one says a
+        // word of her own, and two characters talk with each other (0: never).
+        int chatterMinutes=45;
+        int banterMinutes=30;
+        bool updateCheck=true;      // look for a newer release on GitHub now and then
         // Speaking aloud through a VOICEVOX-compatible engine on this computer, in one of its voices.
         bool voice=false;
         bool voiceDirect=false;     // VOICEVOX's files used directly (voiceFolder), not its engine

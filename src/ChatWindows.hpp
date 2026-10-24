@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace MikuMikuDesktopPerch
 {
@@ -28,6 +29,12 @@ namespace MikuMikuDesktopPerch
         // Show the reply as far as this many characters (it follows the speech); without it
         // the text appears at a reading pace of its own.
         void SetReveal(double characters){externalReveal=characters;}
+        // Screen rectangles to keep clear of (other characters, their bubbles): above the head,
+        // the bubble slides sideways, as far as its tail still starts over the head.
+        void SetAvoid(std::vector<RECT> rects){avoid=std::move(rects);}
+        // Where it was last drawn (body and name tag, screen pixels); false while hidden.
+        bool Placed(RECT& rect) const {rect=placed;return visible&&!fading&&placed.right>placed.left;}
+        double Age() const {return clock;}   // seconds since it popped up
 
         // Per frame: advance the animations, the reveal and the hide timer, and place the
         // bubble so its tail points at anchor (the top of the head, screen pixels), inside
@@ -48,6 +55,26 @@ namespace MikuMikuDesktopPerch
         double holdLeft=0;     // seconds before fading once all is shown
         double externalReveal=-1;
         bool visible=false,waiting=false,finished=false,notice=false,fading=false;
+        std::vector<RECT> avoid;
+        RECT placed{};
+    };
+
+    // A question's two answers (はい／いいえ) in a small box under the mascot who asks. Clicking
+    // one closes it and calls onChoose (true: the first). Clicking elsewhere leaves it open.
+    class ChoiceBox
+    {
+    public:
+        ~ChoiceBox();
+        void Open(HWND owner,POINT bottomCentre,const std::wstring& yes,const std::wstring& no,std::function<void(bool)> onChoose);
+        void Close();
+        bool IsOpen() const {return window!=nullptr;}
+        HWND Handle() const {return window;}
+
+    private:
+        static LRESULT CALLBACK Proc(HWND,UINT,WPARAM,LPARAM);
+        HWND window=nullptr;
+        HFONT font=nullptr;
+        std::function<void(bool)> onChoose;
     };
 
     // A one-line box for talking to the mascot. Enter sends (onSend gets the text) and clears

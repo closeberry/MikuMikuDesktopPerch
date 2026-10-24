@@ -142,6 +142,9 @@ namespace MikuMikuDesktopPerch
         userName=ReadString(path,L"UserName",userName);
         chatMemory=ReadInt(path,L"ChatMemory",chatMemory?1:0)!=0;
         chatInitiative=ReadInt(path,L"ChatInitiative",chatInitiative?1:0)!=0;
+        chatterMinutes=std::clamp(ReadInt(path,L"ChatterMinutes",chatterMinutes),5,600);
+        banterMinutes=std::clamp(ReadInt(path,L"BanterMinutes",banterMinutes),0,600);
+        updateCheck=ReadInt(path,L"UpdateCheck",updateCheck?1:0)!=0;
         voice=ReadInt(path,L"Voice",voice?1:0)!=0;
         voiceEndpoint=ReadString(path,L"VoiceEndpoint",voiceEndpoint);
         voiceDirect=ReadInt(path,L"VoiceDirect",voiceDirect?1:0)!=0;
@@ -191,6 +194,9 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"UserName",userName);
         WriteString(path,L"ChatMemory",chatMemory?L"1":L"0");
         WriteString(path,L"ChatInitiative",chatInitiative?L"1":L"0");
+        WriteString(path,L"ChatterMinutes",std::to_wstring(chatterMinutes));
+        WriteString(path,L"BanterMinutes",std::to_wstring(banterMinutes));
+        WriteString(path,L"UpdateCheck",updateCheck?L"1":L"0");
         WriteString(path,L"Voice",voice?L"1":L"0");
         WriteString(path,L"VoiceEndpoint",voiceEndpoint);
         WriteString(path,L"VoiceDirect",voiceDirect?L"1":L"0");
