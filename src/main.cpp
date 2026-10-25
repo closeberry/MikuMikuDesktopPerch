@@ -3539,8 +3539,10 @@ namespace
         static constexpr std::string_view Actions[]={"/say","/talk","/gesture","/motion","/motion/stop","/walk"};
         if(std::find(std::begin(Actions),std::end(Actions),r.path)==std::end(Actions)){answer(404,ApiError(L"no such command"));return;}
         if(!post){answer(405,ApiError(L"use POST"));return;}
+        // POST /motion may send a VMD as it is (its character then goes in the query).
+        const bool rawMotion=r.path=="/motion"&&r.contentType=="application/octet-stream";
         Net::Json body;
-        if(!r.body.empty()&&(!Net::JsonParser(r.body).Parse(body)||body.type!=Net::Json::Type::Object))
+        if(!rawMotion&&!r.body.empty()&&(!Net::JsonParser(r.body).Parse(body)||body.type!=Net::Json::Type::Object))
         {
             answer(400,ApiError(L"the body must be a JSON object"));
             return;
@@ -3549,10 +3551,17 @@ namespace
             const Net::Json* v=body.Member(name);
             return v&&v->type==Net::Json::Type::String?Net::Wide(v->text):std::wstring();
         };
-        auto number=[&body](const char* name)->std::optional<double>{
-            const Net::Json* v=body.Member(name);
-            if(!v||v->type!=Net::Json::Type::Number)return std::nullopt;
-            return std::strtod(v->text.c_str(),nullptr);
+        // From the body, or else from the query (name=value&...).
+        auto number=[&body,&r](const char* name)->std::optional<double>{
+            if(const Net::Json* v=body.Member(name))
+                return v->type==Net::Json::Type::Number?std::optional<double>(std::strtod(v->text.c_str(),nullptr)):std::nullopt;
+            const std::string key=std::string(name)+"=",query="&"+r.query;
+            const size_t at=query.find("&"+key);
+            if(at==std::string::npos)return std::nullopt;
+            const char* start=query.c_str()+at+1+key.size();
+            char* end=nullptr;
+            const double value=std::strtod(start,&end);
+            return end!=start?std::optional<double>(value):std::nullopt;
         };
         auto flag=[&body](const char* name){const Net::Json* v=body.Member(name);return v&&v->type==Net::Json::Type::Bool&&v->text=="true";};
         const double character=number("character").value_or(1);
@@ -3603,10 +3612,31 @@ namespace
         }
         if(r.path=="/motion")
         {
-            const std::wstring path=text("path");
-            if(path.empty()){answer(400,ApiError(L"\"path\" is missing"));return;}
+            std::wstring path=rawMotion?std::wstring():text("path");
+            if(!rawMotion&&path.empty()){answer(400,ApiError(L"\"path\" is missing (or send the VMD itself as application/octet-stream)"));return;}
+            if(rawMotion&&r.body.empty()){answer(400,ApiError(L"the VMD is empty"));return;}
             if(m.model.MotionPlaying()){answer(409,ApiError(L"a motion is playing (POST /motion/stop first)"));return;}
-            if(std::wstring error;!m.model.SetMotion(path,error))
+            // A VMD sent as it is goes through a file of its own in %TEMP%, read in full and
+            // removed at once: it is checked and loaded like any other.
+            if(rawMotion)
+            {
+                wchar_t temp[MAX_PATH]{};
+                GetTempPathW(MAX_PATH,temp);
+                path=std::wstring(temp)+L"MikuMikuDesktopPerch-api-"+std::to_wstring(GetCurrentProcessId())+L".vmd";
+                std::ofstream file(std::filesystem::path(path),std::ios::binary|std::ios::trunc);
+                file.write(r.body.data(),static_cast<std::streamsize>(r.body.size()));
+                if(!file){answer(503,ApiError(L"could not keep the VMD in a temporary file"));return;}
+            }
+            std::wstring error;
+            const bool loaded=m.model.SetMotion(path,error);
+            if(rawMotion)
+            {
+                std::error_code ignored;
+                std::filesystem::remove(path,ignored);
+                if(const size_t at=error.find(path);at!=std::wstring::npos)error.replace(at,path.size(),T(L"（送られたデータ）",L"(the data sent)"));
+                path=Fmt(L"({0} bytes sent)",{std::to_wstring(r.body.size())});
+            }
+            if(!loaded)
             {
                 std::wstring ignored;
                 m.model.SetMotion(Own(m).motionPath,ignored);   // hers stays

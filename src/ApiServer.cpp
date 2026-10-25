@@ -15,6 +15,7 @@ namespace MikuMikuDesktopPerch
     namespace
     {
         constexpr size_t MaxHeader=16*1024,MaxBody=64*1024;
+        constexpr size_t MaxMotionBody=16*1024*1024;   // a VMD sent as it is (POST /motion)
 
         std::string Lower(std::string_view text)
         {
@@ -148,7 +149,7 @@ namespace MikuMikuDesktopPerch
         if(b==std::string_view::npos){Send(client,400,Error("bad request line"));return;}
         request->method=std::string(line.substr(0,a));
         request->path=std::string(line.substr(a+1,b-a-1));
-        if(const size_t q=request->path.find('?');q!=std::string::npos)request->path.resize(q);
+        if(const size_t q=request->path.find('?');q!=std::string::npos){request->query=request->path.substr(q+1);request->path.resize(q);}
 
         size_t length=0;
         bool hostOk=false,origin=false;
@@ -162,6 +163,7 @@ namespace MikuMikuDesktopPerch
             if(colon==std::string_view::npos)continue;
             const std::string name=Lower(Trim(header.substr(0,colon))),value=Trim(header.substr(colon+1));
             if(name=="content-length")length=static_cast<size_t>(std::strtoull(value.c_str(),nullptr,10));
+            else if(name=="content-type")request->contentType=Trim(Lower(value.substr(0,value.find(';'))));
             else if(name=="origin")origin=true;
             else if(name=="host")
             {
@@ -174,7 +176,21 @@ namespace MikuMikuDesktopPerch
             }
         }
         if(origin||!hostOk||request->method=="OPTIONS"){Send(client,403,Error("only programs on this computer may use the API, not web pages"));return;}
-        if(length>MaxBody){Send(client,413,Error("request too large"));return;}
+        const bool motion=request->path=="/motion"&&request->contentType=="application/octet-stream";
+        if(length>(motion?MaxMotionBody:MaxBody))
+        {
+            // Read (and drop) what is being sent first, up to a point: a client still sending
+            // when the connection closes sees it cut, not the answer.
+            for(size_t left=length-std::min(length,data.size()-headEnd-4);left>0&&length<=4*MaxMotionBody;)
+            {
+                const int n=recv(client,buffer,sizeof(buffer),0);
+                if(n<=0)break;
+                left-=std::min(left,static_cast<size_t>(n));
+            }
+            Send(client,413,Error("request too large"));
+            return;
+        }
+        request->body.reserve(length);
         request->body=data.substr(headEnd+4);
         while(request->body.size()<length)
         {

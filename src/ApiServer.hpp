@@ -19,7 +19,9 @@ namespace MikuMikuDesktopPerch
         {
             std::string method;      // "GET", "POST"
             std::string path;        // "/say", without the query
-            std::string body;        // UTF-8 (JSON for POST)
+            std::string query;       // after the '?', as sent ("character=2")
+            std::string contentType; // lower case, without parameters ("application/json")
+            std::string body;        // UTF-8 JSON, or a VMD's bytes (POST /motion as application/octet-stream)
             int status=200;          // filled by the receiver
             std::string response;    // JSON, filled by the receiver
             HANDLE done=CreateEventW(nullptr,TRUE,FALSE,nullptr);

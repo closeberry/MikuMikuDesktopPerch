@@ -142,7 +142,7 @@ Other apps and scripts can have the characters talk, make gestures, play motions
 - Only this computer can use it (it listens on 127.0.0.1 only); other PCs cannot reach it
 - Requests from web pages open in a browser are refused (requests with an `Origin` header, and those whose `Host` is not `127.0.0.1`, `localhost` or `[::1]`), so a site you are viewing cannot move the characters
 - The body is JSON (UTF-8), and so is the answer: `{"ok":true}` on success, and `{"ok":false,"error":"..."}` with a status such as 400 (a mistake in the request), 404 (no such command or character) or 409 (not possible now) otherwise
-- `"character"` picks which character to ask (1–6; the first when left out)
+- `"character"` picks which character to ask (1–6; the first when left out). When the body is not JSON (a VMD sent as it is), put it in the URL, as in `/motion?character=2`
 
 | Method and path | Body | What it does |
 |---|---|---|
@@ -152,6 +152,7 @@ Other apps and scripts can have the characters talk, make gestures, play motions
 | `POST /talk` | `{"text":"What day is it today?"}` | Treated as if you said it: the LLM replies (and it is remembered like your chats). Requests such as timers work too |
 | `POST /gesture` | `{"name":"wave"}` | Makes one gesture. Only while standing in the app's own idle pose (409 while idle motions are in use, or while walking or sitting) |
 | `POST /motion` | `{"path":"C:\\motions\\dance.vmd"}` | Plays a VMD once, at once (standing up first if sitting; when on a window, warping to the bottom right of the screen first, as usual). Afterwards the motion opened with "Open motion..." comes back. Nothing is saved in the settings file. 409 while a motion is playing |
+| `POST /motion` | The VMD file's contents themselves (`Content-Type: application/octet-stream`, up to 16 MB) | Plays a VMD sent as data instead of a path (a motion made without writing a file, for example). Otherwise as above. The data received is loaded through a temporary file, removed at once |
 | `POST /motion/stop` | none | Stops the playing motion smoothly (or calls it off if it has not started) |
 | `POST /walk` | `{"dx":-300}` or `{"x":800,"run":true}` | Walks `dx` pixels sideways on the surface she is on (minus is left), or to the screen x `x` (runs when `run` is `true`). 409 while held, warping and the like |
 
@@ -169,7 +170,13 @@ Example (curl, in Git Bash and the like):
 curl -s -X POST http://127.0.0.1:50080/walk -H "Content-Type: application/json" -d '{"dx":-300}'
 ```
 
-From Python: `requests.post("http://127.0.0.1:50080/gesture", json={"name": "wave"})`. MCP clients such as Claude Desktop can use it without a tunnel, through a stdio MCP server that calls this API.
+Sending a VMD as it is (PowerShell):
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:50080/motion?character=1" -Method Post -ContentType "application/octet-stream" -InFile "C:\motions\dance.vmd"
+```
+
+From Python: `requests.post("http://127.0.0.1:50080/gesture", json={"name": "wave"})`, or `requests.post("http://127.0.0.1:50080/motion", data=vmd_bytes, headers={"Content-Type": "application/octet-stream"})`. MCP clients such as Claude Desktop can use it without a tunnel, through a stdio MCP server that calls this API.
 
 ## Settings (`MikuMikuDesktopPerch.ini` in the exe's folder, UTF-16)
 
@@ -234,7 +241,7 @@ Models and motions are often opened as distributed, so the app is built so that 
 - **Broken data**: if PMXLoader causes a memory access violation while loading or preparing pose computation, it is handled as an error instead of crashing (for both PMX and VMD). Models with out-of-range references are rejected before being shown. If the idle motions in the settings cannot be loaded, they are taken off and only the model is shown
 - **Textures**: paths pointing to another computer (`\\server\share\...` and the like) are not opened (to keep Windows from connecting to it and handing over credentials). Paths with a colon after the drive letter (alternate data streams and the like) are not opened either. Images are loaded only as the BMP, PNG, JPEG, GIF and TIFF that come with Windows, judged by content, not by extension (image codecs installed later are not used). Sizes up to 16384 pixels each way
 - **DLLs**: DLLs loaded by name are not searched for in the working folder
-- **Control from other apps**: off by default. When on, it listens on 127.0.0.1 only, and refuses requests with an `Origin` header or whose `Host` is not this computer (from web pages, DNS rebinding). Bodies are limited to 64 KB
+- **Control from other apps**: off by default. When on, it listens on 127.0.0.1 only, and refuses requests with an `Origin` header or whose `Host` is not this computer (from web pages, DNS rebinding). Bodies are limited to 64 KB (16 MB for a VMD sent as it is)
 - **Build**: Control Flow Guard, CET compatibility, ASLR and DEP are enabled
 
 ## Supported models
