@@ -31,7 +31,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdTabs
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
@@ -43,6 +43,10 @@ namespace MikuMikuDesktopPerch
             HWND persona=nullptr;   // the persona dialog, while open
             HWND memory=nullptr;    // the memory dialog, while open
             HWND gestures=nullptr;  // the gesture choice, while open
+            HWND tabs=nullptr;
+            // The controls on each tab, and the tab Add puts controls on (-1: on every tab).
+            std::vector<std::vector<HWND>> pages;
+            int page=-1;
             HFONT font=nullptr;
             SettingsChoice choice;
             std::function<void(const SettingsChoice&)> onApply;
@@ -62,7 +66,31 @@ namespace MikuMikuDesktopPerch
             return c;
         }
         HWND Add(const wchar_t* cls,const wchar_t* text,DWORD style,int x,int y,int w,int h,int id=0)
-        {return AddTo(state.window,cls,text,style,x,y,w,h,id);}
+        {
+            HWND c=AddTo(state.window,cls,text,style,x,y,w,h,id);
+            if(state.page>=0)
+            {
+                state.pages[static_cast<size_t>(state.page)].push_back(c);
+                ShowWindow(c,SW_HIDE);
+            }
+            return c;
+        }
+
+        // Puts the following controls on a new tab (of the tab control along the top).
+        void Page(const wchar_t* title)
+        {
+            TCITEMW item{TCIF_TEXT};
+            item.pszText=const_cast<wchar_t*>(title);
+            TabCtrl_InsertItem(state.tabs,static_cast<int>(state.pages.size()),&item);
+            state.page=static_cast<int>(state.pages.size());
+            state.pages.emplace_back();
+        }
+
+        void ShowPage(int page)
+        {
+            for(size_t p=0;p<state.pages.size();++p)
+                for(HWND c:state.pages[p])ShowWindow(c,static_cast<int>(p)==page?SW_SHOWNA:SW_HIDE);
+        }
 
         void Check(int id,bool on){CheckDlgButton(state.window,id,on?BST_CHECKED:BST_UNCHECKED);}
         bool Checked(int id){return IsDlgButtonChecked(state.window,id)==BST_CHECKED;}
@@ -118,7 +146,12 @@ namespace MikuMikuDesktopPerch
         {
             const Settings& s=state.choice.settings;
             const CharacterSettings& own=state.choice.mascot;
-            int y=10;
+            // The window is kept low by putting its sections on tabs: only the tab strip of the
+            // tab control is shown, and the controls sit on the window below it.
+            state.tabs=Add(WC_TABCONTROLW,L"",WS_TABSTOP|WS_CLIPSIBLINGS,10,8,440,30,IdTabs);
+            constexpr int top=48;
+            int y=top;
+            Page(T(L"動きと表示",L"Motion and display"));
             Group(T(L"動き",L"Motion"),y,128);
             CheckBox(IdAuto,T(L"おまかせ行動（ひとりで歩き回る）",L"Auto behavior (walks around on her own)"),28,y+22,270,s.autoBehavior);
             Add(L"BUTTON",T(L"しぐさを選ぶ...",L"Gestures..."),BS_PUSHBUTTON|WS_TABSTOP,316,y+18,120,26,IdGestures);
@@ -145,7 +178,8 @@ namespace MikuMikuDesktopPerch
             Label(T(L"太陽の位置（左右・高さ）",L"Sun (side, height)"),28,y+128,140);
             Slider(IdSunAzimuth,170,y+126,130,-180,180,s.lightAzimuth);
             Slider(IdSunElevation,306,y+126,130,5,90,s.lightElevation);
-            y+=166;
+            y=top;
+            Page(T(L"会話と声",L"Talking and voice"));
             Group(T(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",L"Talking (an LLM on this computer: Ollama, LM Studio, ...)"),y,252);
             Label(T(L"接続先",L"Server"),28,y+22,130);
             Add(L"EDIT",s.chatEndpoint.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+22,266,24,IdChatEndpoint);
@@ -183,7 +217,8 @@ namespace MikuMikuDesktopPerch
             SendDlgItemMessageW(state.window,IdVoiceFolder,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"VOICEVOXのフォルダ",L"VOICEVOX folder")));
             Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+191,70,26,IdVoiceBrowse);
             UpdateVoiceMode();
-            y+=234;
+            y=top;
+            Page(T(L"秘書",L"Assistant"));
             Group(T(L"秘書（タイマー・リマインダー・やることは、メニューと会話から）",L"Assistant (timers, reminders and to-dos: from the menu or by talking)"),y,164);
             CheckBox(IdMorningSummary,T(L"朝に、今日のリマインダーとやることを話す",L"Tell today's reminders and to-dos in the morning"),28,y+22,400,s.morningSummary);
             Label(T(L"使い続けたら休憩をすすめる",L"Suggest a break after using the PC for"),28,y+50,290);
@@ -197,7 +232,8 @@ namespace MikuMikuDesktopPerch
             SendDlgItemMessageW(state.window,IdCalendarAddress,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"iCal形式の非公開アドレス",L"Secret address in iCal format")));
             Label(T(L"カレンダーの予定の前に知らせる",L"Tell me before calendar events"),28,y+134,290);
             Combo(IdCalendarLead,326,y+132,110);
-            y+=174;
+            y=top;
+            Page(T(L"詳細",L"Advanced"));
             Group(T(L"詳細（変更すると再起動します）",L"Advanced (changes restart the app)"),y,166);
             Label(T(L"描画のfps",L"Drawing fps"),28,y+22,130);
             Combo(IdFps,170,y+22,120);
@@ -216,7 +252,8 @@ namespace MikuMikuDesktopPerch
             Label(T(L"共有トゥーンのフォルダ",L"Shared toon folder"),28,y+134,140);
             Add(L"EDIT",s.toonDir.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+134,190,24,IdToonDir);
             Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+133,70,26,IdToonBrowse);
-            y+=176;
+            state.page=-1;
+            y=top+138+166;
             Add(L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,276,y,82,28,IDOK);
             Add(L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,366,y,82,28,IDCANCEL);
 
@@ -246,6 +283,11 @@ namespace MikuMikuDesktopPerch
                       s.banterMinutes,Fmt(T(L"{0}分ごと",L"Every {0} min"),{std::to_wstring(s.banterMinutes)}));
             FillCombo(IdLanguage,{{T(L"自動",L"Auto"),0},{L"日本語",1},{L"English",2}},s.language==L"ja"?1:s.language==L"en"?2:0,L"");
             UpdateInitiative();
+            // Down to the tab row, leaving the pane's top line under it.
+            RECT row{};
+            TabCtrl_GetItemRect(state.tabs,0,&row);
+            SetWindowPos(state.tabs,nullptr,0,0,Px(440),row.bottom+2,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+            ShowPage(0);
         }
 
         void BrowseToonDir()
@@ -860,6 +902,9 @@ namespace MikuMikuDesktopPerch
                     return 0;
                 }
                 break;
+            case WM_NOTIFY:
+                if(const auto* n=reinterpret_cast<const NMHDR*>(lParam);n->idFrom==IdTabs&&n->code==TCN_SELCHANGE)ShowPage(TabCtrl_GetCurSel(state.tabs));
+                return 0;
             case WM_HSCROLL:
                 if(state.onLight)state.onLight(SliderValue(IdSunAzimuth),SliderValue(IdSunElevation));
                 return 0;
@@ -872,6 +917,8 @@ namespace MikuMikuDesktopPerch
                 if(state.memory){DestroyWindow(state.memory);state.memory=nullptr;}
                 if(state.gestures){DestroyWindow(state.gestures);state.gestures=nullptr;}
                 state.window=nullptr;
+                state.tabs=nullptr;
+                state.pages.clear();
                 if(state.font){DeleteObject(state.font);state.font=nullptr;}
                 state.onApply=nullptr;
                 state.onLight=nullptr;
@@ -911,17 +958,17 @@ namespace MikuMikuDesktopPerch
         state.onApply=std::move(onApply);
         state.onLight=std::move(onLight);
         state.onCheckUpdate=std::move(onCheckUpdate);
-        INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES|ICC_LISTVIEW_CLASSES};
+        INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES|ICC_LISTVIEW_CLASSES|ICC_TAB_CLASSES};
         InitCommonControlsEx(&controls);
         state.dpi=static_cast<int>(GetDpiForSystem());
         NONCLIENTMETRICSW metrics{sizeof(metrics)};
         SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,state.dpi);
         state.font=CreateFontIndirectW(&metrics.lfMessageFont);
 
-        // Client 460 x 984 logical pixels, centred on the screen the cursor is on.
+        // Client 460 x 400 logical pixels, centred on the screen the cursor is on.
         const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-        RECT frame{0,0,Px(460),Px(984)};
+        RECT frame{0,0,Px(460),Px(400)};
         AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
         POINT cursor{};
         GetCursorPos(&cursor);
