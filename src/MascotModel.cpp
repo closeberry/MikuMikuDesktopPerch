@@ -168,6 +168,7 @@ namespace MikuMikuDesktopPerch
         std::array<float,3> ToArray(const DirectX::XMFLOAT3& v){return {v.x,v.y,v.z};}
 
         constexpr double ResetBlendSeconds=0.5;   // ease of the simulated bones in a physics reset
+        constexpr double ResetPoseSeconds=1.5;    // the same in a reset asked for (ResetPose)
 
         // Built-in clips: the exe's resources of a type (IDLECLIP: idle clips, WINDOWCLIP: window
         // motions) by name (which the resource compiler upper-cases), written to files under
@@ -380,6 +381,8 @@ namespace MikuMikuDesktopPerch
         struct ResetFrom {int bone;DirectX::XMFLOAT4 rotation;DirectX::XMFLOAT3 position;};
         std::vector<ResetFrom> resetFrom;
         double resetBlend=-1;   // seconds into the ease, -1 when not resetting
+        double resetLength=ResetBlendSeconds;   // how long this ease takes
+        bool resetPosePending=false;   // the pending reset was asked for (ResetPose): ease longer
         double floorWait=0;     // seconds the floor has waited for the bodies to come up
         bool floorOnReset=false;   // the pending reset is for the floor: turn it on after
 
@@ -409,13 +412,16 @@ namespace MikuMikuDesktopPerch
             for(size_t i=0;i<keys.size()&&i<pmx->bones.size();++i)
                 if(pmx->bones[i].IsPhysics&&keys[i].physics)resetFrom.push_back({static_cast<int>(i),keys[i].rotation,keys[i].position});
             resetBlend=0;
+            // Asked for: the body's own motion fades out meanwhile (up to 1.2 s), so the bodies
+            // are put down on the settled pose.
+            resetLength=resetPosePending?ResetPoseSeconds:ResetBlendSeconds;
         }
 
         void BlendPhysicsBones(double dt)
         {
             using namespace DirectX;
             resetBlend+=dt;
-            float w=static_cast<float>(std::min(resetBlend/ResetBlendSeconds,1.0));
+            float w=static_cast<float>(std::min(resetBlend/resetLength,1.0));
             w=w*w*(3-2*w);
             for(const auto& f:resetFrom)
             {
@@ -2087,6 +2093,14 @@ namespace MikuMikuDesktopPerch
     }
 
     void MascotModel::ResetPhysics(){impl->resetPhysicsPending=true;}
+
+    void MascotModel::ResetPose()
+    {
+        auto& m=*impl;
+        if(m.shotActive){m.shotFrozen=-1;m.shotEnding=true;}
+        m.motion.EndGestures();
+        m.resetPhysicsPending=m.resetPosePending=true;
+    }
     std::uint32_t MascotModel::PhysicsResets() const {return impl->physicsResets;}
     const std::wstring& MascotModel::PhysicsResetReason() const {return impl->resetReason;}
 
@@ -2130,7 +2144,7 @@ namespace MikuMikuDesktopPerch
         // Physics reads solvedPose, so the layered pose also drives hair and skirt.
         // A physics reset starts from where physics last left each simulated bone.
         if(m.physics&&m.resetPhysicsPending&&m.resetBlend<0)m.BeginPhysicsReset();
-        m.resetPhysicsPending=false;
+        m.resetPhysicsPending=m.resetPosePending=false;
         m.solver->HiPose(m.solver->solvedPose,static_cast<float>(m.frame),false,m.continuous);
         m.SampleIdle(m.solver->solvedPose,dt);
         m.SampleGait(m.solver->solvedPose,dt);
@@ -2176,7 +2190,7 @@ namespace MikuMikuDesktopPerch
                     m.floorWait=0;
                 }
             }
-            if(m.resetBlend>=ResetBlendSeconds)
+            if(m.resetBlend>=m.resetLength)
             {
                 // The bones are back in their animated place: put the bodies there with no
                 // momentum, and simulate again from this frame.

@@ -97,6 +97,9 @@ namespace MikuMikuDesktopPerch
         // Play a gesture (by its ForceGesture name) once as a reaction, as when talking. False
         // when it cannot now (not standing, or already reacting).
         bool Emote(const std::wstring& name);
+        // Fade out the gesture and the click reaction playing (from the weight each has now), and
+        // hold off the next gesture for a few seconds.
+        void EndGestures();
         // A walking (0) or running (1) motion played in place by the model instead of the
         // generated gait: its ground speed (units per second), 0 for the generated gait. The
         // pose passed to Apply then holds the motion's frame, which is turned to the side here.
@@ -241,6 +244,11 @@ namespace MikuMikuDesktopPerch
         int gestureSide=0;                   // 0 left hand, 1 right
         double gestureTime=0,gestureLength=0,nextGestureAt=2;
         double frozenAt=-1;                  // diagnostics: hold the gesture at this time
+        static constexpr double GestureBlend=0.7,ReactionBlendOut=0.5;   // seconds of fade
+        static constexpr double CutBlend=1.2;   // EndGestures' fade: slower, arms may be overhead
+        // EndGestures: seconds left of the fade that cuts the gesture or reaction short (-1: none).
+        // Its own timeline runs on meanwhile (shortening it would jump to how it ends).
+        double gestureCut=-1,reactionCut=-1;
         // Shortest and longest run of each gesture, in seconds.
         static std::array<float,2> GestureLengths(Gesture g)
         {

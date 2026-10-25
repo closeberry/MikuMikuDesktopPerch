@@ -50,7 +50,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
@@ -1372,7 +1372,9 @@ namespace
         SetWindowLongPtrW(m.hwnd,GWL_EXSTYLE,style);
     }
 
-    void ShowMenu(Mascot& m,POINT screen)
+    // From the tray icon (it stands for the first character), what is about one character is
+    // about that one, except the reset, which is for all of them.
+    void ShowMenu(Mascot& m,POINT screen,bool tray=false)
     {
         // Things used often stay here; switches and display options are in the settings window.
         HMENU menu=CreatePopupMenu();
@@ -1428,6 +1430,10 @@ namespace
         AppendMenuW(menu,MF_STRING|(app.settings.windowMode?MF_CHECKED:0),IdWindowMode,T(L"アクティブウィンドウに乗る",L"Ride on the active window"));
         AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkLeft,T(L"左へ歩く",L"Walk left"));
         AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkRight,T(L"右へ歩く",L"Walk right"));
+        if(tray&&app.mascots.size()>1)
+            AppendMenuW(menu,MF_STRING,IdResetPoseAll,T(L"全員のポーズと物理をリセット",L"Reset everyone's pose and physics"));
+        else
+            AppendMenuW(menu,MF_STRING,IdResetPose,T(L"ポーズと物理をリセット",L"Reset pose and physics"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         AppendMenuW(menu,MF_STRING,IdSettings,T(L"設定...",L"Settings..."));
         AppendMenuW(menu,MF_STRING,IdExit,T(L"終了",L"Exit"));
@@ -3352,6 +3358,15 @@ namespace
         return true;
     }
 
+    // The menu's reset: the motion playing over what she does fades out (an opened one waiting
+    // to start no longer does), and hair and skirt ease back to their modelled shape.
+    void ResetPose(Mascot& m)
+    {
+        m.motionRequested=false;
+        m.model.ResetPose();
+        Trace(L"%.1f reset pose and physics",app.clock);
+    }
+
     void OnCommand(Mascot& m,UINT id)
     {
         if(id>IdTimerMinutes&&id<=IdTimerMinutes+120)
@@ -3535,6 +3550,12 @@ namespace
                 m.model.StopMotion();
                 StartWalk(m,m.windowX+m.windowSize.cx*0.5+(id==IdWalkLeft?-300:300));
             }
+            break;
+        case IdResetPose:
+            ResetPose(m);
+            break;
+        case IdResetPoseAll:
+            for(const auto& each:app.mascots)ResetPose(*each);
             break;
         case IdSettings:
             ShowSettingsWindow(m.hwnd,{app.settings,StartupRegistered(),Own(m),m.character,&m.memory,MascotModel::IdleGestureChoices(),MascotRenderer::Gpus(),m.renderer.AdapterName()},
@@ -3966,7 +3987,7 @@ namespace
             {
                 POINT p{};
                 GetCursorPos(&p);
-                ShowMenu(*app.mascots.front(),p);
+                ShowMenu(*app.mascots.front(),p,true);
             }
             return 0;
         case Updater::CheckedMessage:
@@ -4214,6 +4235,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     int snapshotShove=0;                      // --shove <px>: moved that far 2 s after start
     std::wstring snapshotSay;                 // --say <text>: said in the bubble 1 s after start
     int snapshotClick=0;                      // --click head|body: 1 head, 2 body, 1.5 s after start
+    double snapshotReset=-1;                  // --reset-pose <seconds>: the menu's reset then
     {
         int argc=0;
         LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
@@ -4276,6 +4298,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--click"&&i+1<argc)
             {
                 snapshotClick=std::wstring(argv[++i])==L"head"?1:2;
+            }
+            else if(arg==L"--reset-pose"&&i+1<argc)
+            {
+                snapshotReset=_wtof(argv[++i]);
             }
             else if(arg==L"--direction"&&i+1<argc)
             {
@@ -4820,6 +4846,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     SayFixed(m,snapshotSay);
                     snapshotSay.clear();
                 }
+                if(snapshotReset>=0&&app.clock>snapshotReset)
+                {
+                    for(const auto& each:app.mascots)ResetPose(*each);
+                    snapshotReset=-1;
+                }
                 if(m.diagnosticShove&&app.clock>2.0)
                 {
                     Trace(L"%.1f diagnostic shove from x=%.0f by %d",app.clock,CenterX(m),m.diagnosticShove);
@@ -4949,8 +4980,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(FILE* info=nullptr;_wfopen_s(&info,(snapshotPath+L".txt").c_str(),L"w, ccs=UTF-8")==0&&info)
             {
                 const auto rest=m.model.ArmRestAngles(),fix=m.model.ArmCorrections();
-                fwprintf(info,L"model=%s\narmRest L=%.1f R=%.1f\narmCorrection L=%.1f R=%.1f\nwindow=%dx%d\n",
-                         Own(m).modelPath.c_str(),rest[0],rest[1],fix[0],fix[1],m.windowSize.cx,m.windowSize.cy);
+                fwprintf(info,L"model=%s\nclock=%.2f\narmRest L=%.1f R=%.1f\narmCorrection L=%.1f R=%.1f\nwindow=%dx%d\n",
+                         Own(m).modelPath.c_str(),app.clock,rest[0],rest[1],fix[0],fix[1],m.windowSize.cx,m.windowSize.cy);
                 fwprintf(info,L"%s",m.model.DescribeRig().c_str());
                 fwprintf(info,L"idle clips=%d played=%d\n",m.model.IdleClipCount(),m.model.IdleClipPlays());
                 fwprintf(info,L"%s",m.model.DescribeWindowMotions().c_str());

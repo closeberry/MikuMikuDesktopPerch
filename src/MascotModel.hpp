@@ -157,6 +157,11 @@ namespace MikuMikuDesktopPerch
         // Also done by itself while standing still, when hair or a skirt stays raised against
         // gravity. PhysicsResets counts both, for diagnostics.
         void ResetPhysics();
+        // Back to the plain pose of what she is doing (standing: the idle motion or the generated
+        // standing pose): the opened motion, a built-in clip, a gesture and a click reaction fade
+        // out, while the simulated bones ease to their modelled shape; then the bodies and joints
+        // are put there with no momentum and physics resumes (about one and a half seconds).
+        void ResetPose();
         std::uint32_t PhysicsResets() const;
         const std::wstring& PhysicsResetReason() const;   // last automatic one, for diagnostics
 

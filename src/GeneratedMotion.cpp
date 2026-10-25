@@ -681,7 +681,7 @@ namespace MikuMikuDesktopPerch
         for(const auto& [n,g]:GestureNames)
             if(name==n)
             {
-                reaction=g;
+                reaction=g;reactionCut=-1;
                 reactionSide=Random01()<0.5f?0:1;
                 reactionTime=0;
                 reactionLength=static_cast<int>(g)>GestureCount?2.5:std::min(3.5,static_cast<double>(GestureLengths(g)[0]));
@@ -689,6 +689,18 @@ namespace MikuMikuDesktopPerch
                 return true;
             }
         return false;
+    }
+
+    void GeneratedMotion::EndGestures()
+    {
+        // Each fades out from the weight it has now.
+        if(gesture!=Gesture::None&&gestureCut<0)
+        {
+            if(frozenAt>=0){gestureTime=frozenAt;frozenAt=-1;}
+            gestureCut=CutBlend;
+        }
+        if(reaction!=Gesture::None&&reactionCut<0)reactionCut=CutBlend;
+        nextGestureAt=std::max(nextGestureAt,clock+3.0);
     }
 
     bool GeneratedMotion::ForceGesture(const std::wstring& name)
@@ -699,7 +711,7 @@ namespace MikuMikuDesktopPerch
         for(const auto& [n,g]:GestureNames)
             if(base==n)
             {
-                gesture=g;gestureSide=0;gestureTime=0;gestureLength=1e9;frozenAt=-1;
+                gesture=g;gestureSide=0;gestureTime=0;gestureLength=1e9;frozenAt=-1;gestureCut=-1;
                 if(at!=std::wstring::npos){frozenAt=std::stod(name.substr(at+1));gestureLength=GestureLengths(g)[1];}
                 return true;
             }
@@ -1239,21 +1251,24 @@ namespace MikuMikuDesktopPerch
             }
             const Gesture next=static_cast<Gesture>(pick);
             gesture=next;
+            gestureCut=-1;
             gestureSide=Random01()<0.5f?0:1;
             gestureTime=0;
             const auto range=GestureLengths(next);
             gestureLength=range[0]+(range[1]-range[0])*Random01();
         }
         gestureTime=frozenAt>=0?frozenAt:gestureTime+dt;
-        if(gestureTime>=gestureLength)
+        if(gestureCut>=0)gestureCut-=dt;
+        if(gestureTime>=gestureLength||(gestureCut<=0&&gestureCut>-1))
         {
             gesture=Gesture::None;
             gestureWeight=0;
-            nextGestureAt=clock+1.5+Random01();
+            gestureCut=-1;
+            nextGestureAt=std::max(nextGestureAt,clock+1.5+Random01());
             return;
         }
-        constexpr double Blend=0.7;
-        gestureWeight=frozenAt>=0?1.0f:Smooth(static_cast<float>(std::min({gestureTime/Blend,(gestureLength-gestureTime)/Blend,1.0})));
+        gestureWeight=frozenAt>=0?1.0f:Smooth(static_cast<float>(std::min({gestureTime/GestureBlend,(gestureLength-gestureTime)/GestureBlend,1.0})));
+        if(gestureCut>0)gestureWeight*=Smooth(static_cast<float>(gestureCut/CutBlend));
 
         std::vector<Key> g=keys;
         PoseGesture(gesture,gestureTime,gestureLength,gestureSide,gestureWeight,g,morphOut);
@@ -1277,6 +1292,7 @@ namespace MikuMikuDesktopPerch
         else if(activity==Activity::Sit||activity==Activity::Hang)pick=Gesture::ShyNod;
         else return false;
         reaction=pick;
+        reactionCut=-1;
         reactionSide=Random01()<0.5f?0:1;
         reactionTime=0;
         reactionLength=pick==Gesture::PatHead?2.8:pick==Gesture::Curious||pick==Gesture::ShyNod?2.2:2.5;
@@ -1294,9 +1310,11 @@ namespace MikuMikuDesktopPerch
         // Picked up or set walking meanwhile: let go of it.
         if(activity!=Activity::Idle&&activity!=Activity::Sit&&activity!=Activity::Hang)
             reactionLength=std::min(reactionLength,reactionTime+0.5);
-        if(reactionTime>=reactionLength){reaction=Gesture::None;reactionWeight=0;return;}
+        if(reactionCut>=0)reactionCut-=dt;
+        if(reactionTime>=reactionLength||(reactionCut<=0&&reactionCut>-1)){reaction=Gesture::None;reactionWeight=0;reactionCut=-1;return;}
         const double blendIn=reaction==Gesture::Surprised?0.12:0.3;
-        reactionWeight=Smooth(static_cast<float>(std::min({reactionTime/blendIn,(reactionLength-reactionTime)/0.5,1.0})));
+        reactionWeight=Smooth(static_cast<float>(std::min({reactionTime/blendIn,(reactionLength-reactionTime)/ReactionBlendOut,1.0})));
+        if(reactionCut>0)reactionWeight*=Smooth(static_cast<float>(reactionCut/CutBlend));
         std::vector<Key> g=keys;
         PoseGesture(reaction,reactionTime,reactionLength,reactionSide,reactionWeight,g,reactionMorphs);
         for(size_t i=0;i<keys.size();++i)
