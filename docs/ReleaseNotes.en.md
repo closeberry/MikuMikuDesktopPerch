@@ -2,7 +2,7 @@
 
 [日本語](ReleaseNotes.md)
 
-## Next version (unreleased)
+## 1.2.4
 
 ### Fixes
 

@@ -2,7 +2,7 @@
 
 [English](ReleaseNotes.en.md)
 
-## 次のバージョン（未リリース）
+## 1.2.4
 
 ### 直したこと
 
