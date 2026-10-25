@@ -25,6 +25,7 @@ namespace MikuMikuDesktopPerch
         void ShowNotice(const std::wstring& text); // a message of the app's own (errors), shown whole
         void Hide();                               // fade out
         bool Visible() const {return visible;}
+        const std::wstring& Text() const {return text;}   // the reply (or notice) as it stands
         bool Talking() const {return visible&&!notice&&!fading&&revealed<static_cast<double>(text.size());}
         // Show the reply as far as this many characters (it follows the speech); without it
         // the text appears at a reading pace of its own.

@@ -146,7 +146,7 @@ VMDを使わず、プログラムで生成する動きです。作法は [docs/M
 
 | メソッドとパス | 本文 | 内容 |
 |---|---|---|
-| `GET /state` | なし | バージョンと、キャラクターごとの名前・モデル・していること（`idle`、`walk`、`sit` など）・ウィンドウの上か・話しているか・モーション再生中か・居眠り中か・位置 |
+| `GET /state` | なし | バージョンと、会話を外部アプリに任せているか（`externalChat`）と、キャラクターごとの名前・モデル・していること（`idle`、`walk`、`sit` など）・ウィンドウの上か・話しているか・モーション再生中か・居眠り中か・位置 |
 | `GET /gestures` | なし | `/gesture` で使えるしぐさの名前と、`/say` の `feeling` に使える気持ちの名前 |
 | `POST /say` | `{"text":"こんにちは","feeling":"smile"}` | 書いたとおりに吹き出しでしゃべる（声の設定があれば声も、口パクも）。LLMは使いません。`feeling` は省略できます（`smile`、`surprise`、`troubled`、`angry`、`sad`、`shy`、`neutral`） |
 | `POST /say`（音声つき） | `{"text":"Hello!","audio":"<base64>"}` または `{"text":"Hello!","audioFile":"C:\\voice\\hello.mp3"}` | 外部で作った音声と一緒にしゃべる。どの言語でも使えます（口パクは音声の大きさから作るので、言葉を問いません）。吹き出しの文字は音声の長さに合わせて出ていきます。`audio` は音声ファイルの中身をbase64にしたもの（本文全体で16MBまで）、`audioFile` はこのコンピューターの音声ファイルのパス（64MBまで）。MP3、AAC（M4A）、WAV、FLAC など、Windowsで再生できる形式に対応（10分まで、モノラルかステレオ）。音声つきのときは、設定の声（VOICEVOX）は使いません |
@@ -186,6 +186,41 @@ Invoke-RestMethod http://127.0.0.1:50080/say -Method Post -ContentType "applicat
 ```
 
 Python なら `requests.post("http://127.0.0.1:50080/gesture", json={"name": "wave"})` や、`requests.post("http://127.0.0.1:50080/motion", data=vmd_bytes, headers={"Content-Type": "application/octet-stream"})` のように呼べます。Claude Desktop などのMCPクライアントからは、このAPIを呼ぶstdioのMCPサーバーを用意すれば、トンネルなしで使えます。
+
+### アプリからの知らせ（イベント）と、会話を任せる
+
+`GET /events` につなぐと、つないでいる間、キャラクターに起きたことが届きます（Server-Sent Events。`event:` に種類、`data:` にJSON）。同時に8本までつなげます。
+
+| イベント | いつ | data の例 |
+|---|---|---|
+| `hello` | つないだとき | `{"chat":"app"}`（会話を外部アプリに任せている間は `"external"`） |
+| `said` | あなたが入力欄でキャラクターに話しかけたとき | `{"character":1,"text":"今日の天気は？","answeredBy":"external"}`（`answeredBy` は返事をする側。`app` はこのアプリ（LLM、タイマーなど）） |
+| `spoke` | キャラクターがセリフを言い終えたとき（次のセリフで途中から切り替わったときは出ません） | `{"character":1,"text":"晴れだよ。"}` |
+| `speakFirst` | 会話を任せている間に、キャラクターが自分から話しかけようとしたとき（あいさつ、ひと言など） | `{"character":1,"situation":"夕方から夜の時間です。…"}` |
+| `click` | クリックされたとき | `{"character":1,"part":"head"}`（`head` か `body`） |
+| `held` | つままれた・離されたとき | `{"character":1,"held":true}` |
+| `doze` | 居眠りを始めた・起きたとき | `{"character":1,"dozing":true}` |
+| `motionEnd` | モーションの再生が終わったとき | `{"character":1,"fromApi":true}`（`/motion` で頼んだものなら `true`） |
+
+15秒ごとに、何も起きていなくても `: ping` の行が届きます（切れたことに気づくため）。
+
+**会話を任せる**：`GET /events?chat=external` でつなぐと、つないでいる間は、あなたが入力欄で話しかけた言葉がLLMには行かず、`said` で外部アプリに届きます。外部アプリが `/say`（音声つきも可）で答えると、キャラクターがそれを言います。答えを待つ間は吹き出しに点々が出て、1分たっても答えがなければ消えます。自分から話しかける時（あいさつなど）も、LLMの代わりに `speakFirst` が届きます（タイマーや更新の知らせのように、必ず伝えることは、決まった文でそのまま言います）。タイマー・リマインダー・やることの頼みは、これまでどおりこのアプリが受けます。外部アプリの接続が切れると（遅くとも15秒ほどで）、元どおりLLMが返事をします。
+
+Python で、話しかけられたらオウム返しする例：
+
+```python
+import json, requests
+with requests.get("http://127.0.0.1:50080/events?chat=external", stream=True) as r:
+    event = None
+    for line in r.iter_lines(decode_unicode=True):
+        if line.startswith("event: "):
+            event = line[7:]
+        elif line.startswith("data: ") and event == "said":
+            said = json.loads(line[6:])
+            if said["answeredBy"] == "external":
+                requests.post("http://127.0.0.1:50080/say",
+                              json={"character": said["character"], "text": "「" + said["text"] + "」って言ったね。"})
+```
 
 ## 設定（exeと同じフォルダの `MikuMikuDesktopPerch.ini`、UTF-16）
 

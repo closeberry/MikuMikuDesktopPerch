@@ -169,6 +169,10 @@ namespace
         // The opened (one-shot) motion: requested right after opening, then now and then.
         bool motionRequested=false,motionWasPlaying=false,motionClosePending=false;
         bool apiMotion=false;   // the motion is one another program asked for: once, then hers comes back
+        // Another program holds the conversation (see UserSaid): waiting for its answer until
+        // then (-1: not waiting). talking: she was saying a line last frame (for "spoke").
+        double externalWaitUntil=-1;
+        bool talking=false;
         double nextMotionAt=0,motionStartAt=0;   // motionStartAt: standing up before it plays
         bool behindSurface=false;     // hanging: the window sits just behind the surface window
         double hangEndedAt=-1;
@@ -280,6 +284,16 @@ namespace
     } app;
 
     CharacterSettings& Own(const Mascot& m){return app.settings.characters[m.slot];}
+
+    // An event about character m for the programs listening on the API (GET /events);
+    // more: further JSON members ("\"part\":\"head\"").
+    void Emit(const char* event,const Mascot& m,const std::string& more={})
+    {
+        if(app.api)app.api->Publish(event,"{\"character\":"+std::to_string(m.slot+1)+(more.empty()?"":","+more)+"}");
+    }
+
+    // A program listening on the API holds the conversation (instead of the LLM).
+    bool ExternalChat(){return app.api&&app.api->ExternalChat();}
 
     // Now and then, about every so many minutes: a third sooner or later at random.
     double Interval(int minutes){return minutes*60.0*(2.0/3.0+app.Random01()*2.0/3.0);}
@@ -598,6 +612,7 @@ namespace
             head=p.y<r.top+s.y+0.02*unit&&std::abs(p.x-(r.left+s.x))<0.12*unit;
         }
         if(a==Activity::Walk||a==Activity::Run)StopGroundActivity(m);
+        Emit("click",m,head?"\"part\":\"head\"":"\"part\":\"body\"");
         if(m.model.React(head))Trace(L"%.1f click on the %s",app.clock,head?L"head":L"body");
     }
 
@@ -637,6 +652,7 @@ namespace
         if(m.motionWasPlaying&&!playing)
         {
             Trace(L"%.1f motion finished",app.clock);
+            Emit("motionEnd",m,m.apiMotion?"\"fromApi\":true":"\"fromApi\":false");
             m.nextMotionAt=app.clock+90+app.Random01()*150;
             if(m.motionClosePending){std::wstring error;m.model.SetMotion({},error);m.motionClosePending=false;}
             if(m.apiMotion){std::wstring error;m.model.SetMotion(Own(m).motionPath,error);m.apiMotion=false;}
@@ -1754,11 +1770,56 @@ namespace
     // fallback: said as it is if the LLM does not answer.
     void SpeakFirst(Mascot& m,const std::wstring& situation,const std::wstring& fallback={})
     {
+        if(ExternalChat())
+        {
+            // The program holding the conversation decides what she says; news that must reach
+            // the user (an alarm, an update) is said as it is.
+            Trace(L"%.1f speak first (another program): %s",app.clock,situation.c_str());
+            if(!fallback.empty())SayFixed(m,fallback);
+            else Emit("speakFirst",m,"\"situation\":"+Net::JsonString(situation));
+            return;
+        }
         if(!ChatReady(m,false))return;
         m.fallbackLine=fallback;
         Trace(L"%.1f speak first: %s",app.clock,situation.c_str());
         m.conversation.push_back({L"user",English()?L"("+situation+L")":L"（"+situation+L"）"});
         StartReply(m,situation);
+    }
+
+    // The user said something to her (in the input box). The programs listening hear it; while
+    // one holds the conversation, it answers (with /say) instead of the LLM, and she waits for
+    // that with bouncing dots, a minute at most. Timers, reminders and to-dos stay hers.
+    void UserSaid(Mascot& m,const std::wstring& text)
+    {
+        if(!ExternalChat())
+        {
+            Emit("said",m,"\"text\":"+Net::JsonString(text)+",\"answeredBy\":\"app\"");
+            Talk(m,text);
+            return;
+        }
+        if(InBanter(m))EndBanter(L"the user talks to one of them");
+        m.fallbackLine.clear();
+        const bool plan=HandlePlan(m,text);
+        Emit("said",m,"\"text\":"+Net::JsonString(text)+",\"answeredBy\":"+(plan?"\"app\"":"\"external\""));
+        if(plan)return;
+        if(m.chat)m.chat->Cancel();
+        m.chatRequest=0;
+        if(m.voice)m.voice->CancelAll();
+        m.speech.Reset();
+        m.bubble.Begin(m.character.name);
+        m.externalWaitUntil=app.clock+60;
+        Trace(L"%.1f said to another program",app.clock);
+    }
+
+    // Waiting for the other program's answer: given up after a minute, or when it lets go of
+    // the conversation (its stream closed).
+    void UpdateExternalWait(Mascot& m)
+    {
+        if(m.externalWaitUntil<0)return;
+        if(app.clock<m.externalWaitUntil&&ExternalChat())return;
+        m.externalWaitUntil=-1;
+        if(!m.bubble.Talking())m.bubble.Hide();
+        Trace(L"%.1f no answer from another program",app.clock);
     }
 
     // Greetings for the time of day (once per part of the day, restarts included), a welcome
@@ -1786,6 +1847,7 @@ namespace
             m.dozing=true;
             m.model.SetDozing(true);
             Trace(L"%.1f doze off",app.clock);
+            Emit("doze",m,"\"dozing\":true");
         }
         else if(m.dozing&&(idle<2||!still))
         {
@@ -1793,6 +1855,7 @@ namespace
             m.model.SetDozing(false);
             if(idle<2&&a==Activity::Idle&&app.Random01()<0.5f)m.model.Emote(L"yawn");
             Trace(L"%.1f wake up",app.clock);
+            Emit("doze",m,"\"dozing\":false");
         }
         if(m.dozing)m.nextDecision=std::max(m.nextDecision,app.clock+10);   // no wandering off asleep
     }
@@ -1803,7 +1866,7 @@ namespace
 
     void MaybeSpeakFirst()
     {
-        if(!app.settings.chatInitiative||app.settings.chatModel.empty()||app.clock<8)return;
+        if(!app.settings.chatInitiative||(app.settings.chatModel.empty()&&!ExternalChat())||app.clock<8)return;
         if(app.focus.on&&!app.focus.resting)return;   // focus mode: the user is working
         if(app.banter.stage!=App::Banter::Stage::None)return;
         const double idle=InputIdleSeconds();
@@ -1876,7 +1939,7 @@ namespace
         // Just above the feet, over the legs, so it is close to her without hiding the face.
         const RECT r=FrameRect(m);
         const POINT ground=GroundPointOnScreen(m);
-        m.chatInput.Open(m.hwnd,{(r.left+r.right)/2,ground.y-static_cast<LONG>(ModelHeightPixels(m)*0.12)},[&m](const std::wstring& text){Talk(m,text);});
+        m.chatInput.Open(m.hwnd,{(r.left+r.right)/2,ground.y-static_cast<LONG>(ModelHeightPixels(m)*0.12)},[&m](const std::wstring& text){UserSaid(m,text);});
     }
 
     // Show and say the reply as far as text goes (it only ever grows).
@@ -2240,6 +2303,7 @@ namespace
     // sound: a WAV file (16-bit PCM) to say it with, instead of her voice.
     void SayFixed(Mascot& m,const std::wstring& text,std::string sound)
     {
+        m.externalWaitUntil=-1;
         m.fallbackLine.clear();
         if(m.chat)m.chat->Cancel();
         m.chatRequest=0;
@@ -3111,6 +3175,10 @@ namespace
         }
         m.bubble.Tick(dt,anchor,static_cast<int>(unit*0.08),WorkAreaOfWindow(m),app.paused);
         m.model.SetMouth(m.speech.Mouth(),m.speech.Speaking()&&!app.paused);
+        // A line said to the end (not one cut off by the next): the programs listening hear it.
+        const bool talking=m.speech.Speaking()||m.bubble.Talking();
+        if(m.talking&&!talking)Emit("spoke",m,"\"text\":"+Net::JsonString(m.bubble.Text()));
+        m.talking=talking;
     }
 
     // A model can be on the desktop once (its persona and memory are kept per model), and must
@@ -3351,6 +3419,7 @@ namespace
                     m.carryVelocity=m.carryAcceleration={};
                     m.model.StopMotion();
                     m.model.SetActivity(Activity::Grabbed);
+                    Emit("held",m,"\"held\":true");
                     // Picked up: over the other characters.
                     if(app.settings.topmost)SetWindowPos(m.hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER);
                     RaiseOverlays();
@@ -3366,6 +3435,7 @@ namespace
                 m.place=Place::Falling;
                 m.fallSpeed=std::max(0.0f,m.carryVelocity.y*0.5f);
                 m.model.SetActivity(Activity::Fall);
+                Emit("held",m,"\"held\":false");
             }
             if(m.pressed||message==WM_LBUTTONUP)
             {
@@ -3502,7 +3572,7 @@ namespace
     std::string ApiState()
     {
         auto flag=[](bool on){return on?"true":"false";};
-        std::string out="{\"ok\":true,\"version\":"+Net::JsonString(CurrentVersion())+",\"characters\":[";
+        std::string out="{\"ok\":true,\"version\":"+Net::JsonString(CurrentVersion())+",\"externalChat\":"+flag(ExternalChat())+",\"characters\":[";
         for(size_t i=0;i<app.mascots.size();++i)
         {
             Mascot& m=*app.mascots[i];
@@ -4500,6 +4570,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 MaybeMemorize(m);
                 UpdateDozing(m);
                 UpdateFeeling(m);
+                UpdateExternalWait(m);
                 if(m.pendingClick&&app.clock>=m.pendingClickAt)
                 {
                     OnClick(m,*m.pendingClick);

@@ -1,9 +1,13 @@
 #pragma once
 #include <windows.h>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace MikuMikuDesktopPerch
 {
@@ -12,6 +16,8 @@ namespace MikuMikuDesktopPerch
     // time; each is handed to the notify window's thread, which does it and fills the answer.
     // Requests from web pages are refused (they carry an Origin header, or a Host other than
     // this computer's), so a site open in a browser cannot make the characters do anything.
+    // GET /events stays open and carries what happens (server-sent events) to the programs
+    // listening; one may ask to hold the conversation (GET /events?chat=external).
     class ApiServer
     {
     public:
@@ -48,9 +54,24 @@ namespace MikuMikuDesktopPerch
         // The receiver has filled the request: its answer goes back to the caller.
         static void Answered(Request& request){SetEvent(request.done);}
 
+        // An event for every program listening (GET /events), as "event: <name>" and
+        // "data: <json>". From any thread; sent in the background.
+        void Publish(const char* event,const std::string& json);
+        // A program listening holds the conversation: what the user says goes to it, not the LLM.
+        bool ExternalChat() const;
+
     private:
         void Run();
-        void Serve(std::uintptr_t client);
+        bool Serve(std::uintptr_t client);   // true: the connection stays open (an event stream)
+        void Write();                        // the event streams' sender
+
+        struct Listener {std::uintptr_t socket;bool chat;};
+        mutable std::mutex mutex;            // guards what follows
+        std::condition_variable wake;
+        std::vector<Listener> listeners;
+        std::deque<std::string> outbox;
+        bool quitting=false;
+        std::thread writer;
 
         HWND notify;
         int port=0;

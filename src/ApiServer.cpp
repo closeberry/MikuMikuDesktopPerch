@@ -5,6 +5,7 @@
 #include "Log.hpp"
 #include "Text.hpp"
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cctype>
 #include <string_view>
@@ -15,6 +16,7 @@ namespace MikuMikuDesktopPerch
     namespace
     {
         constexpr size_t MaxHeader=16*1024,MaxBody=64*1024;
+        constexpr size_t MaxListeners=8;
         constexpr size_t MaxLargeBody=16*1024*1024;   // a VMD sent as it is (POST /motion), or a line with its sound (POST /say)
 
         std::string Lower(std::string_view text)
@@ -61,6 +63,18 @@ namespace MikuMikuDesktopPerch
             }
         }
 
+        // All of it, or false (the other end has gone, or stopped reading for the send timeout).
+        bool SendAll(SOCKET client,const std::string& out)
+        {
+            for(size_t sent=0;sent<out.size();)
+            {
+                const int n=send(client,out.data()+sent,static_cast<int>(std::min<size_t>(out.size()-sent,INT_MAX)),0);
+                if(n<=0)return false;
+                sent+=static_cast<size_t>(n);
+            }
+            return true;
+        }
+
         std::string Error(const char* text){return std::string("{\"ok\":false,\"error\":\"")+text+"\"}";}
     }
 
@@ -90,6 +104,8 @@ namespace MikuMikuDesktopPerch
         listener=s;
         port=listenPort;
         stopping=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        quitting=false;
+        writer=std::thread([this]{Write();});
         worker=std::thread([this]{Run();});
         Log(L"API: listening on 127.0.0.1:%d",port);
         return {};
@@ -101,6 +117,15 @@ namespace MikuMikuDesktopPerch
         SetEvent(stopping);
         closesocket(static_cast<SOCKET>(listener));   // accept returns at once
         worker.join();
+        {
+            std::lock_guard lock(mutex);
+            quitting=true;
+        }
+        wake.notify_all();
+        writer.join();
+        for(const Listener& l:listeners)closesocket(static_cast<SOCKET>(l.socket));
+        listeners.clear();
+        outbox.clear();
         listener=INVALID_SOCKET;
         CloseHandle(stopping);
         stopping=nullptr;
@@ -118,12 +143,57 @@ namespace MikuMikuDesktopPerch
                 if(WaitForSingleObject(stopping,0)==WAIT_OBJECT_0)return;
                 continue;
             }
-            Serve(client);
-            closesocket(client);
+            if(!Serve(client))closesocket(client);
         }
     }
 
-    void ApiServer::Serve(std::uintptr_t handle)
+    void ApiServer::Publish(const char* event,const std::string& json)
+    {
+        {
+            std::lock_guard lock(mutex);
+            if(listeners.empty()||quitting)return;
+            if(outbox.size()>=256)outbox.pop_front();   // one not reading for a while misses the oldest
+            outbox.push_back(std::string("event: ")+event+"\ndata: "+json+"\n\n");
+        }
+        wake.notify_all();
+    }
+
+    bool ApiServer::ExternalChat() const
+    {
+        std::lock_guard lock(mutex);
+        return std::any_of(listeners.begin(),listeners.end(),[](const Listener& l){return l.chat;});
+    }
+
+    // Sends what was published to every stream in turn, and a comment every 15 seconds so a
+    // program gone away is noticed (its stream is closed when sending fails).
+    void ApiServer::Write()
+    {
+        std::unique_lock lock(mutex);
+        for(;;)
+        {
+            std::string message=": ping\n\n";
+            if(wake.wait_for(lock,std::chrono::seconds(15),[this]{return quitting||!outbox.empty();}))
+            {
+                if(quitting)return;
+                message=std::move(outbox.front());
+                outbox.pop_front();
+            }
+            const std::vector<Listener> targets=listeners;
+            lock.unlock();
+            std::vector<std::uintptr_t> gone;
+            for(const Listener& l:targets)
+                if(!SendAll(static_cast<SOCKET>(l.socket),message))gone.push_back(l.socket);
+            lock.lock();
+            for(const std::uintptr_t g:gone)
+            {
+                closesocket(static_cast<SOCKET>(g));
+                std::erase_if(listeners,[g](const Listener& l){return l.socket==g;});
+                Log(L"API: an event stream closed (%zu left)",listeners.size());
+            }
+        }
+    }
+
+    bool ApiServer::Serve(std::uintptr_t handle)
     {
         const SOCKET client=static_cast<SOCKET>(handle);
         const DWORD timeout=5000;
@@ -136,9 +206,9 @@ namespace MikuMikuDesktopPerch
         char buffer[4096];
         while((headEnd=data.find("\r\n\r\n"))==std::string::npos)
         {
-            if(data.size()>MaxHeader){Send(client,413,Error("request too large"));return;}
+            if(data.size()>MaxHeader){Send(client,413,Error("request too large"));return false;}
             const int n=recv(client,buffer,sizeof(buffer),0);
-            if(n<=0)return;
+            if(n<=0)return false;
             data.append(buffer,static_cast<size_t>(n));
         }
         auto request=std::make_shared<Request>();
@@ -146,7 +216,7 @@ namespace MikuMikuDesktopPerch
         const size_t lineEnd=head.find("\r\n");
         const std::string_view line=head.substr(0,lineEnd);
         const size_t a=line.find(' '),b=a==std::string_view::npos?a:line.find(' ',a+1);
-        if(b==std::string_view::npos){Send(client,400,Error("bad request line"));return;}
+        if(b==std::string_view::npos){Send(client,400,Error("bad request line"));return false;}
         request->method=std::string(line.substr(0,a));
         request->path=std::string(line.substr(a+1,b-a-1));
         if(const size_t q=request->path.find('?');q!=std::string::npos){request->query=request->path.substr(q+1);request->path.resize(q);}
@@ -175,7 +245,23 @@ namespace MikuMikuDesktopPerch
                 hostOk=bare=="127.0.0.1"||bare=="localhost"||bare=="[::1]";
             }
         }
-        if(origin||!hostOk||request->method=="OPTIONS"){Send(client,403,Error("only programs on this computer may use the API, not web pages"));return;}
+        if(origin||!hostOk||request->method=="OPTIONS"){Send(client,403,Error("only programs on this computer may use the API, not web pages"));return false;}
+        if(request->path=="/events")
+        {
+            if(request->method!="GET"){Send(client,405,Error("use GET"));return false;}
+            const bool chat=("&"+request->query+"&").find("&chat=external&")!=std::string::npos;
+            std::lock_guard lock(mutex);
+            if(listeners.size()>=MaxListeners){Send(client,503,Error("too many event streams"));return false;}
+            // Sends do not wait long: a program that stops reading loses its stream.
+            const DWORD sendTimeout=2000;
+            setsockopt(client,SOL_SOCKET,SO_SNDTIMEO,reinterpret_cast<const char*>(&sendTimeout),sizeof(sendTimeout));
+            const bool held=chat||std::any_of(listeners.begin(),listeners.end(),[](const Listener& l){return l.chat;});
+            if(!SendAll(client,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-store\r\nConnection: keep-alive\r\n\r\n"
+                               "event: hello\ndata: {\"chat\":\""+std::string(held?"external":"app")+"\"}\n\n"))return false;
+            listeners.push_back({client,chat});
+            Log(L"API: an event stream opened%s (%zu in all)",chat?L", holding the conversation":L"",listeners.size());
+            return true;
+        }
         const bool large=(request->path=="/motion"&&request->contentType=="application/octet-stream")||request->path=="/say";
         if(length>(large?MaxLargeBody:MaxBody))
         {
@@ -188,14 +274,14 @@ namespace MikuMikuDesktopPerch
                 left-=std::min(left,static_cast<size_t>(n));
             }
             Send(client,413,Error("request too large"));
-            return;
+            return false;
         }
         request->body.reserve(length);
         request->body=data.substr(headEnd+4);
         while(request->body.size()<length)
         {
             const int n=recv(client,buffer,sizeof(buffer),0);
-            if(n<=0)return;
+            if(n<=0)return false;
             request->body.append(buffer,static_cast<size_t>(n));
         }
         request->body.resize(length);
@@ -204,10 +290,11 @@ namespace MikuMikuDesktopPerch
         if(!PostMessageW(notify,RequestMessage,reinterpret_cast<WPARAM>(new std::shared_ptr<Request>(request)),0))
         {
             Send(client,503,Error("the app is not ready"));
-            return;
+            return false;
         }
         const HANDLE waits[]={request->done,stopping};
-        if(WaitForMultipleObjects(2,waits,FALSE,10000)!=WAIT_OBJECT_0){Send(client,503,Error("the app did not answer"));return;}
+        if(WaitForMultipleObjects(2,waits,FALSE,10000)!=WAIT_OBJECT_0){Send(client,503,Error("the app did not answer"));return false;}
         Send(client,request->status,request->response);
+        return false;
     }
 }

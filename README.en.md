@@ -146,7 +146,7 @@ Other apps and scripts can have the characters talk, make gestures, play motions
 
 | Method and path | Body | What it does |
 |---|---|---|
-| `GET /state` | none | The version, and for each character its name, model, what it is doing (`idle`, `walk`, `sit`, ...), whether it is on a window, talking, playing a motion or dozing, and where it is |
+| `GET /state` | none | The version, whether another app holds the conversation (`externalChat`), and for each character its name, model, what it is doing (`idle`, `walk`, `sit`, ...), whether it is on a window, talking, playing a motion or dozing, and where it is |
 | `GET /gestures` | none | The gesture names `/gesture` takes, and the feeling names `/say`'s `feeling` takes |
 | `POST /say` | `{"text":"Hello!","feeling":"smile"}` | Says exactly that in the speech bubble (with the voice when one is set up, and the mouth moving). No LLM is used. `feeling` may be left out (`smile`, `surprise`, `troubled`, `angry`, `sad`, `shy`, `neutral`) |
 | `POST /say` (with a sound) | `{"text":"Hello!","audio":"<base64>"}` or `{"text":"Hello!","audioFile":"C:\\voice\\hello.mp3"}` | Says it with a sound made elsewhere, in any language (the mouth follows how loud the sound is, whatever the words). The bubble's text comes out over the length of the sound. `audio` is the sound file's contents in base64 (the whole body up to 16 MB); `audioFile` is the path of a sound file on this computer (up to 64 MB). MP3, AAC (M4A), WAV, FLAC and other formats Windows plays (up to 10 minutes, mono or stereo). With a sound, the voice in the settings (VOICEVOX) is not used |
@@ -186,6 +186,41 @@ Invoke-RestMethod http://127.0.0.1:50080/say -Method Post -ContentType "applicat
 ```
 
 From Python: `requests.post("http://127.0.0.1:50080/gesture", json={"name": "wave"})`, or `requests.post("http://127.0.0.1:50080/motion", data=vmd_bytes, headers={"Content-Type": "application/octet-stream"})`. MCP clients such as Claude Desktop can use it without a tunnel, through a stdio MCP server that calls this API.
+
+### News from the app (events), and handing over the conversation
+
+Connect to `GET /events`, and while connected, what happens to the characters comes to you (Server-Sent Events: the kind in `event:`, JSON in `data:`). Up to 8 connections at once.
+
+| Event | When | data, for example |
+|---|---|---|
+| `hello` | On connecting | `{"chat":"app"}` (`"external"` while another app holds the conversation) |
+| `said` | You said something to a character in the input box | `{"character":1,"text":"What's the weather?","answeredBy":"external"}` (`answeredBy`: who answers; `app` is this app: the LLM, timers and so on) |
+| `spoke` | A character finished a line (not sent when the next line cut it off) | `{"character":1,"text":"Sunny!"}` |
+| `speakFirst` | While another app holds the conversation, a character would speak first (a greeting, a remark) | `{"character":1,"situation":"It is evening. ..."}` |
+| `click` | Clicked | `{"character":1,"part":"head"}` (`head` or `body`) |
+| `held` | Picked up or let go | `{"character":1,"held":true}` |
+| `doze` | Dozed off or woke up | `{"character":1,"dozing":true}` |
+| `motionEnd` | A motion finished playing | `{"character":1,"fromApi":true}` (`true` when asked for with `/motion`) |
+
+Every 15 seconds without news, a `: ping` line comes (so a lost connection is noticed).
+
+**Handing over the conversation**: connect with `GET /events?chat=external`, and while connected, what you say in the input box goes to that app as `said` instead of to the LLM. When it answers with `/say` (a sound may come with it), the character says it. While waiting she shows bouncing dots in the bubble, gone after a minute without an answer. When she would speak first (greetings and the like), `speakFirst` comes instead of asking the LLM (news that must reach you, such as timers and updates, is said in fixed words as it is). Timers, reminders and to-dos are still taken by this app. When the other app's connection ends (within about 15 seconds), the LLM answers again as before.
+
+A Python example that repeats what you say:
+
+```python
+import json, requests
+with requests.get("http://127.0.0.1:50080/events?chat=external", stream=True) as r:
+    event = None
+    for line in r.iter_lines(decode_unicode=True):
+        if line.startswith("event: "):
+            event = line[7:]
+        elif line.startswith("data: ") and event == "said":
+            said = json.loads(line[6:])
+            if said["answeredBy"] == "external":
+                requests.post("http://127.0.0.1:50080/say",
+                              json={"character": said["character"], "text": "You said \"" + said["text"] + "\"."})
+```
 
 ## Settings (`MikuMikuDesktopPerch.ini` in the exe's folder, UTF-16)
 
