@@ -82,6 +82,7 @@ namespace MikuMikuDesktopPerch
             c.motionPath=ReadString(path,L"Motion",c.motionPath,section);
             c.idleMotionPaths=ReadList(path,L"IdleMotion",section);
             c.clickMotionPaths=ReadList(path,L"ClickMotion",section);
+            c.windowMotionPaths=ReadList(path,L"WindowMotion",section);
             c.walkMotionPath=ReadString(path,L"WalkMotion",c.walkMotionPath,section);
             c.runMotionPath=ReadString(path,L"RunMotion",c.runMotionPath,section);
             c.x=ReadInt(path,L"X",c.x,section);
@@ -95,6 +96,7 @@ namespace MikuMikuDesktopPerch
             WriteString(path,L"Motion",c.motionPath,section);
             WriteList(path,L"IdleMotion",c.idleMotionPaths,section);
             WriteList(path,L"ClickMotion",c.clickMotionPaths,section);
+            WriteList(path,L"WindowMotion",c.windowMotionPaths,section);
             WriteString(path,L"WalkMotion",c.walkMotionPath,section);
             WriteString(path,L"RunMotion",c.runMotionPath,section);
             WriteString(path,L"X",std::to_wstring(c.x),section);

@@ -38,6 +38,7 @@
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 
 using namespace MikuMikuDesktopPerch;
 
@@ -48,7 +49,8 @@ namespace
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
-                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus};
+                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
@@ -163,6 +165,10 @@ namespace
         std::vector<Spark> sparks;
         struct Jump {double startX,startLine,vx,vy,duration,time;} jump{};
         Activity restPose=Activity::Idle; // pose to (re)take on the window once settled
+        int restClip=-1;                  // the window motion it is played with (-1: generated)
+        // Moving along the window with a window motion (see UpdateWindowMove), and when to next.
+        bool windowMoving=false;
+        double nextWindowMove=-1;
         double restPoseAt=-1;             // clock time to take it, -1 for none
         double avoidCooldown=0;
 
@@ -222,6 +228,7 @@ namespace
         double nextChatterAt=-1;   // set from the chosen interval at start
         double awaySince=-1;
         Activity forcedRestPose=Activity::Idle;   // --rest-pose sit|hang (diagnostics)
+        int forcedRestClip=-1;                    // --rest-pose window<n> (diagnostics)
         std::vector<std::unique_ptr<Mascot>> mascots;   // in the order of settings.characters
         std::vector<Change> changes;
         // Two characters talking with each other (see UpdateBanter): the second comes over to
@@ -240,6 +247,7 @@ namespace
         } banter;
         double nextBanterAt=-1;       // set from the chosen interval at start
         bool banterRequested=false;   // --banter: one a few seconds after start (diagnostics)
+        std::wstring perchWindowTitle;   // --perch-window <title>|test: the first character goes to that window (tests)
         // Updates (with UpdateCheck on): a newer release found and not yet answered, the one
         // asking the user about it (she stays put until answered), and the answer box.
         std::unique_ptr<Updater> updater;
@@ -722,6 +730,31 @@ namespace
         m.nextDecision=app.clock+15+app.Random01()*25;
     }
 
+    // Resting on a window, now and then she moves along it with a window motion that moves (one
+    // on the same side of the window, behind or in front), then rests again where it ends.
+    void UpdateWindowMove(Mascot& m)
+    {
+        const Activity a=m.model.CurrentActivity();
+        if(m.windowMoving&&a!=Activity::Walk)m.windowMoving=false;   // picked up, or it ended
+        if(!app.settings.autoBehavior||m.place!=Place::Ground||!m.surfaceWindow||m.travel!=Travel::None||m.dozing)return;
+        if((a!=Activity::Sit&&a!=Activity::Hang)||MotionBusy(m)||app.clock<m.nextWindowMove)return;
+        m.nextWindowMove=app.clock+20+app.Random01()*40;
+        const int clip=m.model.ChooseMove(m.model.DrawnBehind(),app.Random01());
+        if(clip<0)return;
+        double left,right;
+        SurfaceRange(m,left,right);
+        const double distance=(80+app.Random01()*240)*(app.Random01()<0.5f?-1:1);
+        double target=CenterX(m)+distance;
+        if(target<left||target>right)target=CenterX(m)-distance;
+        target=FreeSpot(m,std::clamp(target,left,right),FeetLine(m),left,right);
+        if(std::abs(target-CenterX(m))<40)return;
+        Trace(L"%.1f window move to %.0f with window motion %d",app.clock,target,clip);
+        m.windowMoving=true;
+        m.restPoseAt=-1;
+        m.model.SetWindowMotion(clip);
+        StartWalk(m,target);
+    }
+
     // Standing still on top of another character (dropped there, or both came to the same
     // place): step aside to free room on the same surface. When both could move, the one added
     // later does; one in the middle of something moves once it is done.
@@ -988,9 +1021,11 @@ namespace
         {
             // Settle, then sit or hang from the edge (--rest-pose fixes it for checks). Lying down
             // is left out: physics too often tangles hair and skirt on a body turned on its side.
-            m.restPose=app.Random01()<0.55f?Activity::Sit:Activity::Hang;
-            if(app.forcedRestPose!=Activity::Idle)m.restPose=app.forcedRestPose;
+            // The window motions take turns with these (see MascotModel::ChooseRest).
+            std::tie(m.restPose,m.restClip)=m.model.ChooseRest(app.Random01());
+            if(app.forcedRestPose!=Activity::Idle){m.restPose=app.forcedRestPose;m.restClip=app.forcedRestClip;}
             m.restPoseAt=app.clock+1.2+app.Random01()*1.5;
+            m.nextWindowMove=app.clock+20+app.Random01()*40;
         }
     }
 
@@ -1043,7 +1078,7 @@ namespace
     // later, once the body has come up over the edge.
     void UpdateHangOrder(Mascot& m)
     {
-        const bool hanging=m.place==Place::Ground&&m.surfaceWindow&&m.model.CurrentActivity()==Activity::Hang;
+        const bool hanging=m.place==Place::Ground&&m.surfaceWindow&&m.model.DrawnBehind();
         if(hanging)m.hangEndedAt=-1;
         else if(m.behindSurface&&m.hangEndedAt<0)m.hangEndedAt=app.clock;
         const bool behind=hanging||(m.behindSurface&&m.surfaceWindow&&m.place==Place::Ground&&app.clock-m.hangEndedAt<0.3);
@@ -1116,6 +1151,7 @@ namespace
                m.model.CurrentActivity()==Activity::Idle)
             {
                 // Sitting faces one side or the other at random (knees to that side).
+                m.model.SetWindowMotion(m.restClip);
                 m.model.SetActivity(m.restPose,app.Random01()<0.5f?-1:1);
                 m.restPoseAt=-1;
             }
@@ -1373,6 +1409,12 @@ namespace
         AppendMenuW(motions,MF_STRING,IdOpenClickMotion,T(L"クリック時のモーションを開く...（複数選択可）",L"Open click motions... (one or more)"));
         AppendMenuW(motions,MF_STRING|(clickCount==0?MF_GRAYED:0),IdCloseClickMotion,
                     clickCount>1?Fmt(T(L"クリック時のモーションを閉じる（{0}件）",L"Close click motions ({0})"),{std::to_wstring(clickCount)}).c_str():T(L"クリック時のモーションを閉じる",L"Close click motion"));
+        AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
+        const size_t windowCount=Own(m).windowMotionPaths.size();
+        AppendMenuW(motions,MF_STRING,IdOpenWindowMotion,T(L"ウィンドウの上のモーションを開く...（複数選択可）",L"Open window motions... (one or more)"));
+        AppendMenuW(motions,MF_STRING|(windowCount==0?MF_GRAYED:0),IdAddWindowMotion,T(L"ウィンドウの上のモーションを追加...",L"Add window motions..."));
+        AppendMenuW(motions,MF_STRING|(windowCount==0?MF_GRAYED:0),IdCloseWindowMotion,
+                    windowCount>1?Fmt(T(L"ウィンドウの上のモーションを閉じる（{0}件）",L"Close window motions ({0})"),{std::to_wstring(windowCount)}).c_str():T(L"ウィンドウの上のモーションを閉じる",L"Close window motion"));
         AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
         AppendMenuW(motions,MF_STRING|(Own(m).walkMotionPath.empty()?0:MF_CHECKED),IdOpenWalkMotion,T(L"歩くモーションを開く...",L"Open walk motion..."));
         AppendMenuW(motions,MF_STRING|(Own(m).runMotionPath.empty()?0:MF_CHECKED),IdOpenRunMotion,T(L"走るモーションを開く...",L"Open run motion..."));
@@ -3347,6 +3389,32 @@ namespace
             app.settings.Save(app.settingsPath);
             break;
         }
+        case IdOpenWindowMotion:
+        case IdAddWindowMotion:
+        case IdCloseWindowMotion:
+        {
+            // As idle motions: Open replaces the list, Add appends, Close empties it (back to the
+            // built-in ones and the generated sitting and hanging). Taken at her next rest.
+            std::vector<std::wstring> paths;
+            if(id!=IdCloseWindowMotion)
+            {
+                const auto& list=Own(m).windowMotionPaths;
+                auto picked=OpenFilesDialog(m.hwnd,T(L"VMD モーション (*.vmd)\0*.vmd\0",L"VMD motion (*.vmd)\0*.vmd\0"),list.empty()?Own(m).modelPath:list.back());
+                if(picked.empty())break;
+                if(id==IdAddWindowMotion)paths=list;
+                for(auto& p:picked)
+                    if(std::find(paths.begin(),paths.end(),p)==paths.end())paths.push_back(std::move(p));
+            }
+            if(std::wstring error;!m.model.SetWindowMotions(paths,error))
+            {
+                ShowMessage(error,MB_ICONERROR);
+                break;
+            }
+            Own(m).windowMotionPaths=paths;
+            app.settings.Save(app.settingsPath);
+            Log(L"%s",m.model.DescribeWindowMotions().c_str());
+            break;
+        }
         case IdWindowMode:
             SetWindowMode(!app.settings.windowMode);
             app.settings.Save(app.settingsPath);
@@ -3901,6 +3969,8 @@ namespace
         if(std::wstring motionError;!m.model.SetMotion(own.motionPath,motionError))own.motionPath.clear();
         std::erase_if(own.clickMotionPaths,[](const std::wstring& p){return !std::filesystem::exists(p);});
         if(std::wstring clickError;!m.model.SetClickMotions(own.clickMotionPaths,clickError))own.clickMotionPaths.clear();
+        std::erase_if(own.windowMotionPaths,[](const std::wstring& p){return !std::filesystem::exists(p);});
+        if(std::wstring windowError;!m.model.SetWindowMotions(own.windowMotionPaths,windowError))own.windowMotionPaths.clear();
         for(int which=0;which<2;++which)
         {
             std::wstring& path=which==0?own.walkMotionPath:own.runMotionPath;
@@ -4030,6 +4100,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     std::optional<int> snapshotFilter;        // --physics-filter 0-3
     bool snapshotPlayMotion=false;            // --play-motion: play the opened motion at once
     int snapshotWalk=0;                       // --walk <px>: walk that far 3 s after start
+    int snapshotWindowMotion=-1;              // --window-motion <n>: played in the --activity (sit, hang, walk)
+    int snapshotDirection=1;                  // --direction -1|1: the way the --activity faces or goes
     int snapshotShove=0;                      // --shove <px>: moved that far 2 s after start
     std::wstring snapshotSay;                 // --say <text>: said in the bubble 1 s after start
     int snapshotClick=0;                      // --click head|body: 1 head, 2 body, 1.5 s after start
@@ -4059,6 +4131,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--gesture"&&i+1<argc)
             {
                 snapshotGesture=argv[++i];
+            }
+            else if(arg==L"--window-clip"&&i+1<argc)
+            {
+                MascotModel::AddWindowClipFile(argv[++i]);   // tried as a built-in window motion (window<n> after the embedded ones)
             }
             else if(arg==L"--idle-clip"&&i+1<argc)
             {
@@ -4091,6 +4167,18 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--click"&&i+1<argc)
             {
                 snapshotClick=std::wstring(argv[++i])==L"head"?1:2;
+            }
+            else if(arg==L"--direction"&&i+1<argc)
+            {
+                snapshotDirection=_wtoi(argv[++i])<0?-1:1;
+            }
+            else if(arg==L"--perch-window"&&i+1<argc)
+            {
+                app.perchWindowTitle=argv[++i];
+            }
+            else if(arg==L"--window-motion"&&i+1<argc)
+            {
+                snapshotWindowMotion=_wtoi(argv[++i]);
             }
             else if(arg==L"--rest-pose"&&i+1<argc)
             {
@@ -4359,6 +4447,24 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.hwnd=CreateWindowExW(WS_EX_TOOLWINDOW,ControlClass,L"MikuMikuDesktopPerch",WS_POPUP,0,0,0,0,nullptr,nullptr,instance,nullptr);
     if(!app.hwnd)return 1;
 
+    // Tests (--perch-window test): a plain window of the app's own to rest on and move along,
+    // whichever window is in front.
+    if(app.perchWindowTitle==L"test")
+    {
+        WNDCLASSEXW surface{sizeof(surface)};
+        surface.lpfnWndProc=DefWindowProcW;
+        surface.hInstance=instance;
+        surface.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+        surface.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);
+        surface.lpszClassName=L"MikuMikuDesktopPerchTestSurface";
+        RegisterClassExW(&surface);
+        app.perchWindowTitle=L"MikuMikuDesktopPerch test surface";
+        const RECT work=WorkAreaAt({0,0});
+        const int w=(work.right-work.left)/2,h=(work.bottom-work.top)/4;
+        CreateWindowExW(0,surface.lpszClassName,app.perchWindowTitle.c_str(),WS_OVERLAPPEDWINDOW|WS_VISIBLE,
+                        work.left+(work.right-work.left-w)/2,work.bottom-h-(work.bottom-work.top)/6,w,h,nullptr,nullptr,instance,nullptr);
+    }
+
     // Keep asking for the first character's model until one loads (or the user cancels).
     std::wstring error;
     for(;;)
@@ -4404,7 +4510,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     else if(snapshotActivity==L"sit")forcedActivity=Activity::Sit;
     else if(snapshotActivity==L"grab")forcedActivity=Activity::Grabbed;
     else if(snapshotActivity==L"fall")forcedActivity=Activity::Fall;
-    if(forcedActivity)first.model.SetActivity(*forcedActivity,1);
+    if(forcedActivity)
+    {
+        first.model.SetWindowMotion(snapshotWindowMotion);
+        first.model.SetActivity(*forcedActivity,snapshotDirection);
+    }
     if(!snapshotGesture.empty())first.model.ForceGesture(snapshotGesture);
     if(snapshotDoze){first.dozing=first.forcedDoze=true;first.model.SetDozing(true);}
     first.motionRequested=snapshotPlayMotion;
@@ -4562,9 +4672,18 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     // Past an end of the surface (it moved or shrank): stop there, unless coming back
                     // onto it from beyond (see ReturnOnScreen).
                     const bool reached=std::abs(centerX-m.walkTargetX)<margin||(centerX<left-1&&m.walkTargetX<centerX)||(centerX>right+1&&m.walkTargetX>centerX);
-                    if(reached){Trace(L"%.1f walk ends at x=%.0f",app.clock,centerX);StopGroundActivity(m);}
+                    if(reached&&m.windowMoving)
+                    {
+                        // Moved along the window: straight back into the pose she rested in.
+                        Trace(L"%.1f window move ends at x=%.0f",app.clock,centerX);
+                        m.windowMoving=false;
+                        m.model.SetWindowMotion(m.restClip);
+                        m.model.SetActivity(m.restPose,app.Random01()<0.5f?-1:1);
+                    }
+                    else if(reached){Trace(L"%.1f walk ends at x=%.0f",app.clock,centerX);StopGroundActivity(m);}
                 }
                 UpdateAutoBehavior(m);
+                UpdateWindowMove(m);
                 MakeRoom(m);
                 ReturnOnScreen(m,dt);
                 MaybeMemorize(m);
@@ -4633,6 +4752,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 UpdateMotionPlayback(m);
                 UpdateWindowMode(m,dt);
+                // Tests: onto the window named, whichever window is in front.
+                if(!app.perchWindowTitle.empty()&&&m==app.mascots.front().get()&&m.place==Place::Ground&&m.travel==Travel::None&&!m.surfaceWindow)
+                    if(const HWND target=FindWindowW(nullptr,app.perchWindowTitle.c_str());
+                       target&&IsStandableWindow(target,m.hwnd,static_cast<int>(ModelFrameOf(m).width*m.pixelsPerUnit)))
+                        BeginTravel(m,target);
                 AvoidCursor(m,cursor);
                 UpdateHangOrder(m);
             }
@@ -4715,6 +4839,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                          Own(m).modelPath.c_str(),rest[0],rest[1],fix[0],fix[1],m.windowSize.cx,m.windowSize.cy);
                 fwprintf(info,L"%s",m.model.DescribeRig().c_str());
                 fwprintf(info,L"idle clips=%d played=%d\n",m.model.IdleClipCount(),m.model.IdleClipPlays());
+                fwprintf(info,L"%s",m.model.DescribeWindowMotions().c_str());
                 for(const auto& [key,label]:MascotModel::IdleGestureChoices())
                     if(key.rfind(L"clip:",0)==0)fwprintf(info,L"%s = %s\n",key.c_str(),label.c_str());
                 for(size_t i=0;i<clearance.size();++i)

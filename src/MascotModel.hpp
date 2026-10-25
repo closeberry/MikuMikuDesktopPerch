@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace MikuMikuDesktopPerch
@@ -161,6 +162,26 @@ namespace MikuMikuDesktopPerch
 
         // Generated motion layer (see GeneratedMotion.hpp). direction: -1 left, +1 right for Walk.
         void SetActivity(Activity activity,int direction=0);
+        // Window motions (see docs/WindowMotions.md): VMDs played resting on a window's top edge,
+        // instead of the generated sitting or hanging, or moving along it. The built-in ones come
+        // with the exe; paths are the user's own (kept per character).
+        bool SetWindowMotions(const std::vector<std::wstring>& paths,std::wstring& error);
+        // How to rest on a window: Sit or Hang, with the window motion to play (-1: the generated
+        // pose), at random among those not left out (gesture keys window:sit, window:hang and
+        // window:<name> for the built-in ones).
+        std::pair<Activity,int> ChooseRest(float random01) const;
+        // A window motion that moves along the edge on the same side of the window (behind or in
+        // front), at random; -1 when there is none.
+        int ChooseMove(bool behind,float random01) const;
+        // The window motion for the next SetActivity: Sit or Hang for one that rests, Walk for one
+        // that moves (Walk's direction is the way it goes). Any other activity ends it.
+        void SetWindowMotion(int clip);
+        // Hanging from the edge, or playing a window motion made below it: drawn behind the window.
+        bool DrawnBehind() const;
+        // Diagnostics: how each window motion was taken (behind or in front, resting or moving).
+        std::wstring DescribeWindowMotions() const;
+        // Diagnostics (--window-clip): a VMD file added to the built-in window motions.
+        static void AddWindowClipFile(const std::wstring& path);
         Activity CurrentActivity() const;
         bool CanSit() const;
         std::wstring DescribeRig() const;

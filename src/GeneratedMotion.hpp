@@ -102,6 +102,13 @@ namespace MikuMikuDesktopPerch
         // pose passed to Apply then holds the motion's frame, which is turned to the side here.
         void SetClipSpeed(int which,float speed){clipSpeed[which]=speed;}
         bool ClipGait() const {return (activity==Activity::Walk&&clipSpeed[0]>0)||(activity==Activity::Run&&clipSpeed[1]>0);}
+        // A window motion (resting on a window's top edge, or moving along it) played instead of
+        // the generated pose while sitting, hanging or walking: its frame is in the pose passed
+        // to Apply. turn: it moves forward, so it is turned to the side like a walking motion.
+        // step: how far it moved this frame (world units: along the way it faces when turned,
+        // otherwise along X).
+        void SetPerch(bool on,bool turn,float step){perch=on;perchTurn=turn;perchStep+=on?step:0.0f;}
+        int Direction() const {return direction;}
         // Shift another pose (an opened motion blended over this layer's output) by the walking
         // travel, as Apply does to its own output.
         void AddRootOffset(PMX::Pose& pose) const;
@@ -259,6 +266,10 @@ namespace MikuMikuDesktopPerch
         std::vector<std::pair<int,float>> reactionMorphs;
         std::uint32_t random=FreshSeed();
         std::array<float,2> clipSpeed{0,0};
+        bool perch=false,perchTurn=false;
+        float perchStep=0;
         void ClipGaitKeys(const PMX::Pose& pose,std::vector<Key>& keys,double dt);
+        void PerchKeys(const PMX::Pose& pose,std::vector<Key>& keys,double dt);
+        void TurnKeys(std::vector<Key>& keys);
     };
 }

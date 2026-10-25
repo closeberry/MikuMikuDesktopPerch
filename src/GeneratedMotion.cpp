@@ -1688,6 +1688,7 @@ namespace MikuMikuDesktopPerch
             walkAmount=0;
             yaw=0;
         }
+        else if(perch&&(activity==Activity::Sit||activity==Activity::Hang||activity==Activity::Walk))PerchKeys(pose,target,dt);
         else if(ClipGait())ClipGaitKeys(pose,target,dt);
         else
         {
@@ -1755,6 +1756,35 @@ namespace MikuMikuDesktopPerch
             const auto& k=pose.boneKeys[overrides[i]];
             keys[i]={k.rotation,k.position};
         }
+        TurnKeys(keys);
+        const float speed=clipSpeed[activity==Activity::Run?1:0];
+        rootOffset+=speed*walkAmount*XMVectorGetX(XMVector3TransformNormal(XMVectorSet(0,0,-1,0),XMMatrixRotationY(yaw)))*static_cast<float>(dt);
+    }
+
+    // A window motion (see SetPerch), taken as it is. One that moves forward is turned to the
+    // side like a walking motion; the body travels by the motion's own step, so a planted hand
+    // or knee stays put. Resting (or moving sideways), she turns back to face the viewer.
+    void GeneratedMotion::PerchKeys(const PMX::Pose& pose,std::vector<Key>& keys,double dt)
+    {
+        activityTime+=dt;
+        const float follow=static_cast<float>(1.0-std::exp(-dt/0.18));
+        yaw+=((perchTurn?-direction*WalkYaw:0.0f)-yaw)*follow;
+        walkAmount=0;
+        for(size_t i=0;i<overrides.size();++i)
+        {
+            const auto& k=pose.boneKeys[overrides[i]];
+            keys[i]={k.rotation,k.position};
+        }
+        if(std::abs(yaw)>1e-4f)TurnKeys(keys);
+        rootOffset+=perchTurn?perchStep*XMVectorGetX(XMVector3TransformNormal(XMVectorSet(0,0,-1,0),XMMatrixRotationY(yaw))):perchStep;
+        perchStep=0;
+    }
+
+    // Turns a motion made facing the front by yaw: the foot IK targets swing round the vertical
+    // axis, 下半身 turns with them and 上半身 a little less (the chest stays toward the viewer).
+    // センター's height goes to グルーブ (センター moves on the ground only).
+    void GeneratedMotion::TurnKeys(std::vector<Key>& keys)
+    {
         const XMMATRIX turn=XMMatrixRotationY(yaw);
         const XMVECTOR yawTurn=XMQuaternionRotationRollPitchYaw(0,yaw,0);
         auto key=[&](int bone)->Key*{return bone>=0&&static_cast<size_t>(bone)<slot.size()&&slot[bone]>=0?&keys[slot[bone]]:nullptr;};
@@ -1776,8 +1806,6 @@ namespace MikuMikuDesktopPerch
             XMStoreFloat3(&k->position,XMVector3Transform(XMLoadFloat3(&k->position),turn));
             if(Key* g=key(rig.groove))g->position.y+=height;
         }
-        const float speed=clipSpeed[activity==Activity::Run?1:0];
-        rootOffset+=speed*walkAmount*XMVectorGetX(XMVector3TransformNormal(XMVectorSet(0,0,-1,0),turn))*static_cast<float>(dt);
     }
 
     // Accumulated walking travel: センター carries the body, the foot IK targets (parented to

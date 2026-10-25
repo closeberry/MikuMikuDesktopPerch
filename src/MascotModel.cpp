@@ -169,86 +169,99 @@ namespace MikuMikuDesktopPerch
 
         constexpr double ResetBlendSeconds=0.5;   // ease of the simulated bones in a physics reset
 
-        // Built-in idle clips: the exe's resources of type IDLECLIP (by name, which the
-        // resource compiler upper-cases), written to files under %TEMP% (the VMD loader reads
-        // files), then any VMD files diagnostics added. Their labels come from the NAMES
-        // resource of type IDLECLIPNAMES (UTF-8 lines: name, tab, Japanese, tab, English, and
-        // optionally tab, the author in Japanese, tab, in English).
+        // Built-in clips: the exe's resources of a type (IDLECLIP: idle clips, WINDOWCLIP: window
+        // motions) by name (which the resource compiler upper-cases), written to files under
+        // %TEMP% (the VMD loader reads files). Their labels come from the NAMES resource of type
+        // IDLECLIPNAMES (UTF-8 lines: name, tab, Japanese, tab, English, and optionally tab, the
+        // author in Japanese, tab, in English), for both kinds.
         struct ClipEntry {std::wstring key,path,japanese,english,authorJapanese,authorEnglish;};
-        std::vector<std::wstring>& ExtraClipFiles(){static std::vector<std::wstring> files;return files;}
-        std::vector<ClipEntry> BuiltinClipEntries()
+        std::vector<ClipEntry> EmbeddedClips(const wchar_t* resourceType,const wchar_t* folder)
         {
-            static const std::vector<ClipEntry> embedded=[]{
-                std::vector<ClipEntry> files;
-                wchar_t temp[MAX_PATH]{};
-                if(!GetTempPathW(MAX_PATH,temp))return files;
-                const std::filesystem::path dir=std::filesystem::path(temp)/L"MikuMikuDesktopPerch"/L"idle";
-                std::error_code ignored;
-                std::filesystem::create_directories(dir,ignored);
-                struct Found {std::filesystem::path dir;std::vector<ClipEntry>* files;} found{dir,&files};
-                EnumResourceNamesW(nullptr,L"IDLECLIP",[](HMODULE module,LPCWSTR type,LPWSTR name,LONG_PTR param)->BOOL{
-                    auto& f=*reinterpret_cast<Found*>(param);
-                    const std::wstring id=IS_INTRESOURCE(name)?std::to_wstring(reinterpret_cast<ULONG_PTR>(name)):std::wstring(name);
-                    const HRSRC info=FindResourceW(module,name,type);
-                    const HGLOBAL data=info?LoadResource(module,info):nullptr;
-                    const void* bytes=data?LockResource(data):nullptr;
-                    const DWORD size=info?SizeofResource(module,info):0;
-                    if(!bytes||!size)return TRUE;
-                    const std::filesystem::path file=f.dir/(id+L".vmd");
-                    FILE* out=nullptr;
-                    if(_wfopen_s(&out,file.c_str(),L"wb")!=0||!out)return TRUE;
-                    const bool written=fwrite(bytes,1,size,out)==size;
-                    fclose(out);
-                    if(written)f.files->push_back({id,file.wstring(),id,id});
-                    return TRUE;
-                },reinterpret_cast<LONG_PTR>(&found));
-                std::sort(files.begin(),files.end(),[](const ClipEntry& a,const ClipEntry& b){return a.key<b.key;});
-                // Labels.
-                if(const HRSRC info=FindResourceW(nullptr,L"NAMES",L"IDLECLIPNAMES"))
-                    if(const HGLOBAL data=LoadResource(nullptr,info))
-                        if(const char* text=static_cast<const char*>(LockResource(data)))
+            std::vector<ClipEntry> files;
+            wchar_t temp[MAX_PATH]{};
+            if(!GetTempPathW(MAX_PATH,temp))return files;
+            const std::filesystem::path dir=std::filesystem::path(temp)/L"MikuMikuDesktopPerch"/folder;
+            std::error_code ignored;
+            std::filesystem::create_directories(dir,ignored);
+            struct Found {std::filesystem::path dir;std::vector<ClipEntry>* files;} found{dir,&files};
+            EnumResourceNamesW(nullptr,resourceType,[](HMODULE module,LPCWSTR type,LPWSTR name,LONG_PTR param)->BOOL{
+                auto& f=*reinterpret_cast<Found*>(param);
+                const std::wstring id=IS_INTRESOURCE(name)?std::to_wstring(reinterpret_cast<ULONG_PTR>(name)):std::wstring(name);
+                const HRSRC info=FindResourceW(module,name,type);
+                const HGLOBAL data=info?LoadResource(module,info):nullptr;
+                const void* bytes=data?LockResource(data):nullptr;
+                const DWORD size=info?SizeofResource(module,info):0;
+                if(!bytes||!size)return TRUE;
+                const std::filesystem::path file=f.dir/(id+L".vmd");
+                FILE* out=nullptr;
+                if(_wfopen_s(&out,file.c_str(),L"wb")!=0||!out)return TRUE;
+                const bool written=fwrite(bytes,1,size,out)==size;
+                fclose(out);
+                if(written)f.files->push_back({id,file.wstring(),id,id});
+                return TRUE;
+            },reinterpret_cast<LONG_PTR>(&found));
+            std::sort(files.begin(),files.end(),[](const ClipEntry& a,const ClipEntry& b){return a.key<b.key;});
+            // Labels.
+            if(const HRSRC info=FindResourceW(nullptr,L"NAMES",L"IDLECLIPNAMES"))
+                if(const HGLOBAL data=LoadResource(nullptr,info))
+                    if(const char* text=static_cast<const char*>(LockResource(data)))
+                    {
+                        const int size=static_cast<int>(SizeofResource(nullptr,info));
+                        std::wstring all(static_cast<size_t>(MultiByteToWideChar(CP_UTF8,0,text,size,nullptr,0)),L'\0');
+                        MultiByteToWideChar(CP_UTF8,0,text,size,all.data(),static_cast<int>(all.size()));
+                        for(size_t start=0;start<all.size();)
                         {
-                            const int size=static_cast<int>(SizeofResource(nullptr,info));
-                            std::wstring all(static_cast<size_t>(MultiByteToWideChar(CP_UTF8,0,text,size,nullptr,0)),L'\0');
-                            MultiByteToWideChar(CP_UTF8,0,text,size,all.data(),static_cast<int>(all.size()));
-                            for(size_t start=0;start<all.size();)
+                            size_t end=all.find(L'\n',start);
+                            if(end==std::wstring::npos)end=all.size();
+                            std::wstring line=all.substr(start,end-start);
+                            start=end+1;
+                            if(!line.empty()&&line.back()==L'\r')line.pop_back();
+                            if(!line.empty()&&line[0]==0xFEFF)line.erase(0,1);
+                            if(line.empty()||line[0]==L'#')continue;
+                            std::vector<std::wstring> fields;
+                            for(size_t from=0;;)
                             {
-                                size_t end=all.find(L'\n',start);
-                                if(end==std::wstring::npos)end=all.size();
-                                std::wstring line=all.substr(start,end-start);
-                                start=end+1;
-                                if(!line.empty()&&line.back()==L'\r')line.pop_back();
-                                if(!line.empty()&&line[0]==0xFEFF)line.erase(0,1);
-                                if(line.empty()||line[0]==L'#')continue;
-                                std::vector<std::wstring> fields;
-                                for(size_t from=0;;)
-                                {
-                                    const size_t tab=line.find(L'\t',from);
-                                    fields.push_back(line.substr(from,tab==std::wstring::npos?std::wstring::npos:tab-from));
-                                    if(tab==std::wstring::npos)break;
-                                    from=tab+1;
-                                }
-                                if(fields.size()<2)continue;
-                                fields.resize(5);
-                                for(auto& e:files)
-                                    if(_wcsicmp(e.key.c_str(),fields[0].c_str())==0)
-                                    {
-                                        e.japanese=fields[1];
-                                        e.english=fields[2].empty()?fields[1]:fields[2];
-                                        e.authorJapanese=fields[3];
-                                        e.authorEnglish=fields[4].empty()?fields[3]:fields[4];
-                                    }
+                                const size_t tab=line.find(L'\t',from);
+                                fields.push_back(line.substr(from,tab==std::wstring::npos?std::wstring::npos:tab-from));
+                                if(tab==std::wstring::npos)break;
+                                from=tab+1;
                             }
+                            if(fields.size()<2)continue;
+                            fields.resize(5);
+                            for(auto& e:files)
+                                if(_wcsicmp(e.key.c_str(),fields[0].c_str())==0)
+                                {
+                                    e.japanese=fields[1];
+                                    e.english=fields[2].empty()?fields[1]:fields[2];
+                                    e.authorJapanese=fields[3];
+                                    e.authorEnglish=fields[4].empty()?fields[3]:fields[4];
+                                }
                         }
-                return files;
-            }();
-            std::vector<ClipEntry> files=embedded;
-            for(const auto& path:ExtraClipFiles())
+                    }
+            return files;
+        }
+
+        // The embedded ones, then any VMD files diagnostics added (--idle-clip, --window-clip).
+        std::vector<ClipEntry> WithExtraFiles(std::vector<ClipEntry> files,const std::vector<std::wstring>& extra)
+        {
+            for(const auto& path:extra)
             {
                 const std::wstring stem=std::filesystem::path(path).stem().wstring();
                 files.push_back({stem,path,stem,stem});
             }
             return files;
+        }
+        std::vector<std::wstring>& ExtraClipFiles(){static std::vector<std::wstring> files;return files;}
+        std::vector<std::wstring>& ExtraWindowClipFiles(){static std::vector<std::wstring> files;return files;}
+        std::vector<ClipEntry> BuiltinClipEntries()
+        {
+            static const std::vector<ClipEntry> embedded=EmbeddedClips(L"IDLECLIP",L"idle");
+            return WithExtraFiles(embedded,ExtraClipFiles());
+        }
+        std::vector<ClipEntry> WindowClipEntries()
+        {
+            static const std::vector<ClipEntry> embedded=EmbeddedClips(L"WINDOWCLIP",L"window");
+            return WithExtraFiles(embedded,ExtraWindowClipFiles());
         }
     }
 
@@ -570,6 +583,168 @@ namespace MikuMikuDesktopPerch
             }
         }
 
+        // Window motions (see docs/WindowMotions.md): resting on a window's top edge instead of
+        // the generated sitting or hanging, or moving along it. Made with the edge as the floor
+        // (y=0), facing the front, and looked at once when loaded: drawn behind the window when
+        // the body goes down by most of its height (it hangs from the edge), and moving when
+        // センター ends up away from where it started. One moving forward (along Z) is turned to
+        // the side to go, as a walking motion is; one moving sideways (along X), facing the
+        // viewer, is mirrored to go the other way.
+        struct WindowClip
+        {
+            Clip clip;
+            std::wstring key;                       // a built-in one's name (empty: the user's)
+            bool behind=false,moving=false,forward=false;
+            float sign=1;                           // +1: it moves the way it is taken to go
+            std::vector<DirectX::XMFLOAT2> root;    // センター's x, z each frame, from frame 0
+            int last=1;
+        };
+        std::vector<WindowClip> builtinWindowClips,userWindowClips;
+        int windowNext=-1,windowActive=-1;          // built-in ones first, then the user's
+        double windowFrame=0;
+        PMX::Pose windowPose;
+        std::vector<int> mirrorBone;                // each bone's left/right counterpart (itself when none)
+        int windowCenter=-1;                        // センター and the foot IK targets, which a moving one carries
+        std::array<int,2> windowLegIK{-1,-1};
+
+        // A bone by name from the model itself (the clips load before the solver exists).
+        int ModelBone(std::initializer_list<const wchar_t*> names) const
+        {
+            for(auto n:names)
+                for(size_t i=0;i<pmx->bones.size();++i)
+                    if(pmx->bones[i].name==n)return static_cast<int>(i);
+            return -1;
+        }
+
+        WindowClip* WindowClipAt(int n)
+        {
+            if(n<0)return nullptr;
+            if(n<static_cast<int>(builtinWindowClips.size()))return &builtinWindowClips[n];
+            n-=static_cast<int>(builtinWindowClips.size());
+            return n<static_cast<int>(userWindowClips.size())?&userWindowClips[n]:nullptr;
+        }
+
+        bool LoadWindowClips(const std::vector<std::wstring>& paths,std::vector<WindowClip>& out,const wchar_t* kind,std::wstring& error)
+        {
+            std::vector<Clip> clips;
+            if(!LoadClips(paths,clips,kind,error))return false;
+            const int center=ModelBone({L"センター"}),groove=ModelBone({L"グルーブ"}),head=ModelBone({L"頭"});
+            windowCenter=center;
+            windowLegIK={ModelBone({L"左足ＩＫ",L"左足IK"}),ModelBone({L"右足ＩＫ",L"右足IK"})};
+            const float headY=head>=0?pmx->bones[head].position.y:15.0f;
+            out.clear();
+            for(auto& clip:clips)
+            {
+                WindowClip w;
+                w.last=std::max(clip.vmd->lastFrame,1);
+                PMX::Pose sample;
+                float drop=0;
+                DirectX::XMFLOAT2 origin{};
+                for(int f=0;f<=w.last;++f)
+                {
+                    clip.sampler->HiPose(sample,static_cast<float>(f),false,false);
+                    DirectX::XMFLOAT3 c{};
+                    if(center>=0&&static_cast<size_t>(center)<sample.boneKeys.size())c=sample.boneKeys[center].position;
+                    if(f==0)origin={c.x,c.z};
+                    w.root.push_back({c.x-origin.x,c.z-origin.y});
+                    drop+=c.y+(groove>=0&&static_cast<size_t>(groove)<sample.boneKeys.size()?sample.boneKeys[groove].position.y:0.0f);
+                }
+                w.behind=drop/static_cast<float>(w.last+1)<-0.6f*headY;
+                const auto& end=w.root.back();
+                w.moving=std::hypot(end.x,end.y)>0.1f*headY;
+                w.forward=std::abs(end.y)>=std::abs(end.x);
+                // Forward is toward the viewer (-Z), as MMD models face.
+                w.sign=(w.forward?-end.y:end.x)>=0?1.0f:-1.0f;
+                w.clip=std::move(clip);
+                out.push_back(std::move(w));
+            }
+            return true;
+        }
+
+        // How far a moving window clip has gone along its way by frame f (between the frames).
+        float WindowAlong(const WindowClip& w,double f) const
+        {
+            const int a=std::clamp(static_cast<int>(f),0,w.last),b=std::min(a+1,w.last);
+            const float t=static_cast<float>(f-a);
+            const auto& p=w.root[a];
+            const auto& q=w.root[b];
+            const float x=p.x+(q.x-p.x)*t,z=p.y+(q.y-p.y)*t;
+            return (w.forward?-z:x)*w.sign;
+        }
+
+        void BuildMirror()
+        {
+            if(!mirrorBone.empty()||!pmx)return;
+            const size_t n=pmx->bones.size();
+            mirrorBone.resize(n);
+            for(size_t i=0;i<n;++i)
+            {
+                mirrorBone[i]=static_cast<int>(i);
+                std::wstring name=pmx->bones[i].name;
+                const size_t at=name.find_first_of(L"左右");
+                if(at==std::wstring::npos)continue;
+                name[at]=name[at]==L'左'?L'右':L'左';
+                for(size_t j=0;j<n;++j)
+                    if(pmx->bones[j].name==name){mirrorBone[i]=static_cast<int>(j);break;}
+            }
+        }
+
+        // The window motion playing, over the pose (all bones, as the gait motion is): looped,
+        // and for a moving one, held in place (センター and the foot IK targets, which hang from
+        // 全ての親) while the motion layer moves the body by the same step.
+        void SampleWindow(PMX::Pose& pose,double dt)
+        {
+            const Activity a=motion.CurrentActivity();
+            WindowClip* w=WindowClipAt(windowActive);
+            if(!w||(w->moving?a!=Activity::Walk:(a!=Activity::Sit&&a!=Activity::Hang)))
+            {
+                windowActive=-1;
+                motion.SetPerch(false,false,0);
+                return;
+            }
+            const double previous=windowFrame;
+            windowFrame+=dt*30.0;
+            float step=0;
+            if(windowFrame>=w->last)
+            {
+                windowFrame=std::fmod(windowFrame,static_cast<double>(w->last));
+                if(w->moving)step=WindowAlong(*w,w->last)-WindowAlong(*w,previous)+WindowAlong(*w,windowFrame)-WindowAlong(*w,0);
+            }
+            else if(w->moving)step=WindowAlong(*w,windowFrame)-WindowAlong(*w,previous);
+            w->clip.sampler->HiPose(windowPose,static_cast<float>(windowFrame),false,false);
+            if(w->moving)
+            {
+                const int f=std::clamp(static_cast<int>(windowFrame),0,w->last),g=std::min(f+1,w->last);
+                const float t=static_cast<float>(windowFrame-f);
+                const float x=w->root[f].x+(w->root[g].x-w->root[f].x)*t,z=w->root[f].y+(w->root[g].y-w->root[f].y)*t;
+                for(const int bone:{windowCenter,windowLegIK[0],windowLegIK[1]})
+                    if(bone>=0&&static_cast<size_t>(bone)<windowPose.boneKeys.size())
+                    {
+                        windowPose.boneKeys[bone].position.x-=x;
+                        windowPose.boneKeys[bone].position.z-=z;
+                    }
+            }
+            const int way=motion.Direction()<0?-1:1;
+            const bool mirror=w->moving&&!w->forward&&way!=static_cast<int>(w->sign);
+            if(mirror)BuildMirror();
+            for(size_t i=0;i<pose.boneKeys.size()&&i<windowPose.boneKeys.size();++i)
+            {
+                const auto& k=windowPose.boneKeys[mirror&&i<mirrorBone.size()?static_cast<size_t>(mirrorBone[i]):i];
+                if(mirror)
+                {
+                    pose.boneKeys[i].rotation={k.rotation.x,-k.rotation.y,-k.rotation.z,k.rotation.w};
+                    pose.boneKeys[i].position={-k.position.x,k.position.y,k.position.z};
+                }
+                else
+                {
+                    pose.boneKeys[i].rotation=k.rotation;
+                    pose.boneKeys[i].position=k.position;
+                }
+            }
+            // Forward: progress along the way she faces; sideways: world X.
+            motion.SetPerch(true,w->moving&&w->forward,w->moving?(w->forward?step:step*static_cast<float>(way)):0.0f);
+        }
+
         // Click motions: one at random per click while standing (instead of a built-in reaction).
         std::vector<Clip> clickClips;
         int lastClick=-1;
@@ -598,6 +773,16 @@ namespace MikuMikuDesktopPerch
                 {
                     builtinClips.push_back(std::move(one.front()));
                     builtinKeys.push_back(entry.key);
+                }
+            }
+            builtinWindowClips.clear();
+            for(const auto& entry:WindowClipEntries())
+            {
+                std::vector<WindowClip> one;
+                if(std::wstring ignored;LoadWindowClips({entry.path},one,L"",ignored))
+                {
+                    one.front().key=entry.key;
+                    builtinWindowClips.push_back(std::move(one.front()));
                 }
             }
         }
@@ -1264,6 +1449,7 @@ namespace MikuMikuDesktopPerch
     }
 
     void MascotModel::AddIdleClipFile(const std::wstring& path){ExtraClipFiles().push_back(path);}
+    void MascotModel::AddWindowClipFile(const std::wstring& path){ExtraWindowClipFiles().push_back(path);}
 
     int MascotModel::IdleClipCount() const {return static_cast<int>(impl->builtinClips.size());}
 
@@ -1275,6 +1461,14 @@ namespace MikuMikuDesktopPerch
             std::wstring label=Fmt(T(L"モーション：{0}",L"Motion: {0}"),{T(e.japanese.c_str(),e.english.c_str())});
             if(!e.authorJapanese.empty())label+=Fmt(T(L"（{0} 様）",L" (by {0})"),{T(e.authorJapanese.c_str(),e.authorEnglish.c_str())});
             list.push_back({L"clip:"+e.key,label});
+        }
+        list.push_back({L"window:sit",T(L"ウィンドウの上：座る",L"On a window: sit")});
+        list.push_back({L"window:hang",T(L"ウィンドウの上：ぶら下がる",L"On a window: hang")});
+        for(const auto& e:WindowClipEntries())
+        {
+            std::wstring label=Fmt(T(L"ウィンドウの上：{0}",L"On a window: {0}"),{T(e.japanese.c_str(),e.english.c_str())});
+            if(!e.authorJapanese.empty())label+=Fmt(T(L"（{0} 様）",L" (by {0})"),{T(e.authorJapanese.c_str(),e.authorEnglish.c_str())});
+            list.push_back({L"window:"+e.key,label});
         }
         return list;
     }
@@ -1648,7 +1842,84 @@ namespace MikuMikuDesktopPerch
 
     bool MascotModel::PhysicsEnabled() const {return impl->physics!=nullptr;}
 
-    void MascotModel::SetActivity(Activity activity,int direction){impl->motion.SetActivity(activity,direction);}
+    void MascotModel::SetActivity(Activity activity,int direction)
+    {
+        auto& m=*impl;
+        // The window motion asked for goes with the activity it is made for; anything else ends one.
+        const Impl::WindowClip* w=m.WindowClipAt(m.windowNext);
+        const int next=w&&(w->moving?activity==Activity::Walk:(activity==Activity::Sit||activity==Activity::Hang))?m.windowNext:-1;
+        if(next!=m.windowActive)m.windowFrame=0;
+        m.windowActive=next;
+        m.windowNext=-1;
+        m.motion.SetActivity(activity,direction);
+    }
+
+    bool MascotModel::SetWindowMotions(const std::vector<std::wstring>& paths,std::wstring& error)
+    {
+        auto& m=*impl;
+        if(!m.pmx)return paths.empty();
+        std::vector<Impl::WindowClip> clips;
+        if(!m.LoadWindowClips(paths,clips,T(L"ウィンドウの上のモーション",L"window motion"),error))return false;
+        if(m.windowActive>=static_cast<int>(m.builtinWindowClips.size()))m.windowActive=-1;
+        m.userWindowClips=std::move(clips);
+        return true;
+    }
+
+    std::pair<Activity,int> MascotModel::ChooseRest(float random01) const
+    {
+        const auto& m=*impl;
+        auto off=[&](const std::wstring& key){return std::find(m.disabledGestures.begin(),m.disabledGestures.end(),key)!=m.disabledGestures.end();};
+        std::vector<std::pair<Activity,int>> picks;
+        if(!off(L"window:sit"))picks.push_back({Activity::Sit,-1});
+        if(!off(L"window:hang"))picks.push_back({Activity::Hang,-1});
+        const int builtin=static_cast<int>(m.builtinWindowClips.size());
+        for(int i=0;i<builtin;++i)
+            if(const auto& w=m.builtinWindowClips[i];!w.moving&&!off(L"window:"+w.key))picks.push_back({w.behind?Activity::Hang:Activity::Sit,i});
+        for(int i=0;i<static_cast<int>(m.userWindowClips.size());++i)
+            if(const auto& w=m.userWindowClips[i];!w.moving)picks.push_back({w.behind?Activity::Hang:Activity::Sit,builtin+i});
+        if(picks.empty())return {Activity::Sit,-1};
+        return picks[std::min(picks.size()-1,static_cast<size_t>(random01*static_cast<float>(picks.size())))];
+    }
+
+    int MascotModel::ChooseMove(bool behind,float random01) const
+    {
+        const auto& m=*impl;
+        auto off=[&](const std::wstring& key){return std::find(m.disabledGestures.begin(),m.disabledGestures.end(),key)!=m.disabledGestures.end();};
+        std::vector<int> picks;
+        const int builtin=static_cast<int>(m.builtinWindowClips.size());
+        for(int i=0;i<builtin;++i)
+            if(const auto& w=m.builtinWindowClips[i];w.moving&&w.behind==behind&&!off(L"window:"+w.key))picks.push_back(i);
+        for(int i=0;i<static_cast<int>(m.userWindowClips.size());++i)
+            if(const auto& w=m.userWindowClips[i];w.moving&&w.behind==behind)picks.push_back(builtin+i);
+        if(picks.empty())return -1;
+        return picks[std::min(picks.size()-1,static_cast<size_t>(random01*static_cast<float>(picks.size())))];
+    }
+
+    void MascotModel::SetWindowMotion(int clip){impl->windowNext=clip;}
+
+    bool MascotModel::DrawnBehind() const
+    {
+        const auto& m=*impl;
+        if(m.motion.CurrentActivity()==Activity::Hang)return true;
+        const Impl::WindowClip* w=const_cast<Impl&>(m).WindowClipAt(m.windowActive);
+        return w&&w->behind;
+    }
+
+    std::wstring MascotModel::DescribeWindowMotions() const
+    {
+        auto& m=*impl;
+        std::wstring out;
+        const int builtin=static_cast<int>(m.builtinWindowClips.size());
+        for(int i=0;i<builtin+static_cast<int>(m.userWindowClips.size());++i)
+        {
+            const auto& w=*m.WindowClipAt(i);
+            wchar_t line[200]{};
+            swprintf_s(line,L"window %d %s: %s, %s%s, %d frames\n",i,w.key.empty()?L"(own)":w.key.c_str(),w.behind?L"behind":L"in front",
+                       w.moving?(w.forward?L"moving forward":L"moving sideways"):L"resting",w.moving?(w.sign>0?L"":L" (backward)"):L"",w.last);
+            out+=line;
+        }
+        return out;
+    }
     Activity MascotModel::CurrentActivity() const {return impl->motion.CurrentActivity();}
     bool MascotModel::CanSit() const {return impl->motion.CanSit();}
     std::wstring MascotModel::DescribeRig() const {return impl->motion.Describe();}
@@ -1863,6 +2134,7 @@ namespace MikuMikuDesktopPerch
         m.solver->HiPose(m.solver->solvedPose,static_cast<float>(m.frame),false,m.continuous);
         m.SampleIdle(m.solver->solvedPose,dt);
         m.SampleGait(m.solver->solvedPose,dt);
+        m.SampleWindow(m.solver->solvedPose,dt);
         m.motion.SetGeneratedIdle(m.idleClips.empty());
         m.motion.SetGesturesAllowed(!m.shotActive);
         m.motion.SetClipCount(static_cast<int>(m.builtinClips.size()));
@@ -1888,7 +2160,7 @@ namespace MikuMikuDesktopPerch
             // Back on her feet, the floor returns once no simulated body is below it (turning
             // it on under one would throw it up); if one stays down, a smooth reset lifts it.
             const Activity a=m.motion.CurrentActivity();
-            const bool floor=a!=Activity::Hang&&a!=Activity::Sit;
+            const bool floor=a!=Activity::Hang&&a!=Activity::Sit&&m.windowActive<0;
             if(!floor)
             {
                 if(m.physics->GroundEnable())m.physics->GroundEnable(false);

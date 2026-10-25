@@ -20,6 +20,9 @@ namespace MikuMikuDesktopPerch
         // Walking and running in place (looped, made to be moved by 全ての親) to use instead of
         // the generated gait; empty: generated.
         std::wstring walkMotionPath,runMotionPath;
+        // The user's own window motions (resting on a window's top edge, or moving along it; see
+        // docs/WindowMotions.md), stored like IdleMotion as the WindowMotion line.
+        std::vector<std::wstring> windowMotionPaths;
         int x=-1;                   // -1: place at the bottom right of the work area
         int voiceSpeaker=3;
         std::wstring voiceName;     // the voice's name as the engine gave it (for the settings window)
