@@ -2,6 +2,18 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.2.5
+
+### New
+
+- **Control from other apps (HTTP API)**: turn on "Remote API" under Advanced in the settings (off by default; port 50080), and other apps and scripts on this computer can have the characters talk (`/say`), be talked to (`/talk`), make gestures (`/gesture`), play VMDs (`/motion`: a file's path or the VMD itself), walk (`/walk`), and tell their state (`/state`). It listens on 127.0.0.1 only and refuses requests from web pages
+- **Lines with a sound**: hand over a sound made elsewhere (MP3, AAC, WAV, FLAC, ...) with the line, and she says it with that sound. The mouth follows how loud it is, so it fits in any language
+- **News from the app, and handing over the conversation**: connected to `/events`, other apps hear when a character is talked to, finishes a line, is clicked, and so on. Connected with `/events?chat=external`, what you say goes to that app instead of the LLM, and it decides the answer (when it disconnects, the LLM answers again)
+
+### Changes
+
+- Ten built-in idle motions: a dogeza, a double peace, a ballet twirl, "Let's go!", exercises, looking around, floating, knee bends, a spin on one leg and "Listen, listen!" (by 結廼 (Yuno)). Each eases in from the standing pose and back out to it, and the movement was smoothed
+
 ## 1.2.4
 
 ### Fixes
