@@ -44,3 +44,18 @@ YAWN IDLECLIP "idle\\yawn.vmd"
 HMM IDLECLIP "idle\\hmm.vmd"
 SORRY IDLECLIP "idle\\sorry.vmd"
 LEAN IDLECLIP "idle\\lean.vmd"
+
+// By Yuno (see README): eased in from the standing pose and back out to it, smoothed over
+// time (the corners at linearly interpolated keys gone), one standing off the origin moved
+// back onto it, the eyes' side-to-side turn halved, and the bones and morphs of the model
+// they were made on left out.
+DOGEZA IDLECLIP "idle\\dogeza.vmd"
+DOUBLEPEACE IDLECLIP "idle\\doublepeace.vmd"
+BALLET IDLECLIP "idle\\ballet.vmd"
+LETSGO IDLECLIP "idle\\letsgo.vmd"
+EXERCISE IDLECLIP "idle\\exercise.vmd"
+LOOKAROUND IDLECLIP "idle\\lookaround.vmd"
+FLOAT IDLECLIP "idle\\float.vmd"
+KNEEBEND IDLECLIP "idle\\kneebend.vmd"
+SPIN IDLECLIP "idle\\spin.vmd"
+LISTEN IDLECLIP "idle\\listen.vmd"

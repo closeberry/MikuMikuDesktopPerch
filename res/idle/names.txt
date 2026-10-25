@@ -2,3 +2,13 @@ YAWN	あくび	Yawn	絢姫	AKI
 HMM	うーん、あっ！	Hmm... oh!	絢姫	AKI
 SORRY	すみません	Excuse me	絢姫	AKI
 LEAN	よりかかる	Leaning	絢姫	AKI
+DOGEZA	どけざ	Dogeza (bowing to the floor)	結廼	Yuno
+DOUBLEPEACE	ダブルピース	Double peace	結廼	Yuno
+BALLET	バレエくるくる	Ballet twirl	結廼	Yuno
+LETSGO	レッツゴ	Let's go!	結廼	Yuno
+EXERCISE	体操	Exercises	結廼	Yuno
+LOOKAROUND	周りを見渡す	Looking around	結廼	Yuno
+FLOAT	宙に浮く	Floating	結廼	Yuno
+KNEEBEND	屈伸	Knee bends	結廼	Yuno
+SPIN	片足くるりん	Spin on one leg	結廼	Yuno
+LISTEN	きいてきいて	Listen, listen!	結廼	Yuno
