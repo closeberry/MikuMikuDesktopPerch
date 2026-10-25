@@ -31,7 +31,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort
         };
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
@@ -206,6 +206,9 @@ namespace MikuMikuDesktopPerch
             Combo(IdMsaa,170,y+50,120);
             Label(T(L"テクスチャの最大サイズ",L"Max texture size"),28,y+78,140);
             Combo(IdTexture,170,y+78,120);
+            // Other programs on this computer may drive the characters (127.0.0.1 only), on this port.
+            CheckBox(IdApi,T(L"外部から操作",L"Remote API"),300,y+78,92,s.api);
+            Add(L"EDIT",std::to_wstring(s.apiPort).c_str(),ES_NUMBER|WS_BORDER|WS_TABSTOP,392,y+78,44,22,IdApiPort);
             Label(T(L"物理演算の更新",L"Physics rate"),28,y+106,130);
             Combo(IdPhysicsFps,170,y+106,120);
             Label(T(L"反復回数",L"Iterations"),300,y+106,56);
@@ -759,6 +762,8 @@ namespace MikuMikuDesktopPerch
             s.chatterMinutes=ComboValue(IdChatterMinutes,s.chatterMinutes);
             s.banterMinutes=ComboValue(IdBanterMinutes,s.banterMinutes);
             s.updateCheck=Checked(IdUpdateCheck);
+            s.api=Checked(IdApi);
+            if(const int p=static_cast<int>(GetDlgItemInt(state.window,IdApiPort,nullptr,FALSE));p>=1024&&p<=65535)s.apiPort=p;
             s.morningSummary=Checked(IdMorningSummary);
             s.restMinutes=ComboValue(IdRestMinutes,s.restMinutes);
             s.focusMinutes=ComboValue(IdFocusMinutes,s.focusMinutes);

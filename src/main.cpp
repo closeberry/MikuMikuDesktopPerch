@@ -1,5 +1,7 @@
 #define NOMINMAX
+#include "ApiServer.hpp"
 #include "ChatWindows.hpp"
+#include "HttpJson.hpp"
 #include "LocalChat.hpp"
 #include "Memory.hpp"
 #include "Voice.hpp"
@@ -165,6 +167,7 @@ namespace
 
         // The opened (one-shot) motion: requested right after opening, then now and then.
         bool motionRequested=false,motionWasPlaying=false,motionClosePending=false;
+        bool apiMotion=false;   // the motion is one another program asked for: once, then hers comes back
         double nextMotionAt=0,motionStartAt=0;   // motionStartAt: standing up before it plays
         bool behindSurface=false;     // hanging: the window sits just behind the surface window
         double hangEndedAt=-1;
@@ -267,6 +270,7 @@ namespace
         std::vector<CalendarEvent> events;
         std::set<std::wstring> eventsTold;
         double nextCalendarFetch=15;
+        std::unique_ptr<ApiServer> api;   // other programs driving the characters (with Settings::api)
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
@@ -634,6 +638,7 @@ namespace
             Trace(L"%.1f motion finished",app.clock);
             m.nextMotionAt=app.clock+90+app.Random01()*150;
             if(m.motionClosePending){std::wstring error;m.model.SetMotion({},error);m.motionClosePending=false;}
+            if(m.apiMotion){std::wstring error;m.model.SetMotion(Own(m).motionPath,error);m.apiMotion=false;}
             if(m.surfaceWindow&&m.restPose!=Activity::Idle)m.restPoseAt=app.clock+0.8;
         }
         m.motionWasPlaying=playing;
@@ -657,7 +662,9 @@ namespace
             return;
         }
         if(app.clock<m.motionStartAt)return;
-        // Dance on the ground at the bottom right of the screen: warp there first.
+        // Dance on the ground at the bottom right of the screen: warp there first. One another
+        // program asked for plays where she stands, unless that is on a window.
+        if(!m.apiMotion||m.surfaceWindow)
         {
             const RECT work=WorkAreaOfWindow(m);
             const double edge=work.right-ModelHalfWidthPixels(m)-16;
@@ -1398,6 +1405,18 @@ namespace
         }
     }
 
+    // Starts, moves or stops the HTTP API as the settings say. Returns why it could not start
+    // (empty when it runs, or is off).
+    std::wstring ApplyApi()
+    {
+        if(!app.settings.api||app.diagnostic){app.api.reset();return {};}
+        if(app.api&&app.api->Running()&&app.api->Port()==app.settings.apiPort)return {};
+        if(!app.api)app.api=std::make_unique<ApiServer>(app.hwnd);
+        const std::wstring error=app.api->Start(app.settings.apiPort);
+        if(!error.empty()){Log(L"API: %s",error.c_str());app.api.reset();}
+        return error;
+    }
+
     // OK in the settings window: switches and display options take effect at once (for every
     // character; the size, the voice and the persona for the one the window was opened for);
     // the detailed ones (frame rate, antialiasing, textures, physics rate, toon folder) are read
@@ -1506,6 +1525,12 @@ namespace
                     owned->character.persona=CharacterProfile::DefaultPersona();
                     owned->conversation.clear();
                 }
+        }
+        if(s.api!=current.api||s.apiPort!=current.apiPort)
+        {
+            current.api=s.api;
+            current.apiPort=s.apiPort;
+            if(const std::wstring error=ApplyApi();!error.empty())ShowMessage(error,MB_ICONERROR);
         }
         if(choice.startWithWindows!=StartupRegistered()&&!SetStartup(choice.startWithWindows))
             ShowMessage(T(L"スタートアップの設定を変更できませんでした。",L"Could not change starting with Windows."),MB_ICONERROR);
@@ -3164,6 +3189,7 @@ namespace
             }
             Own(m).motionPath=path;
             app.settings.Save(app.settingsPath);
+            m.apiMotion=false;
             m.motionRequested=true;   // play it once now
             m.motionClosePending=false;
             break;
@@ -3172,6 +3198,7 @@ namespace
             // Blend out first if it is playing; dropped once it has.
             Own(m).motionPath.clear();
             app.settings.Save(app.settingsPath);
+            m.apiMotion=false;
             m.motionRequested=false;
             if(m.model.MotionPlaying()){m.model.StopMotion();m.motionClosePending=true;}
             else {std::wstring error;m.model.SetMotion({},error);}
@@ -3444,6 +3471,179 @@ namespace
         }
     }
 
+    // ---- Other programs (the HTTP API, see ApiServer.hpp) ----------------------------------
+
+    const char* ActivityName(Activity a)
+    {
+        switch(a)
+        {
+        case Activity::Walk:return "walk";
+        case Activity::Run:return "run";
+        case Activity::Jump:return "jump";
+        case Activity::Sit:return "sit";
+        case Activity::Lie:return "lie";
+        case Activity::Hang:return "hang";
+        case Activity::Grabbed:return "grabbed";
+        case Activity::Fall:return "fall";
+        default:return "idle";
+        }
+    }
+
+    std::string ApiError(const std::wstring& text){return "{\"ok\":false,\"error\":"+Net::JsonString(text)+"}";}
+
+    std::string ApiState()
+    {
+        auto flag=[](bool on){return on?"true":"false";};
+        std::string out="{\"ok\":true,\"version\":"+Net::JsonString(CurrentVersion())+",\"characters\":[";
+        for(size_t i=0;i<app.mascots.size();++i)
+        {
+            Mascot& m=*app.mascots[i];
+            const bool talking=(m.chat&&m.chat->Busy())||m.speech.Speaking()||m.bubble.Talking();
+            if(i)out+=",";
+            out+="{\"character\":"+std::to_string(i+1)+",\"name\":"+Net::JsonString(m.character.name)+
+                 ",\"model\":"+Net::JsonString(m.modelPath)+",\"activity\":\""+ActivityName(m.model.CurrentActivity())+"\""+
+                 ",\"onWindow\":"+flag(m.surfaceWindow!=nullptr)+",\"held\":"+flag(m.place==Place::Held)+
+                 ",\"talking\":"+flag(talking)+",\"motionPlaying\":"+flag(m.model.MotionPlaying())+",\"dozing\":"+flag(m.dozing)+
+                 ",\"x\":"+std::to_string(std::lround(CenterX(m)))+",\"feetY\":"+std::to_string(std::lround(FeetLine(m)))+"}";
+        }
+        return out+"]}";
+    }
+
+    std::string ApiGestures()
+    {
+        std::string out="{\"ok\":true,\"gestures\":[";
+        bool first=true;
+        for(const auto& [key,label]:MascotModel::IdleGestureChoices())
+        {
+            if(key.rfind(L"clip:",0)==0)continue;
+            out+=std::string(first?"":",")+"{\"name\":"+Net::JsonString(key)+",\"label\":"+Net::JsonString(label)+"}";
+            first=false;
+        }
+        out+="],\"feelings\":[";
+        for(size_t i=0;i<std::size(Feelings);++i)out+=std::string(i?",":"")+Net::JsonString(Feelings[i].english);
+        return out+"]}";
+    }
+
+    // One request from another program, done on the window's thread: the character it names
+    // ("character": 1 to 6, the first when left out) says, does or answers what it asks.
+    void OnApiRequest(ApiServer::Request& r)
+    {
+        auto answer=[&r](int status,std::string json){r.status=status;r.response=std::move(json);};
+        const bool get=r.method=="GET",post=r.method=="POST";
+        if(r.path=="/state"||r.path=="/gestures")
+        {
+            if(!get){answer(405,ApiError(L"use GET"));return;}
+            answer(200,r.path=="/state"?ApiState():ApiGestures());
+            return;
+        }
+        static constexpr std::string_view Actions[]={"/say","/talk","/gesture","/motion","/motion/stop","/walk"};
+        if(std::find(std::begin(Actions),std::end(Actions),r.path)==std::end(Actions)){answer(404,ApiError(L"no such command"));return;}
+        if(!post){answer(405,ApiError(L"use POST"));return;}
+        Net::Json body;
+        if(!r.body.empty()&&(!Net::JsonParser(r.body).Parse(body)||body.type!=Net::Json::Type::Object))
+        {
+            answer(400,ApiError(L"the body must be a JSON object"));
+            return;
+        }
+        auto text=[&body](const char* name){
+            const Net::Json* v=body.Member(name);
+            return v&&v->type==Net::Json::Type::String?Net::Wide(v->text):std::wstring();
+        };
+        auto number=[&body](const char* name)->std::optional<double>{
+            const Net::Json* v=body.Member(name);
+            if(!v||v->type!=Net::Json::Type::Number)return std::nullopt;
+            return std::strtod(v->text.c_str(),nullptr);
+        };
+        auto flag=[&body](const char* name){const Net::Json* v=body.Member(name);return v&&v->type==Net::Json::Type::Bool&&v->text=="true";};
+        const double character=number("character").value_or(1);
+        if(character<1||character>static_cast<double>(app.mascots.size())){answer(404,ApiError(L"no such character"));return;}
+        Mascot& m=*app.mascots[static_cast<size_t>(character)-1];
+        const std::string ok="{\"ok\":true}";
+
+        if(r.path=="/say"||r.path=="/talk")
+        {
+            const std::wstring said=text("text");
+            if(said.empty()){answer(400,ApiError(L"\"text\" is missing"));return;}
+            if(said.size()>1000){answer(400,ApiError(L"\"text\" is too long"));return;}
+            // Waiting for the user's answer (an update, an alarm): that question stays.
+            if(&m==app.asker||&m==app.alarmTeller){answer(409,ApiError(L"she is waiting for the user's answer"));return;}
+            if(r.path=="/talk")
+            {
+                // As if the user had said it: the reply comes from the LLM, in her own words.
+                Trace(L"%.1f api: talk",app.clock);
+                Talk(m,said);
+                answer(200,ok);
+                return;
+            }
+            const Feeling* feeling=nullptr;
+            if(const std::wstring name=text("feeling");!name.empty())
+            {
+                for(const auto& f:Feelings)if(name==f.english||name==f.japanese)feeling=&f;
+                if(!feeling){answer(400,ApiError(L"unknown feeling (see /gestures)"));return;}
+            }
+            if(InBanter(m))EndBanter(L"another program has her say something");
+            Trace(L"%.1f api: say",app.clock);
+            SayFixed(m,said);
+            if(feeling)
+            {
+                m.model.SetExpression(feeling->expression,false);
+                m.replyFeelingSet=true;
+            }
+            answer(200,ok);
+            return;
+        }
+        if(r.path=="/gesture")
+        {
+            const std::wstring name=text("name");
+            if(name.empty()){answer(400,ApiError(L"\"name\" is missing"));return;}
+            if(!m.model.Emote(name)){answer(409,ApiError(L"unknown gesture (see /gestures), or she cannot now (only standing still, in the app's own standing pose)"));return;}
+            Trace(L"%.1f api: gesture %s",app.clock,name.c_str());
+            answer(200,ok);
+            return;
+        }
+        if(r.path=="/motion")
+        {
+            const std::wstring path=text("path");
+            if(path.empty()){answer(400,ApiError(L"\"path\" is missing"));return;}
+            if(m.model.MotionPlaying()){answer(409,ApiError(L"a motion is playing (POST /motion/stop first)"));return;}
+            if(std::wstring error;!m.model.SetMotion(path,error))
+            {
+                std::wstring ignored;
+                m.model.SetMotion(Own(m).motionPath,ignored);   // hers stays
+                answer(400,ApiError(error));
+                return;
+            }
+            // Played once as soon as she can (standing up first), then her own comes back.
+            Trace(L"%.1f api: motion %s",app.clock,path.c_str());
+            m.apiMotion=true;
+            m.motionRequested=true;
+            m.motionClosePending=false;
+            answer(200,ok);
+            return;
+        }
+        if(r.path=="/motion/stop")
+        {
+            if(m.model.MotionPlaying())m.model.StopMotion();   // blends out; hers comes back once it has
+            else if(m.apiMotion)
+            {
+                std::wstring error;
+                m.model.SetMotion(Own(m).motionPath,error);
+                m.apiMotion=false;
+                m.motionRequested=false;
+            }
+            answer(200,ok);
+            return;
+        }
+        // /walk: by dx pixels (- to the left), or to the screen x of "x"; "run": true runs.
+        const auto dx=number("dx"),x=number("x");
+        if(!dx&&!x){answer(400,ApiError(L"\"dx\" or \"x\" is missing"));return;}
+        if(m.place!=Place::Ground||m.travel!=Travel::None){answer(409,ApiError(L"she is not standing on anything now"));return;}
+        m.model.StopMotion();
+        StartWalk(m,x?*x:CenterX(m)+*dx,flag("run")?Activity::Run:Activity::Walk);
+        Trace(L"%.1f api: walk to %.0f",app.clock,m.walkTargetX);
+        answer(200,"{\"ok\":true,\"targetX\":"+std::to_string(std::lround(m.walkTargetX))+"}");
+    }
+
     // The hidden control window: the tray icon (it stands for the first character) and quitting.
     LRESULT CALLBACK ControlProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
     {
@@ -3468,7 +3668,15 @@ namespace
         case CalendarFeed::FetchedMessage:
             OnCalendarFetched(reinterpret_cast<CalendarResult*>(wParam));
             return 0;
+        case ApiServer::RequestMessage:
+        {
+            std::unique_ptr<std::shared_ptr<ApiServer::Request>> request(reinterpret_cast<std::shared_ptr<ApiServer::Request>*>(wParam));
+            OnApiRequest(**request);
+            ApiServer::Answered(**request);
+            return 0;
+        }
         case WM_DESTROY:
+            app.api.reset();
             EndBanter(L"quitting");
             app.updateChoice.Close();
             app.alarmChoice.Close();
@@ -4050,6 +4258,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.nextChatterAt=Interval(app.settings.chatterMinutes);
     app.nextBanterAt=Interval(std::max(app.settings.banterMinutes,1));
     if(!app.diagnostic)Updater::CleanUp();
+    ApplyApi();
 
     // Diagnostics act on the first character.
     Mascot& first=*app.mascots.front();

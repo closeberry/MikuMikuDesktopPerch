@@ -190,7 +190,8 @@ namespace MikuMikuDesktopPerch::Net
                 }
             }
             if(c=='"'){out.type=Json::Type::String;return String(out.text);}
-            if(Literal("true")||Literal("false")){out.type=Json::Type::Bool;return true;}
+            if(Literal("true")){out.type=Json::Type::Bool;out.text="true";return true;}
+            if(Literal("false")){out.type=Json::Type::Bool;out.text="false";return true;}
             if(Literal("null")){out.type=Json::Type::Null;return true;}
             const size_t start=p;
             while(p<s.size()&&(std::isdigit(static_cast<unsigned char>(s[p]))||s[p]=='-'||s[p]=='+'||s[p]=='.'||s[p]=='e'||s[p]=='E'))++p;

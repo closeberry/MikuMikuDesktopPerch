@@ -135,6 +135,42 @@ Turn it on with "Ride on the active window" in the right-click menu (setting `Wi
 - When grabbed and let go, it lands on the top edge of the foreground window if one is right below
 - While a full-screen app (a game or presentation) runs, it hides automatically and stops drawing
 
+## Control from other apps (HTTP API)
+
+Other apps and scripts can have the characters talk, make gestures, play motions and walk. Turn on "Remote API" under Advanced in the settings (off by default; the port is 50080. It takes effect as soon as you press OK, without a restart), and a small HTTP server that only this computer can reach (`http://127.0.0.1:50080`) runs.
+
+- Only this computer can use it (it listens on 127.0.0.1 only); other PCs cannot reach it
+- Requests from web pages open in a browser are refused (requests with an `Origin` header, and those whose `Host` is not `127.0.0.1`, `localhost` or `[::1]`), so a site you are viewing cannot move the characters
+- The body is JSON (UTF-8), and so is the answer: `{"ok":true}` on success, and `{"ok":false,"error":"..."}` with a status such as 400 (a mistake in the request), 404 (no such command or character) or 409 (not possible now) otherwise
+- `"character"` picks which character to ask (1–6; the first when left out)
+
+| Method and path | Body | What it does |
+|---|---|---|
+| `GET /state` | none | The version, and for each character its name, model, what it is doing (`idle`, `walk`, `sit`, ...), whether it is on a window, talking, playing a motion or dozing, and where it is |
+| `GET /gestures` | none | The gesture names `/gesture` takes, and the feeling names `/say`'s `feeling` takes |
+| `POST /say` | `{"text":"Hello!","feeling":"smile"}` | Says exactly that in the speech bubble (with the voice when one is set up, and the mouth moving). No LLM is used. `feeling` may be left out (`smile`, `surprise`, `troubled`, `angry`, `sad`, `shy`, `neutral`) |
+| `POST /talk` | `{"text":"What day is it today?"}` | Treated as if you said it: the LLM replies (and it is remembered like your chats). Requests such as timers work too |
+| `POST /gesture` | `{"name":"wave"}` | Makes one gesture. Only while standing in the app's own idle pose (409 while idle motions are in use, or while walking or sitting) |
+| `POST /motion` | `{"path":"C:\\motions\\dance.vmd"}` | Plays a VMD once, at once (standing up first if sitting; when on a window, warping to the bottom right of the screen first, as usual). Afterwards the motion opened with "Open motion..." comes back. Nothing is saved in the settings file. 409 while a motion is playing |
+| `POST /motion/stop` | none | Stops the playing motion smoothly (or calls it off if it has not started) |
+| `POST /walk` | `{"dx":-300}` or `{"x":800,"run":true}` | Walks `dx` pixels sideways on the surface she is on (minus is left), or to the screen x `x` (runs when `run` is `true`). 409 while held, warping and the like |
+
+Example (PowerShell):
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:50080/state
+$body = [Text.Encoding]::UTF8.GetBytes('{"text":"The build is done!","feeling":"smile"}')
+Invoke-RestMethod http://127.0.0.1:50080/say -Method Post -ContentType "application/json" -Body $body
+```
+
+Example (curl, in Git Bash and the like):
+
+```bash
+curl -s -X POST http://127.0.0.1:50080/walk -H "Content-Type: application/json" -d '{"dx":-300}'
+```
+
+From Python: `requests.post("http://127.0.0.1:50080/gesture", json={"name": "wave"})`. MCP clients such as Claude Desktop can use it without a tunnel, through a stdio MCP server that calls this API.
+
 ## Settings (`MikuMikuDesktopPerch.ini` in the exe's folder, UTF-16)
 
 The first character's settings go in the `[Mascot]` section, together with the other settings. The second to sixth characters go in `[Mascot2]`–`[Mascot6]`, with only the per-character items (Model, Motion, IdleMotion, ClickMotion, WalkMotion / RunMotion, X, VoiceSpeaker / VoiceName).
@@ -172,6 +208,7 @@ The first character's settings go in the `[Mascot]` section, together with the o
 | ChatterMinutes | 45 | The rough interval of remarks when speaking first (minutes; random within a third either way) |
 | BanterMinutes | 30 | The rough interval of characters chatting together (minutes; 0 for never) |
 | UpdateCheck | 1 | Check for updates (GitHub releases) |
+| Api / ApiPort | 0 / 50080 | Control from other apps (HTTP API, 127.0.0.1 only) and its port (1024–65535) |
 | DisabledGestures | (empty) | Idle gestures and built-in idle motions not to use (`hip`, `clip:name` and so on, separated by `\|`; chosen with "Gestures..." in the settings; anything not listed is used, including ones added later) |
 | MorningSummary | 1 | Tell today's reminders and to-dos in the morning |
 | RestMinutes | 60 | Suggest a break after using the computer this long (minutes) without one (0 for never) |
@@ -197,6 +234,7 @@ Models and motions are often opened as distributed, so the app is built so that 
 - **Broken data**: if PMXLoader causes a memory access violation while loading or preparing pose computation, it is handled as an error instead of crashing (for both PMX and VMD). Models with out-of-range references are rejected before being shown. If the idle motions in the settings cannot be loaded, they are taken off and only the model is shown
 - **Textures**: paths pointing to another computer (`\\server\share\...` and the like) are not opened (to keep Windows from connecting to it and handing over credentials). Paths with a colon after the drive letter (alternate data streams and the like) are not opened either. Images are loaded only as the BMP, PNG, JPEG, GIF and TIFF that come with Windows, judged by content, not by extension (image codecs installed later are not used). Sizes up to 16384 pixels each way
 - **DLLs**: DLLs loaded by name are not searched for in the working folder
+- **Control from other apps**: off by default. When on, it listens on 127.0.0.1 only, and refuses requests with an `Origin` header or whose `Host` is not this computer (from web pages, DNS rebinding). Bodies are limited to 64 KB
 - **Build**: Control Flow Guard, CET compatibility, ASLR and DEP are enabled
 
 ## Supported models
@@ -251,6 +289,7 @@ Loads the models listed in `list.txt` (UTF-8, one PMX path per line) one by one 
 - `src/PlannerWindow.*`: the list window for reminders and to-dos
 - `src/Calendar.*`: reading Google Calendar (its secret iCal address), expanding repeating events, and encrypting the address
 - `src/Updater.*`: checking GitHub releases, downloading (SHA-256 check, unpacking, version check), and replacing the files
+- `src/ApiServer.*`: the HTTP server other apps control the characters through (127.0.0.1 only; requests from web pages are refused)
 - `src/Text.*`: switching the language (Japanese / English) and choosing the wording
 - `res/`: the icon (`MikuMikuDesktopPerch.ico`) and version information
 - `src/MascotRenderer.*`: D3D12 drawing. GPU skinning (BDEF1/2/4, SDEF; QDEF is treated as BDEF4), and toon, sphere, outline and self-shadow close to MMD's standard (a shadow map of depth seen from the light, 2048×2048, following the materials' self-shadow map and self-shadow flags, with shadowed parts in the toon's dark color; as in MMD, materials without a toon get no shadow)

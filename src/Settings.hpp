@@ -67,6 +67,10 @@ namespace MikuMikuDesktopPerch
         int chatterMinutes=45;
         int banterMinutes=30;
         bool updateCheck=true;      // look for a newer release on GitHub now and then
+        // Other programs on this computer may drive the characters over HTTP on 127.0.0.1:apiPort
+        // (see ApiServer.hpp).
+        bool api=false;
+        int apiPort=50080;
         // Idle gestures and built-in idle motions left out of the standing pose's picks, by
         // key (hip, wave, ..., clip:<name>); everything else is used, new ones included.
         std::vector<std::wstring> disabledGestures;

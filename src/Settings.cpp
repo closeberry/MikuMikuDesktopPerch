@@ -147,6 +147,8 @@ namespace MikuMikuDesktopPerch
         chatterMinutes=std::clamp(ReadInt(path,L"ChatterMinutes",chatterMinutes),5,600);
         banterMinutes=std::clamp(ReadInt(path,L"BanterMinutes",banterMinutes),0,600);
         updateCheck=ReadInt(path,L"UpdateCheck",updateCheck?1:0)!=0;
+        api=ReadInt(path,L"Api",api?1:0)!=0;
+        apiPort=std::clamp(ReadInt(path,L"ApiPort",apiPort),1024,65535);
         disabledGestures=ReadList(path,L"DisabledGestures");
         morningSummary=ReadInt(path,L"MorningSummary",morningSummary?1:0)!=0;
         restMinutes=std::clamp(ReadInt(path,L"RestMinutes",restMinutes),0,600);
@@ -210,6 +212,8 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"ChatterMinutes",std::to_wstring(chatterMinutes));
         WriteString(path,L"BanterMinutes",std::to_wstring(banterMinutes));
         WriteString(path,L"UpdateCheck",updateCheck?L"1":L"0");
+        WriteString(path,L"Api",api?L"1":L"0");
+        WriteString(path,L"ApiPort",std::to_wstring(apiPort));
         WriteList(path,L"DisabledGestures",disabledGestures);
         WriteString(path,L"MorningSummary",morningSummary?L"1":L"0");
         WriteString(path,L"RestMinutes",std::to_wstring(restMinutes));
