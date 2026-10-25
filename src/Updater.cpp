@@ -263,6 +263,15 @@ namespace MikuMikuDesktopPerch
         return {};
     }
 
+    std::wstring Updater::UpdatedFrom()
+    {
+        const std::filesystem::path old=std::filesystem::path(ExePath()).concat(L".old");
+        std::error_code ec;
+        if(!std::filesystem::exists(old,ec))return {};
+        const std::wstring version=FileVersion(old);
+        return version!=CurrentVersion()?version:std::wstring();
+    }
+
     void Updater::CleanUp()
     {
         std::error_code ec;

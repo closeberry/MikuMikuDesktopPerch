@@ -48,6 +48,9 @@ namespace MikuMikuDesktopPerch
         // After a Download without error: returns an explanation when the files could not be
         // put in place (the installed ones are then left as they were).
         static std::wstring Install();
+        // At start-up, before CleanUp: the version Install updated this exe from (it leaves the
+        // old exe beside it), empty when the files were replaced by hand or nothing changed.
+        static std::wstring UpdatedFrom();
         // At start-up: remove what the last update left behind (the old exe, the unpacked files).
         static void CleanUp();
 

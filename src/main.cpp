@@ -261,6 +261,7 @@ namespace
         // Installed: the restart waits for the asker to finish her line (since when, and since
         // when she has been quiet).
         double installedAt=-1,quietSince=-1;
+        std::wstring updatedFrom;      // started on the new exe after an update: said once, then cleared
         // Timers, reminders and to-dos: those come due and not yet told, the one telling them
         // (she stays put until answered) with わかった／5分後に under her.
         Planner planner;
@@ -1723,6 +1724,7 @@ namespace
     void BeginReply(Mascot& m,std::vector<ChatMessage> messages);
     void EndBanter(const wchar_t* why);
     void SayFixed(Mascot& m,const std::wstring& text,std::string sound={});
+    Mascot* PickTeller(double waited);
 
     // The date and time for the LLM, in the language in use.
     std::wstring NowText()
@@ -2463,6 +2465,24 @@ namespace
             app.restart=true;
             DestroyWindow(app.hwnd);
         }
+    }
+
+    // Back on the new exe after an update the app made: one of the characters says it is done
+    // (in her own words when the LLM is set up), once she can.
+    void MaybeTellUpdated()
+    {
+        if(app.updatedFrom.empty()||app.clock<3)return;
+        Mascot* m=PickTeller(app.clock-3);
+        if(!m)return;
+        const std::wstring version=CurrentVersion();
+        Trace(L"%.1f updated from %s to %s: telling",app.clock,app.updatedFrom.c_str(),version.c_str());
+        const std::wstring line=Fmt(T(L"更新が終わったよ！いまはバージョン{0}だよ。",L"The update is done! This is version {0} now."),{version});
+        if(ChatReady(*m,false))
+            SpeakFirst(*m,Fmt(T(L"このアプリ（MikuMikuDesktopPerch）をバージョン{1}から{0}に更新して、いま起動し直したところです。話し相手に、更新が終わったことを伝えて",
+                                L"This app, MikuMikuDesktopPerch, has just been updated from version {1} to {0} and started again. Tell the person you talk with that the update is done"),
+                              {version,app.updatedFrom}),line);
+        else SayFixed(*m,line);
+        app.updatedFrom.clear();
     }
 
     // The new files are unpacked: put them in place and start again on the new exe.
@@ -4498,7 +4518,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.settings.Save(app.settingsPath);
     app.nextChatterAt=Interval(app.settings.chatterMinutes);
     app.nextBanterAt=Interval(std::max(app.settings.banterMinutes,1));
-    if(!app.diagnostic)Updater::CleanUp();
+    if(!app.diagnostic)
+    {
+        app.updatedFrom=Updater::UpdatedFrom();
+        Updater::CleanUp();
+    }
     ApplyApi();
 
     // Diagnostics act on the first character.
@@ -4598,7 +4622,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         QueryPerformanceCounter(&workStart);
         MaybeRestartAfterUpdate();
         if(app.restart)continue;   // quitting: the loop picks up WM_QUIT next
-        if(!forcedActivity){MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
+        if(!forcedActivity){MaybeTellUpdated();MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)
