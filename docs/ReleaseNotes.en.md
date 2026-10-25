@@ -2,6 +2,16 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.2.6
+
+### New
+
+- **Motions on top of a window**: when a character gets on a window's top edge, she can rest or move along it with VMD motions, besides the sitting and hanging the app makes. Choose your own VMDs with "Motion" > "Open window motions..." in the right-click menu (one or more, kept per character), and choose which to use with "Gestures..." in the settings. How to make them, and how to offer them for everyone, is in the bundled `docs/WindowMotions.en.md`
+
+### Changes
+
+- The settings window is split into tabs (Motion and display, Talking and voice, Assistant, Advanced). It is less than half as tall, so it fits on smaller screens
+
 ## 1.2.5
 
 ### New
