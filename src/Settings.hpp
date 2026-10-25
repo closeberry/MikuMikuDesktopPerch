@@ -53,6 +53,7 @@ namespace MikuMikuDesktopPerch
         // little to the right, so the shading falls softly across the body.
         int lightAzimuth=12,lightElevation=25;
         int maxTextureSize=1024;   // larger textures are downscaled at load (0 = keep original)
+        std::wstring gpu;           // the GPU to draw on, as MascotRenderer::Gpus gives its id (empty: the one Windows picks)
         bool blink=true;
         bool breath=true;
         bool lookAtMouse=true;

@@ -67,6 +67,12 @@ namespace MikuMikuDesktopPerch
         void Render(const MascotModel& model,float edgeScale);
         void WaitIdle();
         const std::wstring& AdapterName() const {return adapterName;}
+        // The GPUs that can draw (the software one left out), as (id, name). The id is the
+        // vendor and device ("10DE:249D"): it stays the same when the adapters' order changes.
+        static std::vector<std::pair<std::wstring,std::wstring>> Gpus();
+        // Draw on the GPU with this id; empty, or one not found: the one Windows picks for this
+        // app (its graphics settings decide). Takes effect when the shared device is made.
+        static void PreferGpu(std::wstring id){preferredGpu=std::move(id);}
         // Why the GPU stopped taking work (TDR, a driver update or crash), S_OK while it runs.
         // Once set, nothing more is drawn: the device would have to be made again.
         HRESULT DeviceLost() const {return deviceLost;}
@@ -125,6 +131,7 @@ namespace MikuMikuDesktopPerch
             std::wstring adapterName;
         };
         static std::shared_ptr<Gpu> SharedGpu(std::wstring& error);
+        static inline std::wstring preferredGpu;
         std::shared_ptr<Gpu> gpu;
         Microsoft::WRL::ComPtr<IDXGIFactory6> factory;
         Microsoft::WRL::ComPtr<ID3D12Device> device;

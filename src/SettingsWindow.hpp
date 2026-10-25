@@ -21,6 +21,9 @@ namespace MikuMikuDesktopPerch
         // The gestures and built-in idle motions to choose from (key, label); the choice is
         // settings.disabledGestures.
         std::vector<std::pair<std::wstring,std::wstring>> gestures;
+        // The GPUs to choose from (id, name) and the one drawing now; the choice is settings.gpu.
+        std::vector<std::pair<std::wstring,std::wstring>> gpus;
+        std::wstring gpuInUse;
     };
 
     // Open the settings window (or bring it forward if open) over owner, filled from current.

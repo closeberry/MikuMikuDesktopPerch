@@ -1594,7 +1594,7 @@ namespace
         if(choice.startWithWindows!=StartupRegistered()&&!SetStartup(choice.startWithWindows))
             ShowMessage(T(L"スタートアップの設定を変更できませんでした。",L"Could not change starting with Windows."),MB_ICONERROR);
         const bool restart=s.fps!=current.fps||s.motionBlur!=current.motionBlur||s.msaa!=current.msaa||s.maxTextureSize!=current.maxTextureSize||
-                           s.physicsFps!=current.physicsFps||s.physicsIterations!=current.physicsIterations||s.toonDir!=current.toonDir;
+                           s.physicsFps!=current.physicsFps||s.physicsIterations!=current.physicsIterations||s.toonDir!=current.toonDir||s.gpu!=current.gpu;
         current.fps=s.fps;
         current.motionBlur=s.motionBlur;
         current.msaa=s.msaa;
@@ -1602,6 +1602,7 @@ namespace
         current.physicsFps=s.physicsFps;
         current.physicsIterations=s.physicsIterations;
         current.toonDir=s.toonDir;
+        current.gpu=s.gpu;
         if(s.scale!=current.scale)ApplyScale(s.scale);
         current.Save(app.settingsPath);
         if(restart&&ShowMessage(T(L"詳細の設定は、再起動すると反映されます。\n今すぐ再起動しますか？",L"The advanced settings take effect after a restart.\nRestart now?"),MB_ICONQUESTION|MB_YESNO)==IDYES)
@@ -3428,7 +3429,7 @@ namespace
             }
             break;
         case IdSettings:
-            ShowSettingsWindow(m.hwnd,{app.settings,StartupRegistered(),Own(m),m.character,&m.memory,MascotModel::IdleGestureChoices()},
+            ShowSettingsWindow(m.hwnd,{app.settings,StartupRegistered(),Own(m),m.character,&m.memory,MascotModel::IdleGestureChoices(),MascotRenderer::Gpus(),m.renderer.AdapterName()},
                                [&m](const SettingsChoice& choice){ApplySettings(m,choice);},
                                [](int azimuth,int elevation){
                                    for(const auto& each:app.mascots)each->renderer.SetLight(static_cast<float>(azimuth),static_cast<float>(elevation));},
@@ -4388,6 +4389,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.settingsPath=Settings::DefaultPath();
     app.settings.Load(app.settingsPath);
     SetLanguage(app.settings.language);
+    MascotRenderer::PreferGpu(app.settings.gpu);
     app.diagnostic=!snapshotPath.empty();
     if(!app.diagnostic)
     {

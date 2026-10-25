@@ -133,6 +133,7 @@ namespace MikuMikuDesktopPerch
         if(msaa!=1&&msaa!=2&&msaa!=4&&msaa!=8)msaa=4;
         topmost=ReadInt(path,L"Topmost",topmost?1:0)!=0;
         maxTextureSize=std::clamp(ReadInt(path,L"MaxTextureSize",maxTextureSize),0,16384);
+        gpu=ReadString(path,L"Gpu",gpu);
         blink=ReadInt(path,L"Blink",blink?1:0)!=0;
         breath=ReadInt(path,L"Breath",breath?1:0)!=0;
         lookAtMouse=ReadInt(path,L"LookAtMouse",lookAtMouse?1:0)!=0;
@@ -198,6 +199,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"Msaa",std::to_wstring(msaa));
         WriteString(path,L"Topmost",topmost?L"1":L"0");
         WriteString(path,L"MaxTextureSize",std::to_wstring(maxTextureSize));
+        WriteString(path,L"Gpu",gpu);
         WriteString(path,L"Blink",blink?L"1":L"0");
         WriteString(path,L"Breath",breath?L"1":L"0");
         WriteString(path,L"LookAtMouse",lookAtMouse?L"1":L"0");

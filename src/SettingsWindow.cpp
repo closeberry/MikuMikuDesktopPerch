@@ -27,7 +27,7 @@ namespace MikuMikuDesktopPerch
         {
             IdAuto=1001,IdWindowMode,IdPhysics,IdBlink,IdBreath,IdLookAt,
             IdScale,IdEdge,IdTopmost,IdStartup,
-            IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdPhysicsIterations,IdPhysicsFilter,IdToonDir,IdToonBrowse,
+            IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdPhysicsIterations,IdPhysicsFilter,IdToonDir,IdToonBrowse,IdGpu,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
@@ -134,6 +134,33 @@ namespace MikuMikuDesktopPerch
 
         void UpdateVoiceMode();
 
+        // "Auto" (the GPU Windows picks for this app), then each GPU by name, the one drawing now
+        // marked. The item data is the place in state.choice.gpus plus one (0: auto); a chosen
+        // GPU that is not there now (taken out) is kept as it is.
+        void FillGpus()
+        {
+            const auto& gpus=state.choice.gpus;
+            const std::wstring& chosen=state.choice.settings.gpu;
+            std::vector<std::pair<std::wstring,int>> items{{T(L"自動（Windowsのグラフィックの設定に従う）",L"Auto (as Windows' graphics settings say)"),0}};
+            int value=0;
+            for(size_t i=0;i<gpus.size();++i)
+            {
+                const auto& [id,name]=gpus[i];
+                items.push_back({name==state.choice.gpuInUse?name+T(L"（使用中）",L" (in use)"):name,static_cast<int>(i+1)});
+                if(id==chosen)value=static_cast<int>(i+1);
+            }
+            if(!chosen.empty()&&value==0)value=-1;
+            FillCombo(IdGpu,items,value,Fmt(T(L"見つからないGPU（{0}）",L"GPU not found ({0})"),{chosen}));
+        }
+
+        std::wstring GpuValue()
+        {
+            const int value=ComboValue(IdGpu,-1);
+            const auto& gpus=state.choice.gpus;
+            if(value<0)return state.choice.settings.gpu;
+            return value==0||static_cast<size_t>(value)>gpus.size()?std::wstring():gpus[value-1].first;
+        }
+
         // How often only matters while speaking first is on.
         void UpdateInitiative()
         {
@@ -234,7 +261,7 @@ namespace MikuMikuDesktopPerch
             Combo(IdCalendarLead,326,y+132,110);
             y=top;
             Page(T(L"詳細",L"Advanced"));
-            Group(T(L"詳細（変更すると再起動します）",L"Advanced (changes restart the app)"),y,166);
+            Group(T(L"詳細（変更すると再起動します）",L"Advanced (changes restart the app)"),y,194);
             Label(T(L"描画のfps",L"Drawing fps"),28,y+22,130);
             Combo(IdFps,170,y+22,120);
             CheckBox(IdMotionBlur,T(L"モーションブラー",L"Motion blur"),304,y+22,132,s.motionBlur);
@@ -252,6 +279,9 @@ namespace MikuMikuDesktopPerch
             Label(T(L"共有トゥーンのフォルダ",L"Shared toon folder"),28,y+134,140);
             Add(L"EDIT",s.toonDir.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+134,190,24,IdToonDir);
             Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+133,70,26,IdToonBrowse);
+            Label(T(L"描画に使うGPU",L"GPU for drawing"),28,y+162,140);
+            Combo(IdGpu,170,y+162,266);
+            FillGpus();
             state.page=-1;
             y=top+138+166;
             Add(L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,276,y,82,28,IDOK);
@@ -787,6 +817,7 @@ namespace MikuMikuDesktopPerch
             wchar_t toon[MAX_PATH]{};
             GetDlgItemTextW(state.window,IdToonDir,toon,MAX_PATH);
             s.toonDir=toon;
+            s.gpu=GpuValue();
             wchar_t endpoint[512]{},model[256]{};
             GetDlgItemTextW(state.window,IdChatEndpoint,endpoint,512);
             GetDlgItemTextW(state.window,IdChatModel,model,256);

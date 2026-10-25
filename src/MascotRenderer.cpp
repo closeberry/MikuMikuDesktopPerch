@@ -102,6 +102,28 @@ namespace MikuMikuDesktopPerch
             swprintf_s(text,L"%s (0x%08X)",what,static_cast<unsigned>(hr));
             return text;
         }
+        std::wstring GpuId(const DXGI_ADAPTER_DESC1& desc)
+        {
+            wchar_t id[16]{};
+            swprintf_s(id,L"%04X:%04X",desc.VendorId,desc.DeviceId);
+            return id;
+        }
+    }
+
+    std::vector<std::pair<std::wstring,std::wstring>> MascotRenderer::Gpus()
+    {
+        std::vector<std::pair<std::wstring,std::wstring>> list;
+        ComPtr<IDXGIFactory6> factory;
+        if(FAILED(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory))))return list;
+        ComPtr<IDXGIAdapter1> adapter;
+        for(UINT i=0;factory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_UNSPECIFIED,IID_PPV_ARGS(&adapter))!=DXGI_ERROR_NOT_FOUND;++i)
+        {
+            DXGI_ADAPTER_DESC1 desc{};
+            adapter->GetDesc1(&desc);
+            if(!(desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE))list.push_back({GpuId(desc),desc.Description});
+            adapter.Reset();
+        }
+        return list;
     }
 
     MascotRenderer::~MascotRenderer()
@@ -128,10 +150,26 @@ namespace MikuMikuDesktopPerch
 #endif
         if(FAILED(hr=CreateDXGIFactory2(factoryFlags,IID_PPV_ARGS(&gpu->factory)))){error=HrText(L"DXGI factory",hr);return nullptr;}
 
-        // A mascot should stay off the discrete GPU when an integrated one exists.
-        ComPtr<IDXGIAdapter1> adapter;
-        for(UINT i=0;gpu->factory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_MINIMUM_POWER,IID_PPV_ARGS(&adapter))!=DXGI_ERROR_NOT_FOUND;++i)
+        // In the order Windows prefers for this app (its graphics settings), the one chosen in
+        // the settings first; one that cannot make a device is passed over.
+        std::vector<ComPtr<IDXGIAdapter1>> adapters;
         {
+            ComPtr<IDXGIAdapter1> adapter;
+            for(UINT i=0;gpu->factory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_UNSPECIFIED,IID_PPV_ARGS(&adapter))!=DXGI_ERROR_NOT_FOUND;++i)
+                adapters.push_back(std::move(adapter));
+        }
+        if(!preferredGpu.empty())
+        {
+            const auto chosen=std::find_if(adapters.begin(),adapters.end(),[](const auto& a){
+                DXGI_ADAPTER_DESC1 desc{};
+                a->GetDesc1(&desc);
+                return GpuId(desc)==preferredGpu;});
+            Log(L"GPU chosen in the settings: %s%s",preferredGpu.c_str(),chosen==adapters.end()?L" (not found: Windows picks)":L"");
+            if(chosen!=adapters.end())std::rotate(adapters.begin(),chosen,chosen+1);
+        }
+        for(UINT i=0;i<adapters.size();++i)
+        {
+            const auto& adapter=adapters[i];
             DXGI_ADAPTER_DESC1 desc{};
             adapter->GetDesc1(&desc);
             LARGE_INTEGER driver{};
@@ -140,11 +178,10 @@ namespace MikuMikuDesktopPerch
                 static_cast<unsigned long long>(desc.DedicatedVideoMemory>>20),
                 known?HIWORD(driver.HighPart):0u,known?LOWORD(driver.HighPart):0u,known?HIWORD(driver.LowPart):0u,known?LOWORD(driver.LowPart):0u,
                 desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE?L", software":L"");
-            if(desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE){adapter.Reset();continue;}
+            if(gpu->device||desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE)continue;
             if(const HRESULT created=D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&gpu->device));SUCCEEDED(created))
-            {gpu->adapterName=desc.Description;Log(L"  using it");break;}
+            {gpu->adapterName=desc.Description;Log(L"  using it");}
             else Log(L"  no Direct3D 12 device (0x%08X)",static_cast<unsigned>(created));
-            adapter.Reset();
         }
         if(!gpu->device){error=T(L"D3D12 に対応した GPU が見つかりません。",L"No GPU supporting Direct3D 12 was found.");return nullptr;}
         shared=gpu;
