@@ -21,7 +21,7 @@ namespace MikuMikuDesktopPerch
             std::string path;        // "/say", without the query
             std::string query;       // after the '?', as sent ("character=2")
             std::string contentType; // lower case, without parameters ("application/json")
-            std::string body;        // UTF-8 JSON, or a VMD's bytes (POST /motion as application/octet-stream)
+            std::string body;        // UTF-8 JSON (up to 64 KB; 16 MB for /say), or a VMD's bytes (POST /motion as application/octet-stream)
             int status=200;          // filled by the receiver
             std::string response;    // JSON, filled by the receiver
             HANDLE done=CreateEventW(nullptr,TRUE,FALSE,nullptr);

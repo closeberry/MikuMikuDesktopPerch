@@ -51,6 +51,30 @@ namespace MikuMikuDesktopPerch::Net
         return out+"\"";
     }
 
+    // Base64 (standard or URL-safe alphabet; padding and white space optional). False when
+    // something else is in it.
+    inline bool Base64Decode(std::string_view text,std::string& out)
+    {
+        out.clear();
+        out.reserve(text.size()/4*3);
+        unsigned bits=0;
+        int count=0;
+        for(const char c:text)
+        {
+            int v;
+            if(c>='A'&&c<='Z')v=c-'A';
+            else if(c>='a'&&c<='z')v=c-'a'+26;
+            else if(c>='0'&&c<='9')v=c-'0'+52;
+            else if(c=='+'||c=='-')v=62;
+            else if(c=='/'||c=='_')v=63;
+            else if(c=='='||c==' '||c=='\r'||c=='\n'||c=='\t')continue;
+            else return false;
+            bits=(bits<<6)|static_cast<unsigned>(v);
+            if((count+=6)>=8){count-=8;out+=static_cast<char>((bits>>count)&0xFF);}
+        }
+        return true;
+    }
+
     // Just enough JSON to read the server's replies: values are parsed fully (with a depth
     // limit), strings come back as UTF-8.
     struct Json

@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "ApiServer.hpp"
+#include "AudioDecode.hpp"
 #include "ChatWindows.hpp"
 #include "HttpJson.hpp"
 #include "LocalChat.hpp"
@@ -1662,7 +1663,7 @@ namespace
 
     void BeginReply(Mascot& m,std::vector<ChatMessage> messages);
     void EndBanter(const wchar_t* why);
-    void SayFixed(Mascot& m,const std::wstring& text);
+    void SayFixed(Mascot& m,const std::wstring& text,std::string sound={});
 
     // The date and time for the LLM, in the language in use.
     std::wstring NowText()
@@ -2236,7 +2237,8 @@ namespace
     // ---- Updates -------------------------------------------------------------------------
 
     // Something of the app's own, said in her bubble (and voice) like a reply, without the LLM.
-    void SayFixed(Mascot& m,const std::wstring& text)
+    // sound: a WAV file (16-bit PCM) to say it with, instead of her voice.
+    void SayFixed(Mascot& m,const std::wstring& text,std::string sound)
     {
         m.fallbackLine.clear();
         if(m.chat)m.chat->Cancel();
@@ -2248,7 +2250,13 @@ namespace
         m.replyFeelingSet=false;
         if(m.voice)m.voice->CancelAll();
         m.bubble.Begin(m.character.name);
-        Reveal(m,text);
+        if(sound.empty())Reveal(m,text);
+        else
+        {
+            m.bubble.Append(text);
+            m.replyShown=text.size();
+            m.speech.Say(text,std::move(sound));
+        }
         m.speech.Finish();
         m.bubble.Finish();
     }
@@ -3573,6 +3581,31 @@ namespace
         {
             const std::wstring said=text("text");
             if(said.empty()){answer(400,ApiError(L"\"text\" is missing"));return;}
+            // The sound to say it with (/say): its bytes in base64, or a file on this computer.
+            std::string sound;
+            if(r.path=="/say")
+            {
+                std::string bytes;
+                if(const Net::Json* audio=body.Member("audio"))
+                {
+                    if(audio->type!=Net::Json::Type::String||!Net::Base64Decode(audio->text,bytes)||bytes.empty())
+                    {
+                        answer(400,ApiError(L"\"audio\" must be the sound's bytes in base64"));
+                        return;
+                    }
+                }
+                else if(const std::wstring file=text("audioFile");!file.empty())
+                {
+                    std::error_code ec;
+                    const auto size=std::filesystem::file_size(file,ec);
+                    std::ifstream in(std::filesystem::path(file),std::ios::binary);
+                    if(ec||!in||size>64*1024*1024){answer(400,ApiError(L"could not read \"audioFile\" (64 MB at most)"));return;}
+                    bytes.resize(static_cast<size_t>(size));
+                    in.read(bytes.data(),static_cast<std::streamsize>(bytes.size()));
+                }
+                if(!bytes.empty())
+                    if(const std::wstring error=DecodeAudio(bytes,sound);!error.empty()){answer(400,ApiError(error));return;}
+            }
             if(said.size()>1000){answer(400,ApiError(L"\"text\" is too long"));return;}
             // Waiting for the user's answer (an update, an alarm): that question stays.
             if(&m==app.asker||&m==app.alarmTeller){answer(409,ApiError(L"she is waiting for the user's answer"));return;}
@@ -3591,8 +3624,8 @@ namespace
                 if(!feeling){answer(400,ApiError(L"unknown feeling (see /gestures)"));return;}
             }
             if(InBanter(m))EndBanter(L"another program has her say something");
-            Trace(L"%.1f api: say",app.clock);
-            SayFixed(m,said);
+            Trace(L"%.1f api: say%s",app.clock,sound.empty()?L"":L" with a sound");
+            SayFixed(m,said,std::move(sound));
             if(feeling)
             {
                 m.model.SetExpression(feeling->expression,false);

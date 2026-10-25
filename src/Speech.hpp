@@ -33,9 +33,14 @@ namespace MikuMikuDesktopPerch
         void Voiced(int id,VoiceClip* clip);  // a phrase came back from the voice (nullptr: failed)
         void Add(const std::wstring& text);   // more of the reply (as shown in the bubble)
         void Finish();                        // the reply is complete
+        // A line with a sound of its own (a 16-bit PCM WAV file, as DecodeAudio makes it), in
+        // any language: the text is revealed over the sound, and the mouth follows how loud it
+        // is (and, roughly, how bright: hissing sounds narrow the lips). Call Finish after it.
+        void Say(const std::wstring& text,std::string wav);
         void Tick(double dt);
 
-        bool Active() const {return !events.empty()||!pending.empty()||!waiting.empty();}
+        // (A moment past a sound's end, so the bubble is shown its last characters.)
+        bool Active() const {return !events.empty()||!pending.empty()||!waiting.empty()||clock<soundEnd+0.5;}
         bool Speaking() const;                // still moving the mouth
         double RevealedChars() const;         // how much of the text has been said
         // Weights for the あ い う え お ん morphs now.
@@ -59,6 +64,8 @@ namespace MikuMikuDesktopPerch
         std::vector<Chunk> chunks;
         std::vector<MotionTraceEditor::LipSyncCore::LyricEvent> events;
         std::array<std::vector<std::pair<float,float>>,6> curves;   // per mouth shape: (frame, value)
+        std::array<std::vector<std::pair<float,float>>,6> soundCurves;   // the same, from the loudness of sounds given to Say
+        double soundEnd=0;   // when the last sound given to Say ends (seconds)
         std::wstring pending;
         double clock=0;      // seconds since the reply started
         int nextFrame=0;     // where the next syllable goes, in 30 fps frames

@@ -4,6 +4,7 @@
 #include <oleauto.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <cwctype>
@@ -61,6 +62,45 @@ namespace MikuMikuDesktopPerch
                 if(c>=0x4E00&&c<=0x9FFF){out+=Syllables[c%5];out+=Syllables[(c/5)%5];}
             }
             return out;
+        }
+
+        // A curve's value at a frame: its keys interpolated linearly as MMD does between morph
+        // keys (0 before the first, the last value after the last).
+        float Sample(const std::vector<std::pair<float,float>>& curve,float frame)
+        {
+            if(curve.empty()||frame<curve.front().first)return 0;
+            if(frame>=curve.back().first)return curve.back().second;
+            const auto next=std::upper_bound(curve.begin(),curve.end(),frame,[](float f,const auto& key){return f<key.first;});
+            const auto prev=next-1;
+            const float t=(frame-prev->first)/std::max(1e-3f,next->first-prev->first);
+            return prev->second+(next->second-prev->second)*t;
+        }
+
+        // The 16-bit PCM in a WAV file: its format and samples (false when it is not that).
+        bool ReadPcm(const std::string& wav,WAVEFORMATEX& format,const std::int16_t*& samples,size_t& count)
+        {
+            if(wav.size()<12||wav.compare(0,4,"RIFF")!=0||wav.compare(8,4,"WAVE")!=0)return false;
+            bool haveFormat=false;
+            for(size_t at=12;at+8<=wav.size();)
+            {
+                std::uint32_t size=0;
+                std::memcpy(&size,wav.data()+at+4,4);
+                const size_t body=at+8;
+                if(body+size>wav.size())size=static_cast<std::uint32_t>(wav.size()-body);
+                if(wav.compare(at,4,"fmt ")==0&&size>=16)
+                {
+                    std::memcpy(&format,wav.data()+body,16);
+                    haveFormat=format.wFormatTag==WAVE_FORMAT_PCM&&format.wBitsPerSample==16&&format.nChannels>=1&&format.nSamplesPerSec>0;
+                }
+                else if(wav.compare(at,4,"data")==0&&haveFormat)
+                {
+                    samples=reinterpret_cast<const std::int16_t*>(wav.data()+body);
+                    count=size/2;
+                    return true;
+                }
+                at=body+size+(size&1);
+            }
+            return false;
         }
 
         bool IsPause(wchar_t c){return std::wstring(L"、。！？!?,.…\n").find(c)!=std::wstring::npos;}
@@ -290,6 +330,67 @@ namespace MikuMikuDesktopPerch
         dirty=true;
     }
 
+    void Speech::Say(const std::wstring& text,std::string wav)
+    {
+        WAVEFORMATEX format{};
+        const std::int16_t* samples=nullptr;
+        size_t count=0;
+        if(!ReadPcm(wav,format,samples,count)){Add(text);return;}   // said silently, as without a voice
+        const size_t channels=format.nChannels,frames=count/channels;
+        if(frames==0){Add(text);return;}
+        const double seconds=static_cast<double>(frames)/format.nSamplesPerSec;
+        nextFrame=std::max(nextFrame,static_cast<int>(clock*30.0)+1);
+        const int start=nextFrame;
+
+        // Per 1/30 s: how loud (RMS) and how bright (zero crossings a second, high for s, sh, f).
+        const size_t step=std::max<size_t>(1,format.nSamplesPerSec/30);
+        std::vector<float> loud,bright;
+        for(size_t first=0;first<frames;first+=step)
+        {
+            const size_t last=std::min(frames,first+step);
+            double sum=0;
+            int crossings=0;
+            float previous=0;
+            for(size_t i=first;i<last;++i)
+            {
+                float v=0;
+                for(size_t c=0;c<channels;++c)v+=samples[i*channels+c];
+                v/=static_cast<float>(channels)*32768.0f;
+                sum+=static_cast<double>(v)*v;
+                if(i>first&&(v>=0)!=(previous>=0))++crossings;
+                previous=v;
+            }
+            loud.push_back(static_cast<float>(std::sqrt(sum/static_cast<double>(last-first))));
+            bright.push_back(static_cast<float>(crossings*static_cast<double>(format.nSamplesPerSec)/static_cast<double>(last-first)));
+        }
+        // Loudness against the sound's own loudest parts (whatever its level): quiet gaps close
+        // the mouth. Each syllable stands out from its neighbours: the level is taken against
+        // its average over the last quarter second, so a run of loud syllables still opens and
+        // closes. Quick to open, slower to close.
+        std::vector<float> sorted(loud);
+        std::sort(sorted.begin(),sorted.end());
+        const float reference=std::max(1e-4f,sorted[std::min(sorted.size()-1,sorted.size()*97/100)]);
+        float open=0,average=0;   // keys go after those of an earlier sound (it has ended by start)
+        for(size_t f=0;f<loud.size();++f)
+        {
+            const float relative=std::min(1.0f,loud[f]/reference);
+            average+=(relative-average)*0.25f;
+            const float level=loud[f]<reference*0.08f?0.0f:std::clamp(std::pow(relative,1.2f)*(0.55f+0.9f*std::max(0.0f,relative-0.6f*average)),0.0f,1.0f);
+            open+=(level-open)*(level>open?0.75f:0.4f);
+            const float b=std::clamp((bright[f]-800.0f)/2500.0f,0.0f,1.0f);
+            const float frame=static_cast<float>(start+static_cast<int>(f));
+            soundCurves[0].push_back({frame,0.8f*open*(1.0f-0.6f*b)});   // あ
+            soundCurves[1].push_back({frame,0.8f*open*0.7f*b});          // い
+            soundCurves[4].push_back({frame,0.8f*open*0.3f*(1.0f-b)});   // お: a little rounding
+        }
+        for(auto& curve:soundCurves)curve.push_back({static_cast<float>(start+static_cast<int>(loud.size())),0.0f});
+
+        nextFrame=start+static_cast<int>(seconds*30.0+0.999);
+        sounds.push_back({std::move(wav),start/30.0,start/30.0+seconds,false});
+        chunks.push_back({text.size(),start/30.0,std::max(start/30.0+0.05,nextFrame/30.0)});
+        soundEnd=chunks.back().end;
+    }
+
     void Speech::Tick(double dt)
     {
         if(!Active())return;
@@ -313,7 +414,7 @@ namespace MikuMikuDesktopPerch
 
     bool Speech::Speaking() const
     {
-        if(!waiting.empty())return true;
+        if(!waiting.empty()||clock<soundEnd)return true;
         if(events.empty())return !pending.empty();
         return clock*30.0<events.back().frame+8||!pending.empty();
     }
@@ -331,19 +432,11 @@ namespace MikuMikuDesktopPerch
 
     std::array<float,6> Speech::Mouth() const
     {
-        // Each shape's keys, interpolated linearly as MMD does between morph keys.
+        // Each shape's keys (from the syllables, and from the loudness of a sound of its own).
         std::array<float,6> weights{};
         const float frame=static_cast<float>(clock*30.0);
         for(size_t channel=0;channel<curves.size();++channel)
-        {
-            const auto& curve=curves[channel];
-            if(curve.empty()||frame<curve.front().first)continue;
-            if(frame>=curve.back().first){weights[channel]=curve.back().second;continue;}
-            const auto next=std::upper_bound(curve.begin(),curve.end(),frame,[](float f,const auto& key){return f<key.first;});
-            const auto prev=next-1;
-            const float t=(frame-prev->first)/std::max(1e-3f,next->first-prev->first);
-            weights[channel]=prev->second+(next->second-prev->second)*t;
-        }
+            weights[channel]=std::max(Sample(curves[channel],frame),Sample(soundCurves[channel],frame));
         return weights;
     }
 }

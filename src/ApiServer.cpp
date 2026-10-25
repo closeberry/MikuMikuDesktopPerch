@@ -15,7 +15,7 @@ namespace MikuMikuDesktopPerch
     namespace
     {
         constexpr size_t MaxHeader=16*1024,MaxBody=64*1024;
-        constexpr size_t MaxMotionBody=16*1024*1024;   // a VMD sent as it is (POST /motion)
+        constexpr size_t MaxLargeBody=16*1024*1024;   // a VMD sent as it is (POST /motion), or a line with its sound (POST /say)
 
         std::string Lower(std::string_view text)
         {
@@ -176,12 +176,12 @@ namespace MikuMikuDesktopPerch
             }
         }
         if(origin||!hostOk||request->method=="OPTIONS"){Send(client,403,Error("only programs on this computer may use the API, not web pages"));return;}
-        const bool motion=request->path=="/motion"&&request->contentType=="application/octet-stream";
-        if(length>(motion?MaxMotionBody:MaxBody))
+        const bool large=(request->path=="/motion"&&request->contentType=="application/octet-stream")||request->path=="/say";
+        if(length>(large?MaxLargeBody:MaxBody))
         {
             // Read (and drop) what is being sent first, up to a point: a client still sending
             // when the connection closes sees it cut, not the answer.
-            for(size_t left=length-std::min(length,data.size()-headEnd-4);left>0&&length<=4*MaxMotionBody;)
+            for(size_t left=length-std::min(length,data.size()-headEnd-4);left>0&&length<=4*MaxLargeBody;)
             {
                 const int n=recv(client,buffer,sizeof(buffer),0);
                 if(n<=0)break;

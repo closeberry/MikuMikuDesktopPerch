@@ -86,6 +86,7 @@
     <ClCompile Include="src\third_party\TgaLoader.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ApiServer.cpp" />
+    <ClCompile Include="src\AudioDecode.cpp" />
     <ClCompile Include="src\ChatWindows.cpp" />
     <ClCompile Include="src\LocalChat.cpp" />
     <ClCompile Include="src\Voice.cpp" />
@@ -117,6 +118,7 @@
     <ClInclude Include="src\Calendar.hpp" />
     <ClInclude Include="src\Updater.hpp" />
     <ClInclude Include="src\ApiServer.hpp" />
+    <ClInclude Include="src\AudioDecode.hpp" />
     <ClInclude Include="src\Text.hpp" />
     <ClInclude Include="src\Log.hpp" />
     <ClInclude Include="src\ChatWindows.hpp" />
