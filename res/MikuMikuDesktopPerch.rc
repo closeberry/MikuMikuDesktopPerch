@@ -38,8 +38,8 @@ END
 // Their labels for the settings (UTF-8 lines: name, tab, Japanese, tab, English):
 NAMES IDLECLIPNAMES "idle\\names.txt"
 
-// By Aki (see README): the upper arms swung forward where a forearm met the chest, and the
-// bones and morphs of the model they were made on left out.
+// By Aki (see README): the upper arms swung forward where a forearm met the chest, the eyes'
+// side-to-side turn halved, and the bones and morphs of the model they were made on left out.
 YAWN IDLECLIP "idle\\yawn.vmd"
 HMM IDLECLIP "idle\\hmm.vmd"
 SORRY IDLECLIP "idle\\sorry.vmd"

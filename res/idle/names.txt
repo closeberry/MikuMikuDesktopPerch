@@ -1,4 +1,4 @@
-YAWN	あくび	Yawn
-HMM	うーん、あっ！	Hmm... oh!
-SORRY	すみません	Excuse me
-LEAN	よりかかる	Leaning
+YAWN	あくび	Yawn	絢姫	AKI
+HMM	うーん、あっ！	Hmm... oh!	絢姫	AKI
+SORRY	すみません	Excuse me	絢姫	AKI
+LEAN	よりかかる	Leaning	絢姫	AKI

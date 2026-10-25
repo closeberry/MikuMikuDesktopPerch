@@ -11,7 +11,7 @@
 ### Changes
 
 - Up to 6 characters at once instead of 4 (the load grows about in step with their number)
-- Four built-in idle motions: a yawn, "Hmm... oh!", "Excuse me" and leaning (by 絢姫 (AKI)). "Gestures..." in the settings chooses whether to use them
+- Four built-in idle motions: a yawn, "Hmm... oh!", "Excuse me" and leaning (by 絢姫 (AKI)). "Gestures..." in the settings lists them with their author and chooses whether to use them
 - The log notes the drawing settings (antialiasing, motion blur) and whether the model is drawn 3 seconds after starting
 
 ## 1.2.3

@@ -172,8 +172,9 @@ namespace MikuMikuDesktopPerch
         // Built-in idle clips: the exe's resources of type IDLECLIP (by name, which the
         // resource compiler upper-cases), written to files under %TEMP% (the VMD loader reads
         // files), then any VMD files diagnostics added. Their labels come from the NAMES
-        // resource of type IDLECLIPNAMES (UTF-8 lines: name, tab, Japanese, tab, English).
-        struct ClipEntry {std::wstring key,path,japanese,english;};
+        // resource of type IDLECLIPNAMES (UTF-8 lines: name, tab, Japanese, tab, English, and
+        // optionally tab, the author in Japanese, tab, in English).
+        struct ClipEntry {std::wstring key,path,japanese,english,authorJapanese,authorEnglish;};
         std::vector<std::wstring>& ExtraClipFiles(){static std::vector<std::wstring> files;return files;}
         std::vector<ClipEntry> BuiltinClipEntries()
         {
@@ -218,14 +219,25 @@ namespace MikuMikuDesktopPerch
                                 start=end+1;
                                 if(!line.empty()&&line.back()==L'\r')line.pop_back();
                                 if(!line.empty()&&line[0]==0xFEFF)line.erase(0,1);
-                                const size_t tab1=line.find(L'\t');
-                                if(line.empty()||line[0]==L'#'||tab1==std::wstring::npos)continue;
-                                const size_t tab2=line.find(L'\t',tab1+1);
-                                const std::wstring key=line.substr(0,tab1);
-                                const std::wstring japanese=line.substr(tab1+1,tab2==std::wstring::npos?std::wstring::npos:tab2-tab1-1);
-                                const std::wstring english=tab2==std::wstring::npos?japanese:line.substr(tab2+1);
+                                if(line.empty()||line[0]==L'#')continue;
+                                std::vector<std::wstring> fields;
+                                for(size_t from=0;;)
+                                {
+                                    const size_t tab=line.find(L'\t',from);
+                                    fields.push_back(line.substr(from,tab==std::wstring::npos?std::wstring::npos:tab-from));
+                                    if(tab==std::wstring::npos)break;
+                                    from=tab+1;
+                                }
+                                if(fields.size()<2)continue;
+                                fields.resize(5);
                                 for(auto& e:files)
-                                    if(_wcsicmp(e.key.c_str(),key.c_str())==0){e.japanese=japanese;e.english=english.empty()?japanese:english;}
+                                    if(_wcsicmp(e.key.c_str(),fields[0].c_str())==0)
+                                    {
+                                        e.japanese=fields[1];
+                                        e.english=fields[2].empty()?fields[1]:fields[2];
+                                        e.authorJapanese=fields[3];
+                                        e.authorEnglish=fields[4].empty()?fields[3]:fields[4];
+                                    }
                             }
                         }
                 return files;
@@ -1259,7 +1271,11 @@ namespace MikuMikuDesktopPerch
     {
         auto list=GeneratedMotion::IdleGestureList();
         for(const auto& e:BuiltinClipEntries())
-            list.push_back({L"clip:"+e.key,Fmt(T(L"モーション：{0}",L"Motion: {0}"),{T(e.japanese.c_str(),e.english.c_str())})});
+        {
+            std::wstring label=Fmt(T(L"モーション：{0}",L"Motion: {0}"),{T(e.japanese.c_str(),e.english.c_str())});
+            if(!e.authorJapanese.empty())label+=Fmt(T(L"（{0} 様）",L" (by {0})"),{T(e.authorJapanese.c_str(),e.authorEnglish.c_str())});
+            list.push_back({L"clip:"+e.key,label});
+        }
         return list;
     }
 
