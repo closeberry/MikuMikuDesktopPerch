@@ -6,7 +6,7 @@ namespace MikuMikuDesktopPerch
 {
     // What belongs to one character on the desktop: its model, its motions, its place and its
     // voice. Character 1 is kept in the [Mascot] section (where a single
-    // mascot's settings always were), characters 2 to 4 in [Mascot2] .. [Mascot4].
+    // mascot's settings always were), characters 2 to 6 in [Mascot2] .. [Mascot6].
     struct CharacterSettings
     {
         std::wstring modelPath;
@@ -28,7 +28,7 @@ namespace MikuMikuDesktopPerch
     // MikuMikuDesktopPerch.ini next to the executable (UTF-16LE so Japanese paths survive).
     struct Settings
     {
-        static constexpr int MaxCharacters=4;
+        static constexpr int MaxCharacters=6;
         // At least one; the first is the one the app started with.
         std::vector<CharacterSettings> characters{CharacterSettings{}};
         std::wstring toonDir;       // folder holding toon01.bmp..toon10.bmp (MMD's Data folder)

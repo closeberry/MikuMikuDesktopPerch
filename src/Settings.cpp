@@ -34,7 +34,7 @@ namespace MikuMikuDesktopPerch
             WritePrivateProfileStringW(section,key,value.c_str(),path.c_str());
         }
 
-        // Character 1 in [Mascot], the others in [Mascot2] .. [Mascot4].
+        // Character 1 in [Mascot], the others in [Mascot2] .. [Mascot6].
         std::wstring CharacterSection(size_t index)
         {
             return index==0?std::wstring(Section):std::wstring(Section)+std::to_wstring(index+1);
@@ -105,7 +105,7 @@ namespace MikuMikuDesktopPerch
 
     void Settings::Load(const std::wstring& path)
     {
-        // Characters 2 to 4 go as far as the first without a model.
+        // Characters 2 to 6 go as far as the first without a model.
         characters.assign(1,CharacterSettings{});
         LoadCharacter(path,Section,characters[0]);
         for(size_t i=1;i<MaxCharacters;++i)

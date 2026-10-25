@@ -2,6 +2,16 @@
 
 [日本語](ReleaseNotes.md)
 
+## Next version (unreleased)
+
+### Fixes
+
+- Part of the speech bubble could be hidden behind the character's head; it now always shows in front of the characters
+
+### Changes
+
+- Up to 6 characters at once instead of 4 (the load grows about in step with their number)
+
 ## 1.2.3
 
 ### Fixes

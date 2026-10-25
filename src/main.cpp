@@ -293,6 +293,7 @@ namespace
     }
 
     void SaveWindowPosition(Mascot& m);
+    void RaiseOverlays();
 
     // Behaviour trace for diagnosis: written only when MIKUMIKUDESKTOPPERCH_LOG names a file.
     void Trace(const wchar_t* format,...)
@@ -1029,6 +1030,7 @@ namespace
             SetWindowPos(m.hwnd,m.surfaceWindow,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER);
         }
         else SetWindowPos(m.hwnd,app.settings.topmost?HWND_TOPMOST:HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER);
+        RaiseOverlays();
     }
 
     void UpdateWindowMode(Mascot& m,double dt)
@@ -1256,12 +1258,19 @@ namespace
     // Clicking the taskbar raises it above other topmost windows, mascot included. Put the
     // mascot back on top, but never over shell overlays (Start menu, flyouts, notifications),
     // which are topmost windows of their own when they take the foreground.
-    // The update question's answer box stays over the characters (topmost as well, they are
-    // put back on top now and then).
-    void RaiseAnswerBox()
+    // The speech bubbles, the chat inputs and the answer boxes stay over the characters (topmost
+    // as well, they are put back on top now and then). Raising a character's window leaves the
+    // windows it owns where they were (SWP_NOOWNERZORDER), and its stage covers the work area:
+    // without this, her own head would cover her bubble.
+    void RaiseOverlays()
     {
-        for(HWND box:{app.updateChoice.Handle(),app.alarmChoice.Handle()})
-            if(box)SetWindowPos(box,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        std::vector<HWND> windows;
+        for(const auto& m:app.mascots)windows.push_back(m->bubble.Visible()?m->bubble.Handle():nullptr);
+        for(const auto& m:app.mascots)windows.push_back(m->chatInput.Handle());
+        windows.push_back(app.updateChoice.Handle());
+        windows.push_back(app.alarmChoice.Handle());
+        for(HWND window:windows)
+            if(window)SetWindowPos(window,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
     }
 
     bool IsMascotWindow(HWND window)
@@ -1283,7 +1292,7 @@ namespace
         for(const auto& m:app.mascots)
             if(m->hwnd&&!m->behindSurface)
                 SetWindowPos(m->hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER);
-        RaiseAnswerBox();
+        RaiseOverlays();
     }
 
     void CALLBACK OnForegroundChanged(HWINEVENTHOOK,DWORD,HWND,LONG,LONG,DWORD,DWORD)
@@ -3308,7 +3317,7 @@ namespace
                     m.model.SetActivity(Activity::Grabbed);
                     // Picked up: over the other characters.
                     if(app.settings.topmost)SetWindowPos(m.hwnd,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOOWNERZORDER);
-                    RaiseAnswerBox();
+                    RaiseOverlays();
                 }
                 if(m.place==Place::Held)MoveWindowTo(m,cursor.x-m.dragOffset.x,cursor.y-m.dragOffset.y);
             }
@@ -3680,6 +3689,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     bool snapshotPlayMotion=false;            // --play-motion: play the opened motion at once
     int snapshotWalk=0;                       // --walk <px>: walk that far 3 s after start
     int snapshotShove=0;                      // --shove <px>: moved that far 2 s after start
+    std::wstring snapshotSay;                 // --say <text>: said in the bubble 1 s after start
     int snapshotClick=0;                      // --click head|body: 1 head, 2 body, 1.5 s after start
     {
         int argc=0;
@@ -3727,6 +3737,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--walk"&&i+1<argc)
             {
                 snapshotWalk=_wtoi(argv[++i]);
+            }
+            else if(arg==L"--say"&&i+1<argc)
+            {
+                snapshotSay=argv[++i];
             }
             else if(arg==L"--shove"&&i+1<argc)
             {
@@ -4084,6 +4098,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     QueryPerformanceCounter(&last);
     lastFullscreenCheck=last;
 
+    // Frame pacing in the trace: frames drawn, the longest gap and the time spent on the
+    // characters each frame (update and draw), every 10 seconds.
+    struct Pace {int frames=0;double longest=0,work=0,since=0;} pace;
     bool running=true;
     while(running)
     {
@@ -4122,6 +4139,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.paused)continue;
 
         app.clock+=dt;
+        LARGE_INTEGER workStart{};
+        QueryPerformanceCounter(&workStart);
         MaybeRestartAfterUpdate();
         if(app.restart)continue;   // quitting: the loop picks up WM_QUIT next
         if(!forcedActivity){MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
@@ -4219,6 +4238,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     Trace(L"%.1f diagnostic click: %s (activity %d)",app.clock,reacted?L"reacts":L"no reaction",static_cast<int>(m.model.CurrentActivity()));
                     m.diagnosticClick=0;
                 }
+                if(!snapshotSay.empty()&&&m==&first&&app.clock>1.0)
+                {
+                    SayFixed(m,snapshotSay);
+                    snapshotSay.clear();
+                }
                 if(m.diagnosticShove&&app.clock>2.0)
                 {
                     Trace(L"%.1f diagnostic shove from x=%.0f by %d",app.clock,CenterX(m),m.diagnosticShove);
@@ -4278,6 +4302,19 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             m.renderer.Render(m.model,app.settings.edgeScale);
         }
         // The GPU is shared: once it stops, no character is drawn until the app starts again.
+        {
+            LARGE_INTEGER workEnd{};
+            QueryPerformanceCounter(&workEnd);
+            ++pace.frames;
+            pace.longest=std::max(pace.longest,dt);
+            pace.work+=Seconds(workStart,workEnd,frequency);
+            if((pace.since+=dt)>=10)
+            {
+                Trace(L"%.1f %zu characters: %.1f fps, longest frame %.0f ms, work %.1f ms a frame",app.clock,app.mascots.size(),
+                      pace.frames/pace.since,pace.longest*1000,pace.work*1000/pace.frames);
+                pace={};
+            }
+        }
         HRESULT lost=S_OK;
         for(const auto& m:app.mascots)if(m->renderer.DeviceLost()!=S_OK)lost=m->renderer.DeviceLost();
         if(lost!=S_OK&&!app.deviceLostTold&&!app.diagnostic)

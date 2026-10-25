@@ -35,6 +35,7 @@ namespace MikuMikuDesktopPerch
         // Where it was last drawn (body and name tag, screen pixels); false while hidden.
         bool Placed(RECT& rect) const {rect=placed;return visible&&!fading&&placed.right>placed.left;}
         double Age() const {return clock;}   // seconds since it popped up
+        HWND Handle() const {return window;}
 
         // Per frame: advance the animations, the reveal and the hide timer, and place the
         // bubble so its tail points at anchor (the top of the head, screen pixels), inside
