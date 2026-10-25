@@ -2,6 +2,17 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.2.7
+
+### New
+
+- **Choose the GPU to draw on**: "GPU for drawing" under Advanced in the settings. Choose "Auto" or one of this PC's GPUs by name (the one in use is marked). On a laptop with an integrated and a discrete GPU, if something looks wrong on one, try the other
+
+### Changes
+
+- "Auto" uses the GPU Windows picks for this app (changed in Settings > System > Display > Graphics). Until now, the power-saving GPU was always used
+- The log lists every GPU found and the one chosen in the settings
+
 ## 1.2.6
 
 ### New
