@@ -2,9 +2,19 @@
 
 [日本語](ReleaseNotes.md)
 
-## Next version (unreleased)
+## 1.2.3
+
+### Fixes
+
+- Some models loaded but did not show. A hidden accessory or stray vertices placed far away made the window larger than the screen, with the character pushed off it. The size and place are now measured on the vertices of drawn materials near the skeleton only
+- 32-bit TGA and BMP textures whose alpha is 0 everywhere are taken as opaque (they look as in MMD, instead of the material vanishing)
+- When the GPU stops responding and nothing can be drawn, the app says so and asks whether to restart
 
 ### Changes
+
+- With several monitors, the app starts on the one with the mouse cursor
+- Let go past the edge of the screen, a character comes running back onto it
+- A log for looking into problems: `%LOCALAPPDATA%\MikuMikuDesktopPerch\log.txt` (the last run's in `log.old.txt`; two files at most, 512 KB each). When a model does not show, please attach it when telling about it
 
 - When updating, the app restarts after the character has finished their line
 - "Gestures..." under Motion in the settings: check only the idle gestures (and built-in idle motions) to use. All are used by default, including ones added later
