@@ -168,6 +168,21 @@ namespace MikuMikuDesktopPerch
         voiceDirect=ReadInt(path,L"VoiceDirect",voiceDirect?1:0)!=0;
         voiceFolder=ReadString(path,L"VoiceFolder",voiceFolder);
         lastGreeting=ReadString(path,L"LastGreeting",lastGreeting);
+        // BanterN: first, second, topic, opener and the opening, separated by tabs.
+        recentBanters.clear();
+        for(size_t i=1;i<=MaxBanterRecords;++i)
+        {
+            const std::wstring line=ReadString(path,(L"Banter"+std::to_wstring(i)).c_str(),{});
+            std::vector<std::wstring> fields;
+            for(size_t start=0;start<=line.size();)
+            {
+                const size_t end=std::min(line.find(L'\t',start),line.size());
+                fields.push_back(line.substr(start,end-start));
+                start=end+1;
+            }
+            if(fields.size()!=5||fields[0].empty())continue;
+            recentBanters.push_back({fields[0],fields[1],_wtoi(fields[2].c_str()),_wtoi(fields[3].c_str()),fields[4]});
+        }
         edgeScale=std::clamp(static_cast<float>(_wtof(ReadString(path,L"EdgeScale",std::to_wstring(edgeScale)).c_str())),0.0f,10.0f);
     }
 
@@ -231,6 +246,13 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"VoiceDirect",voiceDirect?L"1":L"0");
         WriteString(path,L"VoiceFolder",voiceFolder);
         WriteString(path,L"LastGreeting",lastGreeting);
+        for(size_t i=0;i<MaxBanterRecords;++i)
+        {
+            const std::wstring key=L"Banter"+std::to_wstring(i+1);
+            if(i>=recentBanters.size()){WritePrivateProfileStringW(Section,key.c_str(),nullptr,path.c_str());continue;}
+            const BanterRecord& r=recentBanters[i];
+            WriteString(path,key.c_str(),r.first+L"\t"+r.second+L"\t"+std::to_wstring(r.topic)+L"\t"+std::to_wstring(r.opener)+L"\t"+r.opening);
+        }
         wchar_t edge[32]{};
         swprintf_s(edge,L"%.2f",edgeScale);
         WriteString(path,L"EdgeScale",edge);

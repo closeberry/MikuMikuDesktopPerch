@@ -96,6 +96,17 @@ namespace MikuMikuDesktopPerch
         std::wstring voiceFolder;   // where VOICEVOX is installed
         std::wstring voiceEndpoint=L"http://127.0.0.1:50021";
         std::wstring lastGreeting;  // the last time-of-day greeting (date and slot), so a restart does not repeat it
+        // The latest chats between two characters (oldest first), so the next ones go
+        // elsewhere: who talked, the topic and the way to start (their places in the app's
+        // lists), and how it began (the first lines).
+        struct BanterRecord
+        {
+            std::wstring first,second;
+            int topic=-1,opener=-1;
+            std::wstring opening;
+        };
+        static constexpr size_t MaxBanterRecords=12;
+        std::vector<BanterRecord> recentBanters;
 
         static std::wstring DefaultPath();
         void Load(const std::wstring& path);

@@ -241,7 +241,8 @@ namespace
             Mascot* speaker=nullptr;   // whose line is being said, or comes next
             bool lineStarted=false;
             int linesLeft=0;
-            std::wstring topic;
+            std::wstring topic,opener;
+            int topicIndex=-1,openerIndex=-1;   // in BanterTopics, BanterOpeners
             std::vector<std::pair<std::wstring,std::wstring>> lines;   // who said it, the line
             double since=0,nextLineAt=0;
         } banter;
@@ -2111,16 +2112,52 @@ namespace
 
     // ---- Characters talking with each other -----------------------------------------------
 
-    // What two characters may start talking about (the prompt adds the date and time).
+    // What two characters may start talking about (the prompt adds the date and time). The
+    // recent chats' topics are not picked again (see PickBanterTopic).
     constexpr const wchar_t* BanterTopics[]={
         L"いまの季節や天気のこと",L"好きな食べ物やおやつのこと",L"最近気になっていること",L"休みの日にしてみたいこと",
-        L"デスクトップの上での暮らしのこと",L"このパソコンの持ち主（いつも話しかけてくれる人）のこと",
-        L"相手に前から聞いてみたかったこと",L"いまの時間帯にちなんだこと",L"好きな音楽や歌のこと",L"ちょっとした思い出話"};
+        L"デスクトップの上での暮らしのこと",L"このパソコンの持ち主（いつも話しかけてくれる人）のこと",L"相手に前から聞いてみたかったこと",L"いまの時間帯にちなんだこと",
+        L"好きな音楽や歌のこと",L"ちょっとした思い出話",L"見てみたい景色",L"苦手なもの",
+        L"もし一日だけ人間の世界に出られたら",L"最近覚えた言葉",L"相手のいいところ",L"理想の休憩のしかた",
+        L"画面の中から見えるもの（アイコンやウィンドウ）",L"子どものころの夢",L"ちょっとした失敗談",L"好きな言葉や口ぐせ",
+        L"行ってみたい場所",L"自分を動物にたとえると",L"今日がんばったこと",L"得意なこと",
+        L"ちょっとした秘密（話せる範囲で）",L"好きな色や服",L"もし魔法がひとつ使えたら",L"朝型か夜型か",
+        L"最近笑ったこと",L"ふたりで一緒にやってみたいこと",L"好きな季節の行事",L"眠れない夜にすること",
+        L"小さな幸せ",L"ゲームや遊びのこと",L"本や物語のこと",L"雨の日の過ごし方",
+        L"好きな飲み物",L"持ち主に内緒で話したいこと（やさしい話）",L"宇宙や星のこと",L"デスクトップの中のお気に入りの場所",
+        L"これからの夢",L"今日の日付にちなんだこと（記念日や季節の行事）",L"ちょっとした豆知識",L"なんでもない雑談（特にテーマなし）",L"相手のまねをしてみる"
+    };
     constexpr const wchar_t* EnglishBanterTopics[]={
-        L"the season and the weather",L"favorite foods and snacks",L"something on your mind lately",L"what you would like to do on a day off",
-        L"life on the desktop",L"the owner of this computer (who always talks to you)",
-        L"something you have long wanted to ask the other",L"something about this time of day",L"favorite music and songs",L"a little memory"};
+        L"the season and the weather",L"favorite foods and snacks",L"something on your mind lately",
+        L"what you would like to do on a day off",L"life on the desktop",L"the owner of this computer (who always talks to you)",
+        L"something you have long wanted to ask the other",L"something about this time of day",L"favorite music and songs",
+        L"a little memory",L"a view you would like to see",L"something you are not good with",
+        L"if you could go out into the human world for a day",L"a word you learned recently",L"something you like about the other",
+        L"your ideal way to take a break",L"what you can see from inside the screen (icons, windows)",L"a childhood dream",
+        L"a small blunder",L"a favorite phrase or saying",L"a place you would like to go",
+        L"which animal you would each be",L"something you did your best at today",L"something you are good at",
+        L"a little secret (as much as you can tell)",L"favorite colors and clothes",L"if you could use one spell",
+        L"morning person or night owl",L"something that made you laugh lately",L"something to try together",
+        L"a seasonal event you like",L"what you do on a sleepless night",L"a small happiness",
+        L"games and play",L"books and stories",L"how to spend a rainy day",
+        L"favorite drinks",L"something to say behind the owner's back (kindly)",L"space and stars",
+        L"a favorite spot on the desktop",L"a dream for the future",L"something about today's date (a day of note or a seasonal event)",L"a bit of trivia",
+        L"idle chit-chat about nothing in particular",L"imitating each other"
+    };
     static_assert(std::size(BanterTopics)==std::size(EnglishBanterTopics));
+    // How the first line starts the chat, picked at random alongside the topic.
+    constexpr const wchar_t* BanterOpeners[]={
+        L"質問をして",L"ちょっとした自慢をして",L"相手を軽くからかって",L"クイズを出して",
+        L"小さな悩みを打ち明けて",L"最近気づいたことを話して",L"相手をほめて",L"「もしも〜だったら」という話をふって",
+        L"意見が分かれそうなことを聞いて",L"ふと思い出したことを話して",L"提案や誘いをして",L"独り言のようにつぶやいて"
+    };
+    constexpr const wchar_t* EnglishBanterOpeners[]={
+        L"by asking a question",L"with a small boast",L"by teasing them a little",
+        L"with a quiz",L"by confiding a small worry",L"with something you noticed lately",
+        L"by complimenting them",L"with a \"what if\"",L"by asking something you two may disagree on",
+        L"with something that just came to mind",L"with a suggestion or an invitation",L"by musing aloud"
+    };
+    static_assert(std::size(BanterOpeners)==std::size(EnglishBanterOpeners));
 
     // Someone is saying something, about to, or being talked to: nobody else starts talking.
     bool AnyoneTalking()
@@ -2134,6 +2171,22 @@ namespace
         auto& b=app.banter;
         if(b.stage==App::Banter::Stage::None)return;
         Trace(L"%.1f banter ends: %s",app.clock,why);
+        // Kept (with its first two lines) so the next chats go elsewhere.
+        if(!b.lines.empty()&&b.first&&b.second)
+        {
+            std::wstring opening;
+            for(size_t i=0;i<std::min<size_t>(b.lines.size(),2);++i)
+            {
+                std::wstring said=b.lines[i].second;
+                if(said.size()>60)said=said.substr(0,60)+L"…";
+                opening+=(opening.empty()?L"":L" / ")+b.lines[i].first+L"："+said;
+            }
+            for(wchar_t& c:opening)if(c==L'\t'||c==L'\r'||c==L'\n')c=L' ';
+            auto& recent=app.settings.recentBanters;
+            recent.push_back({b.first->character.name,b.second->character.name,b.topicIndex,b.openerIndex,opening});
+            if(recent.size()>Settings::MaxBanterRecords)recent.erase(recent.begin(),recent.end()-Settings::MaxBanterRecords);
+            app.settings.Save(app.settingsPath);
+        }
         for(Mascot* m:{b.first,b.second})
             if(m&&m->banterLine)
             {
@@ -2168,6 +2221,39 @@ namespace
                !MotionBusy(c)&&!c.dozing&&!c.chatInput.IsOpen();
     }
 
+    // A place in a list of count, at random, but not one the latest chats used (the last
+    // `recent` of them, whoever talked).
+    template<class Field> int PickAvoiding(size_t count,Field field,size_t recent)
+    {
+        const auto& records=app.settings.recentBanters;
+        std::vector<int> choices;
+        for(int i=0;i<static_cast<int>(count);++i)
+            if(std::none_of(records.end()-static_cast<std::ptrdiff_t>(std::min(recent,records.size())),records.end(),
+                            [&](const Settings::BanterRecord& r){return field(r)==i;}))choices.push_back(i);
+        if(choices.empty())for(int i=0;i<static_cast<int>(count);++i)choices.push_back(i);
+        return choices[std::min(choices.size()-1,static_cast<size_t>(app.Random01()*choices.size()))];
+    }
+
+    // What these two talked about lately (at most 3, oldest first), for the prompt: so they do
+    // not go over the same ground again.
+    std::wstring RecentBanters(const Mascot& a,const Mascot& b)
+    {
+        std::vector<const Settings::BanterRecord*> theirs;
+        for(const auto& r:app.settings.recentBanters)
+            if((r.first==a.character.name&&r.second==b.character.name)||(r.first==b.character.name&&r.second==a.character.name))theirs.push_back(&r);
+        if(theirs.size()>3)theirs.erase(theirs.begin(),theirs.end()-3);
+        std::wstring text;
+        for(const auto* r:theirs)
+        {
+            const bool known=r->topic>=0&&r->topic<static_cast<int>(std::size(BanterTopics));
+            const std::wstring topic=known?(English()?EnglishBanterTopics[r->topic]:BanterTopics[r->topic]):std::wstring(L"?");
+            text+=English()?L"- About "+topic+L". It began: "+r->opening+L"\n":L"- 話題："+topic+L"　始まり："+r->opening+L"\n";
+        }
+        if(text.empty())return text;
+        return T(L"\n最近の二人のおしゃべり（同じ話をくり返さないで。話の中身も、言い回しも、始め方も変えてください）：\n",
+                 L"\nWhat you two talked about lately (do not repeat it: change what you talk about, how you say it, and how you begin):\n")+text;
+    }
+
     // Two characters free to talk get together: the second walks over to stand beside the
     // first (on the side she comes from, if there is room), or warps there from another
     // surface. False when no two can.
@@ -2198,10 +2284,12 @@ namespace
         b.stage=App::Banter::Stage::Gathering;
         b.first=&first;b.second=&second;
         b.since=app.clock;
-        const size_t topic=std::min(std::size(BanterTopics)-1,static_cast<size_t>(app.Random01()*std::size(BanterTopics)));
-        b.topic=English()?EnglishBanterTopics[topic]:BanterTopics[topic];
+        b.topicIndex=PickAvoiding(std::size(BanterTopics),[](const Settings::BanterRecord& r){return r.topic;},8);
+        b.topic=English()?EnglishBanterTopics[b.topicIndex]:BanterTopics[b.topicIndex];
+        b.openerIndex=PickAvoiding(std::size(BanterOpeners),[](const Settings::BanterRecord& r){return r.opener;},3);
+        b.opener=English()?EnglishBanterOpeners[b.openerIndex]:BanterOpeners[b.openerIndex];
         b.linesLeft=4+static_cast<int>(app.Random01()*3);   // 4 to 6 lines
-        Trace(L"%.1f banter: %s and %s, %d lines about %s",app.clock,first.character.name.c_str(),second.character.name.c_str(),b.linesLeft,b.topic.c_str());
+        Trace(L"%.1f banter: %s and %s, %d lines about %s, starting %s",app.clock,first.character.name.c_str(),second.character.name.c_str(),b.linesLeft,b.topic.c_str(),b.opener.c_str());
         const bool sameSurface=second.surfaceWindow==first.surfaceWindow&&std::abs(FeetLine(second)-FeetLine(first))<4;
         if(sameSurface)
         {
@@ -2246,12 +2334,12 @@ namespace
                 L"You are now chatting with \""+other+L"\", who is beside you on the desktop. \""+other+L"\" is like this:\n"+otherPersona+L"\n\n"+
                 (user.empty()?std::wstring(L"The owner of this computer (who always talks to you both) is watching you two.\n")
                              :L"The owner of this computer (who always talks to you both) is called \""+user+L"\" and is watching you two.\n")+
-                remembered+
+                remembered+RecentBanters(m,partner)+
                 L"It is now "+clock+L". What got the chat going: "+b.topic+L"\n"
                 L"Your line appears in a speech bubble over your head. Write only your own (\""+name+L"\") line, in English: one short, casual spoken line of one or two sentences. "
                 L"Do not write \""+other+L"\"'s lines, names, stage directions or anything in ( ). Do not use Markdown, lists, emoji or emoticons.\n"
                 L"Begin your line with how you feel, as exactly one of "+FeelingTags()+L"(for example: [smile] Hey, guess what!)."});
-            if(b.lines.empty())ask=L"Speak to \""+other+L"\" and start the chat.";
+            if(b.lines.empty())ask=L"Speak to \""+other+L"\" and start the chat, "+b.opener+L".";
             else
             {
                 ask=L"The chat so far:\n";
@@ -2268,12 +2356,12 @@ namespace
                 L"いま、デスクトップの上で、となりにいる「"+other+L"」とおしゃべりしています。「"+other+L"」は、こんな人です：\n"+otherPersona+L"\n\n"+
                 (user.empty()?std::wstring(L"このパソコンの持ち主（いつも二人に話しかけてくれる人）が、二人の様子を見ています。\n")
                              :L"このパソコンの持ち主（いつも二人に話しかけてくれる人）の名前は「"+user+L"」で、二人の様子を見ています。\n")+
-                remembered+
+                remembered+RecentBanters(m,partner)+
                 L"いまは"+clock+L"です。おしゃべりのきっかけ："+b.topic+L"\n"
                 L"あなたのセリフは、あなたの頭上の吹き出しに表示されます。あなた（「"+name+L"」）のセリフを1つだけ、1〜2文の短い話し言葉で書いてください。"
                 L"「"+other+L"」のセリフ、名前、ト書き、（ ）書きは書かないでください。Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
                 L"セリフのいちばん最初に、そのときの気持ちを"+FeelingTags()+L"のどれか1つで書いてください（例：［笑顔］ねえ、聞いて！）。"});
-            if(b.lines.empty())ask=L"あなたから「"+other+L"」に話しかけて、おしゃべりを始めてください。";
+            if(b.lines.empty())ask=L"あなたから「"+other+L"」に"+b.opener+L"、おしゃべりを始めてください。";
             else
             {
                 ask=L"ここまでの二人の会話：\n";
