@@ -12,6 +12,7 @@ namespace MikuMikuDesktopPerch
         struct Level { unsigned width=0,height=0; std::vector<std::uint8_t> pixels; };
         std::vector<Level> levels;
         bool hasAlpha=false;
+        bool alphaIgnored=false;   // its alpha was 0 everywhere, so it was taken as opaque
     };
 
     // bmp/png/jpg/gif/tif through WIC, tga through the copied MTE decoder.

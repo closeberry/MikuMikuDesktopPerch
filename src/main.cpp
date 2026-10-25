@@ -14,6 +14,7 @@
 #include "PlannerWindow.hpp"
 #include "Updater.hpp"
 #include "Text.hpp"
+#include "Log.hpp"
 #include <windows.h>
 #include <windowsx.h>
 #include <mmsystem.h>
@@ -140,6 +141,7 @@ namespace
 
         Extent extent;
         double extentCheck=0,extentCalm=0;
+        double offscreenFor=0;        // seconds standing off the screen (see ReturnOnScreen)
 
         // The surface under the feet: a window's top edge, or the ground line when null.
         HWND surfaceWindow=nullptr;
@@ -166,6 +168,7 @@ namespace
         bool behindSurface=false;     // hanging: the window sits just behind the surface window
         double hangEndedAt=-1;
         int diagnosticWalk=0;                     // --walk <px>: walk that far 3 s after start
+        int diagnosticShove=0;                    // --shove <px>: moved that far 2 s after start (off the screen too)
         int diagnosticClick=0;                    // --click head|body: 1 head, 2 body, 1.5 s after start
 
         // Ground behaviour.
@@ -264,6 +267,7 @@ namespace
         std::set<std::wstring> eventsTold;
         double nextCalendarFetch=15;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
+        bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
         float Random01(){random^=random<<13;random^=random>>17;random^=random<<5;return (random&0xFFFFFF)/16777216.0f;}
@@ -726,6 +730,31 @@ namespace
         }
     }
 
+    // Standing off the screen (let go past its edge, or her monitor is gone): she comes running
+    // back. From far off she is first put just past the edge, out of sight, so the run is short.
+    void ReturnOnScreen(Mascot& m,double dt)
+    {
+        const bool settled=m.place==Place::Ground&&m.travel==Travel::None&&!m.surfaceWindow&&!m.dozing&&
+                           m.model.CurrentActivity()==Activity::Idle&&!m.model.Reacting()&&!m.model.MotionPlaying()&&m.model.IdleMotionAtBreak();
+        const RECT work=WorkAreaOfWindow(m);
+        const double x=CenterX(m);
+        const bool off=x<work.left||x>work.right;
+        m.offscreenFor=off&&settled?m.offscreenFor+dt:0;
+        if(m.offscreenFor<0.5)return;
+        m.offscreenFor=0;
+        const double half=ModelHalfWidthPixels(m);
+        const bool fromLeft=x<work.left;
+        const double hidden=fromLeft?work.left-half:work.right+half;
+        if(std::abs(x-hidden)>half)MoveWindowTo(m,hidden-m.windowSize.cx*0.5,m.windowY);
+        double left,right;
+        SurfaceRange(m,left,right);
+        const double inside=0.3*ModelHeightPixels(m);
+        const double target=fromLeft?std::min(left+inside,right):std::max(right-inside,left);
+        Log(L"character %zu was off the screen at x=%.0f: runs back to %.0f",m.slot,x,target);
+        Trace(L"%.1f off the screen at x=%.0f: runs back to %.0f",app.clock,x,target);
+        StartWalk(m,FreeSpot(m,target,FeetLine(m),left,right),Activity::Run);
+    }
+
     // ---- Active-window mode -------------------------------------------------------------
 
     // Pick where to go for a window: its top edge, nearest to where the mascot is, or the
@@ -1135,6 +1164,9 @@ namespace
     // Owned by the first character's window (topmost, so the message comes up over it).
     int ShowMessage(const std::wstring& text,UINT type)
     {
+        std::wstring line=text;
+        std::replace(line.begin(),line.end(),L'\n',L' ');
+        Log(L"message: %s",line.c_str());
         LetClicksThrough();
         const HWND owner=!app.mascots.empty()&&app.mascots.front()->hwnd?app.mascots.front()->hwnd:app.hwnd;
         return MessageBoxW(owner,text.c_str(),L"MikuMikuDesktopPerch",type);
@@ -3470,14 +3502,17 @@ namespace
 
         m.extent=BaseExtent(m);
         const SIZE size=WindowSizeFor(m,app.settings.scale);
-        RECT work{};
-        SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
-        // Placed where it was; a new one at the bottom right, to the left of those before it.
+        // On the monitor she stands on when her model is changed; otherwise on the one under the
+        // cursor (with several monitors, the one the user is at when the app starts).
+        POINT anchor{};
+        if(slot<app.mascots.size()){const RECT r=FrameRect(*app.mascots[slot]);anchor={(r.left+r.right)/2,(r.top+r.bottom)/2};}
+        else GetCursorPos(&anchor);
+        const RECT work=WorkAreaAt(anchor);
+        // Placed where it was when that is on this monitor; otherwise at the bottom right, to the
+        // left of those before it.
         int x=own.x,y=work.bottom-size.cy;
-        if(x==-1)x=work.right-size.cx-static_cast<int>(slot*ModelFrameOf(m).width*1.6f*m.pixelsPerUnit);
-        // Keep the window reachable if the saved position is off every monitor.
-        RECT wanted{x,y,x+size.cx,y+size.cy};
-        if(!MonitorFromRect(&wanted,MONITOR_DEFAULTTONULL))x=work.right-size.cx;
+        if(x==-1||x+size.cx/2<work.left||x+size.cx/2>work.right)
+            x=std::max(static_cast<int>(work.left),static_cast<int>(work.right-size.cx-static_cast<int>(slot*ModelFrameOf(m).width*1.6f*m.pixelsPerUnit)));
         m.windowX=x;m.windowY=y;m.windowSize=size;
 
         // NOREDIRECTIONBITMAP + DirectComposition gives per-pixel alpha;
@@ -3502,6 +3537,13 @@ namespace
         ApplyProceduralSettings(m);
         UpdateCamera(m);
         MoveWindowTo(m,m.windowX,GroundedWindowY(m));
+        {
+            const ModelFrame frame=ModelFrameOf(m);
+            const POINT feet=GroundPointOnScreen(m);
+            Log(L"character %zu: height %.1f, scale %d%%, %.1f px/unit (%.0f px tall), frame %ldx%ld, feet at %ld,%ld on work area %ld,%ld-%ld,%ld",
+                slot,frame.height,app.settings.scale,m.pixelsPerUnit,ModelHeightPixels(m),size.cx,size.cy,feet.x,feet.y,work.left,work.top,work.right,work.bottom);
+            Trace(L"%.1f character %zu placed: frame x=%.0f width %ld, feet at %ld,%ld",app.clock,slot,m.windowX,size.cx,feet.x,feet.y);
+        }
         m.nextDecision=app.clock+8+app.Random01()*10;
         m.nextMotionAt=app.clock+60+app.Random01()*120;
         m.foregroundSince=app.clock;
@@ -3637,6 +3679,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     std::optional<int> snapshotFilter;        // --physics-filter 0-3
     bool snapshotPlayMotion=false;            // --play-motion: play the opened motion at once
     int snapshotWalk=0;                       // --walk <px>: walk that far 3 s after start
+    int snapshotShove=0;                      // --shove <px>: moved that far 2 s after start
     int snapshotClick=0;                      // --click head|body: 1 head, 2 body, 1.5 s after start
     {
         int argc=0;
@@ -3684,6 +3727,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--walk"&&i+1<argc)
             {
                 snapshotWalk=_wtoi(argv[++i]);
+            }
+            else if(arg==L"--shove"&&i+1<argc)
+            {
+                snapshotShove=_wtoi(argv[++i]);
             }
             else if(arg==L"--click"&&i+1<argc)
             {
@@ -3898,7 +3945,21 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     app.settings.Load(app.settingsPath);
     SetLanguage(app.settings.language);
     app.diagnostic=!snapshotPath.empty();
-    if(!app.diagnostic)app.planner.Load();
+    if(!app.diagnostic)
+    {
+        OpenLog();
+        OSVERSIONINFOW os{sizeof(os)};
+        if(const auto rtlGetVersion=reinterpret_cast<LONG(WINAPI*)(OSVERSIONINFOW*)>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"),"RtlGetVersion")))rtlGetVersion(&os);
+        Log(L"MikuMikuDesktopPerch %s on Windows %lu.%lu.%lu, system DPI %u",CurrentVersion().c_str(),os.dwMajorVersion,os.dwMinorVersion,os.dwBuildNumber,GetDpiForSystem());
+        EnumDisplayMonitors(nullptr,nullptr,[](HMONITOR monitor,HDC,LPRECT,LPARAM)->BOOL{
+            MONITORINFO info{sizeof(info)};
+            GetMonitorInfoW(monitor,&info);
+            const RECT& r=info.rcMonitor;
+            const RECT& w=info.rcWork;
+            Log(L"monitor %ld,%ld-%ld,%ld, work area %ld,%ld-%ld,%ld%s",r.left,r.top,r.right,r.bottom,w.left,w.top,w.right,w.bottom,info.dwFlags&MONITORINFOF_PRIMARY?L", primary":L"");
+            return TRUE;},0);
+        app.planner.Load();
+    }
     if(app.diagnostic)
     {
         // Diagnostic runs must not overwrite the user's settings, and show the first character only.
@@ -3991,6 +4052,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     if(snapshotDoze){first.dozing=first.forcedDoze=true;first.model.SetDozing(true);}
     first.motionRequested=snapshotPlayMotion;
     first.diagnosticWalk=snapshotWalk;
+    first.diagnosticShove=snapshotShove;
     first.diagnosticClick=snapshotClick;
     for(int which=0;which<2;++which)
         if(std::wstring gaitError;!snapshotGait[which].empty()&&!first.model.SetGaitMotion(which,snapshotGait[which],gaitError))
@@ -4135,11 +4197,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     double left,right;
                     SurfaceRange(m,left,right);
                     const double centerX=CenterX(m),margin=a==Activity::Run?16:6;
-                    const bool reached=std::abs(centerX-m.walkTargetX)<margin||centerX<left-1||centerX>right+1;
-                    if(reached)StopGroundActivity(m);
+                    // Past an end of the surface (it moved or shrank): stop there, unless coming back
+                    // onto it from beyond (see ReturnOnScreen).
+                    const bool reached=std::abs(centerX-m.walkTargetX)<margin||(centerX<left-1&&m.walkTargetX<centerX)||(centerX>right+1&&m.walkTargetX>centerX);
+                    if(reached){Trace(L"%.1f walk ends at x=%.0f",app.clock,centerX);StopGroundActivity(m);}
                 }
                 UpdateAutoBehavior(m);
-            MakeRoom(m);
+                MakeRoom(m);
+                ReturnOnScreen(m,dt);
                 MaybeMemorize(m);
                 UpdateDozing(m);
                 UpdateFeeling(m);
@@ -4153,6 +4218,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     const bool reacted=m.model.React(m.diagnosticClick==1);
                     Trace(L"%.1f diagnostic click: %s (activity %d)",app.clock,reacted?L"reacts":L"no reaction",static_cast<int>(m.model.CurrentActivity()));
                     m.diagnosticClick=0;
+                }
+                if(m.diagnosticShove&&app.clock>2.0)
+                {
+                    Trace(L"%.1f diagnostic shove from x=%.0f by %d",app.clock,CenterX(m),m.diagnosticShove);
+                    MoveWindowTo(m,m.windowX+m.diagnosticShove,m.windowY);
+                    m.diagnosticShove=0;
                 }
                 if(m.diagnosticWalk&&app.clock>3.0)
                 {
@@ -4205,6 +4276,22 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             PlaceFrame(m);
             UpdateChatBubble(m,dt);
             m.renderer.Render(m.model,app.settings.edgeScale);
+        }
+        // The GPU is shared: once it stops, no character is drawn until the app starts again.
+        HRESULT lost=S_OK;
+        for(const auto& m:app.mascots)if(m->renderer.DeviceLost()!=S_OK)lost=m->renderer.DeviceLost();
+        if(lost!=S_OK&&!app.deviceLostTold&&!app.diagnostic)
+        {
+            app.deviceLostTold=true;
+            wchar_t code[16]{};
+            swprintf_s(code,L"0x%08X",static_cast<unsigned>(lost));
+            if(ShowMessage(Fmt(T(L"GPU が応答しなくなったため、キャラクターを表示できなくなりました（{0}）。\n\nアプリを再起動しますか？\n\nたびたび起きる場合は、GPU ドライバを更新するか、設定でテクスチャの最大サイズやアンチエイリアスを下げると直ることがあります。",
+                                 L"The GPU stopped responding, so the characters can no longer be drawn ({0}).\n\nRestart the app?\n\nIf this keeps happening, updating the GPU driver, or lowering the maximum texture size or anti-aliasing in the settings, may help."),{code}),
+                           MB_ICONWARNING|MB_YESNO)==IDYES)
+            {
+                app.restart=true;
+                DestroyWindow(app.hwnd);
+            }
         }
         if(app.diagnostic&&snapshotClearance&&!snapshotGesture.empty())
         {

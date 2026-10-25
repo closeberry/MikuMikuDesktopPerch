@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "MascotModel.hpp"
 #include "Text.hpp"
+#include "Log.hpp"
 #include "GeneratedMotion.hpp"
 #include <btBulletDynamicsCommon.h>
 #include <windows.h>
@@ -1392,10 +1393,34 @@ namespace MikuMikuDesktopPerch
             }
         }
 
+        // The vertices the framing is measured on: those drawn (by a material that is not
+        // transparent from the start) and near the skeleton. Some models park a hidden accessory
+        // or stray vertices far away; counted, they make the model tiny on screen.
+        std::vector<char> framed(pmx.vertices.size(),0);
+        {
+            const auto head=pmx.bones[findBone({L"頭"})].position,knee=pmx.bones[findBone({L"左ひざ",L"左膝"})].position;
+            const float s=std::max(head.y-knee.y,0.01f);
+            std::uint32_t start=0;
+            for(const auto& material:pmx.materials)
+            {
+                const std::uint32_t count=static_cast<std::uint32_t>(std::max(material.vertexCount,0));
+                if(material.diffuse.w>0)
+                    for(std::uint32_t k=start;k<start+count&&k<pmx.indices.size();++k)
+                    {
+                        const auto i=static_cast<size_t>(pmx.indices[k]);
+                        if(i>=framed.size())continue;
+                        const auto& p=pmx.vertices[i].position;
+                        framed[i]=std::abs(p.x-head.x)<=2.5f*s&&std::abs(p.z-head.z)<=2.5f*s&&p.y>=knee.y-1.5f*s&&p.y<=head.y+2.0f*s;
+                    }
+                start+=count;
+            }
+            if(std::none_of(framed.begin(),framed.end(),[](char f){return f!=0;}))std::fill(framed.begin(),framed.end(),1);
+        }
         next->staticVertices.resize(pmx.vertices.size());
         next->baseVertices.resize(pmx.vertices.size());
         next->boundsMin={1e30f,1e30f,1e30f};
         next->boundsMax={-1e30f,-1e30f,-1e30f};
+        std::array<float,3> allMin{1e30f,1e30f,1e30f},allMax{-1e30f,-1e30f,-1e30f};
         for(size_t i=0;i<pmx.vertices.size();++i)
         {
             const auto& v=pmx.vertices[i];
@@ -1411,16 +1436,29 @@ namespace MikuMikuDesktopPerch
             d.uv={v.uv.x,v.uv.y};
             for(int a=0;a<3;++a)
             {
+                allMin[a]=std::min(allMin[a],d.position[a]);
+                allMax[a]=std::max(allMax[a],d.position[a]);
+                if(!framed[i])continue;
                 next->boundsMin[a]=std::min(next->boundsMin[a],d.position[a]);
                 next->boundsMax[a]=std::max(next->boundsMax[a],d.position[a]);
             }
+        }
+        {
+            size_t count=0;
+            for(const char f:framed)count+=f!=0;
+            Log(L"model: %s",modelPath.c_str());
+            Log(L"  vertices %zu (framed %zu), materials %zu, bones %zu",pmx.vertices.size(),count,pmx.materials.size(),pmx.bones.size());
+            Log(L"  bounds all (%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f), framed (%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)",
+                allMin[0],allMin[1],allMin[2],allMax[0],allMax[1],allMax[2],
+                next->boundsMin[0],next->boundsMin[1],next->boundsMin[2],next->boundsMax[0],next->boundsMax[1],next->boundsMax[2]);
         }
         // Front of the soles: the ground line is drawn there, so perspective does not push the
         // toes (nearer the camera) below the surface the mascot stands on.
         {
             const float soleTop=next->boundsMin[1]+0.03f*(next->boundsMax[1]-next->boundsMin[1]);
             float front=1e30f;
-            for(const auto& d:next->baseVertices)if(d.position[1]<=soleTop)front=std::min(front,d.position[2]);
+            for(size_t i=0;i<next->baseVertices.size();++i)
+                if(const auto& d=next->baseVertices[i];framed[i]&&d.position[1]<=soleTop)front=std::min(front,d.position[2]);
             next->soleFrontZ=front<1e29f?front:(next->boundsMin[2]+next->boundsMax[2])*0.5f;
         }
         // Leg bones for the cursor check, physics bones for the stuck-physics check.
@@ -1547,6 +1585,7 @@ namespace MikuMikuDesktopPerch
             const auto& bones=next->solver->boneMatrices;
             for(size_t i=0;i<next->staticVertices.size();++i)
             {
+                if(!framed[i])continue;
                 const auto& s=next->staticVertices[i];
                 const auto& p=next->baseVertices[i].position;
                 XMVECTOR sum=XMVectorZero();

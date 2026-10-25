@@ -67,6 +67,9 @@ namespace MikuMikuDesktopPerch
         void Render(const MascotModel& model,float edgeScale);
         void WaitIdle();
         const std::wstring& AdapterName() const {return adapterName;}
+        // Why the GPU stopped taking work (TDR, a driver update or crash), S_OK while it runs.
+        // Once set, nothing more is drawn: the device would have to be made again.
+        HRESULT DeviceLost() const {return deviceLost;}
 
         // Alpha (0-255) of the pixel under clientPoint, sampled a couple of frames ago.
         // Returns -1 while no sample is available.
@@ -111,6 +114,7 @@ namespace MikuMikuDesktopPerch
         std::array<bool,FrameCount> clearWhole{};  // back buffer still holds a larger frame
         UINT sampleCount=1;
         std::wstring adapterName;
+        HRESULT deviceLost=S_OK;
 
         // The GPU device, shared by every renderer in the process (one per character): each
         // character's own device would hold its own copy of the driver's state.

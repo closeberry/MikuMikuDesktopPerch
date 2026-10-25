@@ -138,6 +138,19 @@ namespace MikuMikuDesktopPerch
             loaded=LoadWic(path,level);
         }
         if(!loaded)return false;
+        // A 32-bit TGA or BMP whose alpha is 0 all over carries no alpha at all (MMD draws it
+        // opaque); taken as written, the whole material would vanish. A PNG's alpha is meant.
+        image.alphaIgnored=false;
+        if(extension!=L".png"&&!level.pixels.empty())
+        {
+            bool none=true;
+            for(size_t i=3;i<level.pixels.size()&&none;i+=4)none=level.pixels[i]==0;
+            if(none)
+            {
+                for(size_t i=3;i<level.pixels.size();i+=4)level.pixels[i]=255;
+                image.alphaIgnored=true;
+            }
+        }
         image.hasAlpha=false;
         for(size_t i=3;i<level.pixels.size();i+=4)
             if(level.pixels[i]!=255){image.hasAlpha=true;break;}

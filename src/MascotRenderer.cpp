@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
+#include "Log.hpp"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -133,8 +134,16 @@ namespace MikuMikuDesktopPerch
         {
             DXGI_ADAPTER_DESC1 desc{};
             adapter->GetDesc1(&desc);
+            LARGE_INTEGER driver{};
+            const bool known=SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice),&driver));
+            Log(L"GPU %u: %s (vendor %04X device %04X, %llu MB, driver %u.%u.%u.%u)%s",i,desc.Description,desc.VendorId,desc.DeviceId,
+                static_cast<unsigned long long>(desc.DedicatedVideoMemory>>20),
+                known?HIWORD(driver.HighPart):0u,known?LOWORD(driver.HighPart):0u,known?HIWORD(driver.LowPart):0u,known?LOWORD(driver.LowPart):0u,
+                desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE?L", software":L"");
             if(desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE){adapter.Reset();continue;}
-            if(SUCCEEDED(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&gpu->device)))){gpu->adapterName=desc.Description;break;}
+            if(const HRESULT created=D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&gpu->device));SUCCEEDED(created))
+            {gpu->adapterName=desc.Description;Log(L"  using it");break;}
+            else Log(L"  no Direct3D 12 device (0x%08X)",static_cast<unsigned>(created));
             adapter.Reset();
         }
         if(!gpu->device){error=T(L"D3D12 に対応した GPU が見つかりません。",L"No GPU supporting Direct3D 12 was found.");return nullptr;}
@@ -604,7 +613,13 @@ namespace MikuMikuDesktopPerch
         {
             if(!used[i])continue;
             ImageRgba8 image;
-            if(LoadImageRgba8(paths[i],image,maxTextureSize,&uvTriangles[i]))ok=UploadTexture(image,textures[i]);
+            if(LoadImageRgba8(paths[i],image,maxTextureSize,&uvTriangles[i]))
+            {
+                ok=UploadTexture(image,textures[i]);
+                Log(L"  texture %s: %ux%u%s%s",paths[i].c_str(),image.levels[0].width,image.levels[0].height,
+                    image.alphaIgnored?L", alpha 0 everywhere (taken as opaque)":image.hasAlpha?L", alpha":L"",ok?L"":L", upload failed");
+            }
+            else Log(L"  texture %s: could not be read (drawn white)",paths[i].c_str());
         }
         for(int i=0;ok&&i<10;++i)
         {
@@ -749,7 +764,7 @@ namespace MikuMikuDesktopPerch
 
     void MascotRenderer::Render(const MascotModel& model,float edgeScale)
     {
-        if(!srvHeap||!frames[0].mapped)return;
+        if(!srvHeap||!frames[0].mapped||deviceLost!=S_OK)return;
         const UINT index=swapChain->GetCurrentBackBufferIndex();
         auto& f=frames[index];
         WaitForFence(f.fenceValue);
@@ -1106,7 +1121,13 @@ namespace MikuMikuDesktopPerch
             compositionVisual->SetOffsetY(static_cast<float>(visualOffset.y));
             appliedVisualOffset=visualOffset;
         }
-        swapChain->Present(1,0);
+        if(const HRESULT hr=swapChain->Present(1,0);hr==DXGI_ERROR_DEVICE_REMOVED||hr==DXGI_ERROR_DEVICE_RESET)
+        {
+            const HRESULT reason=device->GetDeviceRemovedReason();
+            deviceLost=FAILED(reason)?reason:hr;
+            Log(L"GPU stopped: Present 0x%08X, reason 0x%08X",static_cast<unsigned>(hr),static_cast<unsigned>(reason));
+            return;
+        }
         if(moved)
         {
             // Commit the new position only once the GPU has finished this frame: committed
