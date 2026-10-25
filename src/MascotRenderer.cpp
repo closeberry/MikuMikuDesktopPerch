@@ -208,6 +208,7 @@ namespace MikuMikuDesktopPerch
             q.Format=MotionFormat;q.SampleCount=sampleCount;
             if(FAILED(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS,&q,sizeof(q)))||q.NumQualityLevels==0)motionBlur=false;
         }
+        Log(L"  drawing: MSAA x%u (asked x%d), motion blur %s, resolution %.0f%%",sampleCount,msaa,motionBlur?L"on":L"off",resolutionScale*100);
 
         D3D12_DESCRIPTOR_HEAP_DESC rtv{};
         rtv.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;rtv.NumDescriptors=FrameCount+5;   // back buffers, MSAA colour, scene colour, motion, MSAA motion, blurred colour

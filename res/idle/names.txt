@@ -1,0 +1,4 @@
+YAWN	あくび	Yawn
+HMM	うーん、あっ！	Hmm... oh!
+SORRY	すみません	Excuse me
+LEAN	よりかかる	Leaning

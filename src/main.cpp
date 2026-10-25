@@ -142,6 +142,7 @@ namespace
         Extent extent;
         double extentCheck=0,extentCalm=0;
         double offscreenFor=0;        // seconds standing off the screen (see ReturnOnScreen)
+        double drawnCheck=0;          // seconds on the ground until the drawn-model check is logged; -1 once done
 
         // The surface under the feet: a window's top edge, or the ground line when null.
         HWND surfaceWindow=nullptr;
@@ -4256,11 +4257,27 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 }
             }
 
+            // Once, 3 seconds in, for the log: the alpha drawn at the chest, read back from the
+            // frame. 255 there while nothing shows on screen means the frame is drawn but does
+            // not reach the screen (the driver or the composition), not that drawing failed.
+            const bool checkingDrawn=m.drawnCheck>=0&&m.place==Place::Ground&&(m.drawnCheck+=dt)>=3;
+            if(checkingDrawn)
+            {
+                const ModelFrame frame=ModelFrameOf(m);
+                const int alpha=m.renderer.AlphaAt(m.renderer.Project({frame.cx+m.model.RootOffset(),frame.top*0.65f,frame.cz}));
+                if(m.drawnCheck>=3.5)
+                {
+                    Log(L"character %zu: alpha drawn at the chest %d (%s), frame at %ld,%ld",m.slot,alpha,
+                        alpha>=200?L"drawn":alpha<0?L"no sample":L"not drawn there",WindowPixel(m).x,WindowPixel(m).y);
+                    m.drawnCheck=-1;
+                }
+            }
+
             // Click-through wherever the mascot is not drawn.
             POINT cursor{};
             GetCursorPos(&cursor);
             const RECT r=FrameRect(m);
-            if(m.place!=Place::Held)
+            if(m.place!=Place::Held&&!checkingDrawn)
             {
                 if(PtInRect(&r,cursor))
                 {
