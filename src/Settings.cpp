@@ -165,6 +165,7 @@ namespace MikuMikuDesktopPerch
         if(language!=L"ja"&&language!=L"en")language.clear();
         voice=ReadInt(path,L"Voice",voice?1:0)!=0;
         voiceEndpoint=ReadString(path,L"VoiceEndpoint",voiceEndpoint);
+        voiceStyleStrength=std::clamp(ReadInt(path,L"VoiceStyleStrength",voiceStyleStrength),0,200);
         voiceDirect=ReadInt(path,L"VoiceDirect",voiceDirect?1:0)!=0;
         voiceFolder=ReadString(path,L"VoiceFolder",voiceFolder);
         lastGreeting=ReadString(path,L"LastGreeting",lastGreeting);
@@ -243,6 +244,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"Language",language);
         WriteString(path,L"Voice",voice?L"1":L"0");
         WriteString(path,L"VoiceEndpoint",voiceEndpoint);
+        WriteString(path,L"VoiceStyleStrength",std::to_wstring(voiceStyleStrength));
         WriteString(path,L"VoiceDirect",voiceDirect?L"1":L"0");
         WriteString(path,L"VoiceFolder",voiceFolder);
         WriteString(path,L"LastGreeting",lastGreeting);

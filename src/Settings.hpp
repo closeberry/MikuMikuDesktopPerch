@@ -95,6 +95,7 @@ namespace MikuMikuDesktopPerch
         bool voiceDirect=false;     // VOICEVOX's files used directly (voiceFolder), not its engine
         std::wstring voiceFolder;   // where VOICEVOX is installed
         std::wstring voiceEndpoint=L"http://127.0.0.1:50021";
+        int voiceStyleStrength=100; // AivisSpeech's style strength (its intonationScale), in percent
         std::wstring lastGreeting;  // the last time-of-day greeting (date and slot), so a restart does not repeat it
         // The latest chats between two characters (oldest first), so the next ones go
         // elsewhere: who talked, the topic and the way to start (their places in the app's

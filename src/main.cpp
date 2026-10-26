@@ -346,7 +346,7 @@ namespace
         if(!app.settings.voice){m.speech.SetVoice(nullptr);m.voice.reset();return;}
         if(!m.voice)m.voice=std::make_unique<VoiceEngine>(m.hwnd);
         m.speech.SetVoice([&m](const std::wstring& text){
-            return m.voice->Speak({app.settings.voiceDirect,app.settings.voiceEndpoint,app.settings.voiceFolder},Own(m).voiceSpeaker,text);});
+            return m.voice->Speak({app.settings.voiceDirect,app.settings.voiceEndpoint,app.settings.voiceFolder,app.settings.voiceStyleStrength/100.0},Own(m).voiceSpeaker,text);});
     }
 
     void ApplyProceduralSettings(Mascot& m)
@@ -1556,6 +1556,8 @@ namespace
             }
         }
         current.voiceDirect=s.voiceDirect;
+        current.voiceEndpoint=s.voiceEndpoint;
+        current.voiceStyleStrength=s.voiceStyleStrength;
         current.voiceFolder=s.voiceFolder;
         const bool voiceChanged=s.voice!=current.voice;
         current.voice=s.voice;
@@ -4386,14 +4388,23 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     {
         int argc=0;
         LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
-        // --voice-test <VOICEVOX folder> <style id> <out.wav>: say a line with VOICEVOX's files
-        // directly (no engine), writing the sound or the error (to out.wav.txt).
+        // --voice-test <VOICEVOX folder | engine address> <style id> <out.wav> [style strength]:
+        // say a line with VOICEVOX's files directly (no engine) or with the engine at http://...
+        // (AivisSpeech's style strength, 1 by default), writing the sound, and the error or
+        // when each syllable is said (to out.wav.txt).
         if(argc>=5&&std::wstring(argv[1])==L"--voice-test")
         {
-            std::string wav;
-            const std::wstring error=SynthesizeVoice({true,{},argv[2]},_wtoi(argv[3]),L"こんにちは。今日もいっしょに、がんばろうね。",wav);
-            if(error.empty()){std::ofstream out(std::filesystem::path(argv[4]),std::ios::binary);out.write(wav.data(),static_cast<std::streamsize>(wav.size()));}
-            const std::wstring report=error.empty()?L"ok "+std::to_wstring(wav.size())+L" bytes":error;
+            const std::wstring where=argv[2];
+            const bool engine=where.starts_with(L"http://")||where.starts_with(L"https://");
+            VoiceClip clip;
+            const std::wstring error=MakeVoiceClip({!engine,engine?where:std::wstring(),engine?std::wstring():where,argc>=6?_wtof(argv[5]):1.0},_wtoi(argv[3]),L"こんにちは。今日もいっしょに、がんばろうね。",clip);
+            if(error.empty()){std::ofstream out(std::filesystem::path(argv[4]),std::ios::binary);out.write(clip.wav.data(),static_cast<std::streamsize>(clip.wav.size()));}
+            std::wstring report=error;
+            if(error.empty())
+            {
+                report=L"ok "+std::to_wstring(clip.wav.size())+L" bytes, "+std::to_wstring(clip.seconds)+L" s\n";
+                for(const auto& [at,mora]:clip.morae)report+=std::to_wstring(at)+L"\t"+mora+L"\n";
+            }
             const int n=WideCharToMultiByte(CP_UTF8,0,report.c_str(),static_cast<int>(report.size()),nullptr,0,nullptr,nullptr);
             std::string text(static_cast<size_t>(n),'\0');
             WideCharToMultiByte(CP_UTF8,0,report.c_str(),static_cast<int>(report.size()),text.data(),n,nullptr,nullptr);

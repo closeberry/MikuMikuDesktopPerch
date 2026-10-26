@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "Speech.hpp"
+#include "AudioDecode.hpp"
 #include <windows.h>
 #include <oleauto.h>
 #include <wrl/client.h>
@@ -74,33 +75,6 @@ namespace MikuMikuDesktopPerch
             const auto prev=next-1;
             const float t=(frame-prev->first)/std::max(1e-3f,next->first-prev->first);
             return prev->second+(next->second-prev->second)*t;
-        }
-
-        // The 16-bit PCM in a WAV file: its format and samples (false when it is not that).
-        bool ReadPcm(const std::string& wav,WAVEFORMATEX& format,const std::int16_t*& samples,size_t& count)
-        {
-            if(wav.size()<12||wav.compare(0,4,"RIFF")!=0||wav.compare(8,4,"WAVE")!=0)return false;
-            bool haveFormat=false;
-            for(size_t at=12;at+8<=wav.size();)
-            {
-                std::uint32_t size=0;
-                std::memcpy(&size,wav.data()+at+4,4);
-                const size_t body=at+8;
-                if(body+size>wav.size())size=static_cast<std::uint32_t>(wav.size()-body);
-                if(wav.compare(at,4,"fmt ")==0&&size>=16)
-                {
-                    std::memcpy(&format,wav.data()+body,16);
-                    haveFormat=format.wFormatTag==WAVE_FORMAT_PCM&&format.wBitsPerSample==16&&format.nChannels>=1&&format.nSamplesPerSec>0;
-                }
-                else if(wav.compare(at,4,"data")==0&&haveFormat)
-                {
-                    samples=reinterpret_cast<const std::int16_t*>(wav.data()+body);
-                    count=size/2;
-                    return true;
-                }
-                at=body+size+(size&1);
-            }
-            return false;
         }
 
         bool IsPause(wchar_t c){return std::wstring(L"、。！？!?,.…\n").find(c)!=std::wstring::npos;}

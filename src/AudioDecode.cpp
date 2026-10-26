@@ -122,4 +122,30 @@ namespace MikuMikuDesktopPerch
         wav+=pcm;
         return {};
     }
+
+    bool ReadPcm(const std::string& wav,WAVEFORMATEX& format,const std::int16_t*& samples,size_t& count)
+    {
+        if(wav.size()<12||wav.compare(0,4,"RIFF")!=0||wav.compare(8,4,"WAVE")!=0)return false;
+        bool haveFormat=false;
+        for(size_t at=12;at+8<=wav.size();)
+        {
+            std::uint32_t size=0;
+            std::memcpy(&size,wav.data()+at+4,4);
+            const size_t body=at+8;
+            if(body+size>wav.size())size=static_cast<std::uint32_t>(wav.size()-body);
+            if(wav.compare(at,4,"fmt ")==0&&size>=16)
+            {
+                std::memcpy(&format,wav.data()+body,16);
+                haveFormat=format.wFormatTag==WAVE_FORMAT_PCM&&format.wBitsPerSample==16&&format.nChannels>=1&&format.nSamplesPerSec>0;
+            }
+            else if(wav.compare(at,4,"data")==0&&haveFormat)
+            {
+                samples=reinterpret_cast<const std::int16_t*>(wav.data()+body);
+                count=size/2;
+                return true;
+            }
+            at=body+size+(size&1);
+        }
+        return false;
+    }
 }

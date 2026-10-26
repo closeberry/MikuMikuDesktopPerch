@@ -27,7 +27,14 @@ namespace MikuMikuDesktopPerch
         bool direct=false;
         std::wstring endpoint;
         std::wstring folder;
+        double styleStrength=1.0;   // AivisSpeech's style strength (sent as intonationScale; other engines ignore it)
     };
+
+    // Where the engines listen by default.
+    inline constexpr const wchar_t* VoicevoxEndpoint=L"http://127.0.0.1:50021";
+    inline constexpr const wchar_t* AivisSpeechEndpoint=L"http://127.0.0.1:10101";
+    // Whether an endpoint is AivisSpeech's (its port).
+    bool IsAivisSpeech(const std::wstring& endpoint);
 
     // The voices offered ("character（style）", style id), waiting a few seconds at most.
     // Returns an explanation on failure (empty on success).
@@ -36,6 +43,10 @@ namespace MikuMikuDesktopPerch
     // Say text in a voice right away (waiting for it): the WAV file. Returns an explanation
     // on failure (empty on success).
     std::wstring SynthesizeVoice(const VoiceSource& source,int speaker,const std::wstring& text,std::string& wav);
+
+    // A phrase made into speech, with when each syllable is said, right away (waiting for it).
+    // Returns an explanation on failure (empty on success).
+    std::wstring MakeVoiceClip(const VoiceSource& source,int speaker,const std::wstring& text,VoiceClip& clip);
 
     // Speech in the background, from a VOICEVOX-compatible engine (VOICEVOX, AivisSpeech, ...)
     // on this computer (POST /audio_query, then /synthesis) or from VOICEVOX's files directly.

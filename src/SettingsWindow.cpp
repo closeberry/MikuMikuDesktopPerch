@@ -29,10 +29,12 @@ namespace MikuMikuDesktopPerch
             IdScale,IdEdge,IdTopmost,IdStartup,
             IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdPhysicsIterations,IdPhysicsFilter,IdToonDir,IdToonBrowse,IdGpu,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
-            IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdSunAzimuth,IdSunElevation,
+            IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
             IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdTabs
         };
+        // Where the voice comes from (the voice source choices' values).
+        enum VoiceMode:int{VoiceVoicevox=0,VoiceFiles=1,VoiceAivisSpeech=2};
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
         constexpr wchar_t GesturesClass[]=L"MikuMikuDesktopPerchGestures";
@@ -207,7 +209,7 @@ namespace MikuMikuDesktopPerch
             Slider(IdSunElevation,306,y+126,130,5,90,s.lightElevation);
             y=top;
             Page(T(L"会話と声",L"Talking and voice"));
-            Group(T(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",L"Talking (an LLM on this computer: Ollama, LM Studio, ...)"),y,252);
+            Group(T(L"会話（このコンピューターのLLM：Ollama、LM Studio など）",L"Talking (an LLM on this computer: Ollama, LM Studio, ...)"),y,280);
             Label(T(L"接続先",L"Server"),28,y+22,130);
             Add(L"EDIT",s.chatEndpoint.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+22,266,24,IdChatEndpoint);
             Label(T(L"モデル",L"Model"),28,y+52,130);
@@ -227,7 +229,7 @@ namespace MikuMikuDesktopPerch
             Label(T(L"キャラクター同士のおしゃべり（2人以上のとき）",L"Characters chatting together (two or more)"),46,y+166,270);
             Combo(IdBanterMinutes,326,y+164,110);
             y+=28;
-            CheckBox(IdVoice,T(L"声で話す（VOICEVOX）",L"Voice (VOICEVOX)"),28,y+166,140,s.voice);
+            CheckBox(IdVoice,T(L"声で話す",L"Voice"),28,y+166,140,s.voice);
             Combo(IdVoiceList,170,y+164,128);
             {
                 HWND list=GetDlgItem(state.window,IdVoiceList);
@@ -239,10 +241,15 @@ namespace MikuMikuDesktopPerch
             Add(L"BUTTON",T(L"試聴",L"Listen"),BS_PUSHBUTTON|WS_TABSTOP,304,y+163,56,26,IdVoiceSample);
             Add(L"BUTTON",T(L"一覧を取得",L"Get list"),BS_PUSHBUTTON|WS_TABSTOP,366,y+163,70,26,IdVoiceFetch);
             Combo(IdVoiceMode,46,y+192,120);
-            FillCombo(IdVoiceMode,{{T(L"エンジンを使う",L"Use the engine"),0},{T(L"ファイルを直接使う",L"Use its files"),1}},s.voiceDirect?1:0,L"");
+            FillCombo(IdVoiceMode,{{L"VOICEVOX",VoiceVoicevox},{L"AivisSpeech",VoiceAivisSpeech},{T(L"VOICEVOXのファイル",L"VOICEVOX files"),VoiceFiles}},
+                      s.voiceDirect?VoiceFiles:IsAivisSpeech(s.voiceEndpoint)?VoiceAivisSpeech:VoiceVoicevox,L"");
             Add(L"EDIT",s.voiceFolder.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+192,190,24,IdVoiceFolder);
             SendDlgItemMessageW(state.window,IdVoiceFolder,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"VOICEVOXのフォルダ",L"VOICEVOX folder")));
             Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+191,70,26,IdVoiceBrowse);
+            Label(T(L"スタイルの強さ",L"Style strength"),46,y+222,120);
+            Combo(IdVoiceStrength,170,y+220,190);
+            FillCombo(IdVoiceStrength,{{T(L"0.5（弱め）",L"0.5 (weak)"),50},{T(L"1.0（標準）",L"1.0 (standard)"),100},{T(L"1.5（強め）",L"1.5 (strong)"),150},{T(L"2.0（とても強い）",L"2.0 (very strong)"),200}},
+                      s.voiceStyleStrength,std::to_wstring(s.voiceStyleStrength/100)+L"."+std::to_wstring(s.voiceStyleStrength/10%10)+std::to_wstring(s.voiceStyleStrength%10));
             UpdateVoiceMode();
             y=top;
             Page(T(L"秘書",L"Assistant"));
@@ -338,20 +345,35 @@ namespace MikuMikuDesktopPerch
             }
         }
 
-        // Where the voice comes from, as the window shows it now (engine or files).
+        // Where the voice comes from, as the window shows it now (an engine or VOICEVOX's files).
+        // AivisSpeech is at its own address; VOICEVOX at the one in the settings file (another
+        // compatible engine's, edited in by hand, is kept).
         VoiceSource CurrentVoiceSource()
         {
             wchar_t folder[MAX_PATH]{};
             GetDlgItemTextW(state.window,IdVoiceFolder,folder,MAX_PATH);
-            return {ComboValue(IdVoiceMode,0)==1,state.choice.settings.voiceEndpoint,folder};
+            const int mode=ComboValue(IdVoiceMode,VoiceVoicevox);
+            const std::wstring& endpoint=state.choice.settings.voiceEndpoint;
+            return {mode==VoiceFiles,mode==VoiceAivisSpeech?AivisSpeechEndpoint:IsAivisSpeech(endpoint)?VoicevoxEndpoint:endpoint,folder,
+                    ComboValue(IdVoiceStrength,state.choice.settings.voiceStyleStrength)/100.0};
         }
 
-        // The folder only matters when VOICEVOX's files are used directly.
+        // What to start when the engine does not answer.
+        const wchar_t* StartEngineHint()
+        {
+            return ComboValue(IdVoiceMode,VoiceVoicevox)==VoiceAivisSpeech
+                ?T(L"\n\nAivisSpeech を起動してから、もう一度押してください。",L"\n\nStart AivisSpeech, then press it again.")
+                :T(L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。",L"\n\nStart VOICEVOX (or a compatible voice engine), then press it again.");
+        }
+
+        // The folder only matters when VOICEVOX's files are used directly, the style strength
+        // with AivisSpeech.
         void UpdateVoiceMode()
         {
-            const bool direct=ComboValue(IdVoiceMode,0)==1;
-            EnableWindow(GetDlgItem(state.window,IdVoiceFolder),direct);
-            EnableWindow(GetDlgItem(state.window,IdVoiceBrowse),direct);
+            const int mode=ComboValue(IdVoiceMode,VoiceVoicevox);
+            EnableWindow(GetDlgItem(state.window,IdVoiceFolder),mode==VoiceFiles);
+            EnableWindow(GetDlgItem(state.window,IdVoiceBrowse),mode==VoiceFiles);
+            EnableWindow(GetDlgItem(state.window,IdVoiceStrength),mode==VoiceAivisSpeech);
         }
 
         void BrowseVoiceFolder()
@@ -383,7 +405,7 @@ namespace MikuMikuDesktopPerch
             SetCursor(LoadCursorW(nullptr,IDC_ARROW));
             if(!error.empty())
             {
-                MessageBoxW(state.window,(error+T(L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。",L"\n\nStart VOICEVOX (or a compatible voice engine), then press it again.")).c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
+                MessageBoxW(state.window,(error+StartEngineHint()).c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
                 return;
             }
             state.sample=std::move(wav);
@@ -400,7 +422,7 @@ namespace MikuMikuDesktopPerch
             if(!error.empty())
             {
                 const wchar_t* hint=CurrentVoiceSource().direct?T(L"\n\nVOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）を指定してください。",L"\n\nChoose the folder VOICEVOX is installed in (where VOICEVOX.exe is).")
-                                                              :T(L"\n\nVOICEVOX（または互換の音声エンジン）を起動してから、もう一度押してください。",L"\n\nStart VOICEVOX (or a compatible voice engine), then press it again.");
+                                                              :StartEngineHint();
                 MessageBoxW(state.window,(error+hint).c_str(),L"MikuMikuDesktopPerch",MB_ICONWARNING);
                 return;
             }
@@ -855,6 +877,8 @@ namespace MikuMikuDesktopPerch
             {
                 const VoiceSource source=CurrentVoiceSource();
                 s.voiceDirect=source.direct;
+                s.voiceEndpoint=source.endpoint;
+                s.voiceStyleStrength=static_cast<int>(source.styleStrength*100.0+0.5);
                 s.voiceFolder=source.folder;
             }
             own.voiceSpeaker=ComboValue(IdVoiceList,own.voiceSpeaker);
