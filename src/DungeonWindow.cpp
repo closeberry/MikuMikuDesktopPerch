@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "DungeonWindow.hpp"
+#include "Album.hpp"
 #include "Dungeon.hpp"
 #include "Text.hpp"
 #include "Log.hpp"
@@ -9,6 +10,8 @@
 #include <gdiplus.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <deque>
 #include <memory>
 #pragma comment(lib,"gdiplus.lib")
 
@@ -24,16 +27,21 @@ namespace MikuMikuDesktopPerch
         constexpr float TileSize=10,WallHeight=4.5f;
         // Patterns the geometry shader draws, by the colour's alpha (see GeometryPS.hlsl).
         constexpr float Lit=1,Stones=0.75f,Bricks=0.5f,Glow=0.25f;
+        // Her words: how long a lighter one waits behind one that matters more, how often the
+        // LLM is asked about small things, and how long its line is waited for.
+        constexpr ULONGLONG WordsHold=3000,AskEvery=12000,AskWait=9000;
 
         struct
         {
             HWND window=nullptr;
             ULONG_PTR gdiplus=0;
             Dungeon::Game game;
+            Dungeon::Record record;
+            int bestBefore=0;
             DungeonHero hero;
             std::unique_ptr<Bitmap> face;
             std::function<void(const DungeonResult&)> onEnd;
-            bool confirmQuit=false,ended=false;
+            bool confirmQuit=false,ended=false,showBook=false;
             // The 3D view (a child window over the map's place) and its renderer, only while
             // open. sceneKey: the turn and floor the geometry was last built for.
             HWND view=nullptr;
@@ -54,6 +62,20 @@ namespace MikuMikuDesktopPerch
             bool behind=false;
             DirectX::XMFLOAT3 eye{},target{};
             float cameraAngle=0;
+            // What she says (in the bubble under the view): her own line, or the LLM's as it
+            // comes (waiting: asked, "…" until it does). weight: how much it matters.
+            struct
+            {
+                std::wstring text,fallback;
+                bool waiting=false;
+                int weight=0;
+                ULONGLONG since=0,asked=0;
+                std::deque<std::wstring> recent;   // her last lines (the LLM is asked not to repeat them)
+            } speech;
+            // A picture for the album, taken from the 3D view at `at` (0: none).
+            struct {std::wstring label;bool automatic=false;ULONGLONG at=0;} photo;
+            std::wstring toast;   // a short note under the view ("saved to the album")
+            ULONGLONG toastUntil=0;
         } state;
 
         int Px(int logical){return MulDiv(logical,state.window?static_cast<int>(GetDpiForWindow(state.window)):96,96);}
@@ -76,7 +98,7 @@ namespace MikuMikuDesktopPerch
             if(!state.view)return;
             const RECT r=MapArea();
             MoveWindow(state.view,r.left,r.top,r.right-r.left,r.bottom-r.top,TRUE);
-            ShowWindow(state.view,Showing3D()?SW_SHOWNA:SW_HIDE);
+            ShowWindow(state.view,Showing3D()&&!state.showBook?SW_SHOWNA:SW_HIDE);
             if(state.renderer)
             {
                 std::wstring error;
@@ -89,6 +111,114 @@ namespace MikuMikuDesktopPerch
             // The renderer's memory (its buffers, the model's textures) goes now.
             if(state.renderer){state.renderer->WaitIdle();state.renderer.reset();Log(L"dungeon: 3D view released");}
             state.view=nullptr;
+        }
+
+        void Toast(const std::wstring& text)
+        {
+            state.toast=text;
+            state.toastUntil=GetTickCount64()+3000;
+            if(state.window)InvalidateRect(state.window,nullptr,FALSE);
+        }
+
+        void SaveRecord()
+        {
+            if(!state.hero.recordPath.empty()&&!state.record.Save(state.hero.recordPath))Log(L"dungeon: records not saved (%s)",state.hero.recordPath.c_str());
+        }
+
+        // A picture for the album from the 3D view: by hand at once, or a moment after something
+        // worth keeping (once she has turned to it and said her piece).
+        void QueuePhoto(const std::wstring& label,bool automatic)
+        {
+            if(!state.renderer||state.hero.recordPath.empty())
+            {
+                if(!automatic)Toast(T(L"写真は3Dの表示で撮れます",L"Pictures are taken from the 3D view"));
+                return;
+            }
+            if(!automatic&&state.hero.shutter)PlayShutter();
+            state.photo={label,automatic,GetTickCount64()+(automatic?2500:150)};
+        }
+
+        void TakePhoto()
+        {
+            auto& p=state.photo;
+            p.at=0;
+            AlbumShot shot;
+            shot.automatic=p.automatic;
+            shot.label=p.label;
+            AlbumLayer layer;
+            UINT width=0,height=0;
+            if(!state.renderer||!state.renderer->ReadLastFrame(layer.pixels,width,height))return;
+            // Opaque: the dungeon fills it.
+            for(size_t i=3;i<layer.pixels.size();i+=4)layer.pixels[i]=255;
+            layer.rect={0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
+            shot.characters.push_back(std::move(layer));
+            if(!state.speech.waiting&&!state.speech.text.empty())shot.words.push_back({state.hero.name,state.speech.text});
+            std::wstring error;
+            const std::wstring file=SaveAlbumShot(shot,error);
+            Log(L"dungeon: picture %s",file.empty()?error.c_str():file.c_str());
+            Toast(file.empty()?T(L"写真を保存できませんでした",L"The picture could not be saved"):T(L"アルバムに写真を残しました",L"Saved a picture to the album"));
+        }
+
+        void Say(const std::wstring& line,int weight)
+        {
+            auto& s=state.speech;
+            s.text=line;
+            s.waiting=false;
+            s.weight=weight;
+            s.since=GetTickCount64();
+            if(!line.empty()){s.recent.push_back(line);while(s.recent.size()>4)s.recent.pop_front();}
+        }
+
+        // What she has words for since the last action: the weightiest is said (in her own
+        // words through the LLM when it is there and the moment is worth it), and the moments
+        // worth keeping become pictures.
+        void Listen()
+        {
+            auto talks=state.game.TakeTalks();
+            if(talks.empty())return;
+            using Dungeon::Event;
+            const std::wstring f=std::to_wstring(state.game.Floor());
+            for(const auto& t:talks)
+            {
+                const wchar_t* what=nullptr;
+                if(t.event==Event::BossDown)what=T(L"ボス撃破",L"boss");
+                else if(t.event==Event::Camp&&t.weight>=8)what=T(L"焚き火",L"campfire");
+                else if(t.event==Event::Crystal)what=T(L"水晶の部屋",L"crystals");
+                else if(t.event==Event::Arrive&&t.weight==5)what=T(L"新記録",L"record");
+                else if(t.event==Event::Treasure)what=T(L"宝物",L"treasure");
+                if(what)QueuePhoto(Fmt(T(L"ダンジョン{0}階 {1}",L"Dungeon floor {0} {1}"),{f,what}),true);
+            }
+            // Kept as it goes (a small file), so nothing is lost if the app is closed mid-way.
+            SaveRecord();
+            const Dungeon::Talk* pick=&talks.front();
+            for(const auto& t:talks)if(t.weight>=pick->weight)pick=&t;
+            auto& s=state.speech;
+            const ULONGLONG now=GetTickCount64();
+            // A lighter word does not cut in on one that matters more while it is fresh (or coming).
+            if((s.waiting||now-s.since<WordsHold)&&pick->weight<s.weight)return;
+            if(state.hero.talk&&pick->weight>=2&&(pick->weight>=6||now-s.asked>AskEvery))
+            {
+                const auto& h=state.game.Hero();
+                std::wstring situation=pick->facts+Fmt(T(L"。（いまは{0}階、HP{1}/{2}、レベル{3}）",L". (Now on floor {0}, HP {1}/{2}, level {3})"),
+                                                       {f,std::to_wstring(h.hp),std::to_wstring(h.MaxHp()),std::to_wstring(h.level)});
+                if(!s.recent.empty())
+                {
+                    situation+=T(L"さっきあなたが言ったこと：",L" What you said just before: ");
+                    for(const auto& r:s.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
+                    situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
+                }
+                if(pick->weight<8)situation+=T(L"そのことを、話し相手に一言（1〜2文）",L"Say a word about it to them (one or two sentences)");
+                if(state.hero.talk(situation))
+                {
+                    s.waiting=true;
+                    s.fallback=pick->line;
+                    s.text=L"…";
+                    s.weight=pick->weight;
+                    s.since=s.asked=now;
+                    return;
+                }
+            }
+            Say(pick->line,pick->weight);
         }
 
         // The floor as boxes and plates, from what she has seen: lit where in sight, dim where
@@ -108,8 +238,19 @@ namespace MikuMikuDesktopPerch
                 quad({x0,y0,z0},{x0,y0,z1},{x0,y1,z1},{x0,y1,z0},{-1,0,0},c);
                 quad({x1,y0,z0},{x1,y0,z1},{x1,y1,z1},{x1,y1,z0},{1,0,0},c);
             };
+            // A box of side 2*r around the middle of tile (x, y), from y0 to y1.
+            auto block=[&](int x,int y,float dx,float dz,float r,float y0,float y1,const float (&c)[4]){
+                const float cx=(x+0.5f+dx)*TileSize,cz=-(y+0.5f+dz)*TileSize;
+                box(cx-r*TileSize,y0,cz-r*TileSize,cx+r*TileSize,y1,cz+r*TileSize,c);
+            };
+            auto plate=[&](int x,int y,float r,float height,const float (&c)[4]){
+                const float cx=(x+0.5f)*TileSize,cz=-(y+0.5f)*TileSize,s=r*TileSize;
+                quad({cx-s,height,cz-s},{cx+s,height,cz-s},{cx+s,height,cz+s},{cx-s,height,cz+s},{0,1,0},c);
+            };
             auto shade=[](const float (&c)[3],float k,float pattern=Lit)->std::array<float,4>{return {c[0]*k,c[1]*k,c[2]*k,pattern};};
             auto with=[](const std::array<float,4>& a,auto f){float c[4]={a[0],a[1],a[2],a[3]};return f(c);};
+            auto rgba=[](float r,float g,float b,float k,float pattern,float (&c)[4]){c[0]=r*k;c[1]=g*k;c[2]=b*k;c[3]=pattern;};
+            auto light=[&](int x,int y){return game.Visible(x,y)?1.0f:0.5f;};
             constexpr float T=TileSize,gap=0;
             constexpr float floorColor[3]={0.50f,0.46f,0.58f},wallColor[3]={0.56f,0.24f,0.24f};
             for(int y=0;y<Dungeon::Game::Height;++y)
@@ -127,12 +268,115 @@ namespace MikuMikuDesktopPerch
                         if(game.At(x-1,y)==Dungeon::Tile::Wall)box(x0-th,0,z0-th,x0,WallHeight,z1+th,c);
                         if(game.At(x+1,y)==Dungeon::Tile::Wall)box(x1,0,z0-th,x1+th,WallHeight,z1+th,c);
                     });
+                    if(game.At(x,y)==Dungeon::Tile::Door)
+                    {
+                        // A heavy wooden door, a little higher than the walls, with iron bands.
+                        float wood[4],iron[4];
+                        rgba(0.50f,0.31f,0.16f,k,Lit,wood);rgba(0.25f,0.24f,0.26f,k,Lit,iron);
+                        box(x0+0.04f*T,0,z0+0.04f*T,x1-0.04f*T,WallHeight*1.15f,z1-0.04f*T,wood);
+                        for(const float h:{0.3f,0.75f})box(x0+0.02f*T,WallHeight*h,z0+0.02f*T,x1-0.02f*T,WallHeight*h+0.35f,z1-0.02f*T,iron);
+                    }
                     if(game.At(x,y)==Dungeon::Tile::Stairs)
                     {
                         // Steps going down into a dark well.
                         with(shade(floorColor,0.15f),[&](const float (&c)[4]){quad({x0+0.12f*T,0.05f,z0+0.12f*T},{x1-0.12f*T,0.05f,z0+0.12f*T},{x1-0.12f*T,0.05f,z1-0.12f*T},{x0+0.12f*T,0.05f,z1-0.12f*T},{0,1,0},c);});
                         const float gold[4]={0.90f*k,0.76f*k,0.35f*k,1};
                         for(int i=0;i<3;++i)box(x0+0.15f*T,0,z1-(0.2f+0.22f*i)*T-0.16f*T,x1-0.15f*T,(0.3f-0.1f*i)*T*0.5f,z1-(0.2f+0.22f*i)*T,gold);
+                    }
+                }
+            // Crystals glowing along the edges of a crystal room.
+            for(const auto& r:game.Rooms())
+            {
+                if(r.kind!=Dungeon::RoomKind::Crystal)continue;
+                for(int y=r.y;y<r.y+r.h;++y)
+                    for(int x=r.x;x<r.x+r.w;++x)
+                    {
+                        const bool edge=x==r.x||y==r.y||x==r.x+r.w-1||y==r.y+r.h-1;
+                        if(!edge||(x*7+y*3)%3!=0||!game.Seen(x,y)||game.At(x,y)!=Dungeon::Tile::Floor)continue;
+                        const float k=light(x,y),dx=x==r.x?-0.3f:x==r.x+r.w-1?0.3f:0,dz=y==r.y?-0.3f:y==r.y+r.h-1?0.3f:0;
+                        float c1[4],c2[4];
+                        rgba(0.45f,0.85f,1.0f,k,Glow,c1);rgba(0.80f,0.60f,1.0f,k,Glow,c2);
+                        const float h=0.5f+0.12f*((x+y)%4);
+                        block(x,y,dx,dz,0.06f,0,h*T,c1);
+                        block(x,y,dx+0.13f,dz-0.08f,0.045f,0,h*0.65f*T,c2);
+                        block(x,y,dx-0.12f,dz+0.1f,0.04f,0,h*0.5f*T,c1);
+                    }
+            }
+            for(const auto& t:game.Traps())
+                if(t.found&&game.Seen(t.x,t.y))
+                {
+                    const float k=light(t.x,t.y);
+                    float c[4];
+                    using K=Dungeon::TrapKind;
+                    switch(t.kind)
+                    {
+                    case K::Spikes:
+                        rgba(0.42f,0.42f,0.46f,k,Lit,c);plate(t.x,t.y,0.36f,0.04f,c);
+                        rgba(0.80f,0.80f,0.84f,k,Lit,c);
+                        for(const auto& [dx,dz]:{std::pair{-0.18f,-0.18f},std::pair{0.18f,-0.18f},std::pair{-0.18f,0.18f},std::pair{0.18f,0.18f},std::pair{0.0f,0.0f}})
+                            block(t.x,t.y,dx,dz,0.035f,0,0.22f*T,c);
+                        break;
+                    case K::Warp:rgba(0.70f,0.40f,1.0f,k,Glow,c);plate(t.x,t.y,0.34f,0.05f,c);rgba(0.95f,0.85f,1.0f,k,Glow,c);plate(t.x,t.y,0.14f,0.06f,c);break;
+                    case K::Pit:rgba(0.03f,0.02f,0.04f,1,Lit,c);plate(t.x,t.y,0.40f,0.05f,c);break;
+                    case K::Alarm:rgba(0.95f,0.80f,0.20f,k,Lit,c);plate(t.x,t.y,0.30f,0.05f,c);rgba(0.85f,0.25f,0.20f,k,Lit,c);block(t.x,t.y,0,0,0.08f,0,0.12f*T,c);break;
+                    case K::Sleep:rgba(1.0f,0.62f,0.80f,k,Glow,c);plate(t.x,t.y,0.32f,0.05f,c);break;
+                    }
+                }
+            for(const auto& g:game.Golds())
+                if(game.Seen(g.x,g.y))
+                {
+                    float c[4];rgba(0.98f,0.80f,0.28f,light(g.x,g.y),Lit,c);
+                    block(g.x,g.y,-0.08f,0.05f,0.09f,0,0.06f*T,c);
+                    block(g.x,g.y,0.09f,-0.04f,0.09f,0,0.06f*T,c);
+                    block(g.x,g.y,0.0f,0.0f,0.08f,0.06f*T,0.12f*T,c);
+                }
+            for(const auto& [x,y]:game.Keys())
+                if(game.Seen(x,y))
+                {
+                    float c[4];rgba(1.0f,0.85f,0.35f,light(x,y),Glow,c);
+                    const float cx=(x+0.5f)*T,cz=-(y+0.5f)*T;
+                    box(cx-0.25f*T,0.15f*T,cz-0.04f*T,cx+0.12f*T,0.23f*T,cz+0.04f*T,c);
+                    box(cx+0.08f*T,0.08f*T,cz-0.1f*T,cx+0.28f*T,0.3f*T,cz+0.1f*T,c);
+                    box(cx-0.25f*T,0.05f*T,cz-0.04f*T,cx-0.19f*T,0.15f*T,cz+0.04f*T,c);
+                }
+            for(const auto& w:game.Wares())
+                if(game.Seen(w.x,w.y))
+                {
+                    // A mat (she stands on it to buy), the goods on it in their colour.
+                    const float k=light(w.x,w.y);
+                    float mat[4],c[4];
+                    rgba(0.62f,0.22f,0.24f,k,Lit,mat);
+                    plate(w.x,w.y,0.42f,0.03f,mat);
+                    constexpr float b=0.03f*T;
+                    using I=Dungeon::ItemKind;
+                    switch(w.item.kind)
+                    {
+                    case I::Potion:rgba(0.95f,0.35f,0.40f,k,Lit,c);block(w.x,w.y,0.2f,0.2f,0.08f,b,0.3f*T,c);break;
+                    case I::Ether:rgba(0.35f,0.55f,1.0f,k,Lit,c);block(w.x,w.y,0.2f,0.2f,0.08f,b,0.3f*T,c);break;
+                    case I::Food:rgba(0.96f,0.96f,0.92f,k,Lit,c);block(w.x,w.y,0.2f,0.2f,0.11f,b,0.18f*T,c);rgba(0.1f,0.12f,0.1f,k,Lit,c);block(w.x,w.y,0.2f,0.29f,0.06f,b,0.12f*T,c);break;
+                    case I::Weapon:rgba(0.80f,0.82f,0.88f,k,Lit,c);box((w.x+0.68f)*T,b,-(w.y+0.92f)*T,(w.x+0.74f)*T,0.08f*T,-(w.y+0.3f)*T,c);break;
+                    case I::Armor:rgba(0.60f,0.45f,0.30f,k,Lit,c);block(w.x,w.y,0.2f,0.2f,0.15f,b,0.12f*T,c);break;
+                    default:rgba(1.0f,0.82f,0.35f,k,Glow,c);block(w.x,w.y,0.2f,0.2f,0.05f,b,0.1f*T,c);break;
+                    }
+                }
+            for(const auto& f:game.Fires())
+                if(game.Seen(f.x,f.y))
+                {
+                    const float k=light(f.x,f.y),cx=(f.x+0.5f)*T,cz=-(f.y+0.5f)*T;
+                    float log[4],ring[4];
+                    rgba(0.40f,0.24f,0.12f,f.used?k*0.6f:k,Lit,log);rgba(0.38f,0.36f,0.36f,k,Lit,ring);
+                    for(int i=0;i<6;++i)
+                    {
+                        const float a=i*1.047f;
+                        box(cx+std::cos(a)*0.32f*T-0.06f*T,0,cz+std::sin(a)*0.32f*T-0.06f*T,cx+std::cos(a)*0.32f*T+0.06f*T,0.1f*T,cz+std::sin(a)*0.32f*T+0.06f*T,ring);
+                    }
+                    box(cx-0.26f*T,0,cz-0.05f*T,cx+0.26f*T,0.1f*T,cz+0.05f*T,log);
+                    box(cx-0.05f*T,0.05f*T,cz-0.26f*T,cx+0.05f*T,0.15f*T,cz+0.26f*T,log);
+                    if(!f.used)
+                    {
+                        float flame[4];
+                        rgba(1.0f,0.55f,0.15f,k,Glow,flame);block(f.x,f.y,0,0,0.13f,0.12f*T,0.4f*T,flame);
+                        rgba(1.0f,0.85f,0.35f,k,Glow,flame);block(f.x,f.y,0.02f,-0.02f,0.07f,0.3f*T,0.6f*T,flame);
                     }
                 }
             for(const auto& c:game.Chests())
@@ -174,8 +418,17 @@ namespace MikuMikuDesktopPerch
             if(state.ended)return;
             state.ended=true;
             ReleaseView();
-            const auto& g=state.game;
-            DungeonResult result{g.Floor(),g.Kills(),g.Turns(),g.GetState()==Dungeon::Game::State::Dead};
+            auto& g=state.game;
+            if(g.Turns()>0)g.End();
+            SaveRecord();
+            DungeonResult result;
+            result.floor=g.Floor();result.kills=g.Kills();result.turns=g.Turns();result.rested=g.Rested();
+            result.died=g.GetState()==Dungeon::Game::State::Dead;
+            result.deepest=state.record.best>state.bestBefore;
+            result.daily=g.Daily();
+            for(const auto& id:g.NewTitles())
+                for(const auto& t:Dungeon::Titles())
+                    if(id==t.id)result.titles.push_back(English()?t.en:t.ja);
             auto onEnd=std::move(state.onEnd);
             DestroyWindow(state.window);
             if(onEnd)onEnd(result);
@@ -189,11 +442,123 @@ namespace MikuMikuDesktopPerch
             g.DrawString(text.c_str(),static_cast<INT>(text.size()),&font,PointF(x,y),&brush);
         }
 
+        // Wrapped within the box (cut off at its bottom).
+        void TextBox(Graphics& g,const std::wstring& text,const RectF& box,float size,Color color)
+        {
+            FontFamily family(L"Yu Gothic UI");
+            Font font(family.IsAvailable()?&family:FontFamily::GenericSansSerif(),size,FontStyleRegular,UnitPixel);
+            SolidBrush brush(color);
+            StringFormat format;
+            format.SetTrimming(StringTrimmingEllipsisCharacter);
+            g.DrawString(text.c_str(),static_cast<INT>(text.size()),&font,box,&format,&brush);
+        }
+
         void Bar(Graphics& g,float x,float y,float w,float h,int value,int max,Color fill)
         {
             SolidBrush back(Color(255,40,36,52)),front(fill);
             g.FillRectangle(&back,x,y,w,h);
             if(max>0)g.FillRectangle(&front,x,y,w*std::clamp(value,0,max)/max,h);
+        }
+
+        // Her face in a ring (or her initial on pink).
+        void Face(Graphics& g,float fx,float fy,float size)
+        {
+            if(state.face)
+            {
+                GraphicsPath circle;
+                circle.AddEllipse(fx,fy,size,size);
+                Region kept;
+                g.GetClip(&kept);
+                g.SetClip(&circle,CombineModeIntersect);
+                SolidBrush back(Color(255,250,240,245));
+                g.FillEllipse(&back,fx,fy,size,size);
+                g.DrawImage(state.face.get(),fx,fy,size,size);
+                g.SetClip(&kept);
+            }
+            else
+            {
+                SolidBrush body(Color(255,255,140,180));
+                g.FillEllipse(&body,fx,fy,size,size);
+                Text(g,state.hero.name.substr(0,1),fx+size*0.2f,fy+size*0.1f,size*0.55f,Color(255,255,255,255),true);
+            }
+            Pen ring(Color(255,255,255,255),std::max(1.5f,size/12));
+            g.DrawEllipse(&ring,fx,fy,size,size);
+        }
+
+        // Her words in a bubble beside her face.
+        void SpeechBubble(Graphics& g,const RectF& area)
+        {
+            const auto& s=state.speech;
+            if(s.text.empty())return;
+            const float face=std::min(area.Height*0.62f,static_cast<float>(Px(64)));
+            Face(g,area.X,area.Y+(area.Height-face)/2,face);
+            const float bx=area.X+face+static_cast<float>(Px(14)),bw=area.Width-face-static_cast<float>(Px(14)),r=static_cast<float>(Px(12));
+            GraphicsPath bubble;
+            bubble.AddArc(bx,area.Y,2*r,2*r,180,90);
+            bubble.AddArc(bx+bw-2*r,area.Y,2*r,2*r,270,90);
+            bubble.AddArc(bx+bw-2*r,area.Y+area.Height-2*r,2*r,2*r,0,90);
+            bubble.AddArc(bx,area.Y+area.Height-2*r,2*r,2*r,90,90);
+            bubble.CloseFigure();
+            SolidBrush fill(Color(255,250,246,252));
+            g.FillPath(&fill,&bubble);
+            // The tail toward her face.
+            const float ty=area.Y+area.Height/2;
+            PointF tail[3]={PointF(bx-static_cast<float>(Px(10)),ty),PointF(bx+1,ty-static_cast<float>(Px(8))),PointF(bx+1,ty+static_cast<float>(Px(8)))};
+            g.FillPolygon(&fill,tail,3);
+            const float pad=static_cast<float>(Px(10));
+            Text(g,state.hero.name,bx+pad,area.Y+pad*0.6f,static_cast<float>(Px(12)),Color(255,200,90,140),true);
+            TextBox(g,s.text,RectF(bx+pad,area.Y+pad*0.6f+static_cast<float>(Px(18)),bw-2*pad,area.Height-pad*1.2f-static_cast<float>(Px(18))),
+                    static_cast<float>(Px(15)),Color(255,40,34,52));
+        }
+
+        // The records (Z): monsters and treasures, things found, and the titles.
+        void PaintBook(Graphics& g,const RectF& area)
+        {
+            const auto& r=state.record;
+            const Color white(255,236,232,245),grey(255,120,114,140),gold(255,240,200,110),dim(255,160,154,180);
+            SolidBrush back(Color(255,28,25,40));
+            g.FillRectangle(&back,area);
+            const float pad=static_cast<float>(Px(14)),line=static_cast<float>(Px(18)),size=static_cast<float>(Px(13));
+            float y=area.Y+pad;
+            Text(g,T(L"冒険の記録",L"Adventure records"),area.X+pad,y,static_cast<float>(Px(18)),gold,true);
+            SYSTEMTIME t{};
+            GetLocalTime(&t);
+            wchar_t today[16];
+            swprintf_s(today,L"%04d-%02d-%02d",t.wYear,t.wMonth,t.wDay);
+            const std::wstring daily=r.dailyDate==today&&r.dailyBest>0?Fmt(T(L"{0}階",L"floor {0}"),{std::to_wstring(r.dailyBest)}):T(L"まだ",L"not yet");
+            Text(g,Fmt(T(L"いちばん深い階：{0}階　冒険した回数：{1}　今日のダンジョン：{2}　（Z・Escで戻る）",L"Deepest: floor {0}   Adventures: {1}   Today's dungeon: {2}   (Z/Esc: back)"),
+                       {std::to_wstring(r.best),std::to_wstring(r.runs),daily}),area.X+pad,y+line*1.5f,size,dim);
+            y+=line*3.2f;
+            const float c1=area.X+pad,c2=area.X+area.Width*0.27f,c3=area.X+area.Width*0.55f;
+            float y1=y,y2=y,y3=y;
+            const auto monsters=Dungeon::MonsterBook();
+            int defeated=0;
+            for(const auto& [id,name]:monsters)defeated+=r.kills.count(id)?1:0;
+            Text(g,Fmt(T(L"モンスター（{0}/{1}）",L"Monsters ({0}/{1})"),{std::to_wstring(defeated),std::to_wstring(monsters.size())}),c1,y1,size,gold,true);y1+=line*1.2f;
+            for(const auto& [id,name]:monsters)
+            {
+                const auto k=r.kills.find(id);
+                Text(g,k==r.kills.end()?std::wstring(L"？？？"):name+L"  ×"+std::to_wstring(k->second),c1,y1,size,k==r.kills.end()?grey:white);
+                y1+=line;
+            }
+            y1+=line*0.6f;
+            const auto treasures=Dungeon::TreasureBook();
+            Text(g,Fmt(T(L"宝物（{0}/{1}）",L"Treasures ({0}/{1})"),{std::to_wstring(r.treasures.size()),std::to_wstring(treasures.size())}),c1,y1,size,gold,true);y1+=line*1.2f;
+            for(const auto& [id,name]:treasures){const bool got=r.treasures.count(id)>0;Text(g,got?name:L"？？？",c1,y1,size,got?white:grey);y1+=line;}
+            const auto items=Dungeon::ItemBook();
+            int found=0;
+            for(const auto& [id,name]:items)found+=r.items.count(id)?1:0;
+            Text(g,Fmt(T(L"持ち物（{0}/{1}）",L"Things ({0}/{1})"),{std::to_wstring(found),std::to_wstring(items.size())}),c2,y2,size,gold,true);y2+=line*1.2f;
+            for(const auto& [id,name]:items){const bool got=r.items.count(id)>0;Text(g,got?name:L"？？？",c2,y2,size,got?white:grey);y2+=line;}
+            const auto& titles=Dungeon::Titles();
+            Text(g,Fmt(T(L"称号（{0}/{1}）",L"Titles ({0}/{1})"),{std::to_wstring(r.titles.size()),std::to_wstring(titles.size())}),c3,y3,size,gold,true);y3+=line*1.2f;
+            for(const auto& t:titles)
+            {
+                const bool got=r.titles.count(std::wstring(t.id,t.id+std::strlen(t.id)))>0;
+                Text(g,got?std::wstring(English()?t.en:t.ja):std::wstring(L"？？？"),c3,y3,size,got?gold:grey,got);
+                Text(g,English()?t.hintEn:t.hintJa,c3+static_cast<float>(Px(120)),y3+1,static_cast<float>(Px(11)),got?dim:grey);
+                y3+=line;
+            }
         }
 
         void Paint(HDC dc)
@@ -219,12 +584,13 @@ namespace MikuMikuDesktopPerch
             const float ox=pad+std::floor(areaW/2-(hero.x+0.5f)*tile),oy=pad+std::floor(areaH/2-(hero.y+0.5f)*tile);
             auto at=[&](int x,int y){return PointF(ox+x*tile,oy+y*tile);};
             g.SetClip(RectF(pad,pad,areaW,areaH));
-            if(!Showing3D())
+            if(state.showBook)PaintBook(g,RectF(pad,pad,areaW,areaH));
+            else if(!Showing3D())
             {
 
             // Floors seen (dim) and in sight (lit), and the walls of rooms seen, as in a map.
             // Tiles edge to edge without smoothing, so no seams show between them.
-            SolidBrush lit(Color(255,78,72,98)),dim(Color(255,40,37,54));
+            SolidBrush lit(Color(255,78,72,98)),dim(Color(255,40,37,54)),door(Color(255,128,80,40));
             g.SetSmoothingMode(SmoothingModeNone);
             g.SetPixelOffsetMode(PixelOffsetModeHalf);
             for(int y=0;y<H;++y)
@@ -232,7 +598,7 @@ namespace MikuMikuDesktopPerch
                     if(game.At(x,y)!=Dungeon::Tile::Wall&&game.Seen(x,y))
                     {
                         const PointF p=at(x,y);
-                        g.FillRectangle(game.Visible(x,y)?&lit:&dim,p.X,p.Y,tile,tile);
+                        g.FillRectangle(game.At(x,y)==Dungeon::Tile::Door?&door:game.Visible(x,y)?&lit:&dim,p.X,p.Y,tile,tile);
                     }
             g.SetPixelOffsetMode(PixelOffsetModeDefault);
             g.SetSmoothingMode(SmoothingModeAntiAlias);
@@ -241,7 +607,17 @@ namespace MikuMikuDesktopPerch
             {
                 bool any=false;
                 for(int y=r.y;y<r.y+r.h&&!any;++y)for(int x=r.x;x<r.x+r.w&&!any;++x)any=game.Seen(x,y);
-                if(any){const PointF p=at(r.x,r.y);g.DrawRectangle(&wall,p.X,p.Y,r.w*tile,r.h*tile);}
+                if(!any)continue;
+                const PointF p=at(r.x,r.y);
+                g.DrawRectangle(&wall,p.X,p.Y,r.w*tile,r.h*tile);
+                if(r.kind==Dungeon::RoomKind::Crystal)
+                {
+                    SolidBrush crystal(Color(200,120,220,255));
+                    for(int y=r.y;y<r.y+r.h;++y)
+                        for(int x=r.x;x<r.x+r.w;++x)
+                            if((x==r.x||y==r.y||x==r.x+r.w-1||y==r.y+r.h-1)&&(x*7+y*3)%3==0&&game.Seen(x,y))
+                            {const PointF c=at(x,y);g.FillRectangle(&crystal,c.X+tile*0.4f,c.Y+tile*0.2f,tile*0.2f,tile*0.6f);}
+                }
             }
             for(int y=0;y<Dungeon::Game::Height;++y)
                 for(int x=0;x<Dungeon::Game::Width;++x)
@@ -252,6 +628,43 @@ namespace MikuMikuDesktopPerch
                         SolidBrush step(Color(255,230,196,90));
                         for(int i=0;i<3;++i)g.FillRectangle(&step,p.X+tile*(0.15f+0.12f*i),p.Y+tile*(0.2f+0.22f*i),tile*(0.7f-0.24f*i),tile*0.14f);
                     }
+            for(const auto& t:game.Traps())
+                if(t.found&&game.Seen(t.x,t.y))
+                {
+                    using K=Dungeon::TrapKind;
+                    const PointF p=at(t.x,t.y);
+                    SolidBrush mark(t.kind==K::Spikes?Color(255,190,190,200):t.kind==K::Warp?Color(255,180,110,255):t.kind==K::Pit?Color(255,8,6,10):
+                                    t.kind==K::Alarm?Color(255,240,200,60):Color(255,255,160,210));
+                    PointF d[4]={PointF(p.X+tile/2,p.Y+tile*0.15f),PointF(p.X+tile*0.85f,p.Y+tile/2),PointF(p.X+tile/2,p.Y+tile*0.85f),PointF(p.X+tile*0.15f,p.Y+tile/2)};
+                    g.FillPolygon(&mark,d,4);
+                }
+            for(const auto& gd:game.Golds())
+                if(game.Seen(gd.x,gd.y)){const PointF p=at(gd.x,gd.y);SolidBrush b(Color(255,250,205,70));g.FillEllipse(&b,p.X+tile*0.3f,p.Y+tile*0.3f,tile*0.4f,tile*0.4f);}
+            for(const auto& [x,y]:game.Keys())
+                if(game.Seen(x,y))
+                {
+                    const PointF p=at(x,y);
+                    SolidBrush key(Color(255,255,215,80));
+                    g.FillEllipse(&key,p.X+tile*0.55f,p.Y+tile*0.3f,tile*0.3f,tile*0.3f);
+                    g.FillRectangle(&key,p.X+tile*0.15f,p.Y+tile*0.4f,tile*0.45f,tile*0.1f);
+                    g.FillRectangle(&key,p.X+tile*0.15f,p.Y+tile*0.4f,tile*0.08f,tile*0.22f);
+                }
+            for(const auto& w:game.Wares())
+                if(game.Seen(w.x,w.y))
+                {
+                    const PointF p=at(w.x,w.y);
+                    SolidBrush stand(Color(255,140,105,75)),goods(Color(255,240,240,250));
+                    g.FillRectangle(&stand,p.X+tile*0.15f,p.Y+tile*0.55f,tile*0.7f,tile*0.3f);
+                    g.FillRectangle(&goods,p.X+tile*0.35f,p.Y+tile*0.2f,tile*0.3f,tile*0.38f);
+                }
+            for(const auto& f:game.Fires())
+                if(game.Seen(f.x,f.y))
+                {
+                    const PointF p=at(f.x,f.y);
+                    SolidBrush wood(Color(255,110,70,40)),flame(Color(255,255,150,50));
+                    g.FillRectangle(&wood,p.X+tile*0.15f,p.Y+tile*0.65f,tile*0.7f,tile*0.15f);
+                    if(!f.used)g.FillEllipse(&flame,p.X+tile*0.3f,p.Y+tile*0.2f,tile*0.4f,tile*0.5f);
+                }
             for(const auto& c:game.Chests())
                 if(game.Seen(c.x,c.y))
                 {
@@ -277,26 +690,7 @@ namespace MikuMikuDesktopPerch
             {
                 const PointF p=at(hero.x,hero.y);
                 const float size=tile*1.1f,fx=p.X+tile/2-size/2,fy=p.Y+tile/2-size/2;
-                if(state.face)
-                {
-                    GraphicsPath circle;
-                    circle.AddEllipse(fx,fy,size,size);
-                    Region map;
-                    g.GetClip(&map);
-                    g.SetClip(&circle,CombineModeIntersect);
-                    SolidBrush back(Color(255,250,240,245));
-                    g.FillEllipse(&back,fx,fy,size,size);
-                    g.DrawImage(state.face.get(),fx,fy,size,size);
-                    g.SetClip(&map);
-                }
-                else
-                {
-                    SolidBrush body(Color(255,255,140,180));
-                    g.FillEllipse(&body,fx,fy,size,size);
-                    Text(g,state.hero.name.substr(0,1),fx+size*0.2f,fy+size*0.1f,size*0.55f,Color(255,255,255,255),true);
-                }
-                Pen ring(Color(255,255,255,255),std::max(1.5f,tile/8));
-                g.DrawEllipse(&ring,fx,fy,size,size);
+                Face(g,fx,fy,size);
                 SolidBrush notch(Color(255,255,230,120));
                 const float cx=p.X+tile/2+hero.dirX*size*0.62f,cy=p.Y+tile/2+hero.dirY*size*0.62f;
                 g.FillEllipse(&notch,cx-tile*0.15f,cy-tile*0.15f,tile*0.3f,tile*0.3f);
@@ -310,28 +704,33 @@ namespace MikuMikuDesktopPerch
             float y=pad;
             const Color white(255,236,232,245),grey(255,160,154,180),gold(255,240,200,110);
             Text(g,state.hero.name,px,y,static_cast<float>(Px(17)),white,true);y+=line*1.3f;
-            Text(g,Fmt(T(L"{0}階　レベル{1}",L"Floor {0}  Level {1}"),{std::to_wstring(game.Floor()),std::to_wstring(hero.level)}),px,y,static_cast<float>(Px(14)),gold);y+=line*1.1f;
+            Text(g,Fmt(game.Daily()?T(L"今日のダンジョン {0}階　レベル{1}",L"Today's: floor {0}  Level {1}"):T(L"{0}階　レベル{1}",L"Floor {0}  Level {1}"),
+                       {std::to_wstring(game.Floor()),std::to_wstring(hero.level)}),px,y,static_cast<float>(Px(14)),gold);y+=line*1.1f;
             Text(g,Fmt(L"HP {0}/{1}",{std::to_wstring(hero.hp),std::to_wstring(hero.MaxHp())}),px,y,static_cast<float>(Px(13)),white);y+=line*0.9f;
             Bar(g,px,y,panel-pad*2,static_cast<float>(Px(7)),hero.hp,hero.MaxHp(),Color(255,110,210,120));y+=line*0.6f;
             Text(g,Fmt(L"MP {0}/{1}",{std::to_wstring(hero.mp),std::to_wstring(hero.MaxMp())}),px,y,static_cast<float>(Px(13)),white);y+=line*0.9f;
             Bar(g,px,y,panel-pad*2,static_cast<float>(Px(7)),hero.mp,hero.MaxMp(),Color(255,110,160,240));y+=line*0.7f;
             Text(g,Fmt(T(L"攻撃 {0}　防御 {1}　魔力 {2}",L"ATK {0}  DEF {1}  MAG {2}"),{std::to_wstring(hero.Atk()),std::to_wstring(hero.Def()),std::to_wstring(hero.Mag())}),
-                 px,y,static_cast<float>(Px(13)),white);y+=line*1.4f;
+                 px,y,static_cast<float>(Px(13)),white);y+=line;
+            std::wstring purse=Fmt(T(L"{0}ゴールド　おなか {1}%",L"{0} gold  Full {1}%"),{std::to_wstring(hero.gold),std::to_wstring(hero.food)});
+            if(hero.keys>0)purse+=Fmt(T(L"　鍵 {0}",L"  Keys {0}"),{std::to_wstring(hero.keys)});
+            Text(g,purse,px,y,static_cast<float>(Px(13)),hero.food<=20?Color(255,255,150,120):white);y+=line*1.4f;
 
             // The whole floor, small: where she has been, the stairs once seen, foes in sight.
             {
                 const float scale=std::floor((panel-pad*2)/W*4)/4,mw=scale*W,mh=scale*H;
-                SolidBrush frame(Color(255,30,27,42)),seenTile(Color(255,96,90,120)),litTile(Color(255,150,142,180));
+                SolidBrush frame(Color(255,30,27,42)),seenTile(Color(255,96,90,120)),litTile(Color(255,150,142,180)),doorTile(Color(255,150,95,50));
                 g.FillRectangle(&frame,px-2,y-2,mw+4,mh+4);
                 g.SetSmoothingMode(SmoothingModeNone);
                 for(int ty=0;ty<H;++ty)
                     for(int tx=0;tx<W;++tx)
                         if(game.At(tx,ty)!=Dungeon::Tile::Wall&&game.Seen(tx,ty))
-                            g.FillRectangle(game.Visible(tx,ty)?&litTile:&seenTile,px+tx*scale,y+ty*scale,scale,scale);
+                            g.FillRectangle(game.At(tx,ty)==Dungeon::Tile::Door?&doorTile:game.Visible(tx,ty)?&litTile:&seenTile,px+tx*scale,y+ty*scale,scale,scale);
                 g.SetSmoothingMode(SmoothingModeAntiAlias);
                 auto dot=[&](int tx,int ty,Color c,float r){SolidBrush b(c);g.FillEllipse(&b,px+(tx+0.5f)*scale-r,y+(ty+0.5f)*scale-r,2*r,2*r);};
                 const float r=std::max(2.0f,scale*1.2f);
                 for(int ty=0;ty<H;++ty)for(int tx=0;tx<W;++tx)if(game.At(tx,ty)==Dungeon::Tile::Stairs&&game.Seen(tx,ty))dot(tx,ty,Color(255,240,200,110),r);
+                for(const auto& f:game.Fires())if(game.Seen(f.x,f.y)&&!f.used)dot(f.x,f.y,Color(255,255,150,50),r);
                 for(const auto& m:game.Monsters())if(game.Visible(m.x,m.y))dot(m.x,m.y,Color(255,235,90,90),r);
                 dot(hero.x,hero.y,Color(255,255,140,180),r*1.2f);
                 y+=mh+line*0.8f;
@@ -350,10 +749,14 @@ namespace MikuMikuDesktopPerch
                 Text(g,label,px,y,static_cast<float>(Px(13)),on?gold:white);y+=line*0.95f;
             }
             if(hero.bag.empty()){Text(g,T(L"（なし）",L"(empty)"),px,y,static_cast<float>(Px(13)),grey);y+=line;}
-            const float help=ch-pad-line*3.2f;
-            Text(g,state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\nF：魔法（MP3）　スペース：待つ\nV：カメラ　M：2D・3D　Esc：帰る",L"Up: go  Left/Right: turn  Down: turn round\nF: magic (3 MP)  Space: wait\nV: camera  M: 2D/3D  Esc: go home")
-                                             :T(L"矢印・WASD：移動（敵へ：剣）\nF：魔法（MP3）　スペース：待つ\nV：カメラ　M：2D・3D　Esc：帰る",L"Arrows/WASD: move (into a foe: sword)\nF: magic (3 MP)  Space: wait\nV: camera  M: 2D/3D  Esc: go home"),
-                 px,std::max(y,help),static_cast<float>(Px(12)),grey);
+            const bool fresh=game.Floor()==1&&game.Turns()==0&&!game.Daily();
+            const float help=ch-pad-line*(fresh?5.2f:4.2f);
+            std::wstring keys=state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\n",L"Up: go  Left/Right: turn  Down: turn round\n")
+                                                     :T(L"矢印・WASD：移動（敵へ：剣）\n",L"Arrows/WASD: move (into a foe: sword)\n");
+            keys+=T(L"F：魔法（MP3）　スペース：待つ・罠を探す\nEnter：買う　P：写真　Z：図鑑\nV：カメラ　M：2D/3D　Esc：帰る",
+                    L"F: magic (3 MP)  Space: wait, find traps\nEnter: buy  P: picture  Z: records\nV: camera  M: 2D/3D  Esc: go home");
+            if(fresh)keys+=T(L"\nT：今日のダンジョンで遊ぶ",L"\nT: play today's dungeon instead");
+            Text(g,keys,px,std::max(y,help),static_cast<float>(Px(12)),grey);
 
             // A question over everything when there is one.
             std::wstring ask;
@@ -362,17 +765,32 @@ namespace MikuMikuDesktopPerch
                 ask=T(L"階段だ！\n\nEnter：次の階へ　　B：デスクトップに帰る",L"The stairs!\n\nEnter: the next floor    B: back to the desktop");
             else if(game.GetState()==Dungeon::Game::State::Dead)
                 ask=Fmt(T(L"やられてしまった…（{0}階）\n\nEnter：デスクトップに帰る",L"Defeated... (floor {0})\n\nEnter: back to the desktop"),{std::to_wstring(game.Floor())});
-            // What happened, newest last (in 3D, the question takes its place: the view hides
-            // what is drawn under it).
-            float ly=ch-logHeight+pad/2;
-            if(Showing3D()&&!ask.empty())
+            else if(const auto* w=game.WareHere())
+                ask=Fmt(T(L"{0}：{1}ゴールド（持っているのは{2}ゴールド）\n\nEnter：買う",L"{0}: {1} gold (you have {2})\n\nEnter: buy"),
+                        {w->item.name,std::to_wstring(w->price),std::to_wstring(hero.gold)});
+            // Below the view: her words on the left, what happened on the right (a question in
+            // 3D takes its place: the view hides what is drawn under it).
+            const float top=ch-logHeight+pad/2,speechW=std::floor(areaW*0.56f);
+            SpeechBubble(g,RectF(pad,top,speechW,logHeight-pad*1.5f));
+            const float rx=pad*2+speechW,rw=areaW-speechW-pad;
+            float ly=top;
+            g.SetClip(RectF(rx,top,rw,logHeight-pad));
+            if(!state.toast.empty()&&GetTickCount64()<state.toastUntil){Text(g,state.toast,rx,ly,static_cast<float>(Px(13)),gold,true);ly+=line;}
+            if((Showing3D()||state.showBook)&&!ask.empty())
             {
                 SolidBrush box(Color(255,40,34,58));
-                g.FillRectangle(&box,pad,ly-pad/4,areaW,logHeight-pad);
-                Text(g,ask,pad*2,ly,static_cast<float>(Px(15)),gold);
+                g.FillRectangle(&box,rx,ly,rw,top+logHeight-pad-ly);
+                Text(g,ask,rx+pad,ly+pad/2,static_cast<float>(Px(14)),gold);
                 ask.clear();
             }
-            else for(const auto& entry:game.Log()){Text(g,entry,pad,ly,static_cast<float>(Px(14)),white);ly+=line;}
+            else
+            {
+                const auto& log=game.Log();
+                const int fit=std::max(1,static_cast<int>((top+logHeight-pad-ly)/(line*0.95f)));
+                for(size_t i=log.size()>static_cast<size_t>(fit)?log.size()-fit:0;i<log.size();++i)
+                {Text(g,log[i],rx,ly,static_cast<float>(Px(13)),white);ly+=line*0.95f;}
+            }
+            g.ResetClip();
             if(!ask.empty())
             {
                 const float bw=static_cast<float>(Px(420)),bh=static_cast<float>(Px(120));
@@ -418,11 +836,42 @@ namespace MikuMikuDesktopPerch
             return true;
         }
 
+        // A new adventure: an ordinary one (a new floor each time), or today's (the same floors
+        // all day, its best kept apart).
+        void StartAdventure(bool daily)
+        {
+            SYSTEMTIME t{};
+            GetLocalTime(&t);
+            std::uint32_t seed=GetTickCount()^static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&state));
+            if(daily)
+            {
+                wchar_t today[16];
+                swprintf_s(today,L"%04d-%02d-%02d",t.wYear,t.wMonth,t.wDay);
+                if(state.record.dailyDate!=today){state.record.dailyDate=today;state.record.dailyBest=0;}
+                seed=static_cast<std::uint32_t>(t.wYear*10000+t.wMonth*100+t.wDay)*2654435761u;
+            }
+            state.bestBefore=state.record.best;
+            state.game.Start(seed,state.hero.name,state.hero.bond,daily,state.record);
+            state.sceneKey=-1;
+            state.placed=false;
+            state.heldKey=state.queuedKey=0;
+            state.speech.text.clear();
+            state.speech.waiting=false;
+            state.speech.weight=0;
+            Listen();
+        }
+
         // repeat: the key is held down (the keyboard's auto-repeat).
         void OnKey(WPARAM key,bool repeat)
         {
             auto& game=state.game;
             using State=Dungeon::Game::State;
+            if(state.showBook)
+            {
+                if(key=='Z'||key==VK_ESCAPE||key==VK_RETURN){state.showBook=false;PlaceView();}
+                InvalidateRect(state.window,nullptr,FALSE);
+                return;
+            }
             if(state.confirmQuit)
             {
                 if(key=='Y'||key==VK_RETURN){Finish();return;}
@@ -435,8 +884,12 @@ namespace MikuMikuDesktopPerch
             else if(key==VK_ESCAPE)state.confirmQuit=true;
             else if(key=='M'&&state.renderer){state.show3D=!state.show3D;PlaceView();}
             else if(key=='V'&&Showing3D())state.behind=!state.behind;
+            else if(key=='Z'&&!repeat){state.showBook=true;PlaceView();}
+            else if(key=='P'&&!repeat)QueuePhoto({},false);
+            else if(key=='T'&&!repeat&&game.Floor()==1&&game.Turns()==0&&!game.Daily())StartAdventure(true);
             else if(game.GetState()==State::AtStairs&&key==VK_RETURN)game.Descend();
             else if(game.GetState()==State::AtStairs&&key=='B'){Finish();return;}
+            else if(key==VK_RETURN&&game.WareHere()&&!repeat)game.Buy();
             else
             {
                 int dx=0,dy=0;
@@ -476,6 +929,7 @@ namespace MikuMikuDesktopPerch
                 else if(key>=VK_NUMPAD1&&key<=VK_NUMPAD9)game.Use(static_cast<int>(key-VK_NUMPAD1));
                 else return;
             }
+            Listen();
             InvalidateRect(state.window,nullptr,FALSE);
         }
 
@@ -578,9 +1032,33 @@ namespace MikuMikuDesktopPerch
 
     bool DungeonWindowOpen(){return state.window!=nullptr;}
 
+    void DungeonHeard(const std::wstring& line,bool done)
+    {
+        auto& s=state.speech;
+        if(!state.window||!s.waiting)return;
+        if(!line.empty())s.text=line;
+        if(done)
+        {
+            s.waiting=false;
+            if(line.empty())s.text=s.fallback;
+            s.recent.push_back(s.text);
+            while(s.recent.size()>4)s.recent.pop_front();
+        }
+        InvalidateRect(state.window,nullptr,FALSE);
+    }
+
     void TickDungeonWindow(MascotModel& model,double dt)
     {
-        if(!state.window||!Showing3D())return;
+        if(!state.window)return;
+        // Her words: the LLM's line waited for no longer than AskWait (then her own), a note
+        // under the view cleared when its time is up.
+        {
+            auto& s=state.speech;
+            const ULONGLONG now=GetTickCount64();
+            if(s.waiting&&s.text==L"…"&&now-s.since>AskWait){s.waiting=false;s.text=s.fallback;InvalidateRect(state.window,nullptr,FALSE);}
+            if(!state.toast.empty()&&now>=state.toastUntil){state.toast.clear();InvalidateRect(state.window,nullptr,FALSE);}
+        }
+        if(!Showing3D()||state.showBook)return;
         auto& r=*state.renderer;
         const auto& game=state.game;
         const long long key=static_cast<long long>(game.Floor())*1000000+game.Turns()*4+static_cast<int>(game.GetState());
@@ -600,6 +1078,7 @@ namespace MikuMikuDesktopPerch
             {
                 state.game.StepOffStairs();
                 state.game.Move(sx,sy);
+                Listen();
                 InvalidateRect(state.window,nullptr,FALSE);
             }
             state.queuedKey=0;
@@ -619,13 +1098,13 @@ namespace MikuMikuDesktopPerch
                 {
                     state.game.StepOffStairs();
                     state.game.Move(sx,sy);
+                    Listen();
                     InvalidateRect(state.window,nullptr,FALSE);
                 }
             }
         }
         const auto& hero=game.Hero();
         const float tx=(hero.x+0.5f)*TileSize,tz=-(hero.y+0.5f)*TileSize;
-        const float k=static_cast<float>(1-std::exp(-dt/0.12));
         if(!state.placed||state.floor!=game.Floor())
         {
             state.drawnX=tx;state.drawnZ=tz;
@@ -637,7 +1116,7 @@ namespace MikuMikuDesktopPerch
 
         // She walks to her tile: her gait's own pace, so the planted foot stays put; she runs
         // when she has fallen more than a tile behind (keys pressed faster than she walks), and
-        // a new floor puts her there at once.
+        // a new floor (or a warp) puts her there at once.
         const float dx=tx-state.drawnX,dz=tz-state.drawnZ,distance=std::sqrt(dx*dx+dz*dz);
         if(distance>TileSize*4){state.drawnX=tx;state.drawnZ=tz;}
         else if(distance>0.05f)
@@ -691,6 +1170,7 @@ namespace MikuMikuDesktopPerch
         state.placed=true;
         r.SetCamera(XMLoadFloat3(&state.eye),XMLoadFloat3(&state.target),XMConvertToRadians(state.behind?50.0f:32.0f));
         r.Render(model,state.hero.edgeScale);
+        if(state.photo.at&&GetTickCount64()>=state.photo.at)TakePhoto();
     }
 
     void ShowDungeonWindow(HWND owner,const DungeonHero& hero,std::function<void(const DungeonResult&)> onEnd)
@@ -719,6 +1199,10 @@ namespace MikuMikuDesktopPerch
         state.onEnd=std::move(onEnd);
         state.confirmQuit=false;
         state.ended=false;
+        state.showBook=false;
+        state.photo.at=0;
+        state.toast.clear();
+        state.speech.recent.clear();
         state.face.reset();
         if(hero.faceSize>0&&hero.face.size()>=static_cast<size_t>(hero.faceSize)*hero.faceSize*4)
         {
@@ -726,7 +1210,8 @@ namespace MikuMikuDesktopPerch
             Bitmap view(hero.faceSize,hero.faceSize,hero.faceSize*4,PixelFormat32bppPARGB,const_cast<BYTE*>(state.hero.face.data()));
             state.face.reset(view.Clone(0,0,hero.faceSize,hero.faceSize,PixelFormat32bppPARGB));
         }
-        state.game.Start(GetTickCount()^static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&state)),hero.name);
+        if(hero.recordPath.empty())state.record=Dungeon::Record{};
+        else state.record.Load(hero.recordPath);
 
         // On the owner's monitor, about two thirds of its work area.
         MONITORINFO info{sizeof(info)};
@@ -738,6 +1223,7 @@ namespace MikuMikuDesktopPerch
         state.window=CreateWindowExW(0,ClassName,title.c_str(),WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,
                                      work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,
                                      nullptr,nullptr,instance,nullptr);
+        StartAdventure(false);
         state.show3D=CreateView();
         PlaceView();
         ShowWindow(state.window,SW_SHOWNORMAL);

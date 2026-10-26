@@ -203,6 +203,8 @@ namespace
         double roomCheckAt=0;         // next look at whether she stands on top of another character
         // Talking with another character: the request now running is a line of that conversation.
         bool banterLine=false;
+        // In the dungeon: the request now running is a word of hers there (for its bubble).
+        bool dungeonLine=false;
         // A timer, reminder or to-do request the words alone did not make clear, being read by
         // the LLM (planSaid: what the user said).
         std::unique_ptr<LocalChat> planChat;
@@ -2127,6 +2129,22 @@ namespace
                 m.feelingUntil=-1;
                 Trace(L"%.1f talk: feeling %s",app.clock,feeling->english);
             }
+        if(m.dungeonLine)
+        {
+            // One line, to the dungeon's bubble (and her voice); the rest, if any, is not waited for.
+            bool complete=false;
+            const std::wstring line=BanterLine(m,CleanReply(m.reply),complete);
+            Reveal(m,line);
+            DungeonHeard(line,complete);
+            if(complete)
+            {
+                if(m.chat)m.chat->Cancel();
+                m.chatRequest=0;
+                m.dungeonLine=false;
+                m.speech.Finish();
+            }
+            return;
+        }
         if(m.banterLine)
         {
             bool complete=false;
@@ -2149,6 +2167,16 @@ namespace
         std::unique_ptr<std::wstring> owned(error);
         if(id!=m.chatRequest)return;
         Trace(L"%.1f talk: request %d done %s",app.clock,id,owned->c_str());
+        if(m.dungeonLine)
+        {
+            m.dungeonLine=false;
+            bool complete=false;
+            const std::wstring line=owned->empty()?BanterLine(m,CleanReply(m.reply+L"\n"),complete):std::wstring();
+            if(!line.empty())Reveal(m,line);
+            m.speech.Finish();
+            DungeonHeard(line,true);
+            return;
+        }
         if(m.banterLine)
         {
             if(!owned->empty())
@@ -3399,14 +3427,35 @@ namespace
         return hero;
     }
 
-    // The deepest floor she has reached (characters\<name>.dungeon.txt, "best=N").
-    int DungeonBest(const std::wstring& modelPath)
+    // docs/Dungeon.md: a word from her in the dungeon about what just happened (situation, as a
+    // stage direction), in her own voice, streamed to the dungeon's bubble (DungeonHeard).
+    // False when the LLM is not there or busy with something else: her own line is shown.
+    bool DungeonTalk(Mascot& m,const std::wstring& situation)
     {
-        const std::wstring file=CharacterDataFile(modelPath,L".dungeon.txt",false);
-        std::ifstream in(std::filesystem::path(file),std::ios::binary);
-        std::string line;
-        while(std::getline(in,line))if(line.rfind("best=",0)==0)return std::max(0,std::atoi(line.c_str()+5));
-        return 0;
+        if(ExternalChat()||!ChatReady(m,false))return false;
+        if(m.chat->Busy()&&!m.dungeonLine)return false;
+        if(m.chat->Busy())m.chat->Cancel();   // her last word there, not finished: this one instead
+        const std::wstring& user=app.settings.userName;
+        const std::wstring bond=app.settings.bond?BondPrompt(m):std::wstring();
+        std::vector<ChatMessage> messages;
+        if(English())
+            messages.push_back({L"system",
+                L"You are \""+m.character.name+L"\".\n"+m.character.persona+L"\n"+bond+L"\n"
+                L"You are now exploring a dungeon in a little roguelike game together with "+(user.empty()?std::wstring(L"the person you talk with"):L"\""+user+L"\"")+
+                L", who guides you through it. Your words appear in a speech bubble in the game's window. "
+                L"Write only your own line, in English, as short casual speech. No names, stage directions, anything in ( ), Markdown, lists, emoji or emoticons.\n"
+                L"Begin your line with how you feel, as exactly one of "+FeelingTags()+L"(for example: [surprise] Whoa, look at that!)."});
+        else
+            messages.push_back({L"system",
+                L"あなたは「"+m.character.name+L"」です。\n"+m.character.persona+L"\n"+bond+L"\n"
+                L"いま、"+(user.empty()?std::wstring(L"話し相手"):L"話し相手の「"+user+L"」")+L"と一緒に、ローグライクのミニゲームでダンジョンを冒険しています。"
+                L"話し相手があなたを操作して進んでいます。あなたのセリフは、ゲームの画面の吹き出しに表示されます。"
+                L"あなたのセリフだけを、短い話し言葉で書いてください。名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
+                L"セリフのいちばん最初に、そのときの気持ちを"+FeelingTags()+L"のどれか1つで書いてください（例：［驚き］わっ、見て！）。"});
+        messages.push_back({L"user",English()?L"("+situation+L")":L"（"+situation+L"）"});
+        m.dungeonLine=true;
+        BeginReply(m,std::move(messages));
+        return true;
     }
 
     void OpenDungeon(Mascot& m)
@@ -3423,6 +3472,14 @@ namespace
         hero.msaa=std::min(app.settings.msaa,4);
         hero.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
         hero.light=app.settings.dungeonLight;
+        hero.bond=app.settings.bond?m.bond.Stage():0;
+        hero.recordPath=CharacterDataFile(model,L".dungeon.txt",true);
+        hero.shutter=app.settings.shutterSound;
+        hero.talk=[model](const std::wstring& situation){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inDungeon)return DungeonTalk(*owned,situation);
+            return false;
+        };
         // She goes into the dungeon: off the desktop, standing, looking where her model faces.
         if(m.chat)m.chat->Cancel();
         if(m.voice)m.voice->CancelAll();
@@ -3437,28 +3494,43 @@ namespace
             for(const auto& owned:app.mascots)
                 if(owned->modelPath==model&&owned->inDungeon)
                 {
-                    owned->inDungeon=false;
+                    Mascot& m=*owned;
+                    m.inDungeon=false;
+                    // Her last word there, if still coming, is not carried onto the desktop.
+                    if(m.dungeonLine)
+                    {
+                        m.dungeonLine=false;
+                        if(m.chat)m.chat->Cancel();
+                        m.chatRequest=0;
+                        if(m.voice)m.voice->CancelAll();
+                        m.speech.Reset();
+                    }
+                    m.bubble.Hide();
                     // Back to walking as on the desktop, standing where she was.
-                    owned->model.SetFacingWalk(false);
-                    owned->model.SetActivity(Activity::Idle);
-                    owned->model.TakeRootDelta();
-                    if(!app.paused)ShowWindow(owned->hwnd,SW_SHOWNOACTIVATE);
+                    m.model.SetFacingWalk(false);
+                    m.model.SetActivity(Activity::Idle);
+                    m.model.TakeRootDelta();
+                    if(!app.paused)ShowWindow(m.hwnd,SW_SHOWNOACTIVATE);
+                    // An adventure together, and each campfire shared, bring them closer.
+                    if(r.turns>=30)AddBond(m,BondAction::Dungeon);
+                    for(int i=0;i<r.rested;++i)AddBond(m,BondAction::Dungeon);
                 }
-            const int best=DungeonBest(model);
-            const bool record=r.floor>best;
-            if(record)
-                if(std::ofstream out(std::filesystem::path(CharacterDataFile(model,L".dungeon.txt",true)),std::ios::binary|std::ios::trunc);out)
-                    out<<"best="<<r.floor<<"\n";
-            Trace(L"%.1f dungeon: floor %d, %s, %d defeated, %d turns",app.clock,r.floor,r.died?L"defeated":L"came back",r.kills,r.turns);
+            const bool record=r.deepest;
+            Trace(L"%.1f dungeon: floor %d, %s, %d defeated, %d turns, %d titles",app.clock,r.floor,r.died?L"defeated":L"came back",r.kills,r.turns,static_cast<int>(r.titles.size()));
             const std::wstring floor=std::to_wstring(r.floor),kills=std::to_wstring(r.kills);
             std::wstring line=r.died?Fmt(T(L"うう、{0}階でやられちゃった…。次はもっと深くまで行こうね。",L"Ugh, I got beaten on floor {0}... Let's go deeper next time."),{floor})
                                     :Fmt(T(L"ただいま！{0}階まで行ってきたよ。",L"I'm back! We made it to floor {0}."),{floor});
             if(record)line+=T(L"いちばん深くまで行けた！",L" That's our deepest yet!");
-            const std::wstring facts=Fmt(r.died?T(L"話し相手と一緒にダンジョンを冒険して、{0}階でモンスターにやられてデスクトップに戻ってきました（倒したモンスター{1}匹）",
+            std::wstring titles;
+            for(const auto& t:r.titles)titles+=(titles.empty()?L"":T(L"、",L", "))+(English()?L"\""+t+L"\"":L"「"+t+L"」");
+            if(!titles.empty())line+=Fmt(T(L"称号{0}ももらえたよ。",L" We got the title {0}, too."),{titles});
+            std::wstring facts=Fmt(r.died?T(L"話し相手と一緒にダンジョンを冒険して、{0}階でモンスターにやられてデスクトップに戻ってきました（倒したモンスター{1}匹）",
                                                   L"You explored the dungeon with the person you talk with and were beaten on floor {0}, back on the desktop now ({1} monsters defeated)")
                                                 :T(L"話し相手と一緒にダンジョンを冒険して、{0}階まで行ってデスクトップに戻ってきました（倒したモンスター{1}匹）",
                                                   L"You explored the dungeon with the person you talk with, reached floor {0} and came back to the desktop ({1} monsters defeated)"),
                                          {floor,kills})+(record?T(L"。これまででいちばん深い階です",L". It is the deepest you have been"):L"");
+            if(r.daily)facts+=T(L"。今日だけのダンジョンでした",L". It was today's dungeon");
+            if(!titles.empty())facts+=Fmt(T(L"。称号{0}を手に入れました",L". You earned the title {0}"),{titles});
             app.notices.push_back({line,facts,model,{}});
         });
     }

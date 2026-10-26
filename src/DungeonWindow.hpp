@@ -10,8 +10,9 @@ namespace MikuMikuDesktopPerch
     class MascotModel;
 
     // The dungeon mini game's window (docs/Dungeon.md): the dungeon in 3D (or the map from
-    // above), the hero's state beside it and what happened below. Arrow keys or WASD move (into
-    // a monster: the sword), F casts magic, Space waits, 1-9 and 0 use or equip, V changes the
+    // above), the hero's state beside it, her words and what happened below. Arrow keys or
+    // WASD move (into a monster: the sword), F casts magic, Space waits (and looks for traps),
+    // 1-9 and 0 use or equip, Enter buys, P takes a picture, Z shows the records, V changes the
     // camera, M the 2D map, Esc gives up. One at a time.
     struct DungeonHero
     {
@@ -28,18 +29,29 @@ namespace MikuMikuDesktopPerch
         int msaa=4;
         unsigned maxTexture=1024;
         bool light=false;
+        int bond=0;                 // how close she and the user are (0-4; 0 when not counted): a little help
+        std::wstring recordPath;    // her records (characters\<model>.dungeon.txt); empty: not kept
+        bool shutter=false;         // the album's shutter sound
+        // Her words in her own voice: asks the LLM about situation (a stage direction), the line
+        // coming back through DungeonHeard. False when it cannot now (her own line is shown).
+        std::function<bool(const std::wstring& situation)> talk;
     };
 
     struct DungeonResult
     {
-        int floor=1,kills=0,turns=0;
-        bool died=false;
+        int floor=1,kills=0,turns=0,rested=0;
+        bool died=false,deepest=false,daily=false;
+        std::vector<std::wstring> titles;   // earned this time, by name
     };
 
     // Opens it (or brings it forward when open). onEnd: once, when the adventure is over and
     // the window closes.
     void ShowDungeonWindow(HWND owner,const DungeonHero& hero,std::function<void(const DungeonResult&)> onEnd);
     bool DungeonWindowOpen();
+
+    // Her line asked for with DungeonHero::talk, as it comes in (done: the end; an empty line
+    // when done means none came, and her own line is shown).
+    void DungeonHeard(const std::wstring& line,bool done);
 
     // Every frame while open: the 3D view drawn with her model as it is posed now. The view's
     // renderer is made when the window opens and released when it closes.
