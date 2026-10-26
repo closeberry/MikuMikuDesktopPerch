@@ -2,6 +2,24 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.2.8
+
+### New
+
+- **Speak with AivisSpeech**: choose "AivisSpeech" in the box below the voice under Talking and voice in the settings, and replies are spoken with [AivisSpeech](https://aivis-project.com/), started beforehand (at `http://127.0.0.1:10101`). "Style strength" (0.5 to 2.0, standard 1.0) sets how clearly styles such as sweet or sleepy come through. AivisSpeech's voices set their own pace, so the lip-sync follows the sound
+- **Reset pose and physics**: "Reset pose and physics" in the right-click menu smoothly stops the motion or gesture playing from where it is, eases hair and skirt back to their shape, and then resumes physics (1.5 s). From the tray icon, with more than one character, it is "Reset everyone's pose and physics"
+
+### Changes
+
+- Chats between characters have 45 topics instead of 10 (including one about today's date) and a way to start (a question, a quiz, teasing, musing aloud, ...). Two characters who talked before don't repeat their last chats
+- After the app updates itself, one of the characters says the update is done and which version this is
+- A gesture cut short lowers its arms smoothly instead of dropping them
+
+### Fixes
+
+- The documentation said AivisSpeech could be used, but its address could not be chosen in the settings and its voice and lip-sync went out of step, so it did not work. It does now (above)
+- With a voice, each phrase lasts as long as its sound, so phrases no longer overlap
+
 ## 1.2.7
 
 ### New
