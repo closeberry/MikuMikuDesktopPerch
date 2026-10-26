@@ -33,7 +33,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdTabs
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdTabs
         };
         // The longest persona (characters, a line break counting as one).
         constexpr size_t MaxPersona=4000;
@@ -272,12 +272,16 @@ namespace MikuMikuDesktopPerch
             Label(T(L"カレンダーの予定の前に知らせる",L"Tell me before calendar events"),28,y+134,290);
             Combo(IdCalendarLead,326,y+132,110);
             y+=172;
-            Group(T(L"アルバム（後ろのウィンドウは写りません）",L"Album (windows behind are never in it)"),y,84);
+            Group(T(L"アルバム（後ろのウィンドウは写りません）",L"Album (windows behind are never in it)"),y,112);
             Label(T(L"この瞬間を撮るキー",L"Key to take a picture"),28,y+24,140);
             Add(HOTKEY_CLASSW,L"",WS_BORDER|WS_TABSTOP,170,y+22,150,24,IdAlbumHotkey);
             SendDlgItemMessageW(state.window,IdAlbumHotkey,HKM_SETHOTKEY,static_cast<WPARAM>(s.albumHotkey),0);
             Add(L"BUTTON",T(L"アルバムを開く",L"Open album"),BS_PUSHBUTTON|WS_TABSTOP,326,y+21,110,26,IdOpenAlbum);
-            CheckBox(IdShutterSound,T(L"撮るときにシャッター音を鳴らす",L"Play a shutter sound"),28,y+52,300,s.shutterSound);
+            Label(T(L"保存先",L"Folder"),28,y+52,140);
+            Add(L"EDIT",s.albumFolder.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+50,190,24,IdAlbumFolder);
+            SendDlgItemMessageW(state.window,IdAlbumFolder,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"既定（LOCALAPPDATAの中）",L"Default (in LOCALAPPDATA)")));
+            Add(L"BUTTON",T(L"参照...",L"Browse..."),BS_PUSHBUTTON|WS_TABSTOP,366,y+49,70,26,IdAlbumBrowse);
+            CheckBox(IdShutterSound,T(L"撮るときにシャッター音を鳴らす",L"Play a shutter sound"),28,y+80,300,s.shutterSound);
             y=top;
             Page(T(L"詳細",L"Advanced"));
             Group(T(L"詳細（変更すると再起動します）",L"Advanced (changes restart the app)"),y,194);
@@ -388,20 +392,21 @@ namespace MikuMikuDesktopPerch
             EnableWindow(GetDlgItem(state.window,IdVoiceStrength),mode==VoiceAivisSpeech);
         }
 
-        void BrowseVoiceFolder()
+        // A folder picked into the box id.
+        void BrowseFolder(int id,const wchar_t* title)
         {
             Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
             if(FAILED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog))))return;
             DWORD options=0;
             dialog->GetOptions(&options);
             dialog->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM);
-            dialog->SetTitle(T(L"VOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）",L"The folder VOICEVOX is installed in (where VOICEVOX.exe is)"));
+            dialog->SetTitle(title);
             if(FAILED(dialog->Show(state.window)))return;
             Microsoft::WRL::ComPtr<IShellItem> item;
             PWSTR path=nullptr;
             if(SUCCEEDED(dialog->GetResult(&item))&&SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH,&path)))
             {
-                SetDlgItemTextW(state.window,IdVoiceFolder,path);
+                SetDlgItemTextW(state.window,id,path);
                 CoTaskMemFree(path);
             }
         }
@@ -909,6 +914,12 @@ namespace MikuMikuDesktopPerch
             s.morningSummary=Checked(IdMorningSummary);
             s.albumHotkey=static_cast<int>(SendDlgItemMessageW(state.window,IdAlbumHotkey,HKM_GETHOTKEY,0,0)&0xFFFF);
             s.shutterSound=Checked(IdShutterSound);
+            {
+                std::wstring folder(MAX_PATH*2,L'\0');
+                folder.resize(GetDlgItemTextW(state.window,IdAlbumFolder,folder.data(),static_cast<int>(folder.size())));
+                const size_t a=folder.find_first_not_of(L" \t\""),b=folder.find_last_not_of(L" \t\"");
+                s.albumFolder=a==std::wstring::npos?std::wstring():folder.substr(a,b-a+1);
+            }
             s.restMinutes=ComboValue(IdRestMinutes,s.restMinutes);
             s.focusMinutes=ComboValue(IdFocusMinutes,s.focusMinutes);
             s.focusBreakMinutes=ComboValue(IdFocusBreakMinutes,s.focusBreakMinutes);
@@ -1000,7 +1011,10 @@ namespace MikuMikuDesktopPerch
                     if(HIWORD(wParam)==BN_CLICKED)UpdateInitiative();
                     return 0;
                 case IdVoiceBrowse:
-                    BrowseVoiceFolder();
+                    BrowseFolder(IdVoiceFolder,T(L"VOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）",L"The folder VOICEVOX is installed in (where VOICEVOX.exe is)"));
+                    return 0;
+                case IdAlbumBrowse:
+                    BrowseFolder(IdAlbumFolder,T(L"アルバムの写真を保存するフォルダ",L"The folder to keep the album's pictures in"));
                     return 0;
                 case IdPersona:
                     OpenPersona();

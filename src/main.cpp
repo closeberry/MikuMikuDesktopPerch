@@ -311,6 +311,7 @@ namespace
 
     void Trace(const wchar_t* format,...);
     bool RegisterAlbumHotkey();
+    void MoveAlbum(Settings& current,const std::wstring& chosen);
 
     // Points for something she and the user did together (docs/Bond.md), saved as they come.
     // Not in diagnostic runs, which must leave the user's data alone.
@@ -1597,6 +1598,7 @@ namespace
         }
         current.morningSummary=s.morningSummary;
         current.shutterSound=s.shutterSound;
+        if(s.albumFolder!=current.albumFolder)MoveAlbum(current,s.albumFolder);
         if(s.albumHotkey!=current.albumHotkey)
         {
             current.albumHotkey=s.albumHotkey;
@@ -3326,6 +3328,40 @@ namespace
         }
     }
 
+    // The album goes to another folder (docs/Album.md): what is in the old one is copied there
+    // (never over a file, and nothing is deleted), and the old one is left as it was. A folder
+    // that cannot be made, or one inside the old one, keeps the old.
+    void MoveAlbum(Settings& current,const std::wstring& chosen)
+    {
+        namespace fs=std::filesystem;
+        const std::wstring from=AlbumFolder(false),to=chosen.empty()?DefaultAlbumFolder():chosen;
+        std::error_code ec;
+        auto keep=[&](const std::wstring& why){
+            ShowMessage(Fmt(T(L"アルバムの保存先を「{0}」にできませんでした（{1}）。いまの保存先のままにします。",
+                              L"The album could not be moved to \"{0}\" ({1}). It stays where it is."),{to,why}),MB_ICONWARNING);
+        };
+        if(!fs::path(to).is_absolute()){keep(T(L"ドライブから始まるフォルダを指定してください",L"give a full path, starting with the drive"));return;}
+        if(!fs::create_directories(to,ec)&&!fs::is_directory(to,ec)){keep(T(L"フォルダを作れません",L"the folder cannot be made"));return;}
+        const fs::path a=fs::weakly_canonical(from,ec),b=fs::weakly_canonical(to,ec);
+        const bool same=fs::equivalent(a,b,ec);
+        const auto inside=std::mismatch(a.begin(),a.end(),b.begin(),b.end()).first==a.end();
+        if(!same&&inside&&fs::exists(a,ec)){keep(T(L"いまの保存先の中には置けません",L"it cannot be inside the current one"));return;}
+        int copied=0;
+        if(!same)
+        {
+            std::wstring error;
+            copied=CopyAlbum(from,to,error);
+            if(copied<0){Trace(L"%.1f album: %s",app.clock,error.c_str());keep(T(L"写真をコピーできませんでした",L"the pictures could not be copied"));return;}
+        }
+        current.albumFolder=chosen;
+        SetAlbumFolder(chosen);
+        Trace(L"%.1f album: now in %s (%d files copied from %s)",app.clock,to.c_str(),copied,from.c_str());
+        if(copied>0)
+            ShowMessage(Fmt(T(L"これまでの写真（{0}個のファイル）を、新しい保存先にコピーしました。\n\n元のフォルダ（{1}）は、消さずにそのまま残してあります。",
+                              L"The pictures so far ({0} files) were copied to the new folder.\n\nThe old folder ({1}) is left as it was, nothing deleted."),
+                            {std::to_wstring(copied),from}),MB_ICONINFORMATION);
+    }
+
     // The album's hot key, on the control window (docs/Album.md). False if another program
     // has it already.
     bool RegisterAlbumHotkey()
@@ -4827,6 +4863,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         app.usingSince=day;
     }
     app.settings.Load(app.settingsPath);
+    SetAlbumFolder(app.settings.albumFolder);
     if(!app.usingSince.empty())
         for(const auto& c:app.settings.characters)if(!c.modelPath.empty())app.modelsBefore.insert(c.modelPath);
     SetLanguage(app.settings.language);

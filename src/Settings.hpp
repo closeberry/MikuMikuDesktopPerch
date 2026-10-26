@@ -71,6 +71,7 @@ namespace MikuMikuDesktopPerch
         // and whether a shutter sounds.
         int albumHotkey=0x0753;
         bool shutterSound=true;
+        std::wstring albumFolder;   // where the pictures go (empty: LOCALAPPDATA\MikuMikuDesktopPerch\album)
         bool chatInitiative=true;   // greet, welcome back and now and then say something first
         // With chatInitiative: about how often (minutes, varied by a third either way) one says a
         // word of her own, and two characters talk with each other (0: never).

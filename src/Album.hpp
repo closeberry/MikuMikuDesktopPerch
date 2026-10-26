@@ -30,8 +30,16 @@ namespace MikuMikuDesktopPerch
     // to what is drawn), and a line in album.txt. Returns the first file, or empty (error says why).
     std::wstring SaveAlbumShot(const AlbumShot& shot,std::wstring& error);
 
-    // The album's folder (made when create is set).
+    // The album's folder (made when create is set): the one chosen with SetAlbumFolder, or
+    // DefaultAlbumFolder when none is.
     std::wstring AlbumFolder(bool create);
+    std::wstring DefaultAlbumFolder();
+    void SetAlbumFolder(const std::wstring& folder);
+
+    // The pictures in from, copied into to (subfolders too), never over a file already there
+    // and never deleting anything; album.txt gets the lines it lacks. Returns the files
+    // copied, or -1 (error says why).
+    int CopyAlbum(const std::wstring& from,const std::wstring& to,std::wstring& error);
 
     // A PNG from premultiplied BGRA rows.
     bool WritePng(const std::wstring& path,UINT width,UINT height,UINT pitch,const std::uint8_t* pixels);

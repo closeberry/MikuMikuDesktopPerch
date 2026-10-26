@@ -114,6 +114,8 @@ namespace MikuMikuDesktopPerch
             return file;
         }
 
+        std::wstring chosenFolder;   // SetAlbumFolder (empty: the default)
+
         std::wstring OneLine(std::wstring text)
         {
             for(auto& c:text)if(c==L'\t'||c==L'\r'||c==L'\n')c=L' ';
@@ -121,13 +123,57 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    std::wstring AlbumFolder(bool create)
+    std::wstring DefaultAlbumFolder()
     {
         wchar_t base[MAX_PATH]{};
         if(!GetEnvironmentVariableW(L"LOCALAPPDATA",base,MAX_PATH))return {};
-        const std::filesystem::path folder=std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"album";
-        if(create){std::error_code ec;std::filesystem::create_directories(folder,ec);}
-        return folder.wstring();
+        return (std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"album").wstring();
+    }
+
+    void SetAlbumFolder(const std::wstring& folder){chosenFolder=folder;}
+
+    std::wstring AlbumFolder(bool create)
+    {
+        const std::wstring folder=chosenFolder.empty()?DefaultAlbumFolder():chosenFolder;
+        if(create&&!folder.empty()){std::error_code ec;std::filesystem::create_directories(folder,ec);}
+        return folder;
+    }
+
+    int CopyAlbum(const std::wstring& from,const std::wstring& to,std::wstring& error)
+    {
+        namespace fs=std::filesystem;
+        std::error_code ec;
+        if(!fs::is_directory(from,ec))return 0;
+        int copied=0;
+        for(auto it=fs::recursive_directory_iterator(from,ec);!ec&&it!=fs::recursive_directory_iterator();it.increment(ec))
+        {
+            const fs::path relative=fs::relative(it->path(),from,ec);
+            if(ec)break;
+            const fs::path target=fs::path(to)/relative;
+            if(it->is_directory(ec)){fs::create_directories(target,ec);continue;}
+            if(!it->is_regular_file(ec))continue;
+            if(relative==L"album.txt")
+            {
+                // The lines (pictures) the new one lacks, in their order.
+                auto lines=[](const fs::path& file){
+                    std::vector<std::string> out;
+                    std::ifstream in(file,std::ios::binary);
+                    for(std::string line;std::getline(in,line);)if(!line.empty())out.push_back(line);
+                    return out;
+                };
+                const auto have=lines(target);
+                std::ofstream out(target,std::ios::binary|std::ios::app);
+                for(const auto& line:lines(it->path()))
+                    if(std::find(have.begin(),have.end(),line)==have.end())out<<line<<"\n";
+                continue;
+            }
+            if(fs::exists(target,ec))continue;   // never over a file already there
+            fs::create_directories(target.parent_path(),ec);
+            if(!fs::copy_file(it->path(),target,fs::copy_options::skip_existing,ec)){error=L"could not copy "+it->path().wstring();return -1;}
+            ++copied;
+        }
+        if(ec){error=L"could not read "+from;return -1;}
+        return copied;
     }
 
     bool WritePng(const std::wstring& path,UINT width,UINT height,UINT pitch,const std::uint8_t* pixels)
