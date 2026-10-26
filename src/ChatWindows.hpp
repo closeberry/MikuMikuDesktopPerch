@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -36,6 +37,17 @@ namespace MikuMikuDesktopPerch
         // Where it was last drawn (body and name tag, screen pixels); false while hidden.
         bool Placed(RECT& rect) const {rect=placed;return visible&&!fading&&placed.right>placed.left;}
         double Age() const {return clock;}   // seconds since it popped up
+        // The reply is all in and all shown (not the waiting dots, not fading).
+        bool Complete() const {return visible&&finished&&!fading&&!waiting&&revealed>=static_cast<double>(text.size());}
+        // What it last drew (premultiplied BGRA rows) and where on the screen, for the album;
+        // false while hidden or fading.
+        bool Picture(std::vector<std::uint8_t>& pixels,RECT& rect) const
+        {
+            if(!visible||fading||picture.empty())return false;
+            pixels=picture;
+            rect=pictureRect;
+            return true;
+        }
         HWND Handle() const {return window;}
 
         // Per frame: advance the animations, the reveal and the hide timer, and place the
@@ -59,6 +71,8 @@ namespace MikuMikuDesktopPerch
         bool visible=false,waiting=false,finished=false,notice=false,fading=false;
         std::vector<RECT> avoid;
         RECT placed{};
+        std::vector<std::uint8_t> picture;
+        RECT pictureRect{};
     };
 
     // A question's two answers (はい／いいえ) in a small box under the mascot who asks. Clicking

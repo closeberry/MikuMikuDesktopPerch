@@ -66,6 +66,11 @@ namespace MikuMikuDesktopPerch
         std::wstring userName;      // what the mascot calls the user (empty: no name)
         bool chatMemory=true;       // remember things from conversations (per model, on this computer)
         bool bond=true;             // how close she and the user have become grows (per model, docs/Bond.md)
+        // The album (docs/Album.md): the key that takes a picture anywhere, as a hot key control
+        // holds it (virtual key, HOTKEYF_ flags << 8; 0: none; Ctrl+Alt+Shift+S by default),
+        // and whether a shutter sounds.
+        int albumHotkey=0x0753;
+        bool shutterSound=true;
         bool chatInitiative=true;   // greet, welcome back and now and then say something first
         // With chatInitiative: about how often (minutes, varied by a third either way) one says a
         // word of her own, and two characters talk with each other (0: never).

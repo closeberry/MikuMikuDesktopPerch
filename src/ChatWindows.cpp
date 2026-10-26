@@ -388,6 +388,9 @@ namespace MikuMikuDesktopPerch
         POINT position{static_cast<LONG>(std::floor(left)),static_cast<LONG>(std::floor(top))};
         SIZE size{width,height};
         POINT origin{0,0};
+        GdiFlush();
+        picture.assign(static_cast<const std::uint8_t*>(bits),static_cast<const std::uint8_t*>(bits)+static_cast<size_t>(width)*height*4);
+        pictureRect={position.x,position.y,position.x+width,position.y+height};
         BLENDFUNCTION blend{AC_SRC_OVER,0,255,AC_SRC_ALPHA};
         UpdateLayeredWindow(window,screen,&position,&size,memory,&origin,0,&blend,ULW_ALPHA);
         SelectObject(memory,old);

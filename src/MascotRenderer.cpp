@@ -2,6 +2,7 @@
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
 #include "Log.hpp"
+#include "Album.hpp"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -1178,6 +1179,13 @@ namespace MikuMikuDesktopPerch
 
     bool MascotRenderer::SaveLastFrame(const std::wstring& path)
     {
+        std::vector<std::uint8_t> pixels;
+        UINT width=0,height=0;
+        return ReadLastFrame(pixels,width,height)&&WritePng(path,width,height,width*4,pixels.data());
+    }
+
+    bool MascotRenderer::ReadLastFrame(std::vector<std::uint8_t>& pixels,UINT& width,UINT& height)
+    {
         WaitIdle();
         ID3D12Resource* source=backBuffers[lastRenderedIndex].Get();
         const UINT pitch=(windowWidth*4+255)&~255u;
@@ -1203,19 +1211,12 @@ namespace MikuMikuDesktopPerch
 
         std::uint8_t* data=nullptr;
         if(FAILED(readback->Map(0,nullptr,reinterpret_cast<void**>(&data))))return false;
-        ComPtr<IWICImagingFactory> wic;
-        ComPtr<IWICStream> stream;
-        ComPtr<IWICBitmapEncoder> encoder;
-        ComPtr<IWICBitmapFrameEncode> frame;
-        WICPixelFormatGUID format=GUID_WICPixelFormat32bppPBGRA;
-        const bool ok=SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&wic)))&&
-            SUCCEEDED(wic->CreateStream(&stream))&&SUCCEEDED(stream->InitializeFromFilename(path.c_str(),GENERIC_WRITE))&&
-            SUCCEEDED(wic->CreateEncoder(GUID_ContainerFormatPng,nullptr,&encoder))&&SUCCEEDED(encoder->Initialize(stream.Get(),WICBitmapEncoderNoCache))&&
-            SUCCEEDED(encoder->CreateNewFrame(&frame,nullptr))&&SUCCEEDED(frame->Initialize(nullptr))&&
-            SUCCEEDED(frame->SetSize(windowWidth,windowHeight))&&SUCCEEDED(frame->SetPixelFormat(&format))&&
-            SUCCEEDED(frame->WritePixels(windowHeight,pitch,pitch*windowHeight,data))&&SUCCEEDED(frame->Commit())&&SUCCEEDED(encoder->Commit());
+        width=windowWidth;
+        height=windowHeight;
+        pixels.resize(static_cast<size_t>(width)*height*4);
+        for(UINT y=0;y<height;++y)std::memcpy(pixels.data()+static_cast<size_t>(y)*width*4,data+static_cast<size_t>(y)*pitch,width*4);
         readback->Unmap(0,nullptr);
-        return ok;
+        return true;
     }
 
     void MascotRenderer::WaitForFence(UINT64 value)

@@ -1,4 +1,6 @@
 #include "SettingsWindow.hpp"
+#include "Album.hpp"
+#include <shellapi.h>
 #include "Text.hpp"
 #include "LocalChat.hpp"
 #include "Voice.hpp"
@@ -31,7 +33,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdBond,IdTabs
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdTabs
         };
         // The longest persona (characters, a line break counting as one).
         constexpr size_t MaxPersona=4000;
@@ -269,6 +271,13 @@ namespace MikuMikuDesktopPerch
             SendDlgItemMessageW(state.window,IdCalendarAddress,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"iCal形式の非公開アドレス",L"Secret address in iCal format")));
             Label(T(L"カレンダーの予定の前に知らせる",L"Tell me before calendar events"),28,y+134,290);
             Combo(IdCalendarLead,326,y+132,110);
+            y+=172;
+            Group(T(L"アルバム（後ろのウィンドウは写りません）",L"Album (windows behind are never in it)"),y,84);
+            Label(T(L"この瞬間を撮るキー",L"Key to take a picture"),28,y+24,140);
+            Add(HOTKEY_CLASSW,L"",WS_BORDER|WS_TABSTOP,170,y+22,150,24,IdAlbumHotkey);
+            SendDlgItemMessageW(state.window,IdAlbumHotkey,HKM_SETHOTKEY,static_cast<WPARAM>(s.albumHotkey),0);
+            Add(L"BUTTON",T(L"アルバムを開く",L"Open album"),BS_PUSHBUTTON|WS_TABSTOP,326,y+21,110,26,IdOpenAlbum);
+            CheckBox(IdShutterSound,T(L"撮るときにシャッター音を鳴らす",L"Play a shutter sound"),28,y+52,300,s.shutterSound);
             y=top;
             Page(T(L"詳細",L"Advanced"));
             Group(T(L"詳細（変更すると再起動します）",L"Advanced (changes restart the app)"),y,194);
@@ -898,6 +907,8 @@ namespace MikuMikuDesktopPerch
             s.api=Checked(IdApi);
             if(const int p=static_cast<int>(GetDlgItemInt(state.window,IdApiPort,nullptr,FALSE));p>=1024&&p<=65535)s.apiPort=p;
             s.morningSummary=Checked(IdMorningSummary);
+            s.albumHotkey=static_cast<int>(SendDlgItemMessageW(state.window,IdAlbumHotkey,HKM_GETHOTKEY,0,0)&0xFFFF);
+            s.shutterSound=Checked(IdShutterSound);
             s.restMinutes=ComboValue(IdRestMinutes,s.restMinutes);
             s.focusMinutes=ComboValue(IdFocusMinutes,s.focusMinutes);
             s.focusBreakMinutes=ComboValue(IdFocusBreakMinutes,s.focusBreakMinutes);
@@ -978,6 +989,10 @@ namespace MikuMikuDesktopPerch
                 case IdUpdateNow:
                     if(state.onCheckUpdate)state.onCheckUpdate();
                     return 0;
+                case IdOpenAlbum:
+                    if(const std::wstring folder=AlbumFolder(true);!folder.empty())
+                        ShellExecuteW(state.window,L"open",folder.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+                    return 0;
                 case IdVoiceMode:
                     if(HIWORD(wParam)==CBN_SELCHANGE)UpdateVoiceMode();
                     return 0;
@@ -1051,7 +1066,7 @@ namespace MikuMikuDesktopPerch
         state.onApply=std::move(onApply);
         state.onLight=std::move(onLight);
         state.onCheckUpdate=std::move(onCheckUpdate);
-        INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES|ICC_LISTVIEW_CLASSES|ICC_TAB_CLASSES};
+        INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_BAR_CLASSES|ICC_LISTVIEW_CLASSES|ICC_TAB_CLASSES|ICC_HOTKEY_CLASS};
         InitCommonControlsEx(&controls);
         state.dpi=static_cast<int>(GetDpiForSystem());
         NONCLIENTMETRICSW metrics{sizeof(metrics)};

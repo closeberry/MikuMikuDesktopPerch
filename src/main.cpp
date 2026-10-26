@@ -6,6 +6,8 @@
 #include "LocalChat.hpp"
 #include "Memory.hpp"
 #include "Bond.hpp"
+#include "Album.hpp"
+#include <commctrl.h>
 #include "Voice.hpp"
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
@@ -51,7 +53,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
@@ -124,6 +126,9 @@ namespace
         // request to the LLM once the conversation pauses.
         CharacterMemory memory;
         Bond bond;   // how close she and the user have become (docs/Bond.md)
+        // A day or a stage reached is being told: its picture is taken once she has said it all.
+        std::wstring albumLabel;
+        double albumSince=0;
         std::unique_ptr<VoiceEngine> voice;   // while speaking aloud is on
         std::unique_ptr<LocalChat> memoryChat;
         std::vector<ChatMessage> unmemorized;   // exchanges not yet looked through for notes
@@ -276,8 +281,9 @@ namespace
         struct Focus {bool on=false,resting=false;std::int64_t phaseEnd=0;int rounds=0;} focus;
         // What a character has to tell that is not an alarm (focus mode's turns, a break due):
         // told like one, without the answer box.
-        // model: only the character with that model tells it (dropped if she is gone).
-        struct Notice {std::wstring line,facts,model;};
+        // model: only the character with that model tells it (dropped if she is gone);
+        // album: a picture is taken of her telling it, under this name (docs/Album.md).
+        struct Notice {std::wstring line,facts,model,album;};
         std::vector<Notice> notices;
         double noticesSince=-1;
         // Using the computer without a break (five minutes away counts as one).
@@ -293,6 +299,7 @@ namespace
         // written: a character there with no closeness yet was had before it was counted.
         std::set<std::wstring> modelsBefore;
         std::wstring usingSince;
+        double lastShotAt=-10;      // the album's last picture taken by hand (one a second)
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
@@ -303,6 +310,7 @@ namespace
     CharacterSettings& Own(const Mascot& m){return app.settings.characters[m.slot];}
 
     void Trace(const wchar_t* format,...);
+    bool RegisterAlbumHotkey();
 
     // Points for something she and the user did together (docs/Bond.md), saved as they come.
     // Not in diagnostic runs, which must leave the user's data alone.
@@ -1485,6 +1493,9 @@ namespace
         else
             AppendMenuW(menu,MF_STRING,IdResetPose,T(L"ポーズと物理をリセット",L"Reset pose and physics"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+        AppendMenuW(menu,MF_STRING,IdAlbumShot,T(L"この瞬間を撮る",L"Take a picture"));
+        AppendMenuW(menu,MF_STRING,IdOpenAlbum,T(L"アルバムを開く",L"Open album"));
+        AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         AppendMenuW(menu,MF_STRING,IdSettings,T(L"設定...",L"Settings..."));
         AppendMenuW(menu,MF_STRING,IdExit,T(L"終了",L"Exit"));
         // The menu needs its owner in the foreground, which also raises it: while hanging, put
@@ -1585,6 +1596,14 @@ namespace
             for(const auto& each:app.mascots)each->model.SetDisabledGestures(current.disabledGestures);
         }
         current.morningSummary=s.morningSummary;
+        current.shutterSound=s.shutterSound;
+        if(s.albumHotkey!=current.albumHotkey)
+        {
+            current.albumHotkey=s.albumHotkey;
+            if(!RegisterAlbumHotkey())
+                ShowMessage(T(L"この瞬間を撮るキーは、ほかのアプリが使っているため登録できませんでした。設定の「秘書」で別のキーを選んでください。",
+                              L"The key to take a picture is used by another program, so it could not be set. Choose another key under Assistant in the settings."),MB_ICONWARNING);
+        }
         current.restMinutes=s.restMinutes;
         // Focus mode's lengths take effect from its next turn.
         current.focusMinutes=s.focusMinutes;
@@ -3139,6 +3158,7 @@ namespace
                 app.notices.erase(app.notices.begin());
                 app.noticesSince=app.notices.empty()?-1:app.clock;
                 Trace(L"%.1f notice: %s",app.clock,notice.line.c_str());
+                if(!notice.album.empty()){m->albumLabel=notice.album;m->albumSince=app.clock;}
                 if(m->dozing){m->dozing=false;m->model.SetDozing(false);}
                 if(ChatReady(*m,false))SpeakFirst(*m,notice.facts+T(L"。そのことを、あなたの言葉で伝えて",L". Tell them so, in your own words"),notice.line);
                 else SayFixed(*m,notice.line);
@@ -3208,14 +3228,16 @@ namespace
             if(key.empty())continue;
             const size_t digits=key.find_first_of(L"0123456789");
             const std::wstring kind=key.substr(0,digits),n=key.substr(digits);
-            std::wstring line,facts;
+            std::wstring line,facts,album;
             if(kind==L"year")
             {
+                album=Fmt(T(L"出会って{0}年",L"{0} year(s) together"),{n});
                 line=Fmt(T(L"今日で、出会ってから{0}年だね。これからもよろしくね！",L"Today it's {0} year(s) since we met. Here's to many more!"),{n});
                 facts=Fmt(T(L"今日は、話し相手と初めて会ってからちょうど{0}年の記念日です",L"Today is exactly {0} year(s) since you first met the person you talk with"),{n});
             }
             else if(kind==L"days")
             {
+                album=Fmt(T(L"一緒に{0}日",L"{0} days together"),{n});
                 line=Fmt(T(L"一緒に過ごした日が、今日で{0}日になったよ。いつもありがとう！",L"We've now spent {0} days together. Thanks for always being here!"),{n});
                 facts=Fmt(T(L"話し相手と一緒に過ごした日（アプリを起動してパソコンを使った日）が、今日で{0}日になりました",
                             L"The days you have spent with the person you talk with (days they used the computer with you there) reached {0} today"),{n});
@@ -3229,20 +3251,93 @@ namespace
                     {L"もう、相棒って呼んでもいいよね？いつもありがとう。",L"I can call you my partner now, right? Thanks for everything."}};
                 const int s=std::clamp(std::stoi(n),1,Bond::Stages-1);
                 line=English()?Lines[s][1]:Lines[s][0];
+                album=English()?L"became "+std::wstring(BondStages[s].englishName):L"「"+std::wstring(BondStages[s].name)+L"」になった";
                 facts=Fmt(T(L"話し相手との仲が深まって、「{0}」になりました（{1}）。そう感じていることを",L"You and the person you talk with have grown closer: you are now \"{0}\" ({1}). Say that you feel so"),
                           {BondStageName(m),English()?BondStages[s].englishTone:BondStages[s].tone});
             }
             else
             {
+                album=Fmt(T(L"なかよし度{0}",L"closeness {0}"),{n});
                 line=Fmt(T(L"なかよし度が{0}を超えたよ！",L"Our closeness just passed {0}!"),{n});
                 facts=Fmt(T(L"話し相手とのなかよし度が{0}を超えました",L"Your closeness with the person you talk with has passed {0}"),{n});
             }
-            app.notices.push_back({line,facts,m.modelPath});
+            app.notices.push_back({line,facts,m.modelPath,album});
             m.bond.Told(key);
             m.bond.Save();
             Trace(L"%.1f bond: tell %s (%s)",app.clock,key.c_str(),m.modelPath.c_str());
             return;
         }
+    }
+
+    // docs/Album.md: a picture of one character (or all of them) with their bubbles, made from
+    // what was drawn (the frames read back, the bubbles' bitmaps), never from the screen.
+    bool TakeAlbumShot(Mascot* only,bool automatic,const std::wstring& label)
+    {
+        if(app.paused||app.diagnostic)return false;
+        AlbumShot shot;
+        shot.automatic=automatic;
+        shot.label=label;
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& m=*owned;
+            if(only&&only!=&m)continue;
+            AlbumLayer character;
+            UINT width=0,height=0;
+            if(!m.renderer.ReadLastFrame(character.pixels,width,height))continue;
+            const RECT r=FrameRect(m);
+            character.rect={r.left,r.top,r.left+static_cast<LONG>(width),r.top+static_cast<LONG>(height)};
+            shot.characters.push_back(std::move(character));
+            if(AlbumLayer bubble;m.bubble.Picture(bubble.pixels,bubble.rect))
+            {
+                shot.bubbles.push_back(std::move(bubble));
+                if(!m.bubble.Text().empty())shot.words.push_back({m.character.name,m.bubble.Text()});
+            }
+        }
+        if(shot.characters.empty())return false;
+        std::wstring error;
+        const std::wstring file=SaveAlbumShot(shot,error);
+        Trace(L"%.1f album: %s",app.clock,file.empty()?error.c_str():file.c_str());
+        return !file.empty();
+    }
+
+    // Taken by hand (the menu, the hot key): everyone, with a shutter if it is on, and those
+    // standing about make a peace sign after.
+    void TakeManualShot()
+    {
+        if(app.clock-app.lastShotAt<1.0||app.paused)return;
+        app.lastShotAt=app.clock;
+        if(app.settings.shutterSound)PlayShutter();
+        if(!TakeAlbumShot(nullptr,false,{}))return;
+        for(const auto& owned:app.mascots)
+            if(owned->place==Place::Ground&&owned->travel==Travel::None&&owned->model.CurrentActivity()==Activity::Idle&&!owned->speech.Speaking())
+                owned->model.Emote(L"peace");
+    }
+
+    // A day or a stage reached, told: its picture once she has said it all (given up after
+    // two minutes, if something else came first).
+    void UpdateAlbum()
+    {
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& m=*owned;
+            if(m.albumLabel.empty())continue;
+            if(m.bubble.Complete()&&!m.speech.Speaking())TakeAlbumShot(&m,true,std::exchange(m.albumLabel,{}));
+            else if(app.clock-m.albumSince>120)m.albumLabel.clear();
+        }
+    }
+
+    // The album's hot key, on the control window (docs/Album.md). False if another program
+    // has it already.
+    bool RegisterAlbumHotkey()
+    {
+        UnregisterHotKey(app.hwnd,1);
+        const int key=app.settings.albumHotkey;
+        if(!key||app.diagnostic)return true;
+        const UINT flags=HIBYTE(key);
+        const UINT modifiers=((flags&HOTKEYF_SHIFT)?MOD_SHIFT:0)|((flags&HOTKEYF_CONTROL)?MOD_CONTROL:0)|((flags&HOTKEYF_ALT)?MOD_ALT:0);
+        const bool ok=RegisterHotKey(app.hwnd,1,modifiers|MOD_NOREPEAT,LOBYTE(key))!=FALSE;
+        Trace(L"%.1f album: hot key 0x%04x %s",app.clock,key,ok?L"registered":L"taken by another program");
+        return ok;
     }
 
     // Long at the computer without a break (five minutes away counts as one): a break is
@@ -3700,6 +3795,12 @@ namespace
         case IdResetPose:
             ResetPose(m);
             break;
+        case IdAlbumShot:
+            TakeManualShot();
+            break;
+        case IdOpenAlbum:
+            if(const std::wstring folder=AlbumFolder(true);!folder.empty())ShellExecuteW(nullptr,L"open",folder.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+            break;
         case IdResetPoseAll:
             for(const auto& each:app.mascots)ResetPose(*each);
             break;
@@ -4135,6 +4236,9 @@ namespace
                 GetCursorPos(&p);
                 ShowMenu(*app.mascots.front(),p,true);
             }
+            return 0;
+        case WM_HOTKEY:
+            if(wParam==1)TakeManualShot();
             return 0;
         case Updater::CheckedMessage:
             OnUpdateChecked(reinterpret_cast<Release*>(wParam),lParam!=0);
@@ -4762,6 +4866,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     RegisterClassExW(&control);
     // Never shown: it only holds the tray icon and outlives the characters' windows.
     app.hwnd=CreateWindowExW(WS_EX_TOOLWINDOW,ControlClass,L"MikuMikuDesktopPerch",WS_POPUP,0,0,0,0,nullptr,nullptr,instance,nullptr);
+    RegisterAlbumHotkey();
     if(!app.hwnd)return 1;
 
     // Tests (--perch-window test): a plain window of the app's own to rest on and move along,
@@ -4917,7 +5022,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         QueryPerformanceCounter(&workStart);
         MaybeRestartAfterUpdate();
         if(app.restart)continue;   // quitting: the loop picks up WM_QUIT next
-        if(!forcedActivity){MaybeTellUpdated();MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateBond(dt);UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
+        if(!forcedActivity){MaybeTellUpdated();MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateBond(dt);UpdateAlbum();UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)

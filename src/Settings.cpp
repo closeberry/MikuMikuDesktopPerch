@@ -147,6 +147,8 @@ namespace MikuMikuDesktopPerch
         userName=ReadString(path,L"UserName",userName);
         chatMemory=ReadInt(path,L"ChatMemory",chatMemory?1:0)!=0;
         bond=ReadInt(path,L"Bond",bond?1:0)!=0;
+        albumHotkey=std::clamp(ReadInt(path,L"AlbumHotkey",albumHotkey),0,0xFFFF);
+        shutterSound=ReadInt(path,L"ShutterSound",shutterSound?1:0)!=0;
         chatInitiative=ReadInt(path,L"ChatInitiative",chatInitiative?1:0)!=0;
         chatterMinutes=std::clamp(ReadInt(path,L"ChatterMinutes",chatterMinutes),5,600);
         banterMinutes=std::clamp(ReadInt(path,L"BanterMinutes",banterMinutes),0,600);
@@ -230,6 +232,8 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"UserName",userName);
         WriteString(path,L"ChatMemory",chatMemory?L"1":L"0");
         WriteString(path,L"Bond",bond?L"1":L"0");
+        WriteString(path,L"AlbumHotkey",std::to_wstring(albumHotkey));
+        WriteString(path,L"ShutterSound",shutterSound?L"1":L"0");
         WriteString(path,L"ChatInitiative",chatInitiative?L"1":L"0");
         WriteString(path,L"ChatterMinutes",std::to_wstring(chatterMinutes));
         WriteString(path,L"BanterMinutes",std::to_wstring(banterMinutes));

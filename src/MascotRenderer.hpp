@@ -83,6 +83,8 @@ namespace MikuMikuDesktopPerch
 
         // Diagnostics: read back the frame just rendered and save it as a PNG (premultiplied BGRA).
         bool SaveLastFrame(const std::wstring& path);
+        // The frame just rendered, read back: premultiplied BGRA rows, width*4 bytes each.
+        bool ReadLastFrame(std::vector<std::uint8_t>& pixels,UINT& width,UINT& height);
 
     private:
         static constexpr UINT FrameCount=2;
