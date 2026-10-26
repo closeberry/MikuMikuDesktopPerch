@@ -29,10 +29,12 @@ namespace MikuMikuDesktopPerch
             IdScale,IdEdge,IdTopmost,IdStartup,
             IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdPhysicsIterations,IdPhysicsFilter,IdToonDir,IdToonBrowse,IdGpu,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
-            IdPersonaText,IdPersonaReset,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
+            IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
             IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdTabs
         };
+        // The longest persona (characters, a line break counting as one).
+        constexpr size_t MaxPersona=4000;
         // Where the voice comes from (the voice source choices' values).
         enum VoiceMode:int{VoiceVoicevox=0,VoiceFiles=1,VoiceAivisSpeech=2};
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
@@ -467,6 +469,25 @@ namespace MikuMikuDesktopPerch
             SetForegroundWindow(state.window);
         }
 
+        // The persona as written (line breaks as \n).
+        std::wstring PersonaText(HWND hwnd)
+        {
+            HWND editor=GetDlgItem(hwnd,IdPersonaText);
+            std::wstring text(static_cast<size_t>(GetWindowTextLengthW(editor))+1,L'\0');
+            text.resize(static_cast<size_t>(GetWindowTextW(editor,text.data(),static_cast<int>(text.size()))));
+            std::erase(text,L'\r');
+            return text;
+        }
+
+        // How long the persona is, against the limit.
+        void ShowPersonaCount(HWND hwnd)
+        {
+            const size_t count=PersonaText(hwnd).size();
+            const std::wstring label=Fmt(count>MaxPersona?T(L"{0} / {1} 文字（超過）",L"{0} / {1} (too long)"):T(L"{0} / {1} 文字",L"{0} / {1} characters"),
+                                         {std::to_wstring(count),std::to_wstring(MaxPersona)});
+            SetDlgItemTextW(hwnd,IdPersonaCount,label.c_str());
+        }
+
         LRESULT CALLBACK PersonaProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
         {
             switch(message)
@@ -474,12 +495,25 @@ namespace MikuMikuDesktopPerch
             case WM_COMMAND:
                 switch(LOWORD(wParam))
                 {
+                case IdPersonaText:
+                    if(HIWORD(wParam)==EN_CHANGE)ShowPersonaCount(hwnd);
+                    break;
                 case IDOK:
                 {
-                    std::wstring name(256,L'\0'),text(4096,L'\0');
+                    std::wstring name(256,L'\0');
                     name.resize(static_cast<size_t>(GetDlgItemTextW(hwnd,IdPersonaName,name.data(),256)));
-                    text.resize(static_cast<size_t>(GetDlgItemTextW(hwnd,IdPersonaText,text.data(),4096)));
-                    for(size_t r;(r=text.find(L'\r'))!=std::wstring::npos;)text.erase(r,1);
+                    const std::wstring text=PersonaText(hwnd);
+                    if(text.size()>MaxPersona)
+                    {
+                        MessageBoxW(hwnd,Fmt(T(L"人物設定は{0}文字までです（いまは{1}文字）。短くしてから、もう一度OKを押してください。\n\n"
+                                               L"人物設定は、話しかけるたびにLLMへ送ります。LLMのサーバーが扱える長さ（コンテキスト長）を超えると、人物設定から先に読まれなくなるので、数百〜1,000文字くらいに要点をまとめるのがおすすめです。",
+                                               L"A persona can be up to {0} characters (it is {1} now). Shorten it, then press OK again.\n\n"
+                                               L"The persona is sent to the LLM every time she is talked to. Beyond the length the LLM server handles (its context length), the persona is the first thing lost, so a few hundred to a thousand characters of the essentials work best."),
+                                        {std::to_wstring(MaxPersona),std::to_wstring(text.size())}).c_str(),
+                                    L"MikuMikuDesktopPerch",MB_ICONWARNING);
+                        SetFocus(GetDlgItem(hwnd,IdPersonaText));
+                        return 0;
+                    }
                     state.choice.character.name=name;
                     state.choice.character.persona=text.empty()?CharacterProfile::DefaultPersona():text;
                     ClosePersona();
@@ -538,8 +572,10 @@ namespace MikuMikuDesktopPerch
             std::wstring text=state.choice.character.persona;
             for(size_t n=0;(n=text.find(L'\n',n))!=std::wstring::npos;n+=2)text.insert(n,1,L'\r');
             HWND editor=AddTo(p,L"EDIT",text.c_str(),ES_MULTILINE|ES_WANTRETURN|ES_AUTOVSCROLL|WS_VSCROLL|WS_BORDER|WS_TABSTOP,16,92,428,180,IdPersonaText);
-            SendMessageW(editor,EM_SETLIMITTEXT,4000,0);
+            SendMessageW(editor,EM_SETLIMITTEXT,MaxPersona*4,0);   // more is let in, so OK can say what is too long
             AddTo(p,L"BUTTON",T(L"既定に戻す",L"Default"),BS_PUSHBUTTON|WS_TABSTOP,16,286,100,28,IdPersonaReset);
+            AddTo(p,L"STATIC",L"",SS_LEFT,124,292,144,20,IdPersonaCount);
+            ShowPersonaCount(p);
             AddTo(p,L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,272,286,82,28,IDOK);
             AddTo(p,L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,362,286,82,28,IDCANCEL);
             EnableWindow(state.window,FALSE);
