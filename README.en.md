@@ -249,7 +249,7 @@ The first character's settings go in the `[Mascot]` section, together with the o
 | PhysicsFps | 60 | The physics' internal steps (per second). The same number of steps are taken for each drawn frame (rounded up to a whole multiple of the drawing fps) |
 | PhysicsFilter | 3 | Physics smoothing (0 none, 1 weak, 2 medium, 3 strong). Evens out only the small jitter of hair and skirts. Works more strongly when still, more weakly when moving |
 | PhysicsIterations | 10 | How many times constraints are solved in one physics step (1–100). More reduces the fine jitter of long hair and the like, but is a little heavier |
-| Msaa | 4 | Antialiasing samples (1/2/4/8) |
+| Msaa | 4 | Antialiasing samples (1/2/4/8). A count the GPU does not support is lowered to one it does (none if no count works). With an old Intel graphics driver, drawn without it whatever this says (see "When something goes wrong") |
 | Topmost | 1 | Always on top |
 | EdgeScale | 1.00 | Outline width multiplier (0 for no outline) |
 | MaxTextureSize | 1024 | Textures larger than this are shrunk when loaded (0 to not shrink). Textures with transparent parts have the parts unused by the UVs filled with neighboring colors before shrinking, so UV seams do not show as lines when shrunk or seen from afar |
@@ -275,6 +275,7 @@ The first character's settings go in the `[Mascot]` section, together with the o
 | CalendarAddress | empty | Google Calendar's "Secret address in iCal format" (kept encrypted for this Windows user, starting with `dpapi:`; enter it again after moving the settings file to another computer) |
 | CalendarLeadMinutes | 10 | How many minutes before a calendar event to tell you (0 for never) |
 | LastGreeting | empty | The day and part of the day of the last greeting (so it is not repeated in the same part; written automatically) |
+| OldDriverTold | empty | The GPU and driver version the user was last told was too old (so it is not repeated for the same driver; written automatically) |
 | Voice | 0 | Speak with a voice (VOICEVOX, AivisSpeech) |
 | VoiceEndpoint | http://127.0.0.1:50021 | The voice engine's server (on this computer only; port 10101 is taken as AivisSpeech) |
 | VoiceStyleStrength | 100 | AivisSpeech's style strength (percent, 0 to 200) |
@@ -311,6 +312,8 @@ Each start writes to `%LOCALAPPDATA%\MikuMikuDesktopPerch\log.txt` (UTF-8): the 
 
 When the GPU stops responding (a driver reset, for example) and nothing can be drawn, the app says so and asks whether to restart.
 
+**The model disappears with antialiasing on**: old Intel GPU drivers may draw nothing with antialiasing (MSAA). So on an Intel GPU with a driver from before 2020 (the first number of its version below 27, such as 20.19.15.x or 26.20.100.x), the app draws without antialiasing whatever the settings say, and a character tells you once to update the driver. Updating it from Intel's site (or your PC maker's) makes antialiasing usable again. On any GPU, a sample count it does not support, or drawing targets that cannot be made, also means drawing without antialiasing. Each case leaves lines starting with `MSAA` (or `drawing: MSAA x1`) in `log.txt`. If the model still disappears, set antialiasing to "None" under Advanced in the settings and send us `log.txt`.
+
 ## Diagnostic options
 
 ```
@@ -324,6 +327,7 @@ With `--look <x> <y>`, the cursor position for gaze tracking can be fixed in cli
 `--plan-test <in.txt> <out.txt>` writes how each line of in.txt (UTF-8) is read as a timer, reminder or to-do request (a line starting with `~` is read as typed in the list window).
 `--banter` starts the characters chatting together 5 seconds after starting; `--pretend-version <version>` treats this exe as that version, to try the whole update from the check to the install (it checks at once); and `--reading <text> <out.txt>` writes out the reading used for lip-sync.
 `--voice-test <VOICEVOX folder|http://engine address> <voice ID> <out.wav> [style strength]` speaks one sentence using VOICEVOX's files directly (or a voice engine) (the result, and when each syllable is said, in `out.wav.txt`); `--light <side> <height>` sets the sun's position; `--self-shadow 0|1` switches self-shadow; `--doze` shoots the dozing look; and `--walk-motion <vmd>` and `--run-motion <vmd>` set walk and run motions.
+`--gpu-quirk old-driver` acts as on an old Intel driver (no antialiasing, told once), and `--gpu-quirk whole-resolve` as on a GPU that cannot resolve only the drawn area of the MSAA target (ResolveSubresourceRegion). The `gpu=` line of `out.png.txt` gives the sample count actually used.
 
 ```
 MikuMikuDesktopPerch.exe --check-list <list.txt> <out.tsv>

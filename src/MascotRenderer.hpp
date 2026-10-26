@@ -67,15 +67,22 @@ namespace MikuMikuDesktopPerch
         void Render(const MascotModel& model,float edgeScale);
         void WaitIdle();
         const std::wstring& AdapterName() const {return adapterName;}
+        UINT SampleCount() const {return sampleCount;}   // MSAA samples actually drawn with (1: none)
         // The GPUs that can draw (the software one left out), as (id, name). The id is the
         // vendor and device ("10DE:249D"): it stays the same when the adapters' order changes.
         static std::vector<std::pair<std::wstring,std::wstring>> Gpus();
         // Draw on the GPU with this id; empty, or one not found: the one Windows picks for this
         // app (its graphics settings decide). Takes effect when the shared device is made.
         static void PreferGpu(std::wstring id){preferredGpu=std::move(id);}
+        // Diagnostics: act as if on an old Intel driver ("old-driver") or a GPU that can only
+        // resolve whole MSAA targets ("whole-resolve"). Before the shared device is made.
+        static void SimulateQuirk(const std::wstring& quirk){simulatedQuirks+=quirk+L";";}
         // Why the GPU stopped taking work (TDR, a driver update or crash), S_OK while it runs.
         // Once set, nothing more is drawn: the device would have to be made again.
         HRESULT DeviceLost() const {return deviceLost;}
+        // An Intel GPU with a driver too old to trust with MSAA (see SharedGpu): its id and
+        // driver version ("8086:0412 20.19.15.4531"), empty otherwise. Anti-aliasing is off then.
+        const std::wstring& OldDriver() const {return gpu?gpu->oldDriver:none;}
 
         // Alpha (0-255) of the pixel under clientPoint, sampled a couple of frames ago.
         // Returns -1 while no sample is available.
@@ -131,9 +138,12 @@ namespace MikuMikuDesktopPerch
             Microsoft::WRL::ComPtr<IDXGIFactory6> factory;
             Microsoft::WRL::ComPtr<ID3D12Device> device;
             std::wstring adapterName;
+            std::wstring oldDriver;
+            bool regionResolve=true;   // ResolveSubresourceRegion can be used (else ResolveSubresource)
         };
+        static inline const std::wstring none;
         static std::shared_ptr<Gpu> SharedGpu(std::wstring& error);
-        static inline std::wstring preferredGpu;
+        static inline std::wstring preferredGpu,simulatedQuirks;
         std::shared_ptr<Gpu> gpu;
         Microsoft::WRL::ComPtr<IDXGIFactory6> factory;
         Microsoft::WRL::ComPtr<ID3D12Device> device;

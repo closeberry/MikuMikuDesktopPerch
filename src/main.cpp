@@ -3361,6 +3361,24 @@ namespace
                   L"The person you talk with has been using the computer for about {0} without a break. Gently suggest a short rest"),{DurationText(used)})});
     }
 
+    // Anti-aliasing asked for but turned off for an old Intel graphics driver (see
+    // MascotRenderer::OldDriver): one character tells the user to update it, once per driver.
+    void MaybeTellOldDriver()
+    {
+        if(app.diagnostic||app.clock<10||app.mascots.empty()||app.settings.msaa<=1||!app.notices.empty())return;
+        const std::wstring& driver=app.mascots.front()->renderer.OldDriver();
+        if(driver.empty()||app.settings.oldDriverTold==driver||InputIdleSeconds()>90)return;
+        app.settings.oldDriverTold=driver;
+        app.settings.Save(app.settingsPath);
+        Trace(L"%.1f old graphics driver %s: telling",app.clock,driver.c_str());
+        app.notices.push_back({
+            T(L"グラフィックドライバが古いみたいだから、私が消えちゃわないようにアンチエイリアスを切っておいたよ。インテルのサイトからドライバを更新してみてね。",
+              L"Your graphics driver looks old, so I turned anti-aliasing off so I wouldn't vanish. Try updating it from Intel's website."),
+            Fmt(T(L"このパソコンのインテルのグラフィックドライバ（{0}）が古いため、あなたの姿が消えないようにアンチエイリアスを自動で切りました。話し相手に、グラフィックドライバを更新するとよいと伝えて",
+                  L"This computer's Intel graphics driver ({0}) is old, so anti-aliasing was turned off so that you don't vanish. Tell the person you talk with that updating the graphics driver would be good"),
+                {driver.substr(driver.find(L' ')+1)})});   // the version, without the GPU's id
+    }
+
     // To-dos due tomorrow, today or already: told once a day, when the user is at the computer
     // (in the morning, the morning summary tells them; in focus mode, at a break).
     void UpdateDeadlines()
@@ -4528,6 +4546,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 snapshotGesture=argv[++i];
             }
+            else if(arg==L"--gpu-quirk"&&i+1<argc)
+            {
+                MascotRenderer::SimulateQuirk(argv[++i]);   // old-driver or whole-resolve
+            }
             else if(arg==L"--window-clip"&&i+1<argc)
             {
                 MascotModel::AddWindowClipFile(argv[++i]);   // tried as a built-in window motion (window<n> after the embedded ones)
@@ -5022,7 +5044,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         QueryPerformanceCounter(&workStart);
         MaybeRestartAfterUpdate();
         if(app.restart)continue;   // quitting: the loop picks up WM_QUIT next
-        if(!forcedActivity){MaybeTellUpdated();MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateBond(dt);UpdateAlbum();UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
+        if(!forcedActivity){MaybeTellUpdated();MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateBond(dt);UpdateAlbum();UpdateRest();MaybeTellOldDriver();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)
@@ -5268,6 +5290,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 const auto rest=m.model.ArmRestAngles(),fix=m.model.ArmCorrections();
                 fwprintf(info,L"model=%s\nclock=%.2f\narmRest L=%.1f R=%.1f\narmCorrection L=%.1f R=%.1f\nwindow=%dx%d\n",
                          Own(m).modelPath.c_str(),app.clock,rest[0],rest[1],fix[0],fix[1],m.windowSize.cx,m.windowSize.cy);
+                fwprintf(info,L"gpu=%s msaa=%u (asked %d)%s%s\n",m.renderer.AdapterName().c_str(),m.renderer.SampleCount(),app.settings.msaa,
+                         m.renderer.OldDriver().empty()?L"":L" old driver ",m.renderer.OldDriver().c_str());
                 fwprintf(info,L"%s",m.model.DescribeRig().c_str());
                 fwprintf(info,L"idle clips=%d played=%d\n",m.model.IdleClipCount(),m.model.IdleClipPlays());
                 fwprintf(info,L"%s",m.model.DescribeWindowMotions().c_str());

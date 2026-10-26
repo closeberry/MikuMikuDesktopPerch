@@ -103,6 +103,9 @@ namespace MikuMikuDesktopPerch
         std::wstring voiceEndpoint=L"http://127.0.0.1:50021";
         int voiceStyleStrength=100; // AivisSpeech's style strength (its intonationScale), in percent
         std::wstring lastGreeting;  // the last time-of-day greeting (date and slot), so a restart does not repeat it
+        // The old graphics driver a character last told the user to update (GPU id and driver
+        // version), so she says it once, not every start.
+        std::wstring oldDriverTold;
         // The latest chats between two characters (oldest first), so the next ones go
         // elsewhere: who talked, the topic and the way to start (their places in the app's
         // lists), and how it began (the first lines).

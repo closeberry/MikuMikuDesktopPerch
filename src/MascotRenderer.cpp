@@ -181,10 +181,36 @@ namespace MikuMikuDesktopPerch
                 desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE?L", software":L"");
             if(gpu->device||desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE)continue;
             if(const HRESULT created=D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&gpu->device));SUCCEEDED(created))
-            {gpu->adapterName=desc.Description;Log(L"  using it");}
+            {
+                gpu->adapterName=desc.Description;Log(L"  using it");
+                // A display driver's version starts with the WDDM version it was built for
+                // (20: WDDM 2.0 of Windows 10's first release, ..., 26: WDDM 2.5 of 1809,
+                // 27: WDDM 2.7 of 2004, 30 and up: Windows 11). With MSAA on, the model was
+                // reported to vanish on an old Intel GPU; Intel's D3D12 drivers from before
+                // WDDM 2.7 (before mid 2020: the last ones for Haswell and Broadwell,
+                // 20.19.15.x, and the early DCH ones, 26.20.100.x) are the ones to distrust.
+                // Every Intel GPU still supported has a driver of 27 or later, so anything
+                // below 27 is either out of date or a GPU with no newer driver: no MSAA there.
+                if((desc.VendorId==0x8086&&known&&HIWORD(driver.HighPart)<27)||simulatedQuirks.find(L"old-driver;")!=std::wstring::npos)
+                {
+                    wchar_t text[64]{};
+                    swprintf_s(text,L"%s %u.%u.%u.%u",GpuId(desc).c_str(),HIWORD(driver.HighPart),LOWORD(driver.HighPart),HIWORD(driver.LowPart),LOWORD(driver.LowPart));
+                    gpu->oldDriver=text;
+                    Log(L"  old Intel driver (built for WDDM older than 2.7): anti-aliasing turned off");
+                }
+            }
             else Log(L"  no Direct3D 12 device (0x%08X)",static_cast<unsigned>(created));
         }
         if(!gpu->device){error=T(L"D3D12 に対応した GPU が見つかりません。",L"No GPU supporting Direct3D 12 was found.");return nullptr;}
+        // ResolveSubresourceRegion came with programmable sample positions (ID3D12GraphicsCommandList1)
+        // and is only listed as supported from that feature's tier 1; without it, whole resolves.
+        {
+            D3D12_FEATURE_DATA_D3D12_OPTIONS2 options{};
+            gpu->regionResolve=SUCCEEDED(gpu->device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS2,&options,sizeof(options)))&&
+                               options.ProgrammableSamplePositionsTier!=D3D12_PROGRAMMABLE_SAMPLE_POSITIONS_TIER_NOT_SUPPORTED&&
+                               simulatedQuirks.find(L"whole-resolve;")==std::wstring::npos;
+            Log(L"  MSAA resolve: %s",gpu->regionResolve?L"of the drawn area":L"whole (no programmable sample positions)");
+        }
         shared=gpu;
         return gpu;
     }
@@ -230,14 +256,24 @@ namespace MikuMikuDesktopPerch
            FAILED(hr=composition->Commit()))
         {error=HrText(L"DirectComposition",hr);return false;}
 
-        // Pick the highest supported MSAA count not above the request.
+        // Pick the highest MSAA count not above the request that the colour and depth targets
+        // both support, and that a colour target can be resolved at (none on an old Intel driver).
         sampleCount=1;
-        for(UINT count=static_cast<UINT>(std::max(1,msaa));count>1;count/=2)
+        const auto supports=[&](DXGI_FORMAT format,UINT count)
         {
             D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS q{};
-            q.Format=ColorFormat;q.SampleCount=count;
-            if(SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS,&q,sizeof(q)))&&q.NumQualityLevels>0)
-            {sampleCount=count;break;}
+            q.Format=format;q.SampleCount=count;
+            return SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS,&q,sizeof(q)))&&q.NumQualityLevels>0;
+        };
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT colorSupport{ColorFormat};
+        const bool resolvable=SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT,&colorSupport,sizeof(colorSupport)))&&
+                              (colorSupport.Support1&D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RESOLVE)&&(colorSupport.Support1&D3D12_FORMAT_SUPPORT1_MULTISAMPLE_RENDERTARGET);
+        if(msaa>1&&!gpu->oldDriver.empty())Log(L"  MSAA x%d asked, off: old Intel driver %s",msaa,gpu->oldDriver.c_str());
+        else if(msaa>1&&!resolvable)Log(L"  MSAA x%d asked, off: the colour format cannot be multisampled and resolved",msaa);
+        else for(UINT count=static_cast<UINT>(std::max(1,msaa));count>1;count/=2)
+        {
+            if(supports(ColorFormat,count)&&supports(DepthFormat,count)){sampleCount=count;break;}
+            Log(L"  MSAA x%u not supported",count);
         }
         if(motionBlur&&sampleCount>1)
         {
@@ -273,7 +309,16 @@ namespace MikuMikuDesktopPerch
         if(FAILED(hr=device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)))){error=HrText(L"Fence",hr);return false;}
         fenceEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
 
-        if(!CreateRenderTargets(error)||!CreatePipelines(error))return false;
+        if(!CreateRenderTargets(error)||!CreatePipelines(error))
+        {
+            // Rather than nothing drawn: once more without MSAA.
+            if(sampleCount==1)return false;
+            Log(L"  MSAA x%u failed (%s): drawing without it",sampleCount,error.c_str());
+            error.clear();
+            sampleCount=1;
+            msaaTarget.Reset();msaaMotion.Reset();sceneColor.Reset();sceneMotion.Reset();blurredColor.Reset();depthTarget.Reset();
+            if(!CreateRenderTargets(error)||!CreatePipelines(error))return false;
+        }
 
         // The shadow map: written as depth, read by the model shader.
         {
@@ -759,7 +804,14 @@ namespace MikuMikuDesktopPerch
         if(FAILED(hr=swapChain->ResizeBuffers(FrameCount,swapWidth,swapHeight,ColorFormat,0))){error=HrText(L"ResizeBuffers",hr);return false;}
         for(auto& f:frames){f.hitPoint={-1,-1};f.fenceValue=0;}
         lastAlpha=-1;
-        return CreateRenderTargets(error);
+        if(CreateRenderTargets(error))return true;
+        if(sampleCount==1)return false;
+        // As in Initialize: without MSAA rather than nothing drawn.
+        Log(L"MSAA x%u targets failed at %ux%u (%s): drawing without it",sampleCount,bufferWidth,bufferHeight,error.c_str());
+        error.clear();
+        sampleCount=1;
+        msaaTarget.Reset();msaaMotion.Reset();sceneColor.Reset();sceneMotion.Reset();blurredColor.Reset();depthTarget.Reset();
+        return CreateRenderTargets(error)&&CreatePipelines(error);
     }
 
     void MascotRenderer::SetCamera(FXMVECTOR eye,FXMVECTOR target,float fovY)
@@ -1027,6 +1079,17 @@ namespace MikuMikuDesktopPerch
             commandList->DrawInstanced(6,static_cast<UINT>(particles.size()),0,0);
         }
 
+        // MSAA resolve between targets of the same size: of the drawn area, or of the whole
+        // target where the driver cannot resolve a region.
+        const auto resolve=[&](ID3D12Resource* target,ID3D12Resource* source,DXGI_FORMAT format)
+        {
+            if(gpu->regionResolve)
+            {
+                D3D12_RECT area=drawn;
+                commandList1->ResolveSubresourceRegion(target,0,0,0,source,0,&area,format,D3D12_RESOLVE_MODE_AVERAGE);
+            }
+            else commandList->ResolveSubresource(target,0,source,0,format);
+        };
         if(offscreen)
         {
             // Into sceneColor (and sceneMotion), resolved from MSAA ...
@@ -1041,9 +1104,8 @@ namespace MikuMikuDesktopPerch
                     before.push_back(Transition(sceneMotion.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_DEST));
                 }
                 commandList->ResourceBarrier(static_cast<UINT>(before.size()),before.data());
-                D3D12_RECT source=drawn;
-                commandList1->ResolveSubresourceRegion(sceneColor.Get(),0,0,0,msaaTarget.Get(),0,&source,ColorFormat,D3D12_RESOLVE_MODE_AVERAGE);
-                if(blur)commandList1->ResolveSubresourceRegion(sceneMotion.Get(),0,0,0,msaaMotion.Get(),0,&source,MotionFormat,D3D12_RESOLVE_MODE_AVERAGE);
+                resolve(sceneColor.Get(),msaaTarget.Get(),ColorFormat);
+                if(blur)resolve(sceneMotion.Get(),msaaMotion.Get(),MotionFormat);
                 std::vector<D3D12_RESOURCE_BARRIER> resolved{
                     Transition(msaaTarget.Get(),D3D12_RESOURCE_STATE_RESOLVE_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET),
                     Transition(sceneColor.Get(),D3D12_RESOURCE_STATE_RESOLVE_DEST,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
@@ -1102,6 +1164,37 @@ namespace MikuMikuDesktopPerch
             commandList->DrawInstanced(3,1,0,0);
             after.push_back(Transition(backBuffer,D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE));
             commandList->ResourceBarrier(static_cast<UINT>(after.size()),after.data());
+        }
+        else if(sampleCount>1&&!gpu->regionResolve)
+        {
+            // The back buffer is not the MSAA target's size: resolved whole into sceneColor,
+            // whose drawn area is then copied.
+            D3D12_RESOURCE_STATES backState=D3D12_RESOURCE_STATE_PRESENT;
+            if(clearWhole[index])
+            {
+                auto toTarget=Transition(backBuffer,backState,D3D12_RESOURCE_STATE_RENDER_TARGET);
+                commandList->ResourceBarrier(1,&toTarget);
+                commandList->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{rtvStart.ptr+index*rtvStride},ClearColor,0,nullptr);
+                backState=D3D12_RESOURCE_STATE_RENDER_TARGET;
+                clearWhole[index]=false;
+            }
+            D3D12_RESOURCE_BARRIER b[3]={
+                Transition(msaaTarget.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_SOURCE),
+                Transition(sceneColor.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_RESOLVE_DEST),
+                Transition(backBuffer,backState,D3D12_RESOURCE_STATE_COPY_DEST)};
+            commandList->ResourceBarrier(3,b);
+            resolve(sceneColor.Get(),msaaTarget.Get(),ColorFormat);
+            D3D12_RESOURCE_BARRIER r[2]={
+                Transition(msaaTarget.Get(),D3D12_RESOURCE_STATE_RESOLVE_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET),
+                Transition(sceneColor.Get(),D3D12_RESOURCE_STATE_RESOLVE_DEST,D3D12_RESOURCE_STATE_COPY_SOURCE)};
+            commandList->ResourceBarrier(2,r);
+            D3D12_TEXTURE_COPY_LOCATION to{backBuffer,D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,{}},from{sceneColor.Get(),D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,{}};
+            const D3D12_BOX box{0,0,0,width,height,1};
+            commandList->CopyTextureRegion(&to,0,0,0,&from,&box);
+            D3D12_RESOURCE_BARRIER a[2]={
+                Transition(sceneColor.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET),
+                Transition(backBuffer,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_COPY_SOURCE)};
+            commandList->ResourceBarrier(2,a);
         }
         else if(sampleCount>1)
         {

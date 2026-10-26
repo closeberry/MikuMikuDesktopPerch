@@ -172,6 +172,7 @@ namespace MikuMikuDesktopPerch
         voiceDirect=ReadInt(path,L"VoiceDirect",voiceDirect?1:0)!=0;
         voiceFolder=ReadString(path,L"VoiceFolder",voiceFolder);
         lastGreeting=ReadString(path,L"LastGreeting",lastGreeting);
+        oldDriverTold=ReadString(path,L"OldDriverTold",oldDriverTold);
         // BanterN: first, second, topic, opener and the opening, separated by tabs.
         recentBanters.clear();
         for(size_t i=1;i<=MaxBanterRecords;++i)
@@ -254,6 +255,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"VoiceDirect",voiceDirect?L"1":L"0");
         WriteString(path,L"VoiceFolder",voiceFolder);
         WriteString(path,L"LastGreeting",lastGreeting);
+        WriteString(path,L"OldDriverTold",oldDriverTold);
         for(size_t i=0;i<MaxBanterRecords;++i)
         {
             const std::wstring key=L"Banter"+std::to_wstring(i+1);
