@@ -266,7 +266,7 @@ with requests.get("http://127.0.0.1:50080/events?chat=external", stream=True) as
 | AlbumFolder | （空） | アルバムの保存先（空なら `%LOCALAPPDATA%\MikuMikuDesktopPerch\album`） |
 | ChatInitiative | 1 | ときどき自分から話しかける（時間帯のあいさつ、おかえり、ひと言） |
 | ChatterMinutes | 45 | 自分から話しかけるひと言の、おおよその間隔（分。前後3分の1の範囲でランダム） |
-| BanterMinutes | 30 | キャラクター同士のおしゃべりの、おおよその間隔（分。0でしない） |
+| BanterMinutes | 30 | キャラクター同士のおしゃべりの、おおよその間隔（分。0でしない。1は始まりから1分ごとで、1分より長いおしゃべりなら終わってすぐ次へ） |
 | UpdateCheck | 1 | 更新を自動で確認（GitHubのリリース） |
 | Api / ApiPort | 0 / 50080 | 外部アプリからの操作（HTTP API、127.0.0.1だけ）と、そのポート（1024〜65535） |
 | DisabledGestures | （空） | 待機中に使わないしぐさ・組み込みの待機モーション（`hip`、`clip:名前` などを `\|` 区切り。設定の「しぐさを選ぶ...」で選びます。ここにないものは、あとから加わったものも含めて使います） |

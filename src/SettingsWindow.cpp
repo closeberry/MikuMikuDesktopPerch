@@ -332,7 +332,7 @@ namespace MikuMikuDesktopPerch
                       s.focusBreakMinutes,Fmt(T(L"休憩{0}分",L"Break {0} min"),{std::to_wstring(s.focusBreakMinutes)}));
             FillCombo(IdChatterMinutes,{{T(L"10分ごと",L"Every 10 min"),10},{T(L"20分ごと",L"Every 20 min"),20},{T(L"30分ごと",L"Every 30 min"),30},{T(L"45分ごと（標準）",L"Every 45 min"),45},{T(L"1時間ごと",L"Every hour"),60},{T(L"1時間半ごと",L"Every 1.5 hours"),90},{T(L"2時間ごと",L"Every 2 hours"),120}},
                       s.chatterMinutes,Fmt(T(L"{0}分ごと",L"Every {0} min"),{std::to_wstring(s.chatterMinutes)}));
-            FillCombo(IdBanterMinutes,{{T(L"しない",L"Never"),0},{T(L"10分ごと",L"Every 10 min"),10},{T(L"20分ごと",L"Every 20 min"),20},{T(L"30分ごと（標準）",L"Every 30 min"),30},{T(L"45分ごと",L"Every 45 min"),45},{T(L"1時間ごと",L"Every hour"),60},{T(L"1時間半ごと",L"Every 1.5 hours"),90}},
+            FillCombo(IdBanterMinutes,{{T(L"しない",L"Never"),0},{T(L"1分ごと",L"Every minute"),1},{T(L"10分ごと",L"Every 10 min"),10},{T(L"20分ごと",L"Every 20 min"),20},{T(L"30分ごと（標準）",L"Every 30 min"),30},{T(L"45分ごと",L"Every 45 min"),45},{T(L"1時間ごと",L"Every hour"),60},{T(L"1時間半ごと",L"Every 1.5 hours"),90}},
                       s.banterMinutes,Fmt(T(L"{0}分ごと",L"Every {0} min"),{std::to_wstring(s.banterMinutes)}));
             FillCombo(IdLanguage,{{T(L"自動",L"Auto"),0},{L"日本語",1},{L"English",2}},s.language==L"ja"?1:s.language==L"en"?2:0,L"");
             UpdateInitiative();

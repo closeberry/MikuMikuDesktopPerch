@@ -366,6 +366,10 @@ namespace
     // Now and then, about every so many minutes: a third sooner or later at random.
     double Interval(int minutes){return minutes*60.0*(2.0/3.0+app.Random01()*2.0/3.0);}
 
+    // From the start of one chat between characters to the next. Every minute is meant as
+    // that: a chat longer than a minute is followed by the next as soon as it ends.
+    double BanterInterval(){return app.settings.banterMinutes<=1?60.0:Interval(app.settings.banterMinutes);}
+
     // Taking part in a conversation between characters (getting together for it, or talking).
     bool InBanter(const Mascot& m)
     {
@@ -1587,7 +1591,7 @@ namespace
         if(s.banterMinutes!=current.banterMinutes)
         {
             current.banterMinutes=s.banterMinutes;
-            if(s.banterMinutes>0)app.nextBanterAt=std::min(app.nextBanterAt,app.clock+Interval(s.banterMinutes));
+            if(s.banterMinutes>0)app.nextBanterAt=std::min(app.nextBanterAt,app.clock+BanterInterval());
         }
         if(s.updateCheck&&!current.updateCheck)app.nextUpdateCheck=app.clock+5;
         current.updateCheck=s.updateCheck;
@@ -2458,7 +2462,7 @@ namespace
         BeginReply(m,std::move(messages));
     }
 
-    // Now and then (every 20 to 40 minutes, with "speak first" on, while the user is at the
+    // Now and then (every 20 to 40 minutes by default, with "speak first" on, while the user is at the
     // computer) two characters talk with each other: they get together, then take turns, one
     // line each, each said to its end before the reply. Anything that needs either of them
     // (picking one up, talking to one, the input box) ends it.
@@ -2473,7 +2477,7 @@ namespace
             // Not while focus mode has the user working.
             if(!due||app.mascots.size()<2||app.settings.chatModel.empty()||AnyoneTalking()||(app.focus.on&&!app.focus.resting))return;
             app.banterRequested=false;
-            app.nextBanterAt=app.clock+(StartBanter()?Interval(std::max(app.settings.banterMinutes,1)):60);
+            app.nextBanterAt=app.clock+(StartBanter()?BanterInterval():60);
             return;
         }
         Mascot& first=*b.first;
@@ -4976,7 +4980,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     }
     app.settings.Save(app.settingsPath);
     app.nextChatterAt=Interval(app.settings.chatterMinutes);
-    app.nextBanterAt=Interval(std::max(app.settings.banterMinutes,1));
+    app.nextBanterAt=BanterInterval();
     if(!app.diagnostic)
     {
         app.updatedFrom=Updater::UpdatedFrom();

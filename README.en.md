@@ -266,7 +266,7 @@ The first character's settings go in the `[Mascot]` section, together with the o
 | AlbumFolder | (empty) | Where the album's pictures go (empty: `%LOCALAPPDATA%\MikuMikuDesktopPerch\album`) |
 | ChatInitiative | 1 | Speak first now and then (greetings for the time of day, welcome back, remarks) |
 | ChatterMinutes | 45 | The rough interval of remarks when speaking first (minutes; random within a third either way) |
-| BanterMinutes | 30 | The rough interval of characters chatting together (minutes; 0 for never) |
+| BanterMinutes | 30 | The rough interval of characters chatting together (minutes; 0 for never; 1 is a minute from the start of one to the next, and a chat longer than that is followed by the next as soon as it ends) |
 | UpdateCheck | 1 | Check for updates (GitHub releases) |
 | Api / ApiPort | 0 / 50080 | Control from other apps (HTTP API, 127.0.0.1 only) and its port (1024–65535) |
 | DisabledGestures | (empty) | Idle gestures and built-in idle motions not to use (`hip`, `clip:name` and so on, separated by `\|`; chosen with "Gestures..." in the settings; anything not listed is used, including ones added later) |
