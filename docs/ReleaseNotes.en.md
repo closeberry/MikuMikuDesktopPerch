@@ -2,6 +2,23 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.2.9
+
+### New
+
+- **Closeness**: each character counts how close you two have become. It grows while she is on the desktop as you use the computer, when you talk to her, click her, finish a focus mode round or check off a to-do (at most 30 a day; it never goes down), from "just met" to "partners" in about a month. The LLM is told how close you are, so she gradually talks more openly, keeping to her persona (never colder than it). The number keeps growing after that, and she brings up a stage reached, 7, 30 and 100 days together (then every 100), every year since you met, and closeness passing 1,000 to 10,000 (then every 10,000). Ask "how close are we?" and she tells you. It grows without the LLM too, and she then says the milestones in set words. "Closeness" under Talking and voice turns it off. See `docs/Bond.md` (in Japanese)
+  - Characters you already had start as if together since their oldest memory (or, with none, since the settings ini was made), "friends" at least, so updating never sends them back to "just met"
+- **Album**: pictures of the characters with their speech bubbles. One is taken when she brings up a day or a stage reached together, and you can take one any time with "Take a picture" in the menu or a shortcut that works anywhere (Ctrl+Alt+Shift+S by default), with a shutter sound you can turn off. **It does not capture the screen: it uses the characters and bubbles as the app drew them, so windows behind them and the desktop are never in it.** Each is saved with and without the bubbles, with the words in `album.txt`. The key, the shutter sound and the folder (changing it copies the pictures so far over, and leaves the old folder as it was) are under Album on the Assistant page. "Open album" in the menu opens the folder. See `docs/Album.md` (in Japanese)
+
+### Changes
+
+- The persona window shows how much of the 4,000 characters is written (a line break counts as one). OK with more than that says so, with why a shorter persona works better, and keeps the window open. Before, typing stopped at 4,000 and a line break counted as two
+
+### Fixes
+
+- Turning on anti-aliasing could make the model vanish. MSAA is now checked against the depth format too, and when it cannot be set up the app draws without it (and logs why)
+- Old Intel graphics drivers (older than WDDM 2.7) get no anti-aliasing, and a character suggests updating the driver (once per driver)
+
 ## 1.2.8
 
 ### New
