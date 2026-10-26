@@ -146,6 +146,7 @@ namespace MikuMikuDesktopPerch
         chatModel=ReadString(path,L"ChatModel",chatModel);
         userName=ReadString(path,L"UserName",userName);
         chatMemory=ReadInt(path,L"ChatMemory",chatMemory?1:0)!=0;
+        bond=ReadInt(path,L"Bond",bond?1:0)!=0;
         chatInitiative=ReadInt(path,L"ChatInitiative",chatInitiative?1:0)!=0;
         chatterMinutes=std::clamp(ReadInt(path,L"ChatterMinutes",chatterMinutes),5,600);
         banterMinutes=std::clamp(ReadInt(path,L"BanterMinutes",banterMinutes),0,600);
@@ -228,6 +229,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"ChatModel",chatModel);
         WriteString(path,L"UserName",userName);
         WriteString(path,L"ChatMemory",chatMemory?L"1":L"0");
+        WriteString(path,L"Bond",bond?L"1":L"0");
         WriteString(path,L"ChatInitiative",chatInitiative?L"1":L"0");
         WriteString(path,L"ChatterMinutes",std::to_wstring(chatterMinutes));
         WriteString(path,L"BanterMinutes",std::to_wstring(banterMinutes));

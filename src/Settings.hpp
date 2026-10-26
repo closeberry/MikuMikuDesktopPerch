@@ -65,6 +65,7 @@ namespace MikuMikuDesktopPerch
         std::wstring chatModel;
         std::wstring userName;      // what the mascot calls the user (empty: no name)
         bool chatMemory=true;       // remember things from conversations (per model, on this computer)
+        bool bond=true;             // how close she and the user have become grows (per model, docs/Bond.md)
         bool chatInitiative=true;   // greet, welcome back and now and then say something first
         // With chatInitiative: about how often (minutes, varied by a third either way) one says a
         // word of her own, and two characters talk with each other (0: never).

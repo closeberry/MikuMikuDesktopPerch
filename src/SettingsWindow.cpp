@@ -31,7 +31,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdTabs
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdBond,IdTabs
         };
         // The longest persona (characters, a line break counting as one).
         constexpr size_t MaxPersona=4000;
@@ -219,8 +219,9 @@ namespace MikuMikuDesktopPerch
             SetDlgItemTextW(state.window,IdChatModel,s.chatModel.c_str());
             Add(L"BUTTON",T(L"一覧を取得",L"Get list"),BS_PUSHBUTTON|WS_TABSTOP,366,y+51,70,26,IdChatList);
             Label(T(L"あなたの呼び名",L"Your name"),28,y+82,130);
-            Add(L"EDIT",s.userName.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+82,190,24,IdUserName);
+            Add(L"EDIT",s.userName.c_str(),ES_AUTOHSCROLL|WS_BORDER|WS_TABSTOP,170,y+82,150,24,IdUserName);
             SendDlgItemMessageW(state.window,IdUserName,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"例: たろう",L"e.g. Alex")));
+            CheckBox(IdBond,T(L"なかよし度",L"Closeness"),336,y+83,100,s.bond);
             CheckBox(IdChatMemory,T(L"会話の内容を覚える",L"Remember chats"),28,y+112,140,s.chatMemory);
             Add(L"BUTTON",T(L"人物設定...",L"Persona..."),BS_PUSHBUTTON|WS_TABSTOP,170,y+110,110,26,IdPersona);
             Add(L"BUTTON",T(L"記憶...",L"Memory..."),BS_PUSHBUTTON|WS_TABSTOP,286,y+110,110,26,IdMemory);
@@ -889,6 +890,7 @@ namespace MikuMikuDesktopPerch
             GetDlgItemTextW(state.window,IdUserName,user,128);
             s.userName=trim(user);
             s.chatMemory=Checked(IdChatMemory);
+            s.bond=Checked(IdBond);
             s.chatInitiative=Checked(IdChatInitiative);
             s.chatterMinutes=ComboValue(IdChatterMinutes,s.chatterMinutes);
             s.banterMinutes=ComboValue(IdBanterMinutes,s.banterMinutes);

@@ -18,6 +18,7 @@ namespace MikuMikuDesktopPerch
             HWND window=nullptr;
             HFONT font=nullptr;
             Planner* planner=nullptr;
+            std::function<void(int)> todosDone;
             int dpi=96;
         } state;
 
@@ -156,9 +157,13 @@ namespace MikuMikuDesktopPerch
                     return 0;
                 case IdTodoDone:
                     if(!state.planner)return 0;
-                    for(const int id:Selected(IdTodoList))state.planner->RemoveTodo(id);
+                {
+                    const auto done=Selected(IdTodoList);
+                    for(const int id:done)state.planner->RemoveTodo(id);
                     Save();
+                    if(!done.empty()&&state.todosDone)state.todosDone(static_cast<int>(done.size()));
                     return 0;
+                }
                 case IDOK:
                     // Enter in a box adds what is typed; anywhere else it closes.
                     if(GetFocus()==GetDlgItem(hwnd,IdAlarmNew)){AddAlarm();return 0;}
@@ -183,9 +188,10 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    void ShowPlannerWindow(HWND owner,Planner& planner)
+    void ShowPlannerWindow(HWND owner,Planner& planner,std::function<void(int)> todosDone)
     {
         state.planner=&planner;
+        state.todosDone=std::move(todosDone);
         if(state.window)
         {
             FillLists();

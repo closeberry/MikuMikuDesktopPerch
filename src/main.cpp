@@ -5,6 +5,7 @@
 #include "HttpJson.hpp"
 #include "LocalChat.hpp"
 #include "Memory.hpp"
+#include "Bond.hpp"
 #include "Voice.hpp"
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
@@ -122,6 +123,7 @@ namespace
         // Long-term memory: notes about the user, picked out of finished exchanges by a second
         // request to the LLM once the conversation pauses.
         CharacterMemory memory;
+        Bond bond;   // how close she and the user have become (docs/Bond.md)
         std::unique_ptr<VoiceEngine> voice;   // while speaking aloud is on
         std::unique_ptr<LocalChat> memoryChat;
         std::vector<ChatMessage> unmemorized;   // exchanges not yet looked through for notes
@@ -274,7 +276,8 @@ namespace
         struct Focus {bool on=false,resting=false;std::int64_t phaseEnd=0;int rounds=0;} focus;
         // What a character has to tell that is not an alarm (focus mode's turns, a break due):
         // told like one, without the answer box.
-        struct Notice {std::wstring line,facts;};
+        // model: only the character with that model tells it (dropped if she is gone).
+        struct Notice {std::wstring line,facts,model;};
         std::vector<Notice> notices;
         double noticesSince=-1;
         // Using the computer without a break (five minutes away counts as one).
@@ -286,6 +289,10 @@ namespace
         std::set<std::wstring> eventsTold;
         double nextCalendarFetch=15;
         std::unique_ptr<ApiServer> api;   // other programs driving the characters (with Settings::api)
+        // The models in the settings as they were at start-up, and the day the settings were first
+        // written: a character there with no closeness yet was had before it was counted.
+        std::set<std::wstring> modelsBefore;
+        std::wstring usingSince;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
@@ -294,6 +301,48 @@ namespace
     } app;
 
     CharacterSettings& Own(const Mascot& m){return app.settings.characters[m.slot];}
+
+    void Trace(const wchar_t* format,...);
+
+    // Points for something she and the user did together (docs/Bond.md), saved as they come.
+    // Not in diagnostic runs, which must leave the user's data alone.
+    void AddBond(Mascot& m,BondAction action)
+    {
+        if(!app.settings.bond||app.diagnostic||!m.bond.Add(action))return;
+        m.bond.Save();
+        Trace(L"%.1f bond: %lld (%s)",app.clock,m.bond.Points(),m.modelPath.c_str());
+    }
+
+    // The stages' names, and how she is asked to talk at each.
+    struct BondStage {const wchar_t* name;const wchar_t* englishName;const wchar_t* tone;const wchar_t* englishTone;};
+    constexpr BondStage BondStages[Bond::Stages]={
+        {L"はじめまして",L"just met",L"まだ出会ったばかりです",L"You have only just met"},
+        {L"顔なじみ",L"getting familiar",L"少し打ち解けてきたところです",L"You are getting used to each other"},
+        {L"なかよし",L"friends",L"気軽に話せる仲です",L"You are friends and talk easily"},
+        {L"大のなかよし",L"close friends",L"とても親しく、冗談も言い合える仲です",L"You are close and can joke with each other"},
+        {L"相棒",L"partners",L"長く一緒にいて、心から信頼し合っている相棒です",L"You have been together a long time and trust each other completely"}};
+
+    std::wstring BondStageName(const Mascot& m)
+    {
+        const auto& s=BondStages[m.bond.Stage()];
+        return English()?s.englishName:s.name;
+    }
+
+    // How close she and the user are, for the system prompt: the way she talks follows it,
+    // her persona first.
+    std::wstring BondPrompt(const Mascot& m)
+    {
+        const auto& s=BondStages[m.bond.Stage()];
+        const std::wstring points=std::to_wstring(m.bond.Points()),days=std::to_wstring(m.bond.DaysTogether());
+        const std::wstring& first=m.bond.FirstDay();
+        if(English())
+            return L"\nHow close you and the person you talk with are: \""+std::wstring(s.englishName)+L"\" (closeness "+points+L", "+days+
+                   L" days spent together"+(first.empty()?L"":L", first met on "+first)+L"). "+s.englishTone+L". "
+                   L"Keep to the way of talking in your persona, and never be colder or more distant than it.\n";
+        return L"\n話し相手との仲は「"+std::wstring(s.name)+L"」です（なかよし度"+points+L"、一緒に過ごした日"+days+L"日"+
+               (first.empty()?L"":L"、初めて会ったのは"+first)+L"）。"+s.tone+L"。"
+               L"話し方は人物設定に合わせ、人物設定より冷たく、よそよそしくはしないでください。\n";
+    }
 
     // An event about character m for the programs listening on the API (GET /events);
     // more: further JSON members ("\"part\":\"head\"").
@@ -624,6 +673,7 @@ namespace
         if(a==Activity::Walk||a==Activity::Run)StopGroundActivity(m);
         Emit("click",m,head?"\"part\":\"head\"":"\"part\":\"body\"");
         if(m.model.React(head))Trace(L"%.1f click on the %s",app.clock,head?L"head":L"body");
+        AddBond(m,BondAction::Click);
     }
 
     // Where the others stand on a surface line, or are on their way to: a spot there is taken.
@@ -1513,6 +1563,7 @@ namespace
         const bool chatModelChanged=s.chatModel!=current.chatModel;
         current.chatModel=s.chatModel;
         current.chatMemory=s.chatMemory;
+        current.bond=s.bond;
         current.userName=s.userName;
         current.chatInitiative=s.chatInitiative;
         // A shorter interval takes effect now, not after the old wait.
@@ -1733,7 +1784,7 @@ namespace
     void BeginReply(Mascot& m,std::vector<ChatMessage> messages);
     void EndBanter(const wchar_t* why);
     void SayFixed(Mascot& m,const std::wstring& text,std::string sound={});
-    Mascot* PickTeller(double waited);
+    Mascot* PickTeller(double waited,const std::wstring& model={});
 
     // The date and time for the LLM, in the language in use.
     std::wstring NowText()
@@ -1772,6 +1823,7 @@ namespace
             if(const std::wstring notes=m.memory.Recall(text,1500);!notes.empty())
                 remembered=T(L"\n以前の会話で覚えたこと（必要なときだけ自然に話に生かしてください。ここにないことを覚えているふりはしないでください）：\n",
                              L"\nWhat you remember from earlier conversations (bring it in naturally, only when it fits; do not pretend to remember anything not listed here):\n")+notes+L"\n";
+        if(app.settings.bond)remembered+=BondPrompt(m);
         std::vector<ChatMessage> messages;
         if(English())
             messages.push_back({L"system",
@@ -1845,6 +1897,7 @@ namespace
     // that with bouncing dots, a minute at most. Timers, reminders and to-dos stay hers.
     void UserSaid(Mascot& m,const std::wstring& text)
     {
+        AddBond(m,BondAction::Talk);
         if(!ExternalChat())
         {
             Emit("said",m,"\"text\":"+Net::JsonString(text)+",\"answeredBy\":\"app\"");
@@ -2800,6 +2853,7 @@ namespace
             if(item==todos.end()){line=Fmt(T(L"やることに{0}は見つからなかったよ。",L"I couldn't find {0} on your to-do list."),{Quoted(r.text)});own=false;break;}
             const std::wstring text=item->text;
             app.planner.RemoveTodo(id);
+            for(const auto& owned:app.mascots)AddBond(*owned,BondAction::Todo);
             line=Fmt(T(L"{0}、済みにしたよ。おつかれさま！",L"Checked off {0}. Nice work!"),{Quoted(text)});
             news=Fmt(T(L"話し相手がやることリストの{0}を済ませたので、リストから外しました",L"They finished {0} on their to-do list, so you took it off the list"),{Quoted(text)});
             break;
@@ -2903,8 +2957,30 @@ namespace
     // A timer, reminder or to-do request in what the user said: read without the LLM, or,
     // when the words might be one put another way, by the LLM first (the bubble's dots run
     // meanwhile). False: just talk.
+    // "なかよし度は？": she tells how close they are (in her own words when the LLM is there).
+    bool AnswerBondQuestion(Mascot& m,const std::wstring& said)
+    {
+        if(!app.settings.bond)return false;
+        std::wstring lower=said;
+        std::transform(lower.begin(),lower.end(),lower.begin(),[](wchar_t c){return static_cast<wchar_t>(std::towlower(c));});
+        static constexpr const wchar_t* Words[]={L"なかよし度",L"仲良し度",L"仲よし度",L"親密度",L"好感度",L"closeness",L"bond level",L"friendship level",L"how close are we"};
+        if(std::none_of(std::begin(Words),std::end(Words),[&](const wchar_t* w){return lower.find(w)!=std::wstring::npos;}))return false;
+        const std::wstring points=std::to_wstring(m.bond.Points()),days=std::to_wstring(m.bond.DaysTogether()),stage=BondStageName(m);
+        const std::wstring line=Fmt(T(L"なかよし度は{0}、「{1}」だよ。一緒に過ごした日は{2}日！",L"Our closeness is {0}: \"{1}\". We've spent {2} days together!"),{points,stage,days});
+        const std::wstring facts=Fmt(T(L"なかよし度を聞かれました。いまのなかよし度は{0}、仲は「{1}」、一緒に過ごした日は{2}日です",
+                                       L"You were asked how close you two are. The closeness is {0}, you are \"{1}\", and you have spent {2} days together"),{points,stage,days});
+        Trace(L"%.1f bond: asked (%s)",app.clock,points.c_str());
+        if(!ChatReady(m,false)){SayFixed(m,line);return true;}
+        m.fallbackLine=line;
+        m.conversation.push_back({L"user",said+L"\n"+(English()?L"(":L"（")+facts+
+                                  T(L"。そのことを、あなたの言葉で短く伝えてください）",L". Tell them so, briefly, in your own words.)")});
+        StartReply(m,said);
+        return true;
+    }
+
     bool HandlePlan(Mascot& m,const std::wstring& said)
     {
+        if(AnswerBondQuestion(m,said))return true;
         PlanRequest r=ReadPlanRequest(said,Now());
         if(r.kind==PlanRequest::Kind::TodoDone&&!r.sure&&!app.planner.FindTodo(r.text))r.kind=PlanRequest::Kind::None;
         if(r.kind!=PlanRequest::Kind::None){DoPlan(m,r,said);return true;}
@@ -2954,13 +3030,14 @@ namespace
 
     // Who tells what has come due: a character free to talk, or, after a few seconds of
     // waiting (waited), one busy too (she cuts in). Null for nobody yet.
-    Mascot* PickTeller(double waited)
+    Mascot* PickTeller(double waited,const std::wstring& model)
     {
         if(waited<8&&AnyoneTalking())return nullptr;   // not over someone else at first
         std::vector<Mascot*> free;
         for(const auto& owned:app.mascots)
         {
             Mascot& c=*owned;
+            if(!model.empty()&&c.modelPath!=model)continue;
             if((&c==app.asker||&c==app.alarmTeller)&&waited<30)continue;
             const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
             if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
@@ -3049,7 +3126,14 @@ namespace
         if(!app.notices.empty())
         {
             if(app.banter.stage!=App::Banter::Stage::None)EndBanter(L"a notice");
-            if(Mascot* m=PickTeller(app.clock-app.noticesSince))
+            const std::wstring& only=app.notices.front().model;
+            if(!only.empty()&&std::none_of(app.mascots.begin(),app.mascots.end(),[&](const auto& c){return c->modelPath==only;}))
+            {
+                app.notices.erase(app.notices.begin());   // she has been taken off the desktop
+                app.noticesSince=app.notices.empty()?-1:app.clock;
+                return;
+            }
+            if(Mascot* m=PickTeller(app.clock-app.noticesSince,only))
             {
                 const App::Notice notice=app.notices.front();
                 app.notices.erase(app.notices.begin());
@@ -3083,6 +3167,7 @@ namespace
         if(!f.resting)
         {
             ++f.rounds;
+            for(const auto& owned:app.mascots)AddBond(*owned,BondAction::Focus);
             const bool longBreak=f.rounds%4==0;
             const int minutes=app.settings.focusBreakMinutes*(longBreak?3:1);
             f.resting=true;
@@ -3100,6 +3185,63 @@ namespace
             app.notices.push_back({
                 Fmt(T(L"休憩おわり！また{0}分がんばろう。",L"Break's over! Another {0} minutes, let's go."),{work}),
                 Fmt(T(L"集中モードの休憩が終わりました。次の{0}分の作業を始めるよう、はげまして",L"The focus mode break is over. Cheer them on to start the next {0} minutes of work"),{work})});
+        }
+    }
+
+    // docs/Bond.md: time at the computer with them there counts for each character, and now
+    // and then (one thing a day each) one talks about a day or a stage reached together.
+    void UpdateBond(double dt)
+    {
+        if(!app.settings.bond||app.diagnostic)return;
+        if(InputIdleSeconds()>=90)return;
+        for(const auto& owned:app.mascots)
+            if(owned->bond.AddPresence(dt))
+            {
+                owned->bond.Save();
+                Trace(L"%.1f bond: a day together (%d, %s)",app.clock,owned->bond.DaysTogether(),owned->modelPath.c_str());
+            }
+        if(app.clock<60||!app.notices.empty()||AnyoneTalking()||(app.focus.on&&!app.focus.resting)||app.banter.stage!=App::Banter::Stage::None)return;
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& m=*owned;
+            const std::wstring key=m.bond.DueCelebration();
+            if(key.empty())continue;
+            const size_t digits=key.find_first_of(L"0123456789");
+            const std::wstring kind=key.substr(0,digits),n=key.substr(digits);
+            std::wstring line,facts;
+            if(kind==L"year")
+            {
+                line=Fmt(T(L"今日で、出会ってから{0}年だね。これからもよろしくね！",L"Today it's {0} year(s) since we met. Here's to many more!"),{n});
+                facts=Fmt(T(L"今日は、話し相手と初めて会ってからちょうど{0}年の記念日です",L"Today is exactly {0} year(s) since you first met the person you talk with"),{n});
+            }
+            else if(kind==L"days")
+            {
+                line=Fmt(T(L"一緒に過ごした日が、今日で{0}日になったよ。いつもありがとう！",L"We've now spent {0} days together. Thanks for always being here!"),{n});
+                facts=Fmt(T(L"話し相手と一緒に過ごした日（アプリを起動してパソコンを使った日）が、今日で{0}日になりました",
+                            L"The days you have spent with the person you talk with (days they used the computer with you there) reached {0} today"),{n});
+            }
+            else if(kind==L"stage")
+            {
+                static constexpr const wchar_t* Lines[][2]={{L"",L""},
+                    {L"だいぶ慣れてきたかも。これからよろしくね。",L"I think I'm getting used to you. Let's keep this up."},
+                    {L"なんだか、すっかり仲良くなれた気がする！",L"I feel like we've really become friends!"},
+                    {L"一緒にいると楽しいな。これからもいっぱい話そうね。",L"It's fun being with you. Let's keep talking lots."},
+                    {L"もう、相棒って呼んでもいいよね？いつもありがとう。",L"I can call you my partner now, right? Thanks for everything."}};
+                const int s=std::clamp(std::stoi(n),1,Bond::Stages-1);
+                line=English()?Lines[s][1]:Lines[s][0];
+                facts=Fmt(T(L"話し相手との仲が深まって、「{0}」になりました（{1}）。そう感じていることを",L"You and the person you talk with have grown closer: you are now \"{0}\" ({1}). Say that you feel so"),
+                          {BondStageName(m),English()?BondStages[s].englishTone:BondStages[s].tone});
+            }
+            else
+            {
+                line=Fmt(T(L"なかよし度が{0}を超えたよ！",L"Our closeness just passed {0}!"),{n});
+                facts=Fmt(T(L"話し相手とのなかよし度が{0}を超えました",L"Your closeness with the person you talk with has passed {0}"),{n});
+            }
+            app.notices.push_back({line,facts,m.modelPath});
+            m.bond.Told(key);
+            m.bond.Save();
+            Trace(L"%.1f bond: tell %s (%s)",app.clock,key.c_str(),m.modelPath.c_str());
+            return;
         }
     }
 
@@ -3386,7 +3528,9 @@ namespace
             OpenChatInput(m);
             break;
         case IdPlanner:
-            ShowPlannerWindow(m.hwnd,app.planner);
+            ShowPlannerWindow(m.hwnd,app.planner,[](int done){
+                for(int i=0;i<done;++i)for(const auto& owned:app.mascots)AddBond(*owned,BondAction::Todo);
+            });
             break;
         case IdCancelTimers:
         case IdFocus:
@@ -4112,6 +4256,21 @@ namespace
         m.bubble.Create(m.hwnd);
         m.character=CharacterProfile::Load(own.modelPath,m.model.ModelName());
         m.memory.Load(own.modelPath);
+        if(std::wstring problem;m.bond.Load(own.modelPath,problem),!problem.empty())Trace(L"%.1f bond: %s",app.clock,problem.c_str());
+        if(m.bond.Fresh()&&!app.diagnostic)
+        {
+            // Had before closeness was counted: since her oldest memory, or since the settings
+            // were first written. Saved at once, so that next time she is not taken for one.
+            std::wstring since;
+            for(const auto& e:m.memory.Entries())if(!e.date.empty()&&(since.empty()||e.date<since))since=e.date;
+            if(since.empty()&&app.modelsBefore.count(own.modelPath))since=app.usingSince;
+            if(!since.empty())
+            {
+                m.bond.CarryOver(since);
+                Trace(L"%.1f bond: carried over since %s (%lld)",app.clock,since.c_str(),m.bond.Points());
+            }
+            m.bond.Save();
+        }
         for(const auto& [user,text]:TakePendingExchanges(own.modelPath))
             m.unmemorized.push_back({user?L"user":L"assistant",text});
         ApplyVoiceSettings(m);
@@ -4532,7 +4691,18 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     }
 
     app.settingsPath=Settings::DefaultPath();
+    if(WIN32_FILE_ATTRIBUTE_DATA data{};GetFileAttributesExW(app.settingsPath.c_str(),GetFileExInfoStandard,&data))
+    {
+        SYSTEMTIME utc{},local{};
+        FileTimeToSystemTime(&data.ftCreationTime,&utc);
+        SystemTimeToTzSpecificLocalTime(nullptr,&utc,&local);
+        wchar_t day[16]{};
+        swprintf_s(day,L"%04d-%02d-%02d",local.wYear,local.wMonth,local.wDay);
+        app.usingSince=day;
+    }
     app.settings.Load(app.settingsPath);
+    if(!app.usingSince.empty())
+        for(const auto& c:app.settings.characters)if(!c.modelPath.empty())app.modelsBefore.insert(c.modelPath);
     SetLanguage(app.settings.language);
     MascotRenderer::PreferGpu(app.settings.gpu);
     app.diagnostic=!snapshotPath.empty();
@@ -4747,7 +4917,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         QueryPerformanceCounter(&workStart);
         MaybeRestartAfterUpdate();
         if(app.restart)continue;   // quitting: the loop picks up WM_QUIT next
-        if(!forcedActivity){MaybeTellUpdated();MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
+        if(!forcedActivity){MaybeTellUpdated();MaybeMorningSummary();MaybeSpeakFirst();UpdateBanter();MaybeCheckForUpdate();MaybeAskUpdate();UpdateFocus();UpdateBond(dt);UpdateRest();UpdateDeadlines();UpdateCalendar();UpdatePlanner();}
         // The taskbar can also end up above the characters without taking the foreground.
         if((app.topmostCheck+=dt)>=2.0){app.topmostCheck=0;ReassertTopmost();}
         for(const auto& owned:app.mascots)
