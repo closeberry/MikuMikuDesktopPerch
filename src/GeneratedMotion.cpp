@@ -1332,8 +1332,10 @@ namespace MikuMikuDesktopPerch
         activityTime+=dt;
         const bool profile=activity==Activity::Walk||activity==Activity::Run||((activity==Activity::Jump||activity==Activity::Sit)&&direction!=0);
         // Sitting turns only half as far as walking: enough for the knees to point aside.
-        const float targetYaw=profile?-direction*WalkYaw*(activity==Activity::Sit?0.5f:1.0f):0.0f;
+        const bool facing=facingWalk&&(activity==Activity::Walk||activity==Activity::Run);
+        const float targetYaw=profile&&!facing?-direction*WalkYaw*(activity==Activity::Sit?0.5f:1.0f):0.0f;
         yaw+=(targetYaw-yaw)*follow;
+        groundSpeed=0;
         // Relaxed hands: the fingers curl a little, more toward the little finger. Gestures and
         // resting poses set their own curl over this.
         for(int side=0;side<2;++side)CurlFingers(keys,side,{0.2f,0.25f,0.3f,0.35f});
@@ -1369,7 +1371,10 @@ namespace MikuMikuDesktopPerch
             // Step only once the body has mostly turned; the stride eases in and out.
             const float turned=1.0f-std::min(1.0f,std::abs(targetYaw-yaw)/(40.0f*Deg));
             walkAmount=Approach(walkAmount,turned,static_cast<float>(dt/g.easeSeconds));
-            walkPhase+=dt/g.cycle;
+            // Facing walk (the dungeon): quicker steps when asked, longer strides not (they would
+            // look like a lunge); the stride's length stays, so the ground speed follows.
+            const double cycle=g.cycle/(facing&&activity==Activity::Walk?facingPace:1.0f);
+            walkPhase+=dt/cycle;
             const float a=walkAmount,p=Frac(walkPhase),c=std::cos(XM_2PI*p);
             const float stride=g.stride*L*a,lift=g.lift*L*a;
             const XMVECTOR forward=XMVector3TransformNormal(XMVectorSet(0,0,-1,0),XMMatrixRotationY(yaw));
@@ -1424,8 +1429,9 @@ namespace MikuMikuDesktopPerch
                 footKey(side,standingFoot(side,u,h),pitch,yaw);
             }
             // センター travels with the planted foot: stance feet move back at exactly this speed.
-            const float speed=g.stride*L/(g.stance*static_cast<float>(g.cycle));
+            const float speed=g.stride*L/(g.stance*static_cast<float>(cycle));
             rootOffset+=speed*a*XMVectorGetX(forward)*static_cast<float>(dt);
+            groundSpeed=speed*a;
             const float chest=yaw*(WalkChestYaw/WalkYaw);
             // The hips ride a smooth wave, two dips a cycle. Walking is lowest a little after
             // contact (the weight comes onto the front leg) and highest as the other foot comes
@@ -1765,7 +1771,7 @@ namespace MikuMikuDesktopPerch
     {
         activityTime+=dt;
         const float follow=static_cast<float>(1.0-std::exp(-dt/0.18));
-        const float targetYaw=-direction*WalkYaw;
+        const float targetYaw=facingWalk?0.0f:-direction*WalkYaw;
         yaw+=(targetYaw-yaw)*follow;
         const float turned=1.0f-std::min(1.0f,std::abs(targetYaw-yaw)/(40.0f*Deg));
         walkAmount=Approach(walkAmount,turned,static_cast<float>(dt/0.3));
@@ -1777,6 +1783,7 @@ namespace MikuMikuDesktopPerch
         TurnKeys(keys);
         const float speed=clipSpeed[activity==Activity::Run?1:0];
         rootOffset+=speed*walkAmount*XMVectorGetX(XMVector3TransformNormal(XMVectorSet(0,0,-1,0),XMMatrixRotationY(yaw)))*static_cast<float>(dt);
+        groundSpeed=speed*walkAmount;
     }
 
     // A window motion (see SetPerch), taken as it is. One that moves forward is turned to the

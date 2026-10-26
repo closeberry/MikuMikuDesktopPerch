@@ -33,7 +33,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdTabs
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdTabs
         };
         // The longest persona (characters, a line break counting as one).
         constexpr size_t MaxPersona=4000;
@@ -305,6 +305,9 @@ namespace MikuMikuDesktopPerch
             Label(T(L"描画に使うGPU",L"GPU for drawing"),28,y+162,140);
             Combo(IdGpu,170,y+162,266);
             FillGpus();
+            // Read when the dungeon opens: no restart.
+            Group(T(L"ダンジョン（試作）",L"Dungeon (prototype)"),y+202,52);
+            CheckBox(IdDungeonLight,T(L"3Dを軽く表示する（アンチエイリアスなし、テクスチャ512、解像度75%）",L"Draw the 3D view light (no antialiasing, 512 textures, 75% resolution)"),28,y+224,410,s.dungeonLight);
             state.page=-1;
             y=top+138+166;
             Add(L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,276,y,82,28,IDOK);
@@ -914,6 +917,7 @@ namespace MikuMikuDesktopPerch
             s.morningSummary=Checked(IdMorningSummary);
             s.albumHotkey=static_cast<int>(SendDlgItemMessageW(state.window,IdAlbumHotkey,HKM_GETHOTKEY,0,0)&0xFFFF);
             s.shutterSound=Checked(IdShutterSound);
+            s.dungeonLight=Checked(IdDungeonLight);
             {
                 std::wstring folder(MAX_PATH*2,L'\0');
                 folder.resize(GetDlgItemTextW(state.window,IdAlbumFolder,folder.data(),static_cast<int>(folder.size())));

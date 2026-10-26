@@ -104,6 +104,11 @@ namespace MikuMikuDesktopPerch
         // generated gait: its ground speed (units per second), 0 for the generated gait. The
         // pose passed to Apply then holds the motion's frame, which is turned to the side here.
         void SetClipSpeed(int which,float speed){clipSpeed[which]=speed;}
+        // Walk and run the way she faces, without turning to the side, in place (センター does
+        // not travel): whoever draws her moves her at GroundSpeed (the dungeon).
+        // pace: walking's steps that much quicker (1: as on the desktop).
+        void SetFacingWalk(bool on,float pace=1){facingWalk=on;facingPace=pace;}
+        float GroundSpeed() const {return groundSpeed;}
         bool ClipGait() const {return (activity==Activity::Walk&&clipSpeed[0]>0)||(activity==Activity::Run&&clipSpeed[1]>0);}
         // A window motion (resting on a window's top edge, or moving along it) played instead of
         // the generated pose while sitting, hanging or walking: its frame is in the pose passed
@@ -226,6 +231,9 @@ namespace MikuMikuDesktopPerch
         double clock=0,walkPhase=0;
         float walkAmount=0;                  // 0..1, eases stride in and out
         float yaw=0;                         // current body yaw (radians)
+        bool facingWalk=false;
+        float facingPace=1;
+        float groundSpeed=0;                 // how fast the planted foot moves back (units per second)
         DirectX::XMFLOAT2 carryVelocity{},sway{};
         float rootOffset=0,reportedOffset=0;
         double landTime=10;

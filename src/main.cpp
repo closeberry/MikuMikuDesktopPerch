@@ -7,6 +7,7 @@
 #include "Memory.hpp"
 #include "Bond.hpp"
 #include "Album.hpp"
+#include "DungeonWindow.hpp"
 #include <commctrl.h>
 #include "Voice.hpp"
 #include "MascotModel.hpp"
@@ -37,6 +38,7 @@
 #include <cstdarg>
 #include <cwctype>
 #include <fstream>
+#include <cstring>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -53,7 +55,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
@@ -129,6 +131,8 @@ namespace
         // A day or a stage reached is being told: its picture is taken once she has said it all.
         std::wstring albumLabel;
         double albumSince=0;
+        // Away in the dungeon (docs/Dungeon.md): hidden here, her model drawn in its window.
+        bool inDungeon=false;
         std::unique_ptr<VoiceEngine> voice;   // while speaking aloud is on
         std::unique_ptr<LocalChat> memoryChat;
         std::vector<ChatMessage> unmemorized;   // exchanges not yet looked through for notes
@@ -1498,6 +1502,7 @@ namespace
         else
             AppendMenuW(menu,MF_STRING,IdResetPose,T(L"ポーズと物理をリセット",L"Reset pose and physics"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+        AppendMenuW(menu,MF_STRING,IdDungeon,T(L"ダンジョンへ行く（試作）",L"Go to the dungeon (prototype)"));
         AppendMenuW(menu,MF_STRING,IdAlbumShot,T(L"この瞬間を撮る",L"Take a picture"));
         AppendMenuW(menu,MF_STRING,IdOpenAlbum,T(L"アルバムを開く",L"Open album"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
@@ -1602,6 +1607,7 @@ namespace
         }
         current.morningSummary=s.morningSummary;
         current.shutterSound=s.shutterSound;
+        current.dungeonLight=s.dungeonLight;   // from the next time the dungeon opens
         if(s.albumFolder!=current.albumFolder)MoveAlbum(current,s.albumFolder);
         if(s.albumHotkey!=current.albumHotkey)
         {
@@ -2008,7 +2014,7 @@ namespace
         {
             const Mascot& each=*owned;
             if((each.chat&&each.chat->Busy())||each.bubble.Visible()||each.chatInput.IsOpen()||each.speech.Speaking())return;
-            if(each.place==Place::Ground&&each.model.CurrentActivity()!=Activity::Grabbed&&each.travel==Travel::None)free.push_back(owned.get());
+            if(!each.inDungeon&&each.place==Place::Ground&&each.model.CurrentActivity()!=Activity::Grabbed&&each.travel==Travel::None)free.push_back(owned.get());
         }
         if(free.empty())return;
         auto anyone=[&]()->Mascot&{return *free[std::min(free.size()-1,static_cast<size_t>(app.Random01()*free.size()))];};
@@ -2303,7 +2309,7 @@ namespace
     // Free to talk: standing on a surface with nothing else to do.
     bool FreeToTalk(Mascot& c)
     {
-        return c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
+        return !c.inDungeon&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
                !MotionBusy(c)&&!c.dozing&&!c.chatInput.IsOpen();
     }
 
@@ -3063,6 +3069,7 @@ namespace
         {
             Mascot& c=*owned;
             if(!model.empty()&&c.modelPath!=model)continue;
+            if(c.inDungeon)continue;
             if((&c==app.asker||&c==app.alarmTeller)&&waited<30)continue;
             const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
             if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
@@ -3286,7 +3293,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if(only&&only!=&m)continue;
+            if((only&&only!=&m)||m.inDungeon)continue;
             AlbumLayer character;
             UINT width=0,height=0;
             if(!m.renderer.ReadLastFrame(character.pixels,width,height))continue;
@@ -3364,6 +3371,96 @@ namespace
             ShowMessage(Fmt(T(L"これまでの写真（{0}個のファイル）を、新しい保存先にコピーしました。\n\n元のフォルダ（{1}）は、消さずにそのまま残してあります。",
                               L"The pictures so far ({0} files) were copied to the new folder.\n\nThe old folder ({1}) is left as it was, nothing deleted."),
                             {std::to_wstring(copied),from}),MB_ICONINFORMATION);
+    }
+
+    // docs/Dungeon.md: her face for the dungeon, cut from what was last drawn of her (around
+    // the head, a square about a fifth of her height).
+    DungeonHero DungeonHeroOf(Mascot& m)
+    {
+        DungeonHero hero;
+        hero.name=m.character.name;
+        std::vector<std::uint8_t> frame;
+        UINT width=0,height=0;
+        std::array<float,3> head{};
+        if(!m.renderer.ReadLastFrame(frame,width,height)||!m.model.HeadPosition(head))return hero;
+        const POINT s=m.renderer.Project(head);
+        const double unit=ModelHeightPixels(m);
+        const int side=std::max(16,static_cast<int>(unit*0.2));
+        const int left=s.x-side/2,top=static_cast<int>(s.y-unit*0.07)-side/2;
+        hero.faceSize=side;
+        hero.face.assign(static_cast<size_t>(side)*side*4,0);
+        for(int y=0;y<side;++y)
+            for(int x=0;x<side;++x)
+            {
+                const int fx=left+x,fy=top+y;
+                if(fx<0||fy<0||fx>=static_cast<int>(width)||fy>=static_cast<int>(height))continue;
+                std::memcpy(hero.face.data()+(static_cast<size_t>(y)*side+x)*4,frame.data()+(static_cast<size_t>(fy)*width+fx)*4,4);
+            }
+        return hero;
+    }
+
+    // The deepest floor she has reached (characters\<name>.dungeon.txt, "best=N").
+    int DungeonBest(const std::wstring& modelPath)
+    {
+        const std::wstring file=CharacterDataFile(modelPath,L".dungeon.txt",false);
+        std::ifstream in(std::filesystem::path(file),std::ios::binary);
+        std::string line;
+        while(std::getline(in,line))if(line.rfind("best=",0)==0)return std::max(0,std::atoi(line.c_str()+5));
+        return 0;
+    }
+
+    void OpenDungeon(Mascot& m)
+    {
+        if(DungeonWindowOpen()||app.diagnostic){ShowDungeonWindow(m.hwnd,{},{});return;}
+        const std::wstring model=m.modelPath;
+        Trace(L"%.1f dungeon: start (%s)",app.clock,model.c_str());
+        DungeonHero hero=DungeonHeroOf(m);
+        hero.model=&m.model;
+        hero.toonDir=app.settings.toonDir;
+        hero.edgeScale=app.settings.edgeScale;
+        // As rich as the desktop is drawn, but no more than 4x MSAA and 1024 textures (she is
+        // smaller there); light when the settings say so.
+        hero.msaa=std::min(app.settings.msaa,4);
+        hero.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
+        hero.light=app.settings.dungeonLight;
+        // She goes into the dungeon: off the desktop, standing, looking where her model faces.
+        if(m.chat)m.chat->Cancel();
+        if(m.voice)m.voice->CancelAll();
+        m.speech.Reset();
+        m.bubble.Hide();
+        m.chatInput.Close();
+        if(m.place==Place::Ground)StopGroundActivity(m);
+        m.model.SetLookTarget(0,0,false);
+        m.inDungeon=true;
+        ShowWindow(m.hwnd,SW_HIDE);
+        ShowDungeonWindow(m.hwnd,hero,[model](const DungeonResult& r){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inDungeon)
+                {
+                    owned->inDungeon=false;
+                    // Back to walking as on the desktop, standing where she was.
+                    owned->model.SetFacingWalk(false);
+                    owned->model.SetActivity(Activity::Idle);
+                    owned->model.TakeRootDelta();
+                    if(!app.paused)ShowWindow(owned->hwnd,SW_SHOWNOACTIVATE);
+                }
+            const int best=DungeonBest(model);
+            const bool record=r.floor>best;
+            if(record)
+                if(std::ofstream out(std::filesystem::path(CharacterDataFile(model,L".dungeon.txt",true)),std::ios::binary|std::ios::trunc);out)
+                    out<<"best="<<r.floor<<"\n";
+            Trace(L"%.1f dungeon: floor %d, %s, %d defeated, %d turns",app.clock,r.floor,r.died?L"defeated":L"came back",r.kills,r.turns);
+            const std::wstring floor=std::to_wstring(r.floor),kills=std::to_wstring(r.kills);
+            std::wstring line=r.died?Fmt(T(L"うう、{0}階でやられちゃった…。次はもっと深くまで行こうね。",L"Ugh, I got beaten on floor {0}... Let's go deeper next time."),{floor})
+                                    :Fmt(T(L"ただいま！{0}階まで行ってきたよ。",L"I'm back! We made it to floor {0}."),{floor});
+            if(record)line+=T(L"いちばん深くまで行けた！",L" That's our deepest yet!");
+            const std::wstring facts=Fmt(r.died?T(L"話し相手と一緒にダンジョンを冒険して、{0}階でモンスターにやられてデスクトップに戻ってきました（倒したモンスター{1}匹）",
+                                                  L"You explored the dungeon with the person you talk with and were beaten on floor {0}, back on the desktop now ({1} monsters defeated)")
+                                                :T(L"話し相手と一緒にダンジョンを冒険して、{0}階まで行ってデスクトップに戻ってきました（倒したモンスター{1}匹）",
+                                                  L"You explored the dungeon with the person you talk with, reached floor {0} and came back to the desktop ({1} monsters defeated)"),
+                                         {floor,kills})+(record?T(L"。これまででいちばん深い階です",L". It is the deepest you have been"):L"");
+            app.notices.push_back({line,facts,model,{}});
+        });
     }
 
     // The album's hot key, on the control window (docs/Album.md). False if another program
@@ -3694,6 +3791,7 @@ namespace
             break;
         }
         case IdOpenModel:
+            if(m.inDungeon)break;   // her model is in use in the dungeon
         {
             auto path=OpenFileDialog(m.hwnd,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),Own(m).modelPath);
             if(path.empty()||!ModelUsable(path))break;
@@ -3716,6 +3814,7 @@ namespace
             break;
         }
         case IdRemoveCharacter:
+            if(m.inDungeon)break;   // her model is in use in the dungeon
             if(app.mascots.size()>1)app.changes.push_back({Change::Remove,m.slot});
             break;
         case IdOpenMotion:
@@ -3855,6 +3954,9 @@ namespace
             break;
         case IdAlbumShot:
             TakeManualShot();
+            break;
+        case IdDungeon:
+            OpenDungeon(m);
             break;
         case IdOpenAlbum:
             if(const std::wstring folder=AlbumFolder(true);!folder.empty())ShellExecuteW(nullptr,L"open",folder.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
@@ -5073,7 +5175,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(fullscreen!=app.paused)
             {
                 app.paused=fullscreen;
-                for(const auto& m:app.mascots)ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
+                for(const auto& m:app.mascots)if(!m->inDungeon)ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
             }
         }
         const double dt=Seconds(last,now,frequency);
@@ -5091,6 +5193,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
+            if(m.inDungeon)
+            {
+                m.model.Update(dt);
+                m.model.TakeRootDelta();
+                // Her bubble, hidden as she went in, still fades out (and stays out of sight).
+                m.bubble.Tick(dt,{},0,WorkAreaOfWindow(m),true);
+                TickDungeonWindow(m.model,dt);
+                continue;
+            }
             const float ppu=m.pixelsPerUnit;
 
             // Window motion while held or falling: velocity for the dangling sway, acceleration

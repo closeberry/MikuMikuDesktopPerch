@@ -30,6 +30,13 @@ namespace MikuMikuDesktopPerch
             float angle=0;
         };
         static constexpr size_t MaxParticles=512;
+        // Plain lit geometry in world space (SetGeometry): the dungeon's floor, walls and things.
+        struct GeometryVertex
+        {
+            float position[3];
+            float normal[3];
+            float color[4];
+        };
 
         ~MascotRenderer();
         // motionBlur: smear what moves along its motion since the last frame (a pass after the
@@ -50,6 +57,18 @@ namespace MikuMikuDesktopPerch
         void SetCamera(DirectX::FXMVECTOR eye,DirectX::FXMVECTOR target,float fovY);
         // MMD's self-shadow: the model shades itself from the light (a shadow map pass).
         void SetSelfShadow(bool on){selfShadow=on;}
+        // Before Initialize: the self-shadow map's side (2048 normally; a renderer that never
+        // draws self-shadow can ask for a small one and save its memory).
+        void SetShadowMapSize(UINT size){shadowMapSize=std::max(16u,size);}
+        // The colour cleared to (premultiplied): transparent normally, opaque for a scene.
+        void SetBackground(float r,float g,float b,float a){background={r,g,b,a};}
+        // Plain geometry drawn before the model and hidden by it as depth says (and hiding it).
+        // Its pipeline is made on the first call, so renderers that never use it pay nothing.
+        // Waits for the GPU; an empty list draws none.
+        bool SetGeometry(const std::vector<GeometryVertex>& vertices);
+        // A light around (x, z) on the ground that fades to darkness at radius, on the geometry
+        // only (the dungeon's torch); radius 0: none.
+        void SetTorch(float x,float z,float radius){torch={x,z,radius};}
         // Where the light comes from, in degrees: around (0 in front, + to the viewer's
         // right) and up from the horizon.
         void SetLight(float azimuth,float elevation);
@@ -166,7 +185,7 @@ namespace MikuMikuDesktopPerch
         Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
         Microsoft::WRL::ComPtr<ID3D12PipelineState> modelCullPso,modelDoubleSidedPso,edgePso,particlePso,shadowPso,blurPso,upscalePso;
         // Self-shadow map (depth from the light), sampled by the model shader.
-        static constexpr UINT ShadowMapSize=2048;
+        UINT shadowMapSize=2048;
         Microsoft::WRL::ComPtr<ID3D12Resource> shadowMap;
         bool selfShadow=true;
         DirectX::XMFLOAT3 lightDir{-0.5f,-1.0f,0.5f};   // the way the light travels (MMD's default)
@@ -194,6 +213,12 @@ namespace MikuMikuDesktopPerch
 
         // Model resources.
         Microsoft::WRL::ComPtr<ID3D12Resource> staticVertexBuffer,indexBuffer;
+        // SetGeometry's.
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> geometryPso;
+        Microsoft::WRL::ComPtr<ID3D12Resource> geometryBuffer;
+        UINT geometryCount=0;
+        std::array<float,4> background{0,0,0,0};
+        DirectX::XMFLOAT3 torch{0,0,0};
         std::vector<Texture> textures;
         std::array<Texture,10> sharedToons;
         Texture white;

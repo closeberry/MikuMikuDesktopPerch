@@ -19,6 +19,8 @@
 #include "PostVS.h"
 #include "PostPS.h"
 #include "UpscalePS.h"
+#include "GeometryVS.h"
+#include "GeometryPS.h"
 
 namespace MikuMikuDesktopPerch
 {
@@ -36,8 +38,8 @@ namespace MikuMikuDesktopPerch
             XMFLOAT4X4 viewProj;
             XMFLOAT4X4 view;
             XMFLOAT3 lightDir; float edgePixels;
-            XMFLOAT3 lightColor; float pad0;
-            XMFLOAT2 viewportSize; XMFLOAT2 pad1;
+            XMFLOAT3 lightColor; float torchRadius;
+            XMFLOAT2 viewportSize; XMFLOAT2 torchXZ;
             XMFLOAT4X4 particleViewProj;
             XMFLOAT4 cameraRight,cameraUp;
             XMFLOAT4X4 lightViewProj;
@@ -325,7 +327,7 @@ namespace MikuMikuDesktopPerch
             auto defaultHeap=HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
             D3D12_RESOURCE_DESC desc{};
             desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-            desc.Width=desc.Height=ShadowMapSize;desc.DepthOrArraySize=1;desc.MipLevels=1;
+            desc.Width=desc.Height=shadowMapSize;desc.DepthOrArraySize=1;desc.MipLevels=1;
             desc.Format=DXGI_FORMAT_R32_TYPELESS;
             desc.SampleDesc.Count=1;
             desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
@@ -550,6 +552,56 @@ namespace MikuMikuDesktopPerch
             if(FAILED(hr=device->CreateGraphicsPipelineState(&post,IID_PPV_ARGS(&upscalePso)))){error=HrText(L"Upscale PSO",hr);return false;}
         }
         return true;
+    }
+
+    bool MascotRenderer::SetGeometry(const std::vector<GeometryVertex>& vertices)
+    {
+        if(!device||!rootSignature)return false;
+        if(!geometryPso)
+        {
+            // As the model's, without blending (it is opaque) and with both faces drawn.
+            const D3D12_INPUT_ELEMENT_DESC layout[]={
+                {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+                {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT,0,12,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+                {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,24,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+            };
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature=rootSignature.Get();
+            pso.InputLayout={layout,static_cast<UINT>(std::size(layout))};
+            pso.VS={g_GeometryVS,sizeof(g_GeometryVS)};
+            pso.PS={g_GeometryPS,sizeof(g_GeometryPS)};
+            pso.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            pso.NumRenderTargets=motionBlur?2:1;
+            pso.RTVFormats[0]=ColorFormat;
+            if(motionBlur)pso.RTVFormats[1]=MotionFormat;
+            pso.BlendState.IndependentBlendEnable=TRUE;
+            pso.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+            pso.DSVFormat=DepthFormat;
+            pso.SampleDesc.Count=sampleCount;
+            pso.SampleMask=UINT_MAX;
+            pso.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;
+            pso.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
+            pso.RasterizerState.DepthClipEnable=TRUE;
+            pso.RasterizerState.MultisampleEnable=sampleCount>1;
+            pso.DepthStencilState.DepthEnable=TRUE;
+            pso.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ALL;
+            pso.DepthStencilState.DepthFunc=D3D12_COMPARISON_FUNC_LESS_EQUAL;
+            if(const HRESULT hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&geometryPso));FAILED(hr))
+            {
+                Log(L"  geometry pipeline: 0x%08X",static_cast<unsigned>(hr));
+                return false;
+            }
+        }
+        // The old buffer may still be drawn from: the GPU finishes first.
+        WaitIdle();
+        geometryBuffer.Reset();
+        geometryCount=0;
+        if(vertices.empty())return true;
+        BeginUploads();
+        const bool ok=UploadBuffer(vertices.data(),vertices.size()*sizeof(GeometryVertex),geometryBuffer,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        FinishUploads();
+        if(ok)geometryCount=static_cast<UINT>(vertices.size());
+        return ok;
     }
 
     // The last passes' inputs, after the materials' textures and the shadow map, three to a
@@ -892,6 +944,8 @@ namespace MikuMikuDesktopPerch
         scene.lightColor={154/255.0f,154/255.0f,154/255.0f};
         scene.edgePixels=edgeScale*static_cast<float>(height)/600.0f;
         scene.viewportSize={static_cast<float>(width),static_cast<float>(height)};
+        scene.torchXZ={torch.x,torch.y};
+        scene.torchRadius=torch.z;
         {
             // The light looks at the camera's target from far enough to see all the camera
             // sees (the model never leaves the window), straight down its direction.
@@ -903,7 +957,7 @@ namespace MikuMikuDesktopPerch
             const XMMATRIX lightView=XMMatrixLookAtLH(XMVectorSubtract(target,XMVectorScale(toward,2*radius)),target,XMVectorSet(0,1,0,0));
             const XMMATRIX lightProj=XMMatrixOrthographicLH(2*radius,2*radius,radius*0.5f,radius*3.5f);
             XMStoreFloat4x4(&scene.lightViewProj,XMMatrixTranspose(w*lightView*lightProj));
-            scene.shadowInfo={selfShadow?1.0f:0.0f,1.0f/ShadowMapSize,0,0};
+            scene.shadowInfo={selfShadow?1.0f:0.0f,1.0f/shadowMapSize,0,0};
         }
         // Motion blur: last frame's camera and place on screen (the window moves by whole
         // pixels plus the sub-pixel shift). A jump (another monitor) or a first frame has none.
@@ -1017,8 +1071,8 @@ namespace MikuMikuDesktopPerch
             const D3D12_CPU_DESCRIPTOR_HANDLE shadowDsv{dsv.ptr+device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)};
             commandList->OMSetRenderTargets(0,nullptr,FALSE,&shadowDsv);
             commandList->ClearDepthStencilView(shadowDsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
-            const D3D12_VIEWPORT shadowViewport{0,0,static_cast<float>(ShadowMapSize),static_cast<float>(ShadowMapSize),0,1};
-            const D3D12_RECT shadowScissor{0,0,static_cast<LONG>(ShadowMapSize),static_cast<LONG>(ShadowMapSize)};
+            const D3D12_VIEWPORT shadowViewport{0,0,static_cast<float>(shadowMapSize),static_cast<float>(shadowMapSize),0,1};
+            const D3D12_RECT shadowScissor{0,0,static_cast<LONG>(shadowMapSize),static_cast<LONG>(shadowMapSize)};
             commandList->RSSetViewports(1,&shadowViewport);
             commandList->RSSetScissorRects(1,&shadowScissor);
             commandList->SetPipelineState(shadowPso.Get());
@@ -1041,7 +1095,7 @@ namespace MikuMikuDesktopPerch
         // except right after the drawn area shrank (clearWhole).
         const D3D12_RECT drawn{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
         const bool wholeBuffer=sampleCount==1&&!offscreen&&clearWhole[index];
-        commandList->ClearRenderTargetView(rtv,ClearColor,wholeBuffer?0:1,wholeBuffer?nullptr:&drawn);
+        commandList->ClearRenderTargetView(rtv,background.data(),wholeBuffer?0:1,wholeBuffer?nullptr:&drawn);
         if(blur)commandList->ClearRenderTargetView(motionRtv,ClearColor,1,&drawn);
         commandList->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,1,&drawn);
         if(wholeBuffer)clearWhole[index]=false;
@@ -1050,6 +1104,15 @@ namespace MikuMikuDesktopPerch
         commandList->RSSetViewports(1,&viewport);
         commandList->RSSetScissorRects(1,&scissor);
 
+        if(geometryCount)
+        {
+            commandList->SetPipelineState(geometryPso.Get());
+            const D3D12_VERTEX_BUFFER_VIEW geometry{geometryBuffer->GetGPUVirtualAddress(),geometryCount*static_cast<UINT>(sizeof(GeometryVertex)),sizeof(GeometryVertex)};
+            commandList->IASetVertexBuffers(0,1,&geometry);
+            commandList->DrawInstanced(geometryCount,1,0,0);
+            commandList->IASetVertexBuffers(0,2,vbs);
+            commandList->SetPipelineState(modelCullPso.Get());
+        }
         ID3D12PipelineState* current=modelCullPso.Get();
         for(size_t i=0;i<materialCount&&i<materials.size();++i)
         {
@@ -1143,7 +1206,7 @@ namespace MikuMikuDesktopPerch
             const D3D12_CPU_DESCRIPTOR_HANDLE backRtv{rtvStart.ptr+index*rtvStride};
             if(clearWhole[index])
             {
-                commandList->ClearRenderTargetView(backRtv,ClearColor,0,nullptr);
+                commandList->ClearRenderTargetView(backRtv,background.data(),0,nullptr);
                 clearWhole[index]=false;
             }
             commandList->OMSetRenderTargets(1,&backRtv,FALSE,nullptr);
@@ -1174,7 +1237,7 @@ namespace MikuMikuDesktopPerch
             {
                 auto toTarget=Transition(backBuffer,backState,D3D12_RESOURCE_STATE_RENDER_TARGET);
                 commandList->ResourceBarrier(1,&toTarget);
-                commandList->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{rtvStart.ptr+index*rtvStride},ClearColor,0,nullptr);
+                commandList->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{rtvStart.ptr+index*rtvStride},background.data(),0,nullptr);
                 backState=D3D12_RESOURCE_STATE_RENDER_TARGET;
                 clearWhole[index]=false;
             }
@@ -1203,7 +1266,7 @@ namespace MikuMikuDesktopPerch
             {
                 auto toTarget=Transition(backBuffer,backState,D3D12_RESOURCE_STATE_RENDER_TARGET);
                 commandList->ResourceBarrier(1,&toTarget);
-                commandList->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{rtvStart.ptr+index*rtvStride},ClearColor,0,nullptr);
+                commandList->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{rtvStart.ptr+index*rtvStride},background.data(),0,nullptr);
                 backState=D3D12_RESOURCE_STATE_RENDER_TARGET;
                 clearWhole[index]=false;
             }

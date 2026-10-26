@@ -143,6 +143,10 @@ namespace MikuMikuDesktopPerch
         // faces someone beside her. Eased in and out; only while standing (otherwise it eases
         // back to 0 quickly).
         void SetTurn(float yaw);
+        // Walk and run the way she faces, in place: whoever draws her moves her at GroundSpeed
+        // (units per second; the dungeon). Off: she turns to the side and travels (the desktop).
+        void SetFacingWalk(bool on,float pace=1);
+        float GroundSpeed() const;
         // World position of the head bone from the latest solve; false if the model has none.
         bool HeadPosition(std::array<float,3>& position) const;
         // Between the eyes (左目 and 右目, or the one there is) from the latest solve; the head

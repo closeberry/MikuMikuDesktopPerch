@@ -7,9 +7,9 @@ cbuffer Scene : register(b0)
     float3 LightDir;        // direction the light travels (MMD default: -0.5,-1,0.5)
     float EdgePixels;       // outline width in pixels for edge size 1
     float3 LightColor;
-    float ScenePad0;
+    float TorchRadius;      // the dungeon's torch around the hero (0: none), see GeometryPS
     float2 ViewportSize;
-    float2 ScenePad1;
+    float2 TorchXZ;
     float4x4 ParticleViewProj;   // plain camera, for effects drawn in world space
     float4 CameraRight;
     float4 CameraUp;

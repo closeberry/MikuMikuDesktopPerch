@@ -94,6 +94,8 @@
     <ClCompile Include="src\Memory.cpp" />
     <ClCompile Include="src\Bond.cpp" />
     <ClCompile Include="src\Album.cpp" />
+    <ClCompile Include="src\Dungeon.cpp" />
+    <ClCompile Include="src\DungeonWindow.cpp" />
     <ClCompile Include="src\Speech.cpp" />
     <ClCompile Include="src\MascotModel.cpp" />
     <ClCompile Include="src\GeneratedMotion.cpp" />
@@ -131,6 +133,8 @@
     <ClInclude Include="src\Memory.hpp" />
     <ClInclude Include="src\Bond.hpp" />
     <ClInclude Include="src\Album.hpp" />
+    <ClInclude Include="src\Dungeon.hpp" />
+    <ClInclude Include="src\DungeonWindow.hpp" />
     <ClInclude Include="src\Speech.hpp" />
     <ClInclude Include="src\third_party\LipSyncCore.hpp" />
     <ClInclude Include="src\GeneratedMotion.hpp" />
@@ -155,6 +159,8 @@
     <FxCompile Include="shaders\PostVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
     <FxCompile Include="shaders\PostPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
     <FxCompile Include="shaders\UpscalePS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
+    <FxCompile Include="shaders\GeometryVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
+    <FxCompile Include="shaders\GeometryPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
