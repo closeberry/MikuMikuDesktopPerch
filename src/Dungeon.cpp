@@ -62,6 +62,18 @@ namespace MikuMikuDesktopPerch::Dungeon
 
         // Her words without the LLM: one of these, at random.
         using Lines=std::initializer_list<std::pair<const wchar_t*,const wchar_t*>>;
+
+        // What a shop asks for it (and gives half of, buying it back).
+        int Price(const Item& item)
+        {
+            switch(item.kind)
+            {
+            case ItemKind::Potion:return 30;
+            case ItemKind::Ether:return 40;
+            case ItemKind::Food:return item.food>50?40:20;
+            default:return 25+item.atk*12+item.def*12+item.mag*12+item.hp*3+item.mp*5;
+            }
+        }
     }
 
     const std::vector<Title>& Titles(){return TitleList;}
@@ -496,9 +508,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                     if(const auto [x,y]=place(i);x>=0)
                     {
                         Item item=RandomItem(Random(0,1));
-                        const int value=item.kind==ItemKind::Potion?30:item.kind==ItemKind::Ether?40:item.kind==ItemKind::Food?(item.food>50?40:20):
-                                        25+item.atk*12+item.def*12+item.mag*12+item.hp*3+item.mp*5;
-                        wares.push_back({x,y,item,value});
+                        wares.push_back({x,y,item,Price(item)});
                     }
             if(r.kind==RoomKind::Vault)
                 for(int n=Random(2,3);n>0;--n)
@@ -1015,8 +1025,21 @@ namespace MikuMikuDesktopPerch::Dungeon
         if(state!=State::Playing)return false;
         const auto w=std::find_if(wares.begin(),wares.end(),[&](const Ware& w){return w.x==player.x&&w.y==player.y;});
         if(w==wares.end())return false;
-        if(player.gold<w->price){Note(T(L"ゴールドが足りない。",L"Not enough gold."));return false;}
-        if(static_cast<int>(player.bag.size())>=BagSize){Note(T(L"持ち物がいっぱい。",L"The bag is full."));return false;}
+        // Why not, in her words (the goods' question hides the log while she stands on them).
+        if(player.gold<w->price)
+        {
+            Note(T(L"ゴールドが足りない。",L"Not enough gold."));
+            Say(Event::Refused,Fmt(T(L"ゴールドが足りないみたい…。{0}ゴールドで、持ってるのは{1}ゴールドだよ。",L"We don't have enough gold... it's {0}, and we have {1}."),
+                                   {std::to_wstring(w->price),std::to_wstring(player.gold)}),{},4);
+            return false;
+        }
+        if(static_cast<int>(player.bag.size())>=BagSize)
+        {
+            Note(T(L"持ち物がいっぱい。",L"The bag is full."));
+            Say(Event::Refused,T(L"持ち物がいっぱいで持てないよ。何か売ってから買おう（Shift＋数字キーで売れるよ）。",
+                                 L"My bag is full, I can't carry it. Let's sell something first (Shift + a number key sells)."),{},4);
+            return false;
+        }
         player.gold-=w->price;
         player.bag.push_back(w->item);
         Found(w->item);
@@ -1025,6 +1048,37 @@ namespace MikuMikuDesktopPerch::Dungeon
             Fmt(T(L"ダンジョンのお店で{0}を買いました",L"You bought a {0} at the dungeon shop"),{w->item.name}),1);
         wares.erase(w);
         if(record&&++record->bought>=5)Earn("patron");
+        EndTurn();
+        return true;
+    }
+
+    bool Game::InShop() const
+    {
+        const int r=RoomAt(player.x,player.y);
+        return r>=0&&rooms[r].kind==RoomKind::Shop;
+    }
+
+    bool Game::Drop(int index)
+    {
+        if(state!=State::Playing||index<0||index>=static_cast<int>(player.bag.size()))return false;
+        bolt.clear();
+        const Item item=player.bag[index];
+        player.bag.erase(player.bag.begin()+index);
+        for(int* slot:{&player.weapon,&player.armor,&player.accessory})
+        {
+            if(*slot==index)*slot=-1;
+            else if(*slot>index)--*slot;
+        }
+        player.hp=std::min(player.hp,player.MaxHp());
+        player.mp=std::min(player.mp,player.MaxMp());
+        if(InShop())
+        {
+            const int gold=std::max(1,Price(item)/2);
+            player.gold+=gold;
+            Note(Fmt(T(L"{0}を{1}ゴールドで売った。",L"Sold the {0} for {1} gold."),{item.name,std::to_wstring(gold)}));
+            Say(Event::Sold,Fmt(LINE({L"{0}、{1}ゴールドになったよ。",L"The {0} got us {1} gold."}),{item.name,std::to_wstring(gold)}),{},1);
+        }
+        else Note(Fmt(T(L"{0}を捨てた。",L"Left the {0} behind."),{item.name}));
         EndTurn();
         return true;
     }
@@ -1058,15 +1112,23 @@ namespace MikuMikuDesktopPerch::Dungeon
         if(turns%12==0&&player.food>0)
         {
             --player.food;
+            // She says what would help: the food she carries (eaten with its number key), or
+            // to look for some (chests, shops).
+            const auto food=std::find_if(player.bag.begin(),player.bag.end(),[](const Item& i){return i.kind==ItemKind::Food;});
+            const std::wstring key=food==player.bag.end()?std::wstring():std::to_wstring((food-player.bag.begin()+1)%10);
             if(player.food==20&&!hungryTold)
             {
                 hungryTold=true;
-                Say(Event::Hungry,LINE({L"おなかすいてきちゃった…。",L"I'm getting hungry..."}),
-                    T(L"ダンジョンの中で、おなかがすいてきました（満腹度20%）",L"You are getting hungry in the dungeon (20% full)"),4);
+                Say(Event::Hungry,food!=player.bag.end()?Fmt(T(L"おなかすいてきちゃった…。{0}、食べてもいい？（{1}キー）",L"I'm getting hungry... can I eat the {0}? (key {1})"),{food->name,key})
+                                                        :T(L"おなかすいてきちゃった…。宝箱かお店で、おにぎりを探そう。",L"I'm getting hungry... let's look for a rice ball in a chest or a shop."),
+                    food!=player.bag.end()?Fmt(T(L"ダンジョンの中で、おなかがすいてきました（満腹度20%）。持ち物の{0}を食べたいと伝えて",L"You are getting hungry in the dungeon (20% full). Say you would like to eat the {0} you carry"),{food->name})
+                                          :T(L"ダンジョンの中で、おなかがすいてきました（満腹度20%）。食べ物を持っていないので、宝箱やお店で探したいと伝えて",
+                                             L"You are getting hungry in the dungeon (20% full). You carry no food: say you would like to find some in a chest or a shop"),4);
             }
             if(player.food==0)
-                Say(Event::Starving,LINE({L"おなかぺこぺこ…何か食べたいな。",L"I'm starving... I need something to eat."}),
-                    T(L"おなかがぺこぺこで、力が出なくなってきました",L"You are starving and losing strength"),5);
+                Say(Event::Starving,food!=player.bag.end()?Fmt(T(L"おなかぺこぺこ…。{0}を食べさせて（{1}キー）。",L"I'm starving... let me eat the {0} (key {1})."),{food->name,key})
+                                                          :T(L"おなかぺこぺこ…。食べ物を見つけるまで、少しずつ力が抜けちゃう。",L"I'm starving... until we find food, I'll keep getting weaker."),
+                    T(L"おなかがぺこぺこで、力が出なくなってきました（HPが少しずつ減ります）",L"You are starving and losing strength (HP slowly drops)"),5);
         }
         if(player.food>0)
         {

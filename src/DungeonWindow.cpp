@@ -199,7 +199,7 @@ namespace MikuMikuDesktopPerch
             const ULONGLONG now=GetTickCount64();
             // A lighter word does not cut in on one that matters more while it is fresh (or coming).
             if((s.waiting||now-s.since<WordsHold)&&pick->weight<s.weight)return;
-            if(state.hero.talk&&pick->weight>=2&&(pick->weight>=6||now-s.asked>AskEvery))
+            if(state.hero.talk&&pick->event!=Event::Refused&&pick->weight>=2&&(pick->weight>=6||now-s.asked>AskEvery))
             {
                 const auto& h=state.game.Hero();
                 std::wstring situation=pick->facts+Fmt(T(L"。（いまは{0}階、HP{1}/{2}、レベル{3}）",L". (Now on floor {0}, HP {1}/{2}, level {3})"),
@@ -739,7 +739,8 @@ namespace MikuMikuDesktopPerch
                 y+=mh+line*0.8f;
             }
 
-            Text(g,T(L"持ち物（数字キーで使う・装備）",L"Bag (number keys: use, equip)"),px,y,static_cast<float>(Px(12)),grey);y+=line;
+            Text(g,game.InShop()?T(L"持ち物　数字：使う　Shift＋数字：売る",L"Bag  number: use  Shift+number: sell")
+                                :T(L"持ち物　数字：使う　Shift＋数字：捨てる",L"Bag  number: use  Shift+number: drop"),px,y,static_cast<float>(Px(12)),grey);y+=line;
             for(size_t i=0;i<hero.bag.size();++i)
             {
                 const auto& item=hero.bag[i];
@@ -769,7 +770,10 @@ namespace MikuMikuDesktopPerch
             else if(game.GetState()==Dungeon::Game::State::Dead)
                 ask=Fmt(T(L"やられてしまった…（{0}階）\n\nEnter・Esc：デスクトップに帰る",L"Defeated... (floor {0})\n\nEnter/Esc: back to the desktop"),{std::to_wstring(game.Floor())});
             else if(const auto* w=game.WareHere())
-                ask=Fmt(T(L"{0}：{1}ゴールド（持っているのは{2}ゴールド）\n\nEnter：買う",L"{0}: {1} gold (you have {2})\n\nEnter: buy"),
+                ask=Fmt(static_cast<int>(hero.bag.size())>=Dungeon::Game::BagSize
+                            ?T(L"{0}：{1}ゴールド（持っているのは{2}ゴールド）\n持ち物がいっぱい：Shift＋数字キーで売ってから\nEnter：買う",
+                               L"{0}: {1} gold (you have {2})\nThe bag is full: sell something first (Shift + number)\nEnter: buy")
+                            :T(L"{0}：{1}ゴールド（持っているのは{2}ゴールド）\n\nEnter：買う",L"{0}: {1} gold (you have {2})\n\nEnter: buy"),
                         {w->item.name,std::to_wstring(w->price),std::to_wstring(hero.gold)});
             // Below the view: her words on the left, what happened on the right (a question in
             // 3D takes its place: the view hides what is drawn under it).
@@ -931,10 +935,18 @@ namespace MikuMikuDesktopPerch
                 else if(key=='F')game.Cast();
                 // One turn a press: held down, it does not keep waiting (nor looking for traps).
                 else if((key==VK_SPACE||key==VK_OEM_PERIOD)&&!repeat)game.Rest();
-                else if(key>='1'&&key<='9')game.Use(static_cast<int>(key-'1'));
-                else if(key=='0')game.Use(9);
-                else if(key>=VK_NUMPAD1&&key<=VK_NUMPAD9)game.Use(static_cast<int>(key-VK_NUMPAD1));
-                else return;
+                else
+                {
+                    // A number: that thing used or put on; with Shift, sold (in a shop) or left behind.
+                    int index=-1;
+                    if(key>='1'&&key<='9')index=static_cast<int>(key-'1');
+                    else if(key=='0')index=9;
+                    else if(key>=VK_NUMPAD1&&key<=VK_NUMPAD9)index=static_cast<int>(key-VK_NUMPAD1);
+                    else return;
+                    if(repeat)return;
+                    if(GetKeyState(VK_SHIFT)&0x8000)game.Drop(index);
+                    else game.Use(index);
+                }
             }
             Listen();
             InvalidateRect(state.window,nullptr,FALSE);

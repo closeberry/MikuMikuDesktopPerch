@@ -88,7 +88,8 @@ namespace MikuMikuDesktopPerch::Dungeon
 
     // Something she has words for. The window shows line (or asks the LLM, giving it facts);
     // weight: how much it matters (a heavier one wins when several come at once).
-    enum class Event {Arrive,Room,House,Boss,BossDown,LevelUp,Chest,LowHp,Trap,Camp,Shop,Bought,Key,Vault,Treasure,Hungry,Starving,Dead,Kill,Crystal,Title,Saved,Dodged};
+    enum class Event {Arrive,Room,House,Boss,BossDown,LevelUp,Chest,LowHp,Trap,Camp,Shop,Bought,Key,Vault,Treasure,Hungry,Starving,Dead,Kill,Crystal,Title,Saved,Dodged,Sold,
+                     Refused};   // Refused: what she cannot do now and why (said at once, in her own fixed words)
     struct Talk {Event event=Event::Room;std::wstring line,facts;int weight=1;};
 
     class Game
@@ -108,7 +109,9 @@ namespace MikuMikuDesktopPerch::Dungeon
         bool Cast();
         bool Rest();             // waits a turn, looking for traps around her
         bool Use(int index);
+        bool Drop(int index);    // in a shop, sold for half its price; elsewhere, left behind
         bool Buy();              // the goods she stands on
+        bool InShop() const;
         void Descend();          // on the stairs: the next floor
         void StepOffStairs();    // on the stairs, staying: back to playing
         void End();              // the adventure is over (back home or beaten): the records count it        // Turn to face (dx, dy) without a turn passing (the camera behind her turns with her).
