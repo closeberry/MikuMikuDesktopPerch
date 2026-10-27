@@ -73,6 +73,9 @@ namespace MikuMikuDesktopPerch
         // A light around (x, z) on the ground that fades to darkness at radius, on the geometry
         // only (the dungeon's torch); radius 0: none.
         void SetTorch(float x,float z,float radius){torch={x,z,radius};}
+        // Geometry that changes every frame (the dungeon's monsters as they walk and strike),
+        // drawn as SetGeometry's is, copied to the GPU each frame.
+        void SetMovingGeometry(std::vector<GeometryVertex> vertices){moving=std::move(vertices);}
         // The model left out of the frame (the geometry still drawn): the camera is where she
         // stands (the dungeon's first-person view).
         void SetModelHidden(bool hidden){modelHidden=hidden;}
@@ -135,6 +138,10 @@ namespace MikuMikuDesktopPerch
             UINT64 fenceValue=0;
             std::uint64_t dynamicRevision=0;
             POINT hitPoint{-1,-1};
+            // SetMovingGeometry's vertices this frame (made on first use, grown as needed).
+            Microsoft::WRL::ComPtr<ID3D12Resource> moving;
+            std::uint8_t* movingMapped=nullptr;
+            size_t movingCapacity=0;   // vertices
         };
 
         bool CreatePipelines(std::wstring& error);
@@ -157,6 +164,7 @@ namespace MikuMikuDesktopPerch
         std::wstring adapterName;
         HRESULT deviceLost=S_OK;
         bool modelHidden=false;
+        std::vector<GeometryVertex> moving;
 
         // The GPU device, shared by every renderer in the process (one per character): each
         // character's own device would hold its own copy of the driver's state.

@@ -1020,6 +1020,29 @@ namespace MikuMikuDesktopPerch
         lastViewport=scene.viewportSize;
         lastScreenOffset=screenOffset;
         history=true;
+        // The moving geometry this frame, in this frame's own buffer (grown when too small;
+        // the frame's last use is over by now).
+        UINT movingCount=0;
+        if(!moving.empty()&&geometryPso)
+        {
+            if(f.movingCapacity<moving.size())
+            {
+                if(f.moving&&f.movingMapped)f.moving->Unmap(0,nullptr);
+                f.moving.Reset();f.movingMapped=nullptr;f.movingCapacity=0;
+                const size_t capacity=moving.size()+moving.size()/2+1024;
+                auto heap=HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+                auto desc=BufferDesc(capacity*sizeof(GeometryVertex));
+                if(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&f.moving)))&&
+                   SUCCEEDED(f.moving->Map(0,nullptr,reinterpret_cast<void**>(&f.movingMapped))))
+                    f.movingCapacity=capacity;
+                else{f.moving.Reset();f.movingMapped=nullptr;}
+            }
+            if(f.movingMapped)
+            {
+                std::memcpy(f.movingMapped,moving.data(),moving.size()*sizeof(GeometryVertex));
+                movingCount=static_cast<UINT>(moving.size());
+            }
+        }
         for(size_t i=0;i<particles.size();++i)
         {
             const auto& q=particles[i];
@@ -1105,12 +1128,21 @@ namespace MikuMikuDesktopPerch
         commandList->RSSetViewports(1,&viewport);
         commandList->RSSetScissorRects(1,&scissor);
 
-        if(geometryCount)
+        if(geometryCount||movingCount)
         {
             commandList->SetPipelineState(geometryPso.Get());
-            const D3D12_VERTEX_BUFFER_VIEW geometry{geometryBuffer->GetGPUVirtualAddress(),geometryCount*static_cast<UINT>(sizeof(GeometryVertex)),sizeof(GeometryVertex)};
-            commandList->IASetVertexBuffers(0,1,&geometry);
-            commandList->DrawInstanced(geometryCount,1,0,0);
+            if(geometryCount)
+            {
+                const D3D12_VERTEX_BUFFER_VIEW geometry{geometryBuffer->GetGPUVirtualAddress(),geometryCount*static_cast<UINT>(sizeof(GeometryVertex)),sizeof(GeometryVertex)};
+                commandList->IASetVertexBuffers(0,1,&geometry);
+                commandList->DrawInstanced(geometryCount,1,0,0);
+            }
+            if(movingCount)
+            {
+                const D3D12_VERTEX_BUFFER_VIEW view{f.moving->GetGPUVirtualAddress(),movingCount*static_cast<UINT>(sizeof(GeometryVertex)),sizeof(GeometryVertex)};
+                commandList->IASetVertexBuffers(0,1,&view);
+                commandList->DrawInstanced(movingCount,1,0,0);
+            }
             commandList->IASetVertexBuffers(0,2,vbs);
             commandList->SetPipelineState(modelCullPso.Get());
         }

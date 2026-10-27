@@ -377,6 +377,7 @@ namespace MikuMikuDesktopPerch::Dungeon
             m.color=k.color;
         }
         m.hp=m.maxHp;
+        m.uid=++nextUid;
         return m;
     }
 
@@ -783,6 +784,8 @@ namespace MikuMikuDesktopPerch::Dungeon
                         m.hp-=half.hp;
                         m.split=half.split=true;
                         half.xp=std::max(1,m.xp/2);
+                        half.uid=++nextUid;
+                        half.struck=false;
                         born.push_back(half);
                         Note(Fmt(T(L"{0}が分裂した！",L"The {0} split in two!"),{m.name}));
                         break;
@@ -1269,6 +1272,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         const size_t acting=monsters.size();
         for(auto& b:born)if(Free(b.x,b.y))monsters.push_back(b);
         born.clear();
+        for(auto& m:monsters)m.struck=false;
         for(size_t i=0;i<acting&&state!=State::Dead;++i)
         {
             if(monsters[i].hp<=0)continue;
@@ -1312,6 +1316,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                 }
                 if(open)
                 {
+                    m.struck=true;
                     flame=line;
                     m.breath=4;
                     const int damage=std::max(2,m.atk+Random(0,m.atk/2)-player.Def()/3);
@@ -1339,6 +1344,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                     const int amount=std::min(player.gold,std::max(1,player.gold*Random(20,40)/100));
                     player.gold-=amount;
                     m.stolen=amount;
+                    m.struck=true;
                     Note(Fmt(T(L"{0}に{1}ゴールド盗まれた！",L"The {0} stole {1} gold!"),{m.name,std::to_wstring(amount)}));
                     Say(Event::Stolen,LINE({L"あっ、ゴールド返して！",L"Hey, give that back!"},{L"泥棒ー！待てー！",L"Thief! Come back here!"}),
                         Fmt(T(L"{0}に{1}ゴールドを盗まれました。倒せば取り返せます",L"A {0} stole {1} gold; defeating it gets it back"),{m.name,std::to_wstring(amount)}),4);
@@ -1347,6 +1353,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                 // Close to the user, she slips past a blow now and then.
                 if(bond>=2&&Random(1,100)<=bond*2)
                 {
+                    m.struck=true;
                     m.charging=false;
                     Note(Fmt(T(L"{0}の攻撃を、ひらりとかわした！",L"Dodged the {0}'s attack!"),{m.name}));
                     if(Random(1,100)<=30)Say(Event::Dodged,LINE({L"見えてたよ！",L"Saw that coming!"},{L"当たらないよっ。",L"Missed me!"}),
@@ -1354,6 +1361,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                     continue;
                 }
                 int damage=std::max(1,m.atk+Random(0,m.atk/3)-player.Def()/2);
+                m.struck=true;
                 if(m.charging)
                 {
                     m.charging=false;

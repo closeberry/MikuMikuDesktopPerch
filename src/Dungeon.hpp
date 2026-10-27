@@ -48,6 +48,8 @@ namespace MikuMikuDesktopPerch::Dungeon
         int breath=0;       // turns before the dragon can breathe fire again
         int fleeing=0;      // turns a goblin has run with the gold
         int size=0;         // 1: its body takes the 3x3 tiles round (x, y) (the dragon)
+        int uid=0;          // which one it is (for drawing it as it goes from tile to tile)
+        bool struck=false;  // it went for her in its last turn (a blow, a theft, fire)
     };
 
     // Whether monster m's body is on tile (x, y).
@@ -210,6 +212,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         std::vector<std::pair<int,int>> keysOnFloor;
         std::vector<std::pair<int,int>> bolt,flame;
         std::vector<Monster> born;   // split off this turn: joins the others as the monsters act
+        int nextUid=0;
         std::deque<std::wstring> log;
         std::vector<Talk> talks;
         std::vector<std::string> newTitles;

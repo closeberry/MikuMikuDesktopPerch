@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <map>
 #include <memory>
 #pragma comment(lib,"gdiplus.lib")
 
@@ -38,6 +39,10 @@ namespace MikuMikuDesktopPerch
         constexpr ULONGLONG DefeatShown=1500;   // the defeat stays at least this long before a key takes her home
 
         enum class Strike {None,Sword,Magic};   // her attacks, shown in 3D
+        // A monster as drawn: where it is on its way to its tile, which way it faces, its stride,
+        // and how far through an attack or a flinch it is (-1: none).
+        struct MonsterLook {float x=0,z=0,yaw=0,walk=0,moving=0,strike=-1,flinch=-1;};
+
         // A spark flying from a hit (world units, per second), fading over its life.
         struct Spark {DirectX::XMFLOAT3 at,speed;float size;float color[3];double age,life;};
 
@@ -101,6 +106,13 @@ namespace MikuMikuDesktopPerch
             std::pair<int,int> strikeTile{-1,-1};
             double strikeLands=0;
             std::vector<Spark> burst;   // flying from a hit
+            // The monsters as last shown (the game's, taken once her blow has landed), and how
+            // each is drawn (by its uid).
+            std::vector<Dungeon::Monster> shown;
+            long long shownKey=-1;
+            int shownFloor=-1;
+            std::map<int,MonsterLook> looks;
+            double monsterClock=0;
             // The dragon's fire in 3D: the tiles it swept (from the dragon out), for a moment.
             std::vector<std::pair<int,int>> flame;
             int flameTurn=-1;
@@ -484,23 +496,7 @@ namespace MikuMikuDesktopPerch
                     box(cx-0.32f*T,0,cz-0.22f*T,cx+0.32f*T,0.36f*T,cz+0.22f*T,body);
                     box(cx-0.34f*T,0.36f*T,cz-0.24f*T,cx+0.34f*T,0.46f*T,cz+0.24f*T,lid);
                 }
-            for(const auto& m:game.Monsters())
-                if(game.Visible(m.x,m.y))
-                {
-                    // Its own shape (MonsterArt), turned toward her.
-                    const float cx=(m.x+0.5f)*T,cz=-(m.y+0.5f)*T;
-                    const auto& h=game.Hero();
-                    const float yaw=std::atan2(static_cast<float>(h.x-m.x),-static_cast<float>(h.y-m.y));
-                    const float tall=AddMonster(out,m,cx,cz,yaw);
-                    // Its health above it when hurt.
-                    if(m.hp<m.maxHp)
-                    {
-                        const float w=(0.8f+1.6f*m.size)*T,left=cx-w/2,top=tall+0.15f*T,f=static_cast<float>(std::max(0,m.hp))/m.maxHp;
-                        const float back[4]={0.15f,0.12f,0.18f,1},red[4]={0.9f,0.3f,0.3f,1};
-                        box(left,top,cz-0.05f*T,left+w,top+0.08f*T,cz+0.05f*T,back);
-                        box(left,top+0.01f*T,cz-0.07f*T,left+w*f,top+0.09f*T,cz+0.07f*T,red);
-                    }
-                }
+            // The monsters move: drawn every frame (MovingMonsters).
             // The spell's path is not marked here: its light flies along it (TickDungeonWindow).
             return out;
         }
@@ -994,6 +990,7 @@ namespace MikuMikuDesktopPerch
             wchar_t today[16];
             swprintf_s(today,L"%04d-%02d-%02d",t.wYear,t.wMonth,t.wDay);
             state.record.today=today;   // the day treasures found now are remembered by
+            state.shownKey=-1;state.shownFloor=-1;state.looks.clear();state.shown.clear();
             if(daily)
             {
                 if(state.record.dailyDate!=today){state.record.dailyDate=today;state.record.dailyBest=0;}
@@ -1452,6 +1449,8 @@ namespace MikuMikuDesktopPerch
             {
                 const auto [x,y]=state.strikeTile;
                 const bool fell=std::none_of(game.Monsters().begin(),game.Monsters().end(),[&](const Dungeon::Monster& m){return Dungeon::Occupies(m,x,y);});
+                for(const auto& m:state.shown)
+                    if(Dungeon::Occupies(m,x,y))if(const auto it=state.looks.find(m.uid);it!=state.looks.end())it->second.flinch=0;
                 const XMFLOAT3 at{(x+0.5f)*TileSize,6.0f,-(y+0.5f)*TileSize};
                 std::uint32_t seed=static_cast<std::uint32_t>(GetTickCount64());
                 auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};
@@ -1601,6 +1600,71 @@ namespace MikuMikuDesktopPerch
         }
         state.burst.erase(std::remove_if(state.burst.begin(),state.burst.end(),[](const auto& s){return s.age>=s.life;}),state.burst.end());
         r.SetParticles(sparks);
+
+        // The monsters: taken from the game once her blow has landed (a fallen one goes then,
+        // the others move on and strike back after it), then each glides to its tile, walking,
+        // turned to her, striking when it went for her.
+        {
+            const bool waiting=state.strikeAsked!=Strike::None||(state.strike!=Strike::None&&state.strikeTime<state.strikeLands);
+            const long long key=static_cast<long long>(game.Floor())*100000+game.Turns();
+            if(key!=state.shownKey&&!waiting)
+            {
+                if(state.shownFloor!=game.Floor()){state.looks.clear();state.shownFloor=game.Floor();}
+                state.shown=game.Monsters();
+                state.shownKey=key;
+                for(auto it=state.looks.begin();it!=state.looks.end();)
+                    it=std::any_of(state.shown.begin(),state.shown.end(),[&](const Dungeon::Monster& m){return m.uid==it->first;})?std::next(it):state.looks.erase(it);
+                for(const auto& m:state.shown)
+                    if(m.struck)if(const auto it=state.looks.find(m.uid);it!=state.looks.end())it->second.strike=0;
+            }
+            state.monsterClock+=dt;
+            std::vector<MascotRenderer::GeometryVertex> moving;
+            for(const auto& m:state.shown)
+            {
+                const float tx=(m.x+0.5f)*TileSize,tz=-(m.y+0.5f)*TileSize;
+                auto [it,fresh]=state.looks.try_emplace(m.uid);
+                auto& l=it->second;
+                if(fresh){l.x=tx;l.z=tz;l.yaw=std::atan2(state.drawnX-tx,state.drawnZ-tz);if(m.struck)l.strike=0;}
+                const float dx=tx-l.x,dz=tz-l.z,distance=std::sqrt(dx*dx+dz*dz);
+                if(distance>TileSize*3){l.x=tx;l.z=tz;}
+                else if(distance>0.05f)
+                {
+                    // Brisker when it has fallen behind (two steps in a turn).
+                    const float speed=TileSize/(distance>TileSize*1.2f?0.16f:0.3f);
+                    const float step=std::min(distance,speed*static_cast<float>(dt));
+                    l.x+=dx/distance*step;l.z+=dz/distance*step;
+                    l.moving=std::min(1.0f,l.moving+static_cast<float>(dt/0.12));
+                }
+                else{l.x=tx;l.z=tz;l.moving=std::max(0.0f,l.moving-static_cast<float>(dt/0.2));}
+                if(l.moving>0)l.walk+=static_cast<float>(dt)*XM_2PI*3.0f;
+                const float face=std::atan2(state.drawnX-l.x,state.drawnZ-l.z);
+                l.yaw+=std::remainder(face-l.yaw,XM_2PI)*static_cast<float>(1-std::exp(-dt/0.12));
+                if(l.strike>=0&&(l.strike+=static_cast<float>(dt/0.6))>1)l.strike=-1;
+                if(l.flinch>=0&&(l.flinch+=static_cast<float>(dt/0.35))>1)l.flinch=-1;
+                if(!game.Visible(m.x,m.y))continue;
+                MonsterPose pose;
+                pose.walk=l.walk;pose.moving=l.moving;pose.strike=l.strike;pose.flinch=l.flinch;
+                pose.time=static_cast<float>(state.monsterClock)+static_cast<float>(m.uid)*1.7f;
+                pose.charging=m.charging;
+                const float tall=AddMonster(moving,m,l.x,l.z,l.yaw,pose);
+                // Its health above it when hurt.
+                if(m.hp<m.maxHp)
+                {
+                    const float w=(0.8f+1.6f*m.size)*TileSize,left=l.x-w/2,top=tall+0.15f*TileSize,f=static_cast<float>(std::max(0,m.hp))/m.maxHp;
+                    auto bar=[&](float x0,float y0,float x1,float y1,float cr,float cg,float cb){
+                        const float z0=l.z-0.06f*TileSize,z1=l.z+0.06f*TileSize;
+                        const float quads[3][4][3]={{{x0,y1,z0},{x1,y1,z0},{x1,y1,z1},{x0,y1,z1}},{{x0,y0,z0},{x1,y0,z0},{x1,y1,z0},{x0,y1,z0}},{{x0,y0,z1},{x1,y0,z1},{x1,y1,z1},{x0,y1,z1}}};
+                        const float normals[3][3]={{0,1,0},{0,0,-1},{0,0,1}};
+                        for(int q=0;q<3;++q)
+                            for(int k:{0,1,2,0,2,3})
+                                moving.push_back({{quads[q][k][0],quads[q][k][1],quads[q][k][2]},{normals[q][0],normals[q][1],normals[q][2]},{cr,cg,cb,1}});
+                    };
+                    bar(left,top,left+w,top+0.08f*TileSize,0.15f,0.12f,0.18f);
+                    bar(left,top+0.01f*TileSize,left+w*f,top+0.09f*TileSize,0.9f,0.3f,0.3f);
+                }
+            }
+            r.SetMovingGeometry(std::move(moving));
+        }
         r.SetTorch(state.drawnX,state.drawnZ,TileSize*(state.behind?9.0f:7.0f));
 
         // The camera: from above and behind the map's bottom edge (as in Shiren), or behind her
