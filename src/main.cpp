@@ -10,6 +10,7 @@
 #include "DungeonWindow.hpp"
 #include "Dungeon.hpp"
 #include "Mahjong.hpp"
+#include "MahjongSound.hpp"
 #include "MahjongWindow.hpp"
 #include "TreasureArt.hpp"
 #include <commctrl.h>
@@ -5280,6 +5281,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(argc>=3&&std::wstring(argv[1])==L"--mahjong-tiles")
         {
             const bool saved=SaveMahjongTiles(argv[2]);
+            LocalFree(argv);
+            return saved?0:1;
+        }
+        // --mahjong-sounds <folder>: the mahjong table's sounds as WAV files.
+        if(argc>=3&&std::wstring(argv[1])==L"--mahjong-sounds")
+        {
+            const bool saved=SaveMahjongSounds(argv[2]);
             LocalFree(argv);
             return saved?0:1;
         }

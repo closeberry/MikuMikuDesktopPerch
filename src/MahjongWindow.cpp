@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "MahjongWindow.hpp"
 #include "Mahjong.hpp"
+#include "MahjongSound.hpp"
 #include "Log.hpp"
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
@@ -113,6 +114,8 @@ namespace MikuMikuDesktopPerch
             bool seenOver=false;
             double testVanishAt=0;           // and then (on the clock) the tile goes
             std::wstring testGesture;        // diagnostics: a gesture of hers once seated
+            // What the table was when last heard (sounds for what changed since).
+            struct Heard {bool valid=false,youDrawn=false,herDrawn=false,over=false,endShown=false;size_t youRiver=0,herRiver=0,youMelds=0,herMelds=0;} heard;
         } state;
 
         // Where the parts of the window go, in logical pixels: her side on top, her river, the
@@ -1086,6 +1089,44 @@ namespace MikuMikuDesktopPerch
             InvalidateRect(state.window,nullptr,FALSE);
         }
 
+        // The table's sounds, for what changed since the last tick: draws, discards (hers
+        // vanishing and appearing at the 3D table), calls, riichi, a win declared, and the
+        // jingle as a hand's end or the game's is shown.
+        void Listen()
+        {
+            auto& t=state.table;
+            auto& h=state.heard;
+            const auto& you=t.Of(Mahjong::You);
+            const auto& her=t.Of(Mahjong::Her);
+            const bool over=t.Now()==Phase::RoundOver||t.Now()==Phase::GameOver;
+            const bool endShown=(t.Now()==Phase::RoundOver&&!Waiting())||t.Now()==Phase::GameOver;
+            if(h.valid)
+            {
+                if(you.hasDrawn&&!h.youDrawn)PlayMahjongSound(MahjongSound::Draw);
+                if(her.hasDrawn&&!h.herDrawn)PlayMahjongSound(MahjongSound::Draw);
+                if(you.river.size()>h.youRiver)
+                {
+                    PlayMahjongSound(MahjongSound::Place);
+                    if(you.river.back().sideways)PlayMahjongSound(MahjongSound::Riichi);
+                }
+                if(her.river.size()>h.herRiver)
+                {
+                    if(state.renderer){PlayMahjongSound(MahjongSound::Vanish);PlayMahjongSound(MahjongSound::Appear);}
+                    else PlayMahjongSound(MahjongSound::Place);
+                    if(her.river.back().sideways)PlayMahjongSound(MahjongSound::Riichi);
+                }
+                if(you.melds.size()>h.youMelds||her.melds.size()>h.herMelds)PlayMahjongSound(MahjongSound::Call);
+                if(over&&!h.over&&!t.Ended().draw)PlayMahjongSound(MahjongSound::Win);
+                if(endShown&&!h.endShown)
+                {
+                    if(t.Now()==Phase::GameOver)PlayMahjongSound(you.points>=her.points?MahjongSound::GameWon:MahjongSound::GameLost);
+                    else if(t.Ended().draw)PlayMahjongSound(MahjongSound::Drawn);
+                    else PlayMahjongSound(t.Ended().winner==Mahjong::You?MahjongSound::YouWon:MahjongSound::YouLost);
+                }
+            }
+            h={true,you.hasDrawn,her.hasDrawn,over,endShown,you.river.size(),her.river.size(),you.melds.size(),her.melds.size()};
+        }
+
         void Tick()
         {
             auto& t=state.table;
@@ -1137,6 +1178,7 @@ namespace MikuMikuDesktopPerch
                     parts|=t.Now()==Phase::RoundOver?Everything:Bottom;   // what waited (the buttons, the end) shows now
             }
             Redraw(parts);
+            Listen();
         }
 
         std::wstring ScoreLine(const Mahjong::Score& s)
@@ -1530,6 +1572,7 @@ namespace MikuMikuDesktopPerch
                 Finish();
                 return 0;
             case WM_DESTROY:
+                StopMahjongSounds();
                 state.window=nullptr;
                 ReleaseView();
                 state.face.reset();
