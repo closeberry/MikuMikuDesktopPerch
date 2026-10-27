@@ -808,9 +808,26 @@ namespace MikuMikuDesktopPerch
                 g.SetSmoothingMode(SmoothingModeAntiAlias);
                 auto dot=[&](int tx,int ty,Color c,float r){SolidBrush b(c);g.FillEllipse(&b,px+(tx+0.5f)*scale-r,y+(ty+0.5f)*scale-r,2*r,2*r);};
                 const float r=std::max(2.0f,scale*1.2f);
-                for(int ty=0;ty<H;++ty)for(int tx=0;tx<W;++tx)if(game.At(tx,ty)==Dungeon::Tile::Stairs&&game.Seen(tx,ty))dot(tx,ty,Color(255,240,200,110),r);
                 for(const auto& f:game.Fires())if(game.Seen(f.x,f.y)&&!f.used)dot(f.x,f.y,Color(255,255,150,50),r);
                 for(const auto& m:game.Monsters())if(game.Visible(m.x,m.y))dot(m.x,m.y,Color(255,235,90,90),r);
+                // The stairs once seen: a mark of their own, larger than the dots and over them
+                // (a staircase on a dark tile, framed in gold), so they are found again after
+                // she has gone on exploring.
+                for(int ty=0;ty<H;++ty)
+                    for(int tx=0;tx<W;++tx)
+                    {
+                        if(game.At(tx,ty)!=Dungeon::Tile::Stairs||!game.Seen(tx,ty))continue;
+                        const float s=std::max(static_cast<float>(Px(9)),scale*3.2f),cx=px+(tx+0.5f)*scale,cy=y+(ty+0.5f)*scale;
+                        const RectF box(cx-s/2,cy-s/2,s,s);
+                        SolidBrush back(Color(255,40,32,24)),steps(Color(255,250,215,120));
+                        Pen edge(Color(255,250,215,120),std::max(1.0f,s*0.1f));
+                        g.FillRectangle(&back,box);
+                        g.DrawRectangle(&edge,box.X,box.Y,box.Width,box.Height);
+                        // Three steps going up to the right.
+                        const float u=s*0.22f,x0=box.X+s*0.17f,y1=box.Y+s*0.83f;
+                        const PointF stair[]={{x0,y1},{x0,y1-u},{x0+u,y1-u},{x0+u,y1-2*u},{x0+2*u,y1-2*u},{x0+2*u,y1-3*u},{x0+3*u,y1-3*u},{x0+3*u,y1}};
+                        g.FillPolygon(&steps,stair,8);
+                    }
                 dot(hero.x,hero.y,Color(255,255,140,180),r*1.2f);
                 y+=mh+line*0.8f;
             }
