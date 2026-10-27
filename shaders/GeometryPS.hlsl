@@ -1,7 +1,8 @@
 // The dungeon's surfaces, patterned here from the world position (no texture memory): the
 // colour's alpha picks the pattern. 1: plain, 0.75: floor stones (one a tile of 10 units),
-// 0.5: wall bricks, 0.25: glowing (unlit), 0: a monster's skin with grime on it (patterned from
-// where on the monster, so it moves with it). The floors and walls also carry the look of the
+// 0.5: wall bricks, 0.25: glowing (unlit), 0: a thing's own surface (patterned from where on
+// the thing, so it moves with it): by the steps of 0.02 above it, a monster's skin with grime,
+// wood, metal (with a shine) or stone. The floors and walls also carry the look of the
 // stretch of floors they belong to (Theme, added to the alpha in steps of 0.02): 0 old bricks,
 // 1 mossy stone ruins, 2 an ice cave, 3 a lava cave, 4 an amethyst abyss. Lit half by the
 // scene's light, half ambient, and by a torch around the hero (TorchXZ, TorchRadius) that fades
@@ -223,7 +224,32 @@ float4 main(VSOutput i) : SV_Target
     float3 rgb = i.color.rgb, glow = 0;
     if (pattern == 1)
         return float4(rgb, 1);
-    if (pattern == 0)
+    float shine = 0;
+    if (pattern == 0 && theme == 1)
+    {
+        // Wood: a grain running along the boards, the boards' dark seams, a little grime.
+        const float3 q = i.local;
+        rgb *= 0.78 + 0.34 * Noise(float2(q.x * 0.22 + q.z * 0.05, (q.y + q.z) * 3.2));
+        const float board = frac((q.y + 0.37 * q.z) / 1.15);
+        rgb *= lerp(0.55, 1, smoothstep(0.0, 0.07, min(board, 1 - board)));
+        rgb *= 1 - 0.3 * smoothstep(0.55, 0.85, Noise(q.xy * 0.5 + q.z * 0.3 + 2.0));
+    }
+    else if (pattern == 0 && theme == 2)
+    {
+        // Metal: a little uneven, scratched, and shining where the light glances off it.
+        const float3 q = i.local;
+        rgb *= 0.85 + 0.25 * Noise(q.xy * 1.8 + q.z * 1.3);
+        rgb *= 1 - 0.25 * Crack(float2(q.x + q.z, q.y) * 1.4, 0.015);
+        shine = 0.55;
+    }
+    else if (pattern == 0 && theme == 3)
+    {
+        // Stone: rough, mottled, with darker hollows.
+        const float3 q = i.local;
+        rgb *= 0.72 + 0.45 * Rough(q.xy * 0.7 + q.z * 0.45);
+        rgb *= 1 - 0.3 * smoothstep(0.55, 0.8, Noise(q.zy * 0.4 + q.x * 0.3 + 6.0));
+    }
+    else if (pattern == 0)
     {
         // Grime: blotches of dirt, a fine grain, streaks run down, dirt up from the ground,
         // and the colour dulled a little.
@@ -246,6 +272,13 @@ float4 main(VSOutput i) : SV_Target
     {
         const float d = distance(i.world.xz, TorchXZ);
         light *= lerp(0.22, 1.15, pow(saturate(1 - d / TorchRadius), 1.4));
+    }
+    if (shine > 0)
+    {
+        // A highlight where the light would glance off toward the camera.
+        const float3 view = normalize(cross(CameraRight.xyz, CameraUp.xyz));
+        const float3 bounce = reflect(normalize(LightDir), normalize(i.normal));
+        glow += shine * pow(saturate(dot(bounce, -view)), 18) * light;
     }
     return float4(rgb * light + glow, 1);
 }

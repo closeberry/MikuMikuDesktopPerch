@@ -7,6 +7,7 @@
 #include "MascotRenderer.hpp"
 #include "MascotModel.hpp"
 #include "MonsterArt.hpp"
+#include "PropArt.hpp"
 #include "TreasureArt.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -343,27 +344,25 @@ namespace MikuMikuDesktopPerch
                     if(game.At(x,y)==Dungeon::Tile::Wall||!game.Seen(x,y))continue;
                     const float k=game.Visible(x,y)?1.0f:0.45f;
                     const float x0=x*T,x1=(x+1)*T,z1=-y*T,z0=-(y+1)*T;
-                    with(shade(floorColor,k,floorPattern),[&](const float (&c)[4]){quad({x0+gap,0,z0+gap},{x1-gap,0,z0+gap},{x1-gap,0,z1-gap},{x0+gap,0,z1-gap},{0,1,0},c);});
+                    // The stairs' tile has a well in it instead (AddStairs).
+                    if(game.At(x,y)!=Dungeon::Tile::Stairs)
+                        with(shade(floorColor,k,floorPattern),[&](const float (&c)[4]){quad({x0+gap,0,z0+gap},{x1-gap,0,z0+gap},{x1-gap,0,z1-gap},{x0+gap,0,z1-gap},{0,1,0},c);});
                     // Seen from behind her, a ceiling of slabs at the top of the walls (facing down).
                     if(state.behind)
                         with(shade(ceilingColor,k,floorPattern),[&](const float (&c)[4]){quad({x0,WallHeight,z1},{x1,WallHeight,z1},{x1,WallHeight,z0},{x0,WallHeight,z0},{0,-1,0},c);});
                     if(game.At(x,y)==Dungeon::Tile::Door)
                     {
-                        // A heavy wooden door with iron bands, bricks above it up to the ceiling.
-                        float wood[4],iron[4];
-                        rgba(0.50f,0.31f,0.16f,k,Lit,wood);rgba(0.25f,0.24f,0.26f,k,Lit,iron);
-                        box(x0+0.04f*T,0,z0+0.04f*T,x1-0.04f*T,DoorHeight,z1-0.04f*T,wood);
-                        for(const float h:{0.3f,0.75f})box(x0+0.02f*T,DoorHeight*h,z0+0.02f*T,x1-0.02f*T,DoorHeight*h+0.35f,z1-0.02f*T,iron);
+                        // A heavy wooden door, bricks above it up to the ceiling.
+                        const bool alongZ=game.At(x,y-1)!=Dungeon::Tile::Wall||game.At(x,y+1)!=Dungeon::Tile::Wall;
+                        AddDoor(out,(x+0.5f)*T,-(y+0.5f)*T,DoorHeight,alongZ,k);
                         const size_t from=out.size();
                         with(shade(wallColor,k,wallPattern),[&](const float (&c)[4]){box(x0,DoorHeight,z0,x1,WallHeight,z1,c);});
                         sinking(from,x,y,DoorHeight,DoorHeight,game.At(x,y-1)!=Dungeon::Tile::Wall);
                     }
                     if(game.At(x,y)==Dungeon::Tile::Stairs)
                     {
-                        // Steps going down into a dark well.
-                        with(shade(floorColor,0.15f),[&](const float (&c)[4]){quad({x0+0.12f*T,0.05f,z0+0.12f*T},{x1-0.12f*T,0.05f,z0+0.12f*T},{x1-0.12f*T,0.05f,z1-0.12f*T},{x0+0.12f*T,0.05f,z1-0.12f*T},{0,1,0},c);});
-                        const float gold[4]={0.90f*k,0.76f*k,0.35f*k,1};
-                        for(int i=0;i<3;++i)box(x0+0.15f*T,0,z1-(0.2f+0.22f*i)*T-0.16f*T,x1-0.15f*T,(0.3f-0.1f*i)*T*0.5f,z1-(0.2f+0.22f*i)*T,gold);
+                        // Steps going down into a dark well beyond a landing.
+                        AddStairs(out,(x+0.5f)*T,-(y+0.5f)*T,k);
                     }
                 }
             // The rock around the floor seen: a block a whole tile wide for each wall tile next to
@@ -403,99 +402,22 @@ namespace MikuMikuDesktopPerch
                         const bool edge=x==r.x||y==r.y||x==r.x+r.w-1||y==r.y+r.h-1;
                         if(!edge||(x*7+y*3)%3!=0||!game.Seen(x,y)||game.At(x,y)!=Dungeon::Tile::Floor)continue;
                         const float k=light(x,y),dx=x==r.x?-0.3f:x==r.x+r.w-1?0.3f:0,dz=y==r.y?-0.3f:y==r.y+r.h-1?0.3f:0;
-                        float c1[4],c2[4];
-                        rgba(0.45f,0.85f,1.0f,k,Glow,c1);rgba(0.80f,0.60f,1.0f,k,Glow,c2);
-                        const float h=0.5f+0.12f*((x+y)%4);
-                        block(x,y,dx,dz,0.06f,0,h*T,c1);
-                        block(x,y,dx+0.13f,dz-0.08f,0.045f,0,h*0.65f*T,c2);
-                        block(x,y,dx-0.12f,dz+0.1f,0.04f,0,h*0.5f*T,c1);
+                        AddCrystals(out,(x+0.5f+dx)*T,-(y+0.5f+dz)*T,(0.5f+0.12f*((x+y)%4))*T,x*7+y*3,k);
                     }
             }
             for(const auto& t:game.Traps())
-                if(t.found&&game.Seen(t.x,t.y))
-                {
-                    const float k=light(t.x,t.y);
-                    float c[4];
-                    using K=Dungeon::TrapKind;
-                    switch(t.kind)
-                    {
-                    case K::Spikes:
-                        rgba(0.42f,0.42f,0.46f,k,Lit,c);plate(t.x,t.y,0.36f,0.04f,c);
-                        rgba(0.80f,0.80f,0.84f,k,Lit,c);
-                        for(const auto& [dx,dz]:{std::pair{-0.18f,-0.18f},std::pair{0.18f,-0.18f},std::pair{-0.18f,0.18f},std::pair{0.18f,0.18f},std::pair{0.0f,0.0f}})
-                            block(t.x,t.y,dx,dz,0.035f,0,0.22f*T,c);
-                        break;
-                    case K::Warp:rgba(0.70f,0.40f,1.0f,k,Glow,c);plate(t.x,t.y,0.34f,0.05f,c);rgba(0.95f,0.85f,1.0f,k,Glow,c);plate(t.x,t.y,0.14f,0.06f,c);break;
-                    case K::Pit:rgba(0.03f,0.02f,0.04f,1,Lit,c);plate(t.x,t.y,0.40f,0.05f,c);break;
-                    case K::Alarm:rgba(0.95f,0.80f,0.20f,k,Lit,c);plate(t.x,t.y,0.30f,0.05f,c);rgba(0.85f,0.25f,0.20f,k,Lit,c);block(t.x,t.y,0,0,0.08f,0,0.12f*T,c);break;
-                    case K::Sleep:rgba(1.0f,0.62f,0.80f,k,Glow,c);plate(t.x,t.y,0.32f,0.05f,c);break;
-                    }
-                }
+                if(t.found&&game.Seen(t.x,t.y))AddTrap(out,(t.x+0.5f)*T,-(t.y+0.5f)*T,t.kind,light(t.x,t.y));
             for(const auto& g:game.Golds())
-                if(game.Seen(g.x,g.y))
-                {
-                    float c[4];rgba(0.98f,0.80f,0.28f,light(g.x,g.y),Lit,c);
-                    block(g.x,g.y,-0.08f,0.05f,0.09f,0,0.06f*T,c);
-                    block(g.x,g.y,0.09f,-0.04f,0.09f,0,0.06f*T,c);
-                    block(g.x,g.y,0.0f,0.0f,0.08f,0.06f*T,0.12f*T,c);
-                }
+                if(game.Seen(g.x,g.y))AddGold(out,(g.x+0.5f)*T,-(g.y+0.5f)*T,g.amount,light(g.x,g.y));
             for(const auto& [x,y]:game.Keys())
-                if(game.Seen(x,y))
-                {
-                    float c[4];rgba(1.0f,0.85f,0.35f,light(x,y),Glow,c);
-                    const float cx=(x+0.5f)*T,cz=-(y+0.5f)*T;
-                    box(cx-0.25f*T,0.15f*T,cz-0.04f*T,cx+0.12f*T,0.23f*T,cz+0.04f*T,c);
-                    box(cx+0.08f*T,0.08f*T,cz-0.1f*T,cx+0.28f*T,0.3f*T,cz+0.1f*T,c);
-                    box(cx-0.25f*T,0.05f*T,cz-0.04f*T,cx-0.19f*T,0.15f*T,cz+0.04f*T,c);
-                }
+                if(game.Seen(x,y))AddKey(out,(x+0.5f)*T,-(y+0.5f)*T,light(x,y));
+            // A shop's goods on their mats (she stands on one to buy).
             for(const auto& w:game.Wares())
-                if(game.Seen(w.x,w.y))
-                {
-                    // A mat (she stands on it to buy), the goods on it in their colour.
-                    const float k=light(w.x,w.y);
-                    float mat[4],c[4];
-                    rgba(0.62f,0.22f,0.24f,k,Lit,mat);
-                    plate(w.x,w.y,0.42f,0.03f,mat);
-                    constexpr float b=0.03f*T;
-                    using I=Dungeon::ItemKind;
-                    switch(w.item.kind)
-                    {
-                    case I::Potion:rgba(0.95f,0.35f,0.40f,k,Lit,c);block(w.x,w.y,0.2f,0.2f,0.08f,b,0.3f*T,c);break;
-                    case I::Ether:rgba(0.35f,0.55f,1.0f,k,Lit,c);block(w.x,w.y,0.2f,0.2f,0.08f,b,0.3f*T,c);break;
-                    case I::Food:rgba(0.96f,0.96f,0.92f,k,Lit,c);block(w.x,w.y,0.2f,0.2f,0.11f,b,0.18f*T,c);rgba(0.1f,0.12f,0.1f,k,Lit,c);block(w.x,w.y,0.2f,0.29f,0.06f,b,0.12f*T,c);break;
-                    case I::Weapon:rgba(0.80f,0.82f,0.88f,k,Lit,c);box((w.x+0.68f)*T,b,-(w.y+0.92f)*T,(w.x+0.74f)*T,0.08f*T,-(w.y+0.3f)*T,c);break;
-                    case I::Armor:rgba(0.60f,0.45f,0.30f,k,Lit,c);block(w.x,w.y,0.2f,0.2f,0.15f,b,0.12f*T,c);break;
-                    default:rgba(1.0f,0.82f,0.35f,k,Glow,c);block(w.x,w.y,0.2f,0.2f,0.05f,b,0.1f*T,c);break;
-                    }
-                }
+                if(game.Seen(w.x,w.y))AddGoods(out,(w.x+0.5f)*T,-(w.y+0.5f)*T,w.item,light(w.x,w.y));
             for(const auto& f:game.Fires())
-                if(game.Seen(f.x,f.y))
-                {
-                    const float k=light(f.x,f.y),cx=(f.x+0.5f)*T,cz=-(f.y+0.5f)*T;
-                    float log[4],ring[4];
-                    rgba(0.40f,0.24f,0.12f,f.used?k*0.6f:k,Lit,log);rgba(0.38f,0.36f,0.36f,k,Lit,ring);
-                    for(int i=0;i<6;++i)
-                    {
-                        const float a=i*1.047f;
-                        box(cx+std::cos(a)*0.32f*T-0.06f*T,0,cz+std::sin(a)*0.32f*T-0.06f*T,cx+std::cos(a)*0.32f*T+0.06f*T,0.1f*T,cz+std::sin(a)*0.32f*T+0.06f*T,ring);
-                    }
-                    box(cx-0.26f*T,0,cz-0.05f*T,cx+0.26f*T,0.1f*T,cz+0.05f*T,log);
-                    box(cx-0.05f*T,0.05f*T,cz-0.26f*T,cx+0.05f*T,0.15f*T,cz+0.26f*T,log);
-                    if(!f.used)
-                    {
-                        float flame[4];
-                        rgba(1.0f,0.55f,0.15f,k,Glow,flame);block(f.x,f.y,0,0,0.13f,0.12f*T,0.4f*T,flame);
-                        rgba(1.0f,0.85f,0.35f,k,Glow,flame);block(f.x,f.y,0.02f,-0.02f,0.07f,0.3f*T,0.6f*T,flame);
-                    }
-                }
+                if(game.Seen(f.x,f.y))AddCampfire(out,(f.x+0.5f)*T,-(f.y+0.5f)*T,!f.used,light(f.x,f.y));
             for(const auto& c:game.Chests())
-                if(game.Seen(c.x,c.y))
-                {
-                    const float cx=(c.x+0.5f)*T,cz=-(c.y+0.5f)*T,k=game.Visible(c.x,c.y)?1.0f:0.5f;
-                    const float body[4]={0.84f*k,0.60f*k,0.22f*k,1},lid[4]={0.55f*k,0.33f*k,0.12f*k,1};
-                    box(cx-0.32f*T,0,cz-0.22f*T,cx+0.32f*T,0.36f*T,cz+0.22f*T,body);
-                    box(cx-0.34f*T,0.36f*T,cz-0.24f*T,cx+0.34f*T,0.46f*T,cz+0.24f*T,lid);
-                }
+                if(game.Seen(c.x,c.y))AddChest(out,(c.x+0.5f)*T,-(c.y+0.5f)*T,light(c.x,c.y));
             // The monsters move: drawn every frame (MovingMonsters).
             // The spell's path is not marked here: its light flies along it (TickDungeonWindow).
             return out;
