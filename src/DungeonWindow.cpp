@@ -30,6 +30,7 @@ namespace MikuMikuDesktopPerch
         // Her words: how long a lighter one waits behind one that matters more, how often the
         // LLM is asked about small things, and how long its line is waited for.
         constexpr ULONGLONG WordsHold=3000,AskEvery=12000,AskWait=9000;
+        constexpr ULONGLONG DefeatShown=1500;   // the defeat stays at least this long before a key takes her home
 
         struct
         {
@@ -42,6 +43,7 @@ namespace MikuMikuDesktopPerch
             std::unique_ptr<Bitmap> face;
             std::function<void(const DungeonResult&)> onEnd;
             bool confirmQuit=false,ended=false,showBook=false;
+            ULONGLONG deadAt=0;   // when she was beaten (GetTickCount64)
             // The 3D view (a child window over the map's place) and its renderer, only while
             // open. sceneKey: the turn and floor the geometry was last built for.
             HWND view=nullptr;
@@ -180,6 +182,7 @@ namespace MikuMikuDesktopPerch
             const std::wstring f=std::to_wstring(state.game.Floor());
             for(const auto& t:talks)
             {
+                if(t.event==Event::Dead)state.deadAt=GetTickCount64();
                 const wchar_t* what=nullptr;
                 if(t.event==Event::BossDown)what=T(L"ボス撃破",L"boss");
                 else if(t.event==Event::Camp&&t.weight>=8)what=T(L"焚き火",L"campfire");
@@ -760,11 +763,11 @@ namespace MikuMikuDesktopPerch
 
             // A question over everything when there is one.
             std::wstring ask;
-            if(state.confirmQuit)ask=T(L"冒険をやめて、デスクトップに帰る？\n\nY：帰る　　N：続ける",L"Give up and go back to the desktop?\n\nY: go back    N: keep going");
+            if(state.confirmQuit)ask=T(L"冒険をやめて、デスクトップに帰る？\n\nY：帰る　　N・Esc：続ける",L"Give up and go back to the desktop?\n\nY: go back    N/Esc: keep going");
             else if(game.GetState()==Dungeon::Game::State::AtStairs)
                 ask=T(L"階段だ！\n\nEnter：次の階へ　　B：デスクトップに帰る",L"The stairs!\n\nEnter: the next floor    B: back to the desktop");
             else if(game.GetState()==Dungeon::Game::State::Dead)
-                ask=Fmt(T(L"やられてしまった…（{0}階）\n\nEnter：デスクトップに帰る",L"Defeated... (floor {0})\n\nEnter: back to the desktop"),{std::to_wstring(game.Floor())});
+                ask=Fmt(T(L"やられてしまった…（{0}階）\n\nEnter・Esc：デスクトップに帰る",L"Defeated... (floor {0})\n\nEnter/Esc: back to the desktop"),{std::to_wstring(game.Floor())});
             else if(const auto* w=game.WareHere())
                 ask=Fmt(T(L"{0}：{1}ゴールド（持っているのは{2}ゴールド）\n\nEnter：買う",L"{0}: {1} gold (you have {2})\n\nEnter: buy"),
                         {w->item.name,std::to_wstring(w->price),std::to_wstring(hero.gold)});
@@ -872,14 +875,17 @@ namespace MikuMikuDesktopPerch
                 InvalidateRect(state.window,nullptr,FALSE);
                 return;
             }
+            // Going home takes a key pressed for it: Y to give up (not Enter, which also buys and
+            // takes the stairs), and after a defeat Enter or Esc once it has been shown a moment
+            // (a key still held or hammered for the fight would otherwise skip it unseen).
             if(state.confirmQuit)
             {
-                if(key=='Y'||key==VK_RETURN){Finish();return;}
+                if(key=='Y'&&!repeat){Finish();return;}
                 if(key=='N'||key==VK_ESCAPE)state.confirmQuit=false;
             }
             else if(game.GetState()==State::Dead)
             {
-                if(key==VK_RETURN||key==VK_ESCAPE||key==VK_SPACE){Finish();return;}
+                if((key==VK_RETURN||key==VK_ESCAPE)&&!repeat&&GetTickCount64()-state.deadAt>=DefeatShown){Finish();return;}
             }
             else if(key==VK_ESCAPE)state.confirmQuit=true;
             else if(key=='M'&&state.renderer){state.show3D=!state.show3D;PlaceView();}
@@ -887,8 +893,8 @@ namespace MikuMikuDesktopPerch
             else if(key=='Z'&&!repeat){state.showBook=true;PlaceView();}
             else if(key=='P'&&!repeat)QueuePhoto({},false);
             else if(key=='T'&&!repeat&&game.Floor()==1&&game.Turns()==0&&!game.Daily())StartAdventure(true);
-            else if(game.GetState()==State::AtStairs&&key==VK_RETURN)game.Descend();
-            else if(game.GetState()==State::AtStairs&&key=='B'){Finish();return;}
+            else if(game.GetState()==State::AtStairs&&key==VK_RETURN&&!repeat)game.Descend();
+            else if(game.GetState()==State::AtStairs&&key=='B'&&!repeat){Finish();return;}
             else if(key==VK_RETURN&&game.WareHere()&&!repeat)game.Buy();
             else
             {
@@ -923,7 +929,8 @@ namespace MikuMikuDesktopPerch
                 else if(dx||dy){game.StepOffStairs();game.Move(dx,dy);}
                 else if(game.GetState()!=State::Playing)return;
                 else if(key=='F')game.Cast();
-                else if(key==VK_SPACE||key==VK_OEM_PERIOD)game.Rest();
+                // One turn a press: held down, it does not keep waiting (nor looking for traps).
+                else if((key==VK_SPACE||key==VK_OEM_PERIOD)&&!repeat)game.Rest();
                 else if(key>='1'&&key<='9')game.Use(static_cast<int>(key-'1'));
                 else if(key=='0')game.Use(9);
                 else if(key>=VK_NUMPAD1&&key<=VK_NUMPAD9)game.Use(static_cast<int>(key-VK_NUMPAD1));

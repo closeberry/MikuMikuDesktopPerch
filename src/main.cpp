@@ -2015,8 +2015,9 @@ namespace
         for(const auto& owned:app.mascots)
         {
             const Mascot& each=*owned;
+            if(each.inDungeon)continue;   // she talks there; the others may still speak first
             if((each.chat&&each.chat->Busy())||each.bubble.Visible()||each.chatInput.IsOpen()||each.speech.Speaking())return;
-            if(!each.inDungeon&&each.place==Place::Ground&&each.model.CurrentActivity()!=Activity::Grabbed&&each.travel==Travel::None)free.push_back(owned.get());
+            if(each.place==Place::Ground&&each.model.CurrentActivity()!=Activity::Grabbed&&each.travel==Travel::None)free.push_back(owned.get());
         }
         if(free.empty())return;
         auto anyone=[&]()->Mascot&{return *free[std::min(free.size()-1,static_cast<size_t>(app.Random01()*free.size()))];};
@@ -2282,8 +2283,9 @@ namespace
     // Someone is saying something, about to, or being talked to: nobody else starts talking.
     bool AnyoneTalking()
     {
+        // One in the dungeon talks there, not over the ones on the desktop.
         return std::any_of(app.mascots.begin(),app.mascots.end(),[](const auto& m){
-            return (m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking();});
+            return !m->inDungeon&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
     }
 
     void EndBanter(const wchar_t* why)
