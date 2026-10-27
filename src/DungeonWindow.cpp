@@ -42,7 +42,11 @@ namespace MikuMikuDesktopPerch
         enum class Strike {None,Sword,Magic};   // her attacks, shown in 3D
         // A monster as drawn: where it is on its way to its tile, which way it faces, its stride,
         // and how far through an attack or a flinch it is (-1: none).
-        struct MonsterLook {float x=0,z=0,yaw=0,walk=0,moving=0,strike=-1,flinch=-1;};
+        struct MonsterLook {float x=0,z=0,yaw=0,walk=0,moving=0,strike=-1,flinch=-1,breath=-1;};
+        // The dragon breathing fire: how long it takes (rearing, then the fire from about a
+        // third of the way, its head sweeping), and when the fire leaves its mouth and stops.
+        constexpr double BreathTime=1.8;
+        constexpr float FireFrom=0.27f,FireTo=0.84f;
 
         // A spark flying from a hit (world units, per second), fading over its life.
         struct Spark {DirectX::XMFLOAT3 at,speed;float size;float color[3];double age,life;};
@@ -112,6 +116,12 @@ namespace MikuMikuDesktopPerch
             std::pair<int,int> strikeTile{-1,-1};
             double strikeLands=0;
             std::vector<Spark> burst;   // flying from a hit
+            // The dragon's fire: where its mouth was last drawn and how far through breathing
+            // it is (-1: not), and the flames flying from it.
+            MonsterMouth mouth;
+            float breathing=-1;
+            std::vector<Spark> fire;
+            double fireOwed=0;
             // What she picked up, and the things lying about last frame (to see what went).
             std::vector<Pickup> pickups;
             std::vector<Dungeon::Chest> lastChests;
@@ -1537,10 +1547,11 @@ namespace MikuMikuDesktopPerch
         {
             state.flameTime+=dt;
             const float t=static_cast<float>(state.flameTime);
-            if(t>1.0f)state.flame.clear();
+            const float wait=static_cast<float>(BreathTime)*FireFrom;   // the fire reaching them
+            if(t>wait+1.0f)state.flame.clear();
             for(size_t k=0;k<state.flame.size();++k)
             {
-                const float age=t-0.06f*static_cast<float>(k);
+                const float age=t-wait-0.06f*static_cast<float>(k);
                 if(age<0)continue;
                 const float fade=std::clamp(1.0f-(age-0.35f)/0.4f,0.0f,1.0f)*std::clamp(age/0.08f,0.0f,1.0f);
                 const auto [x,y]=state.flame[k];
@@ -1580,6 +1591,65 @@ namespace MikuMikuDesktopPerch
             sparks.push_back(q);
         }
         state.burst.erase(std::remove_if(state.burst.begin(),state.burst.end(),[](const auto& s){return s.age>=s.life;}),state.burst.end());
+        // The dragon's fire: flames pouring from its mouth toward her, carried across as its
+        // head sweeps, spreading over the floor where they reach it, white-hot as they leave,
+        // red as they die, and lighting all along the way.
+        {
+            const float b=state.breathing;
+            if(b>=FireFrom&&b<=FireTo)
+            {
+                const XMVECTOR from=XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(state.mouth.at));
+                const XMVECTOR aim=XMVector3Normalize(XMVectorSubtract(XMVectorSet(state.drawnX,2.0f,state.drawnZ,0),from));
+                const XMVECTOR way=XMVector3TransformNormal(aim,XMMatrixRotationY(state.mouth.sweep*1.25f));
+                const XMVECTOR side=XMVector3Normalize(XMVector3Cross(way,XMVectorSet(0,1,0,0))),up=XMVector3Cross(side,way);
+                std::uint32_t seed=static_cast<std::uint32_t>(GetTickCount64()*2654435761u);
+                auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};
+                for(state.fireOwed+=dt*150.0;state.fireOwed>=1;state.fireOwed-=1)
+                {
+                    const float a=random()*XM_2PI,r=0.13f*random();
+                    const XMVECTOR v=XMVectorScale(XMVector3Normalize(XMVectorAdd(way,XMVectorAdd(XMVectorScale(side,r*std::cos(a)),XMVectorScale(up,r*std::sin(a))))),60.0f+20.0f*random());
+                    Spark f{};
+                    XMStoreFloat3(&f.at,XMVectorAdd(from,XMVectorScale(v,random()*static_cast<float>(dt))));
+                    XMStoreFloat3(&f.speed,v);
+                    f.size=random();
+                    f.life=0.45+0.2*random();
+                    state.fire.push_back(f);
+                }
+            }
+            else state.fireOwed=0;
+            XMVECTOR sum=XMVectorZero();
+            int n=0;
+            for(auto& f:state.fire)
+            {
+                f.age+=dt;
+                const float drag=static_cast<float>(std::exp(-dt/0.5));
+                f.at.x+=f.speed.x*static_cast<float>(dt);f.at.y+=f.speed.y*static_cast<float>(dt);f.at.z+=f.speed.z*static_cast<float>(dt);
+                f.speed.x*=drag;f.speed.z*=drag;f.speed.y=f.speed.y*drag+6.0f*static_cast<float>(dt);
+                if(f.at.y<1.0f){f.at.y=1.0f;f.speed.y=std::max(0.0f,f.speed.y);}   // spreading over the floor
+                const float u=static_cast<float>(f.age/f.life);
+                if(u>=1)continue;
+                const XMVECTOR at=XMLoadFloat3(&f.at);
+                // White-hot to orange to dark red, growing as it goes.
+                const float cg=u<0.25f?0.95f-1.6f*u:std::max(0.15f,0.55f-0.55f*(u-0.25f)/0.75f),cb=std::max(0.05f,0.6f-2.2f*u);
+                const float size=1.2f+7.0f*u+1.5f*f.size,fade=std::pow(1.0f-u,0.7f);
+                if(static_cast<int>(f.size*100)%2==0)halo(at,size*1.3f,1.0f,cg,cb,0.4f*fade);
+                else
+                {
+                    MascotRenderer::Particle q;
+                    q.position={f.at.x,f.at.y,f.at.z};
+                    q.size=size*0.55f;q.color={1.0f,cg,cb,fade};q.angle=static_cast<float>(f.age*5.0)+f.size*6.0f;
+                    sparks.push_back(q);
+                }
+                sum=XMVectorAdd(sum,at);++n;
+            }
+            state.fire.erase(std::remove_if(state.fire.begin(),state.fire.end(),[](const Spark& f){return f.age>=f.life;}),state.fire.end());
+            if(n>0)
+            {
+                const float k=std::min(1.0f,n/40.0f);
+                shine(XMVectorScale(sum,1.0f/n),TileSize*3.0f,1.4f*k,0.65f*k,0.2f*k);
+                if(b>=FireFrom&&b<=FireTo)shine(XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(state.mouth.at)),TileSize*1.6f,1.0f,0.6f,0.25f);
+            }
+        }
         // The flash where a blow landed.
         if(state.flashAge>=0)
         {
@@ -1731,16 +1801,26 @@ namespace MikuMikuDesktopPerch
                 for(auto it=state.looks.begin();it!=state.looks.end();)
                     it=std::any_of(state.shown.begin(),state.shown.end(),[&](const Dungeon::Monster& m){return m.uid==it->first;})?std::next(it):state.looks.erase(it);
                 for(const auto& m:state.shown)
-                    if(m.struck)if(const auto it=state.looks.find(m.uid);it!=state.looks.end())it->second.strike=0;
+                    if(m.struck)if(const auto it=state.looks.find(m.uid);it!=state.looks.end())
+                    {
+                        // The dragon's fire (the game's flame this turn) instead of a bite.
+                        if(m.boss&&!game.Flame().empty())it->second.breath=0;
+                        else it->second.strike=0;
+                    }
             }
             state.monsterClock+=dt;
             std::vector<MascotRenderer::GeometryVertex> moving;
+            state.breathing=-1;
             for(const auto& m:state.shown)
             {
                 const float tx=(m.x+0.5f)*TileSize,tz=-(m.y+0.5f)*TileSize;
                 auto [it,fresh]=state.looks.try_emplace(m.uid);
                 auto& l=it->second;
-                if(fresh){l.x=tx;l.z=tz;l.yaw=std::atan2(state.drawnX-tx,state.drawnZ-tz);if(m.struck)l.strike=0;}
+                if(fresh)
+                {
+                    l.x=tx;l.z=tz;l.yaw=std::atan2(state.drawnX-tx,state.drawnZ-tz);
+                    if(m.struck)(m.boss&&!game.Flame().empty()?l.breath:l.strike)=0;
+                }
                 const float dx=tx-l.x,dz=tz-l.z,distance=std::sqrt(dx*dx+dz*dz);
                 if(distance>TileSize*3){l.x=tx;l.z=tz;}
                 else if(distance>0.05f)
@@ -1757,12 +1837,17 @@ namespace MikuMikuDesktopPerch
                 l.yaw+=std::remainder(face-l.yaw,XM_2PI)*static_cast<float>(1-std::exp(-dt/0.12));
                 if(l.strike>=0&&(l.strike+=static_cast<float>(dt/0.6))>1)l.strike=-1;
                 if(l.flinch>=0&&(l.flinch+=static_cast<float>(dt/0.35))>1)l.flinch=-1;
+                if(l.breath>=0&&(l.breath+=static_cast<float>(dt/BreathTime))>1)l.breath=-1;
                 if(!game.Visible(m.x,m.y))continue;
                 MonsterPose pose;
                 pose.walk=l.walk;pose.moving=l.moving;pose.strike=l.strike;pose.flinch=l.flinch;
-                pose.time=static_cast<float>(state.monsterClock)+static_cast<float>(m.uid)*1.7f;
+                // Each one a little apart (kept small: a float this large would step).
+                pose.time=static_cast<float>(state.monsterClock+(m.uid%61)*1.7);
                 pose.charging=m.charging;
-                const float tall=AddMonster(moving,m,l.x,l.z,l.yaw,pose);
+                pose.breath=l.breath;
+                MonsterMouth mouth;
+                const float tall=AddMonster(moving,m,l.x,l.z,l.yaw,pose,&mouth);
+                if(l.breath>=0){state.mouth=mouth;state.breathing=l.breath;}
                 // Its health above it when hurt.
                 if(m.hp<m.maxHp)
                 {
