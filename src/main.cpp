@@ -8,6 +8,8 @@
 #include "Bond.hpp"
 #include "Album.hpp"
 #include "DungeonWindow.hpp"
+#include "Dungeon.hpp"
+#include "TreasureArt.hpp"
 #include <commctrl.h>
 #include "Voice.hpp"
 #include "MascotModel.hpp"
@@ -57,6 +59,7 @@ namespace
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
                       IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
+    constexpr UINT IdTreasure=600;          // + the treasure's place in Dungeon::TreasureBook: look at it
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
     constexpr int DragThreshold=4;          // pixels the cursor must move before a press becomes a grab
     constexpr float Gravity=98.0f;          // world units/s², the same as the physics world
@@ -306,6 +309,11 @@ namespace
         std::set<std::wstring> modelsBefore;
         std::wstring usingSince;
         double lastShotAt=-10;      // the album's last picture taken by hand (one a second)
+        // A treasure from the dungeon shown on a character's palm (docs/Treasures.md): whose
+        // (model path; empty when none), which, which hand, how she turned, when it began, when
+        // she went quiet and when it is put away (-1: not yet), and its picture.
+        struct Showing {std::wstring model,id;int side=0;float turn=0;double since=0,quietSince=-1,endAt=-1;bool peeked=false;POINT at{};} showing;
+        TreasurePicture picture;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
@@ -317,6 +325,12 @@ namespace
 
     void Trace(const wchar_t* format,...);
     bool RegisterAlbumHotkey();
+    struct OwnedTreasure {size_t index;std::wstring id,name;Dungeon::Record::Found found;};
+    std::vector<OwnedTreasure> TreasuresOf(const std::wstring& modelPath);
+    std::wstring DateText(const std::wstring& date);
+    void ShowTreasure(Mascot& m,size_t index);
+    void UpdateShowing(Mascot& m);
+    Mascot* ShowingTreasure();
     void MoveAlbum(Settings& current,const std::wstring& chosen);
 
     // Points for something she and the user did together (docs/Bond.md), saved as they come.
@@ -1242,8 +1256,11 @@ namespace
             m.lookAtViewerUntil=app.clock+2.5;
         const bool atViewer=app.clock<m.lookAtViewerUntil;
         Mascot* partner=BanterPartner(m);
+        // Another one showing a treasure: standing by, she looks at it on that one's palm.
+        Mascot* shower=ShowingTreasure();
+        const bool atTreasure=shower&&shower!=&m&&m.place==Place::Ground&&!partner&&!atViewer;
         // The opened motion leads the head itself while it plays.
-        if((!app.settings.lookAtMouse&&!atViewer&&!partner)||m.model.Dozing()||a==Activity::Walk||a==Activity::Fall||m.model.MotionPlaying()||m.model.HeadBusy()||!m.model.HeadPosition(head))
+        if((!app.settings.lookAtMouse&&!atViewer&&!partner&&!atTreasure)||m.model.Dozing()||a==Activity::Walk||a==Activity::Fall||m.model.MotionPlaying()||m.model.HeadBusy()||!m.model.HeadPosition(head))
         {
             m.model.SetLookTarget(0,0,false);
             return;
@@ -1259,6 +1276,14 @@ namespace
             const float dx=static_cast<float>(r.left+b.x-(window.left+a.x)),dy=static_cast<float>(r.top+b.y-(window.top+a.y));
             const float pitch=std::clamp(std::atan2(-dy,std::max(std::abs(dx),1.0f)),DirectX::XMConvertToRadians(-30.0f),DirectX::XMConvertToRadians(30.0f));
             m.model.SetLookTarget(DirectX::XMConvertToRadians(dx>0?20.0f:-20.0f),pitch,true);
+            return;
+        }
+        if(std::array<float,3> mine{};atTreasure&&m.model.EyePosition(mine))
+        {
+            const POINT a=m.renderer.Project(mine);
+            const float dx=static_cast<float>(app.showing.at.x-(window.left+a.x)),dy=static_cast<float>(app.showing.at.y-(window.top+a.y));
+            const float pitch=std::clamp(std::atan2(-dy,std::max(std::abs(dx),1.0f)),DirectX::XMConvertToRadians(-30.0f),DirectX::XMConvertToRadians(20.0f));
+            m.model.SetLookTarget(DirectX::XMConvertToRadians(dx>0?25.0f:-25.0f),pitch,true);
             return;
         }
         MONITORINFO monitor{sizeof(monitor)};
@@ -1283,6 +1308,11 @@ namespace
         float target=0;
         if(Mascot* partner=BanterPartner(m);partner&&m.place==Place::Ground)
             target=DirectX::XMConvertToRadians(CenterX(*partner)>CenterX(m)?-25.0f:25.0f);
+        // Showing a treasure: turned aside, so the picture on her palm is clear of her. The
+        // others standing by turn a little toward it.
+        if(app.showing.model==m.modelPath&&app.showing.endAt<0)target=app.showing.turn;
+        else if(Mascot* shower=ShowingTreasure();shower&&shower!=&m&&m.place==Place::Ground&&!BanterPartner(m))
+            target=DirectX::XMConvertToRadians(app.showing.at.x>CenterX(m)?-25.0f:25.0f);
         m.model.SetTurn(target);
     }
 
@@ -1505,6 +1535,19 @@ namespace
             AppendMenuW(menu,MF_STRING,IdResetPose,T(L"ポーズと物理をリセット",L"Reset pose and physics"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         AppendMenuW(menu,MF_STRING,IdDungeon,T(L"ダンジョンへ行く（試作）",L"Go to the dungeon (prototype)"));
+        // The treasures she brought home from it, each to look at on her palm.
+        {
+            HMENU treasures=CreatePopupMenu();
+            const auto owned=TreasuresOf(m.modelPath);
+            for(const auto& t:owned)
+            {
+                std::wstring label=t.name+L"　"+(t.found.date.empty()?std::wstring(T(L"（日付不明）",L"(date unknown)")):DateText(t.found.date));
+                if(t.found.count>1)label+=Fmt(T(L"　×{0}",L"  x{0}"),{std::to_wstring(t.found.count)});
+                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
+            }
+            if(owned.empty())AppendMenuW(treasures,MF_STRING|MF_GRAYED,0,T(L"（まだありません。ダンジョンの宝物庫やボスから持ち帰れます）",L"(None yet: bring some home from the dungeon's vaults and bosses)"));
+            AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(treasures),T(L"お宝を眺める",L"Look at a treasure"));
+        }
         AppendMenuW(menu,MF_STRING,IdAlbumShot,T(L"この瞬間を撮る",L"Take a picture"));
         AppendMenuW(menu,MF_STRING,IdOpenAlbum,T(L"アルバムを開く",L"Open album"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
@@ -3429,6 +3472,134 @@ namespace
         return hero;
     }
 
+    // docs/Treasures.md: the treasures she brought home from the dungeon (her records), in the
+    // order the records list them.
+    std::vector<OwnedTreasure> TreasuresOf(const std::wstring& modelPath)
+    {
+        Dungeon::Record record;
+        record.Load(CharacterDataFile(modelPath,L".dungeon.txt",false));
+        std::vector<OwnedTreasure> out;
+        const auto book=Dungeon::TreasureBook();
+        for(size_t i=0;i<book.size();++i)
+            if(const auto f=record.treasures.find(book[i].first);f!=record.treasures.end())out.push_back({i,book[i].first,book[i].second,f->second});
+        return out;
+    }
+
+    // A YYYY-MM-DD date as she says it ("2026年10月27日").
+    std::wstring DateText(const std::wstring& date)
+    {
+        int y=0,mo=0,d=0;
+        if(swscanf_s(date.c_str(),L"%d-%d-%d",&y,&mo,&d)!=3)return date;
+        if(English())
+        {
+            static constexpr const wchar_t* Months[]={L"January",L"February",L"March",L"April",L"May",L"June",L"July",L"August",L"September",L"October",L"November",L"December"};
+            return std::wstring(Months[std::clamp(mo,1,12)-1])+L" "+std::to_wstring(d)+L", "+std::to_wstring(y);
+        }
+        return std::to_wstring(y)+L"年"+std::to_wstring(mo)+L"月"+std::to_wstring(d)+L"日";
+    }
+
+    // She turns aside toward the middle of the screen (where there is room), holds out a hand
+    // palm up with the treasure's picture on it, and says where it came from (in her own
+    // words with the LLM). Put away once she has had her say.
+    void ShowTreasure(Mascot& m,size_t index)
+    {
+        const auto owned=TreasuresOf(m.modelPath);
+        const auto t=std::find_if(owned.begin(),owned.end(),[&](const OwnedTreasure& o){return o.index==index;});
+        if(t==owned.end()||m.inDungeon||m.place!=Place::Ground)return;
+        if(!app.showing.model.empty()){app.picture.Hide();app.showing={};}
+        StopGroundActivity(m);
+        const RECT work=WorkAreaOfWindow(m);
+        const bool right=CenterX(m)<(work.left+work.right)/2.0;
+        auto& s=app.showing;
+        s={};
+        s.model=m.modelPath;
+        s.id=t->id;
+        // Facing screen right, the right hand is the one toward the viewer (and the reverse).
+        s.side=right?1:0;
+        s.turn=DirectX::XMConvertToRadians(right?-80.0f:80.0f);
+        s.since=app.clock;
+        m.model.Present(s.side,60);   // put away by UpdateShowing
+        std::wstring name,about;
+        Dungeon::TreasureInfo(t->id,name,about);
+        const auto& f=t->found;
+        const std::wstring place=Dungeon::TreasurePlace(f.where);
+        std::wstring line,facts;
+        if(f.date.empty())
+        {
+            line=Fmt(T(L"これは、前にダンジョンで見つけた{0}だよ。",L"This is the {0} we found in the dungeon a while ago."),{name});
+            facts=Fmt(T(L"話し相手と一緒にダンジョンを冒険して持ち帰った宝物「{0}」（{1}）を、手のひらに乗せて眺めています。いつ見つけたかは記録にありません",
+                        L"You are looking at the treasure \"{0}\" ({1}) on your palm, brought home from an adventure in the dungeon with the person you talk with. When you found it is not recorded"),
+                      {name,about});
+        }
+        else
+        {
+            const std::wstring date=DateText(f.date),floor=std::to_wstring(f.floor);
+            line=Fmt(T(L"これは{1}に、{2}階の{3}で見つけた{0}だよ。",L"This is the {0} we found on {1}, from {3} on floor {2}."),{name,date,floor,place});
+            facts=Fmt(T(L"話し相手と一緒にダンジョンを冒険して持ち帰った宝物「{0}」（{1}）を、手のひらに乗せて眺めています。これは{2}に、ダンジョンの{3}階の{4}で手に入れたものです",
+                        L"You are looking at the treasure \"{0}\" ({1}) on your palm, brought home from an adventure in the dungeon with the person you talk with. You got it on {2}, from {4} on floor {3}"),
+                      {name,about,date,floor,place});
+        }
+        if(f.count>1)facts+=Fmt(T(L"（{0}個持っています）",L" (you have {0})"),{std::to_wstring(f.count)});
+        facts+=T(L"。そのときのことを思い出しながら、いつ・どこで見つけたかにも触れて、話し相手に話しかけて",L". Remembering it, and saying when and where you found it, talk to them about it");
+        Trace(L"%.1f treasure: %s on the %s hand",app.clock,t->id.c_str(),s.side?L"right":L"left");
+        if(ChatReady(m,false))SpeakFirst(m,facts,line);
+        else SayFixed(m,line);
+    }
+
+    // Per frame for each character: the treasure she shows, on her palm. It fades in once her
+    // hand is out, and away a few seconds after she goes quiet (7 s at least, 30 at most), or
+    // at once when she is taken away (picked up, walking, off to the dungeon).
+    void UpdateShowing(Mascot& m)
+    {
+        auto& s=app.showing;
+        if(s.model.empty()||s.model!=m.modelPath)return;
+        const double age=app.clock-s.since;
+        m.nextDecision=std::max(m.nextDecision,app.clock+5);   // no wandering off with it
+        const bool talking=m.speech.Active()||m.speech.Speaking()||m.bubble.Talking()||(m.chat&&m.chat->Busy());
+        if(talking)s.quietSince=-1;
+        else if(s.quietSince<0)s.quietSince=app.clock;
+        const bool away=m.inDungeon||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
+        if(s.endAt<0&&(away||age>30||(age>7&&s.quietSince>=0&&app.clock-s.quietSince>3)))
+        {
+            s.endAt=app.clock;
+            m.model.EndGestures();
+        }
+        float alpha=static_cast<float>(std::clamp((age-0.9)/0.4,0.0,1.0));
+        if(s.endAt>=0)alpha*=static_cast<float>(std::clamp(1-(app.clock-s.endAt)/0.35,0.0,1.0));
+        std::array<float,3> palm{};
+        if(away||(s.endAt>=0&&app.clock-s.endAt>0.35)||!m.model.PalmPosition(s.side,palm))
+        {
+            if(s.endAt>=0&&(away||app.clock-s.endAt>0.35)){app.picture.Hide();s={};}
+            return;
+        }
+        const RECT r=FrameRect(m);
+        const POINT p=m.renderer.Project(palm);
+        const int size=std::max(24,static_cast<int>(ModelHeightPixels(m)*0.2));
+        // A little out past the palm, toward where she faces: clear of her arm and body.
+        const int out=s.side==1?1:-1;
+        const POINT bottom{r.left+p.x+out*size/6,r.top+p.y+size/10};
+        s.at={bottom.x,bottom.y-size/2};   // where the others look
+        app.picture.Place(s.id,bottom,size,static_cast<BYTE>(alpha*255));
+        // Once it is out on her palm, the others standing by lean in to see (and stay put).
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& other=*owned;
+            if(&other==&m||other.place!=Place::Ground||other.inDungeon)continue;
+            other.nextDecision=std::max(other.nextDecision,app.clock+5);
+            if(!s.peeked&&age>=1.3&&FreeToTalk(other)&&!InBanter(other))other.model.Emote(L"peek");
+        }
+        if(age>=1.3)s.peeked=true;
+    }
+
+    // The character showing a treasure now (its picture out on her palm), or null.
+    Mascot* ShowingTreasure()
+    {
+        const auto& s=app.showing;
+        if(s.model.empty()||s.endAt>=0||app.clock-s.since<1.0)return nullptr;
+        for(const auto& owned:app.mascots)if(owned->modelPath==s.model)return owned.get();
+        return nullptr;
+    }
+
     // docs/Dungeon.md: a word from her in the dungeon about what just happened (situation, as a
     // stage direction), in her own voice, streamed to the dungeon's bubble (DungeonHeard).
     // False when the LLM is not there or busy with something else: her own line is shown.
@@ -3837,6 +4008,7 @@ namespace
 
     void OnCommand(Mascot& m,UINT id)
     {
+        if(id>=IdTreasure&&id<IdTreasure+100){ShowTreasure(m,id-IdTreasure);return;}
         if(id>IdTimerMinutes&&id<=IdTimerMinutes+120)
         {
             PlanRequest r;
@@ -5462,6 +5634,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             UpdateFacing(m);
             PlaceFrame(m);
             UpdateChatBubble(m,dt);
+            UpdateShowing(m);
             m.renderer.Render(m.model,app.settings.edgeScale);
         }
         // The GPU is shared: once it stops, no character is drawn until the app starts again.

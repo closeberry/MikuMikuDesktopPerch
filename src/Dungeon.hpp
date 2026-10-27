@@ -73,7 +73,12 @@ namespace MikuMikuDesktopPerch::Dungeon
         std::wstring dailyDate;   // YYYY-MM-DD of dailyBest
         int dailyBest=0;
         std::map<std::wstring,int> kills;   // by monster id
-        std::set<std::wstring> items,treasures,titles;
+        std::set<std::wstring> items,titles;
+        // Treasures brought home, by id: when, on which floor and where the first was found
+        // (empty date: found before this was kept), and how many.
+        struct Found {std::wstring date;int floor=0;std::wstring where;int count=0;};
+        std::map<std::wstring,Found> treasures;
+        std::wstring today;   // YYYY-MM-DD, for treasures found now (set by whoever plays; not saved)
         void Load(const std::wstring& path);
         bool Save(const std::wstring& path) const;
     };
@@ -85,6 +90,11 @@ namespace MikuMikuDesktopPerch::Dungeon
     std::vector<std::pair<std::wstring,std::wstring>> MonsterBook();
     std::vector<std::pair<std::wstring,std::wstring>> ItemBook();
     std::vector<std::pair<std::wstring,std::wstring>> TreasureBook();
+    // A treasure's name and a few words about it (for her to talk about), in the language in
+    // use; false for an unknown id.
+    bool TreasureInfo(const std::wstring& id,std::wstring& name,std::wstring& about);
+    // Where a treasure was found ("vault", "boss", "chest"), in words.
+    std::wstring TreasurePlace(const std::wstring& where);
 
     // Something she has words for. The window shows line (or asks the LLM, giving it facts);
     // weight: how much it matters (a heavier one wins when several come at once).
@@ -157,12 +167,12 @@ namespace MikuMikuDesktopPerch::Dungeon
         void Say(Event event,const std::wstring& line,const std::wstring& facts,int weight);
         void Note(const std::wstring& text);
         void Arrived();
-        void Found(const Item& item);
+        void Found(const Item& item,const char* where="chest");
         void Earn(const char* title);
         bool StepOn(int x,int y);
         void RestAtFire(Fire& fire);
         Item RandomItem(int tierBonus=0);
-        Item Treasure();
+        Item Treasure(bool boss=false);
         Monster RandomMonster(bool boss);
         bool Free(int x,int y) const;    // nothing standing there (monsters may walk it)
         bool Empty(int x,int y) const;   // nothing at all there (a place to put something)

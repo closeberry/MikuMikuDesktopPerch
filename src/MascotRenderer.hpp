@@ -36,6 +36,9 @@ namespace MikuMikuDesktopPerch
             float position[3];
             float normal[3];
             float color[4];
+            // A wall top that sinks when it would hide the hero (GeometryVS): its tile's middle
+            // (x, z), how far it can sink (0: it stays), and 1 when floor lies straight beyond it.
+            float wall[4];
         };
 
         ~MascotRenderer();
@@ -69,6 +72,9 @@ namespace MikuMikuDesktopPerch
         // A light around (x, z) on the ground that fades to darkness at radius, on the geometry
         // only (the dungeon's torch); radius 0: none.
         void SetTorch(float x,float z,float radius){torch={x,z,radius};}
+        // The model left out of the frame (the geometry still drawn): the camera is where she
+        // stands (the dungeon's first-person view).
+        void SetModelHidden(bool hidden){modelHidden=hidden;}
         // Where the light comes from, in degrees: around (0 in front, + to the viewer's
         // right) and up from the horizon.
         void SetLight(float azimuth,float elevation);
@@ -149,6 +155,7 @@ namespace MikuMikuDesktopPerch
         UINT sampleCount=1;
         std::wstring adapterName;
         HRESULT deviceLost=S_OK;
+        bool modelHidden=false;
 
         // The GPU device, shared by every renderer in the process (one per character): each
         // character's own device would hold its own copy of the driver's state.

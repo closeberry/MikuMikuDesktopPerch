@@ -564,6 +564,7 @@ namespace MikuMikuDesktopPerch
                 {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
                 {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT,0,12,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
                 {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,24,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+                {"TEXCOORD",1,DXGI_FORMAT_R32G32B32A32_FLOAT,0,40,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
             };
             D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
             pso.pRootSignature=rootSignature.Get();
@@ -1114,7 +1115,7 @@ namespace MikuMikuDesktopPerch
             commandList->SetPipelineState(modelCullPso.Get());
         }
         ID3D12PipelineState* current=modelCullPso.Get();
-        for(size_t i=0;i<materialCount&&i<materials.size();++i)
+        for(size_t i=0;!modelHidden&&i<materialCount&&i<materials.size();++i)
         {
             const auto& m=materials[i];
             if(m.indexCount==0||m.diffuse[3]<=0.0f)continue;
@@ -1124,7 +1125,7 @@ namespace MikuMikuDesktopPerch
             commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+i*3*srvStride});
             commandList->DrawIndexedInstanced(m.indexCount,1,m.indexStart,0,0);
         }
-        if(edgeScale>0.0f)
+        if(edgeScale>0.0f&&!modelHidden)
         {
             commandList->SetPipelineState(edgePso.Get());
             for(size_t i=0;i<materialCount&&i<materials.size();++i)

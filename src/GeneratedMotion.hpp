@@ -43,7 +43,9 @@ namespace MikuMikuDesktopPerch
                             Dangle,SwingArm,ShakeHands,WristRoll,Fingers,ShoulderRoll,Shrug,Sigh,LookBack,LookDown,
                             LookUp,Glance,NeckStretch,Nod,Drowse,Sway,Twist,Peek,Bounce,TapFoot,
                             // Click reactions only (never picked at random).
-                            PatHead,Surprised,Curious,ShyNod};
+                            PatHead,Surprised,Curious,ShyNod,
+                            // Asked for alone (Present): showing something on an open palm.
+                            Present};
         static constexpr int GestureCount=37;
 
         // T-stance correction of one side: keys are generated in the corrected (A-stance) frame.
@@ -97,6 +99,9 @@ namespace MikuMikuDesktopPerch
         // Play a gesture (by its ForceGesture name) once as a reaction, as when talking. False
         // when it cannot now (not standing, or already reacting).
         bool Emote(const std::wstring& name);
+        // Hold a forearm out in front, palm up, as if showing something on it, for seconds
+        // (side 0: the left hand), as a reaction (over an idle VMD too). False when it cannot now.
+        bool Present(int side,double seconds);
         // Fade out the gesture and the click reaction playing (from the weight each has now), and
         // hold off the next gesture for a few seconds.
         void EndGestures();

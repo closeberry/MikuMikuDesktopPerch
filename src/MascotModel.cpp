@@ -2126,6 +2126,25 @@ namespace MikuMikuDesktopPerch
         return true;
     }
 
+    bool MascotModel::PalmPosition(int side,std::array<float,3>& position) const
+    {
+        const auto& m=*impl;
+        if(!m.solver)return false;
+        const int wrist=side==0?m.FindBone({L"左手首"}):m.FindBone({L"右手首"});
+        const int finger=side==0?m.FindBone({L"左中指１",L"左中指1"}):m.FindBone({L"右中指１",L"右中指1"});
+        const size_t count=m.solver->boneMatrices.size();
+        if(wrist<0||finger<0||static_cast<size_t>(wrist)>=count||static_cast<size_t>(finger)>=count)return false;
+        auto at=[&](int bone){
+            return DirectX::XMVector3Transform(DirectX::XMLoadFloat3(&m.pmx->bones[bone].position),DirectX::XMMatrixTranspose(m.solver->boneMatrices[bone]));
+        };
+        const auto palm=DirectX::XMVectorLerp(at(wrist),at(finger),0.55f);
+        position={DirectX::XMVectorGetX(palm),DirectX::XMVectorGetY(palm),DirectX::XMVectorGetZ(palm)};
+        return true;
+    }
+
+    bool MascotModel::Present(int side,double seconds){return !impl->shotActive&&impl->motion.Present(side,seconds);}
+    void MascotModel::EndGestures(){impl->motion.EndGestures();}
+
     bool MascotModel::HeadPosition(std::array<float,3>& position) const
     {
         const auto& m=*impl;

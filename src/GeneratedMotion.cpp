@@ -651,7 +651,8 @@ namespace MikuMikuDesktopPerch
             {L"back",Gesture::LookBack},{L"down",Gesture::LookDown},{L"up",Gesture::LookUp},{L"glance",Gesture::Glance},
             {L"neck",Gesture::NeckStretch},{L"nod",Gesture::Nod},{L"drowse",Gesture::Drowse},{L"sway",Gesture::Sway},
             {L"twist",Gesture::Twist},{L"peek",Gesture::Peek},{L"bounce",Gesture::Bounce},{L"tap",Gesture::TapFoot},
-            {L"pat",Gesture::PatHead},{L"surprised",Gesture::Surprised},{L"curious",Gesture::Curious},{L"shynod",Gesture::ShyNod}};
+            {L"pat",Gesture::PatHead},{L"surprised",Gesture::Surprised},{L"curious",Gesture::Curious},{L"shynod",Gesture::ShyNod},
+            {L"present",Gesture::Present}};
     }
 
     std::vector<std::pair<std::wstring,std::wstring>> GeneratedMotion::IdleGestureList()
@@ -689,6 +690,17 @@ namespace MikuMikuDesktopPerch
                 return true;
             }
         return false;
+    }
+
+    bool GeneratedMotion::Present(int side,double seconds)
+    {
+        if(overrides.empty()||activity!=Activity::Idle)return false;
+        reaction=Gesture::Present;reactionCut=-1;
+        reactionSide=side==0?0:1;
+        reactionTime=0;
+        reactionLength=seconds;
+        reactionWeight=0;
+        return true;
     }
 
     void GeneratedMotion::EndGestures()
@@ -815,6 +827,15 @@ namespace MikuMikuDesktopPerch
             both([&](int side,float o){ReachArm(g,side,XMVectorSet(o*0.05f*L,hipY+0.03f*L,hipZ+0.15f*L,0),XMVectorSet(o*0.8f,-0.2f,1,0));CurlFingers(g,side,{0.4f,0.4f,0.4f,0.4f});});
             SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(3.0f*Deg,0,0));
             neck(2.0f*Deg,0,0);
+            break;
+        case Gesture::Present:
+            // The forearm held out level in front at the waist, the palm up and open (a thing
+            // shown on it), eyes on it and a little smile.
+            ReachArm(g,s,XMVectorSet(out*0.10f*L,S.y-0.34f*L,S.z-0.36f*L,0),XMVectorSet(out,-1,0.3f,0));
+            AimHand(g,s,XMVectorSet(-out*0.15f,0.05f,-1,0),XMVectorSet(0,1,0,0));
+            CurlFingers(g,s,{0.06f,0.06f,0.08f,0.1f});
+            neck(-16.0f*Deg,-out*14.0f*Deg,0);
+            face(rig.smileMouth,0.4f);
             break;
         case Gesture::LookAtPalm:
             // Looking down at the open palm held in front of the chest.

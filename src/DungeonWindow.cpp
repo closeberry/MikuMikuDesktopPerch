@@ -6,6 +6,7 @@
 #include "Log.hpp"
 #include "MascotRenderer.hpp"
 #include "MascotModel.hpp"
+#include "TreasureArt.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -23,8 +24,10 @@ namespace MikuMikuDesktopPerch
         constexpr wchar_t ClassName[]=L"MikuMikuDesktopPerchDungeon";
         constexpr wchar_t ViewClassName[]=L"MikuMikuDesktopPerchDungeonView";
         // The 3D view: a tile's side in MMD units (a character is about 20 tall), and the walls'
-        // height (low, so a camera from above sees over them).
-        constexpr float TileSize=10,WallHeight=4.5f;
+        // height: rock a whole tile thick, about twice her height (with a ceiling on top seen
+        // from behind her); the walls between her and the camera are low (they would hide her).
+        // Doors are a little taller than she is, with bricks above.
+        constexpr float TileSize=10,WallHeight=40.0f,NearWallHeight=3.0f,DoorHeight=14.0f;
         // Patterns the geometry shader draws, by the colour's alpha (see GeometryPS.hlsl).
         constexpr float Lit=1,Stones=0.75f,Bricks=0.5f,Glow=0.25f;
         // Her words: how long a lighter one waits behind one that matters more, how often the
@@ -64,6 +67,10 @@ namespace MikuMikuDesktopPerch
             bool behind=false;
             DirectX::XMFLOAT3 eye{},target{};
             float cameraAngle=0;
+            float cameraBack=TileSize*3.2f;   // behind her: how far back the camera is (in short of a wall)
+            bool firstPerson=false;           // behind her with a wall close behind: seen through her eyes
+            float firstBlend=0;               // easing into it (0: behind her, 1: her eyes)
+            float eyeHeight=15;               // her eyes' height, eased (her walk bobs it)
             // What she says (in the bubble under the view): her own line, or the LLM's as it
             // comes (waiting: asked, "…" until it does). weight: how much it matters.
             struct
@@ -255,7 +262,18 @@ namespace MikuMikuDesktopPerch
             auto rgba=[](float r,float g,float b,float k,float pattern,float (&c)[4]){c[0]=r*k;c[1]=g*k;c[2]=b*k;c[3]=pattern;};
             auto light=[&](int x,int y){return game.Visible(x,y)?1.0f:0.5f;};
             constexpr float T=TileSize,gap=0;
-            constexpr float floorColor[3]={0.50f,0.46f,0.58f},wallColor[3]={0.56f,0.24f,0.24f};
+            constexpr float floorColor[3]={0.50f,0.46f,0.58f},wallColor[3]={0.54f,0.38f,0.33f},ceilingColor[3]={0.85f,0.78f,0.80f};   // bright: lit only by the torch from below
+            // The vertices added since from, above bottom, may sink (a wall's top, where it would
+            // hide her: GeometryVS works out how far as she walks and the camera moves), down to
+            // lowest, for the wall of tile (x, y); floorBeyond: floor straight above it on the map.
+            auto sinking=[&](size_t from,int x,int y,float bottom,float lowest,bool floorBeyond){
+                for(size_t i=from;i<out.size();++i)
+                    if(out[i].position[1]>bottom+0.01f)
+                    {
+                        auto& w=out[i].wall;
+                        w[0]=(x+0.5f)*TileSize;w[1]=-(y+0.5f)*TileSize;w[2]=out[i].position[1]-lowest;w[3]=floorBeyond?1.0f:0.0f;
+                    }
+            };
             for(int y=0;y<Dungeon::Game::Height;++y)
                 for(int x=0;x<Dungeon::Game::Width;++x)
                 {
@@ -263,21 +281,19 @@ namespace MikuMikuDesktopPerch
                     const float k=game.Visible(x,y)?1.0f:0.45f;
                     const float x0=x*T,x1=(x+1)*T,z1=-y*T,z0=-(y+1)*T;
                     with(shade(floorColor,k,Stones),[&](const float (&c)[4]){quad({x0+gap,0,z0+gap},{x1-gap,0,z0+gap},{x1-gap,0,z1-gap},{x0+gap,0,z1-gap},{0,1,0},c);});
-                    // A low wall along each side that meets rock.
-                    const float th=0.18f*T;
-                    with(shade(wallColor,k,Bricks),[&](const float (&c)[4]){
-                        if(game.At(x,y-1)==Dungeon::Tile::Wall)box(x0,0,z1,x1,WallHeight,z1+th,c);
-                        if(game.At(x,y+1)==Dungeon::Tile::Wall)box(x0,0,z0-th,x1,WallHeight,z0,c);
-                        if(game.At(x-1,y)==Dungeon::Tile::Wall)box(x0-th,0,z0-th,x0,WallHeight,z1+th,c);
-                        if(game.At(x+1,y)==Dungeon::Tile::Wall)box(x1,0,z0-th,x1+th,WallHeight,z1+th,c);
-                    });
+                    // Seen from behind her, a ceiling of slabs at the top of the walls (facing down).
+                    if(state.behind)
+                        with(shade(ceilingColor,k,Stones),[&](const float (&c)[4]){quad({x0,WallHeight,z1},{x1,WallHeight,z1},{x1,WallHeight,z0},{x0,WallHeight,z0},{0,-1,0},c);});
                     if(game.At(x,y)==Dungeon::Tile::Door)
                     {
-                        // A heavy wooden door, a little higher than the walls, with iron bands.
+                        // A heavy wooden door with iron bands, bricks above it up to the ceiling.
                         float wood[4],iron[4];
                         rgba(0.50f,0.31f,0.16f,k,Lit,wood);rgba(0.25f,0.24f,0.26f,k,Lit,iron);
-                        box(x0+0.04f*T,0,z0+0.04f*T,x1-0.04f*T,WallHeight*1.15f,z1-0.04f*T,wood);
-                        for(const float h:{0.3f,0.75f})box(x0+0.02f*T,WallHeight*h,z0+0.02f*T,x1-0.02f*T,WallHeight*h+0.35f,z1-0.02f*T,iron);
+                        box(x0+0.04f*T,0,z0+0.04f*T,x1-0.04f*T,DoorHeight,z1-0.04f*T,wood);
+                        for(const float h:{0.3f,0.75f})box(x0+0.02f*T,DoorHeight*h,z0+0.02f*T,x1-0.02f*T,DoorHeight*h+0.35f,z1-0.02f*T,iron);
+                        const size_t from=out.size();
+                        with(shade(wallColor,k,Bricks),[&](const float (&c)[4]){box(x0,DoorHeight,z0,x1,WallHeight,z1,c);});
+                        sinking(from,x,y,DoorHeight,DoorHeight,game.At(x,y-1)!=Dungeon::Tile::Wall);
                     }
                     if(game.At(x,y)==Dungeon::Tile::Stairs)
                     {
@@ -286,6 +302,33 @@ namespace MikuMikuDesktopPerch
                         const float gold[4]={0.90f*k,0.76f*k,0.35f*k,1};
                         for(int i=0;i<3;++i)box(x0+0.15f*T,0,z1-(0.2f+0.22f*i)*T-0.16f*T,x1-0.15f*T,(0.3f-0.1f*i)*T*0.5f,z1-(0.2f+0.22f*i)*T,gold);
                     }
+                }
+            // The rock around the floor seen: a block a whole tile wide for each wall tile next to
+            // it (corners too), bricks on its sides, dark on top. One that would hide her sinks
+            // (see sinking).
+            constexpr float rockTop[3]={0.20f,0.16f,0.20f};
+            for(int y=0;y<Dungeon::Game::Height;++y)
+                for(int x=0;x<Dungeon::Game::Width;++x)
+                {
+                    if(game.At(x,y)!=Dungeon::Tile::Wall)continue;
+                    bool beside=false,lit=false,floorAbove=false;
+                    for(int dy=-1;dy<=1;++dy)
+                        for(int dx=-1;dx<=1;++dx)
+                            if((dx||dy)&&game.At(x+dx,y+dy)!=Dungeon::Tile::Wall&&game.Seen(x+dx,y+dy))
+                            {
+                                beside=true;
+                                lit|=game.Visible(x+dx,y+dy);
+                                // Floor straight above it on the map: it stands in front of that
+                                // floor as the camera above sees it (a corridor's side walls do not).
+                                floorAbove|=dy<0&&dx==0;
+                            }
+                    if(!beside)continue;
+                    const float k=lit?1.0f:0.45f,h=WallHeight;
+                    const float x0=x*T,x1=(x+1)*T,z1=-y*T,z0=-(y+1)*T;
+                    const size_t from=out.size();
+                    with(shade(wallColor,k,Bricks),[&](const float (&c)[4]){box(x0,0,z0,x1,h,z1,c);});
+                    with(shade(rockTop,k),[&](const float (&c)[4]){quad({x0,h+0.02f,z0},{x1,h+0.02f,z0},{x1,h+0.02f,z1},{x0,h+0.02f,z1},{0,1,0},c);});
+                    sinking(from,x,y,0,NearWallHeight,floorAbove);
                 }
             // Crystals glowing along the edges of a crystal room.
             for(const auto& r:game.Rooms())
@@ -545,9 +588,19 @@ namespace MikuMikuDesktopPerch
                 y1+=line;
             }
             y1+=line*0.6f;
+            // Treasures as their pictures, five to a row (the ones not found yet, a "?").
             const auto treasures=Dungeon::TreasureBook();
-            Text(g,Fmt(T(L"宝物（{0}/{1}）",L"Treasures ({0}/{1})"),{std::to_wstring(r.treasures.size()),std::to_wstring(treasures.size())}),c1,y1,size,gold,true);y1+=line*1.2f;
-            for(const auto& [id,name]:treasures){const bool got=r.treasures.count(id)>0;Text(g,got?name:L"？？？",c1,y1,size,got?white:grey);y1+=line;}
+            Text(g,Fmt(T(L"宝物（{0}/{1}）　デスクトップで眺められます",L"Treasures ({0}/{1})  to look at on the desktop"),
+                       {std::to_wstring(r.treasures.size()),std::to_wstring(treasures.size())}),c1,y1,size,gold,true);y1+=line*1.2f;
+            const float cell=std::min((c2-c1-pad)/5,line*2.6f);
+            SolidBrush slot(Color(255,40,36,56));
+            for(size_t i=0;i<treasures.size();++i)
+            {
+                const RectF box(c1+(i%5)*cell,y1+(i/5)*cell,cell-4,cell-4);
+                g.FillRectangle(&slot,box);
+                if(r.treasures.count(treasures[i].first))PaintTreasure(g,treasures[i].first,box);
+                else Text(g,L"?",box.X+box.Width*0.36f,box.Y+box.Height*0.18f,box.Height*0.5f,grey);
+            }
             const auto items=Dungeon::ItemBook();
             int found=0;
             for(const auto& [id,name]:items)found+=r.items.count(id)?1:0;
@@ -850,10 +903,11 @@ namespace MikuMikuDesktopPerch
             SYSTEMTIME t{};
             GetLocalTime(&t);
             std::uint32_t seed=GetTickCount()^static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&state));
+            wchar_t today[16];
+            swprintf_s(today,L"%04d-%02d-%02d",t.wYear,t.wMonth,t.wDay);
+            state.record.today=today;   // the day treasures found now are remembered by
             if(daily)
             {
-                wchar_t today[16];
-                swprintf_s(today,L"%04d-%02d-%02d",t.wYear,t.wMonth,t.wDay);
                 if(state.record.dailyDate!=today){state.record.dailyDate=today;state.record.dailyBest=0;}
                 seed=static_cast<std::uint32_t>(t.wYear*10000+t.wMonth*100+t.wDay)*2654435761u;
             }
@@ -1080,7 +1134,9 @@ namespace MikuMikuDesktopPerch
         if(!Showing3D()||state.showBook)return;
         auto& r=*state.renderer;
         const auto& game=state.game;
-        const long long key=static_cast<long long>(game.Floor())*1000000+game.Turns()*4+static_cast<int>(game.GetState());
+        // Rebuilt after each turn, and when the camera changes (the ceiling is there from behind
+        // her only). The walls that would hide her sink by themselves (GeometryVS).
+        const long long key=(static_cast<long long>(game.Floor())*100000+game.Turns())*8+static_cast<int>(game.GetState())*2+(state.behind?1:0);
         if(key!=state.sceneKey)
         {
             state.sceneKey=key;
@@ -1174,19 +1230,62 @@ namespace MikuMikuDesktopPerch
         {
             const XMVECTOR forward=XMVectorSet(std::sin(state.cameraAngle),0,std::cos(state.cameraAngle),0);
             const XMVECTOR at=XMVectorSet(state.drawnX,0,state.drawnZ,0);
-            target=XMVectorAdd(XMVectorAdd(at,XMVectorScale(forward,TileSize*1.6f)),XMVectorSet(0,11,0,0));
-            eye=XMVectorAdd(XMVectorSubtract(at,XMVectorScale(forward,TileSize*3.2f)),XMVectorSet(0,24,0,0));
+            // Looking a little up the passage, so the ceiling over it shows. The walls stand
+            // tall here, so the camera comes in short of the first wall behind her (and a little
+            // lower, closer in).
+            float back=TileSize*3.2f;
+            for(float s=0.3f;s<=3.2f;s+=0.1f)
+            {
+                const float px=state.drawnX-std::sin(state.cameraAngle)*s*TileSize,pz=state.drawnZ-std::cos(state.cameraAngle)*s*TileSize;
+                if(game.At(static_cast<int>(std::floor(px/TileSize)),static_cast<int>(std::floor(-pz/TileSize)))==Dungeon::Tile::Wall)
+                {
+                    // Half a tile in from the wall: a wall 2 tiles behind her puts the camera
+                    // on the middle of the tile behind her.
+                    back=std::max(TileSize*0.6f,(s-0.5f)*TileSize);
+                    break;
+                }
+            }
+            // In at once (as she turns in a passage the camera would swing through its side
+            // wall), out easing.
+            if(back<state.cameraBack)state.cameraBack=back;
+            else state.cameraBack+=(back-state.cameraBack)*static_cast<float>(1-std::exp(-dt/0.12));
+            const float rise=14+8*state.cameraBack/(TileSize*3.2f);
+            target=XMVectorAdd(XMVectorAdd(at,XMVectorScale(forward,TileSize*1.6f)),XMVectorSet(0,15,0,0));
+            eye=XMVectorAdd(XMVectorSubtract(at,XMVectorScale(forward,state.cameraBack)),XMVectorSet(0,rise,0,0));
+
+            // A wall right behind her leaves the camera so close that her back fills the view:
+            // then it goes on into her eyes (first person), and back out once there is room
+            // (apart enough that it does not flicker between the two at the edge).
+            if(back<TileSize*0.8f)state.firstPerson=true;        // the tile behind her is a wall
+            else if(back>TileSize*0.9f)state.firstPerson=false;
+            std::array<float,3> eyes{};
+            if(model.EyePosition(eyes)&&eyes[1]>1)
+                state.eyeHeight+=(eyes[1]-state.eyeHeight)*static_cast<float>(1-std::exp(-dt/0.3));
+            state.firstBlend+=((state.firstPerson?1.0f:0.0f)-state.firstBlend)*static_cast<float>(1-std::exp(-dt/0.15));
+            if(state.firstBlend>0.001f)
+            {
+                const XMVECTOR firstEye=XMVectorAdd(XMVectorAdd(at,XMVectorScale(forward,TileSize*0.2f)),XMVectorSet(0,state.eyeHeight,0,0));
+                const XMVECTOR firstTarget=XMVectorAdd(XMVectorAdd(at,XMVectorScale(forward,TileSize*1.6f)),XMVectorSet(0,state.eyeHeight-2,0,0));
+                eye=XMVectorLerp(eye,firstEye,state.firstBlend);
+                target=XMVectorLerp(target,firstTarget,state.firstBlend);
+            }
         }
         else
         {
             target=XMVectorSet(state.drawnX,8,state.drawnZ,0);
             eye=XMVectorAdd(target,XMVectorSet(0,62,-48,0));
+            state.firstPerson=false;
+            state.firstBlend=0;
         }
         if(!state.placed){XMStoreFloat3(&state.eye,eye);XMStoreFloat3(&state.target,target);}
         const float c=static_cast<float>(1-std::exp(-dt/(state.behind?0.07:0.15)));
         XMStoreFloat3(&state.eye,XMVectorLerp(XMLoadFloat3(&state.eye),eye,c));
         XMStoreFloat3(&state.target,XMVectorLerp(XMLoadFloat3(&state.target),target,c));
         state.placed=true;
+        // She is left out once the camera comes nearer than the third-person view ever does
+        // (it stops 0.6 tiles back): from there on it would pass through her hair and body.
+        const float ex=state.eye.x-state.drawnX,ez=state.eye.z-state.drawnZ;
+        r.SetModelHidden(state.behind&&ex*ex+ez*ez<TileSize*0.55f*TileSize*0.55f);
         r.SetCamera(XMLoadFloat3(&state.eye),XMLoadFloat3(&state.target),XMConvertToRadians(state.behind?50.0f:32.0f));
         r.Render(model,state.hero.edgeScale);
         if(state.photo.at&&GetTickCount64()>=state.photo.at)TakePhoto();

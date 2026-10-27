@@ -29,10 +29,26 @@ namespace MikuMikuDesktopPerch::Dungeon
         struct Plain {const wchar_t* ja;const wchar_t* en;ItemKind kind;int hp,mp,food;};
         constexpr Plain Supplies[]={{L"回復薬",L"Potion",ItemKind::Potion,20,0,0},{L"魔法の水",L"Magic water",ItemKind::Ether,0,8,0},
                                     {L"おにぎり",L"Rice ball",ItemKind::Food,0,0,50},{L"大きなおにぎり",L"Big rice ball",ItemKind::Food,0,0,100}};
-        // Found only from minFloor down (0: dropped by the boss alone).
-        struct Rare {const wchar_t* ja;const wchar_t* en;int minFloor;};
-        constexpr Rare Treasures[]={{L"古代のコイン",L"Ancient coin",6},{L"星のかけら",L"Star fragment",8},{L"月のしずく",L"Moon drop",12},
-                                    {L"女神の羽根",L"Goddess feather",16},{L"竜のうろこ",L"Dragon scale",0}};
+        // Found only from minFloor down: in vaults (and now and then a chest deep down), or
+        // from a boss. The English name is the id (the records keep it). about: a few words
+        // for her to talk about it.
+        struct Rare {const wchar_t* ja;const wchar_t* en;int minFloor;bool boss;const wchar_t* aboutJa;const wchar_t* aboutEn;};
+        constexpr Rare Treasures[]={
+            {L"古代のコイン",L"Ancient coin",4,false,L"遠い昔の王国で使われていた、すり減った金貨",L"a worn gold coin from a kingdom long gone"},
+            {L"星のかけら",L"Star fragment",5,false,L"夜空から落ちてきたという、ほのかに光る石",L"a softly glowing stone said to have fallen from the night sky"},
+            {L"妖精の小瓶",L"Fairy's vial",6,false,L"妖精が集めた朝露が入っているという小さな瓶",L"a little bottle said to hold dew gathered by fairies"},
+            {L"古の指輪",L"Old ring",7,false,L"赤い宝石のついた、誰かの思い出の指輪",L"a ring with a red stone that once meant a lot to someone"},
+            {L"銀の手鏡",L"Silver hand mirror",8,false,L"のぞくと少しだけ昔の景色が映るという手鏡",L"a hand mirror said to show a glimpse of long ago"},
+            {L"月のしずく",L"Moon drop",10,false,L"月の光が固まってできたという青いしずく",L"a blue drop said to be moonlight turned solid"},
+            {L"琥珀の化石",L"Amber fossil",10,false,L"大昔の小さな生き物が閉じこめられた琥珀",L"amber holding a tiny creature from ages past"},
+            {L"魔法の砂時計",L"Magic hourglass",12,false,L"砂が落ちる間だけ、時間がゆっくり流れるという砂時計",L"an hourglass said to slow time while its sand falls"},
+            {L"虹色の貝殻",L"Rainbow shell",12,false,L"角度で七色に光る、海の底の貝殻",L"a shell from the sea floor that shines in seven colours"},
+            {L"精霊のオルゴール",L"Spirit music box",14,false,L"ふたを開けると、知らない国の歌が流れるオルゴール",L"a music box that plays a song from an unknown land"},
+            {L"女神の羽根",L"Goddess feather",16,false,L"女神の翼から落ちたという、白く輝く羽根",L"a shining white feather said to have fallen from a goddess's wing"},
+            {L"古代竜の牙",L"Ancient dragon fang",18,false,L"何千年も前の竜の、大きな牙",L"the great fang of a dragon from thousands of years ago"},
+            {L"伝説の王冠",L"Legendary crown",20,false,L"伝説の王がかぶっていたという、宝石だらけの王冠",L"a jewel-covered crown said to have belonged to a legendary king"},
+            {L"竜のうろこ",L"Dragon scale",1,true,L"ボスのドラゴンを倒して手に入れた、赤く硬いうろこ",L"a hard red scale won by defeating the boss dragon"},
+            {L"黄金の聖杯",L"Golden chalice",15,true,L"深い階のドラゴンが守っていた、黄金の杯",L"a golden chalice guarded by a dragon in the depths"}};
 
         struct Kind {const wchar_t* ja;const wchar_t* en;int hp,atk,def,xp,minFloor;std::uint32_t color;};
         constexpr Kind Kinds[]={{L"スライム",L"Slime",6,3,0,2,1,0xFF5BC26A},{L"コウモリ",L"Bat",5,4,0,3,1,0xFF9A6BD1},
@@ -102,6 +118,20 @@ namespace MikuMikuDesktopPerch::Dungeon
         return out;
     }
 
+    bool TreasureInfo(const std::wstring& id,std::wstring& name,std::wstring& about)
+    {
+        for(const auto& t:Treasures)
+            if(id==t.en){name=English()?t.en:t.ja;about=English()?t.aboutEn:t.aboutJa;return true;}
+        return false;
+    }
+
+    std::wstring TreasurePlace(const std::wstring& where)
+    {
+        if(where==L"vault")return T(L"宝物庫",L"a vault");
+        if(where==L"boss")return T(L"ボスのドラゴン",L"the boss dragon");
+        return T(L"宝箱",L"a chest");
+    }
+
     void Record::Load(const std::wstring& path)
     {
         *this=Record{};
@@ -125,7 +155,23 @@ namespace MikuMikuDesktopPerch::Dungeon
             else if(key=="dailyBest")dailyBest=n;
             else if(key.rfind("kill.",0)==0)kills[name]=n;
             else if(key.rfind("item.",0)==0)items.insert(name);
-            else if(key.rfind("treasure.",0)==0)treasures.insert(name);
+            else if(key.rfind("treasure.",0)==0)
+            {
+                // date|floor|where|count ("1" from before these were kept: one, date unknown).
+                Found f;
+                std::wstring fields[4];
+                size_t at=0;
+                for(int i=0;i<4;++i){const size_t bar=value.find(L'|',at);fields[i]=value.substr(at,bar==std::wstring::npos?std::wstring::npos:bar-at);if(bar==std::wstring::npos)break;at=bar+1;}
+                if(value.find(L'|')==std::wstring::npos)f.count=std::max(1,n);
+                else
+                {
+                    f.date=fields[0];
+                    f.floor=std::max(0,_wtoi(fields[1].c_str()));
+                    f.where=fields[2];
+                    f.count=std::max(1,_wtoi(fields[3].c_str()));
+                }
+                treasures[name]=f;
+            }
             else if(key.rfind("title.",0)==0)titles.insert(name);
         }
     }
@@ -137,7 +183,8 @@ namespace MikuMikuDesktopPerch::Dungeon
                          "\ndailyDate="+Net::Utf8(dailyDate)+"\ndailyBest="+std::to_string(dailyBest)+"\n";
         for(const auto& [id,n]:kills)text+="kill."+Net::Utf8(id)+"="+std::to_string(n)+"\n";
         for(const auto& id:items)text+="item."+Net::Utf8(id)+"=1\n";
-        for(const auto& id:treasures)text+="treasure."+Net::Utf8(id)+"=1\n";
+        for(const auto& [id,f]:treasures)
+            text+="treasure."+Net::Utf8(id)+"="+Net::Utf8(f.date)+"|"+std::to_string(f.floor)+"|"+Net::Utf8(f.where)+"|"+std::to_string(f.count)+"\n";
         for(const auto& id:titles)text+="title."+Net::Utf8(id)+"=1\n";
         std::ofstream out(std::filesystem::path(path),std::ios::binary|std::ios::trunc);
         out<<text;
@@ -230,12 +277,15 @@ namespace MikuMikuDesktopPerch::Dungeon
             Fmt(T(L"冒険の中で、称号「{0}」を手に入れました（{1}）",L"You earned the title \"{0}\" in the adventure ({1})"),{name,English()?t->hintEn:t->hintJa}),3);
     }
 
-    void Game::Found(const Item& item)
+    void Game::Found(const Item& item,const char* where)
     {
         if(!record)return;
         if(item.kind==ItemKind::Treasure)
         {
-            record->treasures.insert(item.id);
+            // The first one's day, floor and place are kept (what she remembers it by).
+            auto& f=record->treasures[item.id];
+            if(f.count==0){f.date=record->today;f.floor=floor;f.where=Net::Wide(where);}
+            ++f.count;
             if(record->treasures.size()>=std::size(Treasures))Earn("treasure");
             return;
         }
@@ -271,13 +321,16 @@ namespace MikuMikuDesktopPerch::Dungeon
         return gear(ItemKind::Accessory,Accessories[Random(0,static_cast<int>(std::size(Accessories))-1)],false);
     }
 
-    // A treasure the floor allows (the boss's own aside), or a plain item when none does.
-    Item Game::Treasure()
+    // A treasure the floor allows (a boss's own, or the others), or a plain item when none
+    // does. One not brought home yet is a little likelier.
+    Item Game::Treasure(bool boss)
     {
         std::vector<const Rare*> allowed;
-        for(const auto& t:Treasures)if(t.minFloor>0&&t.minFloor<=floor)allowed.push_back(&t);
+        for(const auto& t:Treasures)if(t.boss==boss&&t.minFloor<=floor)allowed.push_back(&t);
         if(allowed.empty())return RandomItem(1);
-        const Rare& t=*Pick(allowed);
+        const Rare* pick=Pick(allowed);
+        if(record&&record->treasures.count(pick->en))pick=Pick(allowed);
+        const Rare& t=*pick;
         Item item;
         item.kind=ItemKind::Treasure;
         item.name=English()?t.en:t.ja;
@@ -512,7 +565,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                     }
             if(r.kind==RoomKind::Vault)
                 for(int n=Random(2,3);n>0;--n)
-                    if(const auto [x,y]=place(i);x>=0)chests.push_back({x,y,floor>=6&&Random(1,100)<=40?Treasure():RandomItem(1)});
+                    if(const auto [x,y]=place(i);x>=0)chests.push_back({x,y,floor>=4&&Random(1,100)<=40?Treasure():RandomItem(1)});
             if(r.kind==RoomKind::House)
                 for(int n=Random(6,9);n>0;--n)
                     if(const auto [x,y]=place(i);x>=0){Monster m=RandomMonster(false);m.x=x;m.y=y;m.house=true;monsters.push_back(m);}
@@ -522,7 +575,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                 if(const auto [x,y]=place(r);x>=0)keysOnFloor.push_back({x,y});
         for(int n=Random(3,5);n>0;--n)
             if(const int r=otherRoom({RoomKind::Shop,RoomKind::Vault});r>=0)
-                if(const auto [x,y]=place(r);x>=0)chests.push_back({x,y,RandomItem()});
+                if(const auto [x,y]=place(r);x>=0)chests.push_back({x,y,floor>=8&&Random(1,100)<=4?Treasure():RandomItem()});   // deep down, now and then a treasure
         for(int n=Random(1,3);n>0;--n)
             if(const int r=otherRoom({RoomKind::Shop,RoomKind::Vault});r>=0)
                 if(const auto [x,y]=place(r);x>=0)golds.push_back({x,y,Random(5,10)+floor*3});
@@ -707,13 +760,9 @@ namespace MikuMikuDesktopPerch::Dungeon
                                      {L"ドラゴンに勝ったよ！すごいよね、私たち！",L"We beat the dragon! Aren't we amazing!"}),
                 Fmt(T(L"ダンジョンの{0}階で、話し相手と一緒にボスのドラゴンを倒しました",L"On floor {0} you and the person you talk with defeated the boss dragon"),{std::to_wstring(floor)}),7);
             Earn("dragon");
-            Item scale;
-            scale.kind=ItemKind::Treasure;
-            scale.name=English()?Treasures[4].en:Treasures[4].ja;
-            scale.id=Treasures[4].en;
-            const bool fresh=record&&!record->treasures.count(scale.id);
-            Found(scale);
-            if(fresh)Note(Fmt(T(L"宝物「{0}」を見つけた！（図鑑に記録）",L"Found a treasure: {0}! (in the records)"),{scale.name}));
+            const Item prize=Treasure(true);
+            Found(prize,"boss");
+            Note(Fmt(T(L"宝物「{0}」を手に入れた！（持ち帰ってデスクトップで眺められる）",L"Won a treasure: {0}! (to look at on the desktop)"),{prize.name}));
         }
         else if(m.house&&houseWoke&&std::none_of(monsters.begin(),monsters.end(),[&](const Monster& o){return o.house&&&o!=&m&&o.hp>0;}))
         {
@@ -812,8 +861,9 @@ namespace MikuMikuDesktopPerch::Dungeon
                 const Item item=chest->item;
                 chests.erase(chest);
                 const bool fresh=record&&!record->treasures.count(item.id);
-                Found(item);
-                Note(Fmt(T(L"宝物「{0}」を見つけた！（図鑑に記録）",L"Found a treasure: {0}! (in the records)"),{item.name}));
+                const int room=RoomAt(x,y);
+                Found(item,room>=0&&rooms[room].kind==RoomKind::Vault?"vault":"chest");
+                Note(Fmt(T(L"宝物「{0}」を見つけた！（持ち帰ってデスクトップで眺められる）",L"Found a treasure: {0}! (to look at on the desktop)"),{item.name}));
                 Say(Event::Treasure,Fmt(LINE({L"宝物の{0}だ…！きれい…。",L"The {0}, a real treasure...! So beautiful..."}),{item.name}),
                     Fmt(T(L"宝箱から、めったに見つからない宝物「{0}」が出てきました{1}",L"A chest held a rare treasure, the {0}{1}"),
                         {item.name,fresh?T(L"（初めて見つけました）",L" (the first you have found)"):T(L"",L"")}),6);

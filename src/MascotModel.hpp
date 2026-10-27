@@ -149,6 +149,13 @@ namespace MikuMikuDesktopPerch
         float GroundSpeed() const;
         // World position of the head bone from the latest solve; false if the model has none.
         bool HeadPosition(std::array<float,3>& position) const;
+        // The middle of a palm (side 0: the left hand), between 手首 and the middle finger's
+        // root, from the latest solve. False on a model without them.
+        bool PalmPosition(int side,std::array<float,3>& position) const;
+        // Hold a forearm out in front, palm up, as if showing something on it, for seconds
+        // (standing only; False when it cannot now).
+        bool Present(int side,double seconds);
+        void EndGestures();   // the gesture and reaction playing fade out
         // Between the eyes (左目 and 右目, or the one there is) from the latest solve; the head
         // bone when there is neither.
         bool EyePosition(std::array<float,3>& position) const;
