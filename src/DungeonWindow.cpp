@@ -46,6 +46,11 @@ namespace MikuMikuDesktopPerch
 
         // A spark flying from a hit (world units, per second), fading over its life.
         struct Spark {DirectX::XMFLOAT3 at,speed;float size;float color[3];double age,life;};
+        // Something she picked up (a chest opened, gold, a key, goods bought): drawn where it
+        // lay until she gets there (age below 0), then it glows and fades away.
+        enum class Picked {Chest,Gold,Key,Goods};
+        struct Pickup {Picked kind;int x,y;int amount=0;Dungeon::Item item{};double age=-1,waited=0;};
+        constexpr double PickupLife=1.1;
 
         // A talk by a campfire (C beside one, no monster about): the user writes in a box under
         // the view and she answers in her bubble; what was said is kept while the box is open.
@@ -107,6 +112,13 @@ namespace MikuMikuDesktopPerch
             std::pair<int,int> strikeTile{-1,-1};
             double strikeLands=0;
             std::vector<Spark> burst;   // flying from a hit
+            // What she picked up, and the things lying about last frame (to see what went).
+            std::vector<Pickup> pickups;
+            std::vector<Dungeon::Chest> lastChests;
+            std::vector<Dungeon::Gold> lastGolds;
+            std::vector<std::pair<int,int>> lastKeys;
+            std::vector<Dungeon::Ware> lastWares;
+            int lastFloor=-1;
             DirectX::XMFLOAT3 flashAt{};   // and a flash of light there, for a moment
             double flashAge=-1;
             // The monsters as last shown (the game's, taken once her blow has landed), and how
@@ -1611,6 +1623,55 @@ namespace MikuMikuDesktopPerch
                 }
             }
         }
+        // What she picked up: the things gone from the floor since last frame (where she has
+        // seen them), each glowing up once she is there, then fading.
+        {
+            if(state.lastFloor!=game.Floor())state.pickups.clear();
+            else
+            {
+                auto gone=[&](int x,int y,auto& now){return game.Seen(x,y)&&std::none_of(now.begin(),now.end(),[&](const auto& t){return t.x==x&&t.y==y;});};
+                for(const auto& c:state.lastChests)if(gone(c.x,c.y,game.Chests()))state.pickups.push_back({Picked::Chest,c.x,c.y,0,c.item});
+                for(const auto& g:state.lastGolds)if(gone(g.x,g.y,game.Golds()))state.pickups.push_back({Picked::Gold,g.x,g.y,g.amount});
+                for(const auto& w:state.lastWares)if(gone(w.x,w.y,game.Wares()))state.pickups.push_back({Picked::Goods,w.x,w.y,0,w.item});
+                for(const auto& [x,y]:state.lastKeys)
+                    if(game.Seen(x,y)&&std::find(game.Keys().begin(),game.Keys().end(),std::pair{x,y})==game.Keys().end())state.pickups.push_back({Picked::Key,x,y});
+            }
+            state.lastFloor=game.Floor();
+            state.lastChests=game.Chests();state.lastGolds=game.Golds();state.lastKeys=game.Keys();state.lastWares=game.Wares();
+            for(auto& p:state.pickups)
+            {
+                const float x=(p.x+0.5f)*TileSize,z=-(p.y+0.5f)*TileSize;
+                if(p.age<0)
+                {
+                    // Until she reaches it (as she is drawn), or a moment has passed.
+                    p.waited+=dt;
+                    const float dx=state.drawnX-x,dz=state.drawnZ-z;
+                    if(dx*dx+dz*dz<0.16f*TileSize*TileSize||p.waited>0.6)p.age=0;
+                    continue;
+                }
+                p.age+=dt;
+                const float f=static_cast<float>(p.age/PickupLife);
+                if(f>=1)continue;
+                // Brightening quickly, then fading slowly; gold for gold, a chest and a key.
+                const float a=f<0.3f?f/0.3f:1.0f-(f-0.3f)/0.7f;
+                const bool golden=p.kind!=Picked::Goods;
+                const float cr=1.0f,cg=golden?0.85f:0.95f,cb=golden?0.45f:0.8f;
+                halo(XMVectorSet(x,3.0f+2.0f*f,z,0),6.0f+4.0f*f,cr,cg,cb,0.5f*a);
+                shine(XMVectorSet(x,4.0f,z,0),TileSize*1.6f,0.9f*cr*a,0.9f*cg*a,0.9f*cb*a);
+                for(int j=0;j<7;++j)
+                {
+                    // Sparkles rising around it.
+                    const float an=XM_2PI*j/7+f*2.0f+p.x,rise=f*(10.0f+2.0f*(j%3));
+                    MascotRenderer::Particle q;
+                    q.position={x+std::cos(an)*(1.5f+1.5f*f),2.0f+rise,z+std::sin(an)*(1.5f+1.5f*f)};
+                    q.size=0.55f*(1.0f-f)+0.15f;
+                    q.color={cr,cg,cb,a};
+                    q.angle=f*6.0f+j;
+                    sparks.push_back(q);
+                }
+            }
+            state.pickups.erase(std::remove_if(state.pickups.begin(),state.pickups.end(),[](const Pickup& p){return p.age>=PickupLife;}),state.pickups.end());
+        }
         // Crystals and magic circles (warp traps) in sight: a glow that swells and fades
         // slowly, lighting what is near (the nearest few, after the fires).
         {
@@ -1717,6 +1778,30 @@ namespace MikuMikuDesktopPerch
                     bar(left,top,left+w,top+0.08f*TileSize,0.15f,0.12f,0.18f);
                     bar(left,top+0.01f*TileSize,left+w*f,top+0.09f*TileSize,0.9f,0.3f,0.3f);
                 }
+            }
+            // What she picked up: as it lay until she gets there, then brightening, rising and
+            // shrinking away.
+            for(const auto& p:state.pickups)
+            {
+                const float x=(p.x+0.5f)*TileSize,z=-(p.y+0.5f)*TileSize,k=game.Visible(p.x,p.y)?1.0f:0.5f;
+                std::vector<MascotRenderer::GeometryVertex> thing;
+                switch(p.kind)
+                {
+                case Picked::Chest:AddChest(thing,x,z,k);break;
+                case Picked::Gold:AddGold(thing,x,z,p.amount,k);break;
+                case Picked::Key:AddKey(thing,x,z,k);break;
+                case Picked::Goods:AddGoods(thing,x,z,p.item,k);break;
+                }
+                const float f=p.age<0?0.0f:static_cast<float>(p.age/PickupLife);
+                const float bright=1.0f+0.8f*std::min(1.0f,f/0.3f),size=f<0.3f?1.0f:std::max(0.0f,1.0f-(f-0.3f)/0.7f),lift=4.0f*f;
+                for(auto& v:thing)
+                {
+                    v.position[0]=x+(v.position[0]-x)*size;
+                    v.position[1]=v.position[1]*size+lift;
+                    v.position[2]=z+(v.position[2]-z)*size;
+                    for(int i=0;i<3;++i)v.color[i]*=bright;
+                }
+                moving.insert(moving.end(),thing.begin(),thing.end());
             }
             // The campfires' flames, flickering.
             for(const auto& f:game.Fires())
