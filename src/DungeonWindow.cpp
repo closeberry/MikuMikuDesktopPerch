@@ -80,6 +80,10 @@ namespace MikuMikuDesktopPerch
             std::unique_ptr<Bitmap> face;
             std::function<void(const DungeonResult&)> onEnd;
             bool confirmQuit=false,ended=false,showBook=false;
+            size_t skill=0;   // the skill E uses (in the order of those learned; Q goes on to the next)
+            // The vacuum blade flying from her (seconds since it was asked, -1: none), from where, which way.
+            double waveTime=-1;
+            float waveX=0,waveZ=0,waveDX=0,waveDZ=0;
             ULONGLONG deadAt=0;   // when she was beaten (GetTickCount64)
             // The 3D view (a child window over the map's place) and its renderer, only while
             // open. sceneKey: the turn and floor the geometry was last built for.
@@ -499,12 +503,16 @@ namespace MikuMikuDesktopPerch
             if(onEnd)onEnd(result);
         }
 
-        void Text(Graphics& g,const std::wstring& text,float x,float y,float size,Color color,bool bold=false)
+        // Returns its width.
+        float Text(Graphics& g,const std::wstring& text,float x,float y,float size,Color color,bool bold=false)
         {
             FontFamily family(L"Yu Gothic UI");
             Font font(family.IsAvailable()?&family:FontFamily::GenericSansSerif(),size,bold?FontStyleBold:FontStyleRegular,UnitPixel);
             SolidBrush brush(color);
             g.DrawString(text.c_str(),static_cast<INT>(text.size()),&font,PointF(x,y),&brush);
+            RectF box;
+            g.MeasureString(text.c_str(),static_cast<INT>(text.size()),&font,PointF(x,y),&box);
+            return box.Width;
         }
 
         // Wrapped within the box (cut off at its bottom).
@@ -593,7 +601,14 @@ namespace MikuMikuDesktopPerch
             const std::wstring daily=r.dailyDate==today&&r.dailyBest>0?Fmt(T(L"{0}階",L"floor {0}"),{std::to_wstring(r.dailyBest)}):T(L"まだ",L"not yet");
             Text(g,Fmt(T(L"いちばん深い階：{0}階　冒険した回数：{1}　今日のダンジョン：{2}　（Z・Escで戻る）",L"Deepest: floor {0}   Adventures: {1}   Today's dungeon: {2}   (Z/Esc: back)"),
                        {std::to_wstring(r.best),std::to_wstring(r.runs),daily}),area.X+pad,y+line*1.5f,size,dim);
-            y+=line*3.2f;
+            {
+                // Her skill level and the skills she knows.
+                std::wstring skills;
+                for(const auto& k:Dungeon::Skills())if(r.skills.count(k.id))skills+=(skills.empty()?L"":T(L"・",L", "))+std::wstring(English()?k.en:k.ja);
+                Text(g,Fmt(T(L"技レベル：{0}　覚えた技：{1}",L"Skill level: {0}   Skills: {1}"),{std::to_wstring(Dungeon::SkillLevelFor(r.skill)),skills.empty()?T(L"まだない",L"none yet"):skills}),
+                     area.X+pad,y+line*2.5f,size,dim);
+            }
+            y+=line*4.2f;
             const float c1=area.X+pad,c2=area.X+area.Width*0.27f,c3=area.X+area.Width*0.55f;
             float y1=y,y2=y,y3=y;
             const auto monsters=Dungeon::MonsterBook();
@@ -793,7 +808,75 @@ namespace MikuMikuDesktopPerch
                  px,y,static_cast<float>(Px(13)),white);y+=line;
             std::wstring purse=Fmt(T(L"{0}ゴールド　おなか {1}%",L"{0} gold  Full {1}%"),{std::to_wstring(hero.gold),std::to_wstring(hero.food)});
             if(hero.keys>0)purse+=Fmt(T(L"　鍵 {0}",L"  Keys {0}"),{std::to_wstring(hero.keys)});
-            Text(g,purse,px,y,static_cast<float>(Px(13)),hero.food<=20?Color(255,255,150,120):white);y+=line*1.4f;
+            Text(g,purse,px,y,static_cast<float>(Px(13)),hero.food<=20?Color(255,255,150,120):white);y+=line;
+            {
+                // Her skill level, the skill E uses, and what her skills are doing for her now.
+                const int level=game.SkillLevel();
+                std::wstring text=Fmt(T(L"技レベル {0}",L"Skill level {0}"),{std::to_wstring(level)});
+                if(level<Dungeon::MaxSkillLevel)
+                    text+=Fmt(T(L"（次まで {0}）",L" (next: {0} more)"),{std::to_wstring(Dungeon::SkillPointsFor(level+1)-game.SkillPoints())});
+                Text(g,text,px,y,static_cast<float>(Px(13)),white);y+=line;
+                // What works on her now, with its turns left (each wears off).
+                std::wstring on;
+                auto add=[&](int turns,const wchar_t* ja,const wchar_t* en){if(turns>0)on+=Fmt(L"{0}{1} ",{std::wstring(T(ja,en)),std::to_wstring(turns)});};
+                add(hero.powerTurns,L"ちから",L"Might ");add(hero.guardTurns,L"まもり",L"Guard ");add(hero.hasteTurns,L"はやさ",L"Haste ");
+                add(hero.regenTurns,L"さいせい",L"Regen ");add(hero.sorceryTurns,L"まりょく",L"Sorcery ");add(hero.focusTurns,L"気合い",L"Focus ");
+                if(!on.empty()){Text(g,on,px,y,static_cast<float>(Px(12)),gold);y+=line*0.9f;}
+                const auto learned=game.Learned();
+                if(!learned.empty())
+                {
+                    const auto& k=Dungeon::SkillOf(learned[state.skill%learned.size()]);
+                    const int fkey=game.KeyOfSkill(learned[state.skill%learned.size()]);
+                    Text(g,Fmt(T(L"E：{0}（MP{1}）{2}",L"E: {0} ({1} MP){2}"),
+                               {std::wstring(English()?k.en:k.ja),std::to_wstring(k.mp),fkey?L" F"+std::to_wstring(fkey):std::wstring()}),
+                         px,y,static_cast<float>(Px(13)),gold);
+                    y+=line;
+                    // Which skill is on which function key, three to a line; one whose effect
+                    // is on now (on her, the floor or the monsters) shines.
+                    auto working=[&](Dungeon::SkillKind kind)
+                    {
+                        using K=Dungeon::SkillKind;
+                        auto anyMonster=[&](int Dungeon::Monster::*turns){for(const auto& m:game.Monsters())if(m.*turns>0)return true;return false;};
+                        switch(kind)
+                        {
+                            case K::Power:return hero.powerTurns>0;
+                            case K::Guard:return hero.guardTurns>0;
+                            case K::Haste:return hero.hasteTurns>0;
+                            case K::Regen:return hero.regenTurns>0;
+                            case K::Sorcery:return hero.sorceryTurns>0;
+                            case K::Focus:return hero.focusTurns>0;
+                            case K::Guide:return game.Guided();
+                            case K::Treasure:return game.Sensed();
+                            case K::Sleep:return anyMonster(&Dungeon::Monster::asleep);
+                            case K::Slow:return anyMonster(&Dungeon::Monster::slow);
+                            case K::Weaken:return anyMonster(&Dungeon::Monster::weak);
+                            default:return false;
+                        }
+                    };
+                    const float size=static_cast<float>(Px(12));
+                    float x=px;
+                    int onRow=0;
+                    for(int n=1;n<=12;++n)
+                    {
+                        Dungeon::SkillKind kind;
+                        if(!game.SkillOnKey(n,kind))continue;
+                        const auto& s=Dungeon::SkillOf(kind);
+                        const std::wstring item=Fmt(L"F{0} {1}",{std::to_wstring(n),std::wstring(English()?s.en:s.ja)});
+                        float wide;
+                        if(working(kind))
+                        {
+                            for(const auto& [ox,oy]:{std::pair{-1.0f,0.0f},{1.0f,0.0f},{0.0f,-1.0f},{0.0f,1.0f}})
+                                Text(g,item,x+ox,y+oy,size,Color(70,255,190,80));
+                            wide=Text(g,item,x,y,size,Color(255,255,236,160));
+                        }
+                        else wide=Text(g,item,x,y,size,grey);
+                        x+=wide+size*0.6f;
+                        if(++onRow==3){x=px;y+=line*0.85f;onRow=0;}
+                    }
+                    if(onRow)y+=line*0.85f;
+                }
+            }
+            y+=line*0.4f;
 
             // The whole floor, small: where she has been, the stairs once seen, foes in sight.
             {
@@ -828,6 +911,30 @@ namespace MikuMikuDesktopPerch
                         const PointF stair[]={{x0,y1},{x0,y1-u},{x0+u,y1-u},{x0+u,y1-2*u},{x0+2*u,y1-2*u},{x0+2*u,y1-3*u},{x0+3*u,y1-3*u},{x0+3*u,y1}};
                         g.FillPolygon(&steps,stair,8);
                     }
+                // Sensed (a skill): where the chests, gold and keys lie, seen or not.
+                if(game.Sensed())
+                {
+                    for(const auto& c:game.Chests())dot(c.x,c.y,Color(255,200,140,60),r);
+                    for(const auto& gd:game.Golds())dot(gd.x,gd.y,Color(255,255,225,90),r*0.8f);
+                    for(const auto& [kx,ky]:game.Keys())dot(kx,ky,Color(255,120,220,255),r);
+                }
+                // Guided (a skill): an arrow from her the way the stairs lie.
+                if(game.Guided())
+                    for(int ty=0;ty<H;++ty)
+                        for(int tx=0;tx<W;++tx)
+                        {
+                            if(game.At(tx,ty)!=Dungeon::Tile::Stairs)continue;
+                            const float ax=static_cast<float>(tx-hero.x),ay=static_cast<float>(ty-hero.y),len=std::sqrt(ax*ax+ay*ay);
+                            if(len<1)continue;
+                            const float ux=ax/len,uy=ay/len,reach=std::min(len,8.0f)*scale;
+                            const float sx=px+(hero.x+0.5f)*scale,sy=y+(hero.y+0.5f)*scale,ex=sx+ux*reach,ey=sy+uy*reach;
+                            Pen arrow(Color(255,250,215,120),std::max(1.5f,scale*0.6f));
+                            g.DrawLine(&arrow,sx,sy,ex,ey);
+                            const float head=std::max(4.0f,scale*2.0f);
+                            const PointF tip[3]={{ex+ux*head,ey+uy*head},{ex-uy*head*0.6f,ey+ux*head*0.6f},{ex+uy*head*0.6f,ey-ux*head*0.6f}};
+                            SolidBrush fill(Color(255,250,215,120));
+                            g.FillPolygon(&fill,tip,3);
+                        }
                 dot(hero.x,hero.y,Color(255,255,140,180),r*1.2f);
                 y+=mh+line*0.8f;
             }
@@ -847,7 +954,7 @@ namespace MikuMikuDesktopPerch
             }
             if(hero.bag.empty()){Text(g,T(L"（なし）",L"(empty)"),px,y,static_cast<float>(Px(13)),grey);y+=line;}
             const bool fresh=game.Floor()==1&&game.Turns()==0&&!game.Daily();
-            const float help=ch-pad-line*(fresh?8.2f:7.2f);
+            const float help=ch-pad-line*((fresh?8.2f:7.2f)+(game.Learned().empty()?0.0f:2.0f));
             // How to fight is said in plain words (newcomers did not guess that walking into a
             // monster attacks it).
             std::wstring keys=state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\n敵に向かって進むと、剣で攻撃\nShift＋↑：跳ぶ　↓：後ろへ跳ぶ　←→：横へ\n",
@@ -857,6 +964,7 @@ namespace MikuMikuDesktopPerch
             // Shops too (newcomers did not find how to sell).
             keys+=T(L"F：魔法（MP3）　スペース：待つ・罠を探す\nお店　Enter：買う　Shift＋数字：売る\nP：写真　Z：図鑑\nV：カメラ　M：2D/3D　Esc：帰る",
                     L"F: magic (3 MP)  Space: wait, find traps\nShop  Enter: buy  Shift+number: sell\nP: picture  Z: records\nV: camera  M: 2D/3D  Esc: go home");
+            if(!game.Learned().empty())keys+=T(L"\nQ：技を選ぶ　E・F1〜F12：技を使う\nShift＋F1〜F12：Qで選んだ技を割り当て",L"\nQ: choose a skill  E/F1-F12: use one\nShift+F1-F12: put the chosen skill on it");
             if(fresh)keys+=T(L"\nT：今日のダンジョンで遊ぶ",L"\nT: play today's dungeon instead");
             const bool fire=ByFire()&&!state.camp.edit;
             if(fire)keys+=T(L"\nC：焚き火で話す",L"\nC: talk by the fire");
@@ -864,7 +972,18 @@ namespace MikuMikuDesktopPerch
 
             // A question over everything when there is one.
             std::wstring ask;
+            bool choosing=false;   // a new skill to choose: in 2D a larger box over the map, its lines long
             if(state.confirmQuit)ask=T(L"冒険をやめて、デスクトップに帰る？\n\nY：帰る　　N・Esc：続ける",L"Give up and go back to the desktop?\n\nY: go back    N/Esc: keep going");
+            else if(const auto offer=game.SkillOffer();!offer.empty()&&game.GetState()==Dungeon::Game::State::Playing)
+            {
+                choosing=true;
+                ask=Fmt(T(L"技レベル{0}！覚える技を1つ選んで（数字キー）",L"Skill level {0}! Choose a skill to learn (number key)"),{std::to_wstring(game.SkillLevel())});
+                for(size_t i=0;i<offer.size();++i)
+                {
+                    const auto& k=Dungeon::SkillOf(offer[i]);
+                    ask+=Fmt(L"\n{0}：{1}（MP{2}）　{3}",{std::to_wstring(i+1),std::wstring(English()?k.en:k.ja),std::to_wstring(k.mp),std::wstring(English()?k.aboutEn:k.aboutJa)});
+                }
+            }
             else if(game.GetState()==Dungeon::Game::State::AtStairs)
                 ask=T(L"階段だ！\n\nEnter：次の階へ　　B：デスクトップに帰る",L"The stairs!\n\nEnter: the next floor    B: back to the desktop");
             else if(game.GetState()==Dungeon::Game::State::Dead)
@@ -905,13 +1024,15 @@ namespace MikuMikuDesktopPerch
             g.ResetClip();
             if(!ask.empty())
             {
-                const float bw=static_cast<float>(Px(420)),bh=static_cast<float>(Px(120));
+                const int lines=1+static_cast<int>(std::count(ask.begin(),ask.end(),L'\n'));
+                const float bw=choosing?std::min(cw-panel-pad*2,static_cast<float>(Px(720))):static_cast<float>(Px(420));
+                const float bh=choosing?static_cast<float>(Px(26))*lines+pad*4:static_cast<float>(Px(120));
                 const float bx=(cw-panel-bw)/2,by=(ch-logHeight-bh)/2;
                 SolidBrush box(Color(235,30,26,44));
                 Pen edge(Color(255,240,200,110),2);
                 g.FillRectangle(&box,bx,by,bw,bh);
                 g.DrawRectangle(&edge,bx,by,bw,bh);
-                Text(g,ask,bx+pad*2,by+pad*2,static_cast<float>(Px(16)),white);
+                Text(g,ask,bx+pad*2,by+pad*2,static_cast<float>(Px(choosing?15:16)),white);
             }
 
             Graphics screen(dc);
@@ -987,6 +1108,80 @@ namespace MikuMikuDesktopPerch
             game.StepOffStairs();
             const int tx=h.x+dx,ty=h.y+dy;
             if(game.Move(dx,dy)&&foe){state.strikeAsked=Strike::Sword;state.strikeAskedAt=GetTickCount64();state.strikeTile={tx,ty};}
+        }
+
+        // Sparkles rising around (x, z) in a colour (a skill working on her or on a monster).
+        void Aura(float x,float z,float r,float g,float b,int count)
+        {
+            auto& seed=state.dripSeed;
+            auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};
+            for(int i=0;i<count;++i)
+            {
+                const float a=random()*DirectX::XM_2PI,d=1.5f+2.0f*random();
+                Spark s{{x+std::cos(a)*d,0.5f+random()*6.0f,z+std::sin(a)*d},{-std::sin(a)*3.0f,14.0f+8.0f*random(),std::cos(a)*3.0f},0.45f+0.4f*random(),{r,g,b},0,0.6+0.4*random()};
+                state.burst.push_back(s);
+            }
+        }
+
+        // The skill E uses: the game's rules, and in 3D how it looks (a blade swung and flying,
+        // or sparkles in its colour).
+        void UseSkill()
+        {
+            auto& game=state.game;
+            const auto learned=game.Learned();
+            if(learned.empty())return;
+            using K=Dungeon::SkillKind;
+            const K kind=learned[state.skill%learned.size()];
+            const auto& h=game.Hero();
+            // Where a blow lands: the first monster within reach the way she faces.
+            std::pair<int,int> tile{-1,-1};
+            if(kind==K::Wave||kind==K::Drain)
+                for(int k=1;k<=(kind==K::Wave?2:1);++k)
+                {
+                    const int x=h.x+h.dirX*k,y=h.y+h.dirY*k;
+                    if(game.At(x,y)==Dungeon::Tile::Wall||game.At(x,y)==Dungeon::Tile::Door)break;
+                    if(std::any_of(game.Monsters().begin(),game.Monsters().end(),[&](const Dungeon::Monster& m){return Dungeon::Occupies(m,x,y);})){tile={x,y};break;}
+                }
+            const int floor=game.Floor();
+            game.StepOffStairs();
+            if(!game.UseSkill(kind)||!Showing3D()||game.Floor()!=floor)return;
+            const float x=state.drawnX,z=state.drawnZ;
+            switch(kind)
+            {
+            case K::Wave:case K::Drain:
+                state.strikeAsked=Strike::Sword;state.strikeAskedAt=GetTickCount64();state.strikeTile=tile;
+                if(kind==K::Wave){state.waveTime=0;state.waveX=x;state.waveZ=z;state.waveDX=static_cast<float>(h.dirX);state.waveDZ=-static_cast<float>(h.dirY);}
+                else Aura(x,z,0.5f,1.0f,0.55f,14);
+                break;
+            case K::Heal:Aura(x,z,0.5f,1.0f,0.55f,24);break;
+            case K::Power:Aura(x,z,1.0f,0.45f,0.3f,24);break;
+            case K::Guard:Aura(x,z,0.45f,0.7f,1.0f,24);break;
+            case K::Focus:Aura(x,z,1.0f,0.8f,0.4f,18);break;
+            case K::Haste:Aura(x,z,0.6f,1.0f,0.95f,24);break;
+            case K::Regen:Aura(x,z,0.55f,1.0f,0.7f,20);break;
+            case K::Sorcery:Aura(x,z,0.85f,0.6f,1.0f,24);break;
+            case K::Slow:case K::Weaken:
+            {
+                const bool slow=kind==K::Slow;
+                Aura(x,z,slow?0.5f:0.7f,slow?0.75f:0.7f,slow?1.0f:0.65f,12);
+                for(const auto& m:game.Monsters())
+                    if((slow?m.slow:m.weak)>0&&game.Visible(m.x,m.y))Aura((m.x+0.5f)*TileSize,-(m.y+0.5f)*TileSize,slow?0.5f:0.7f,slow?0.75f:0.7f,slow?1.0f:0.65f,10);
+                break;
+            }
+            case K::Satiety:Aura(x,z,1.0f,0.75f,0.45f,16);break;
+            case K::Guide:case K::Treasure:Aura(x,z,1.0f,0.9f,0.5f,18);break;
+            case K::TrapSight:Aura(x,z,0.9f,0.95f,1.0f,18);break;
+            case K::Sleep:
+                Aura(x,z,0.75f,0.55f,1.0f,14);
+                for(const auto& m:game.Monsters())if(m.asleep>0&&game.Visible(m.x,m.y))Aura((m.x+0.5f)*TileSize,-(m.y+0.5f)*TileSize,0.75f,0.55f,1.0f,10);
+                break;
+            case K::Teleport:
+                // Gone in sparkles, and there in sparkles (at once, not walking).
+                Aura(x,z,0.8f,0.6f,1.0f,24);
+                state.drawnX=(h.x+0.5f)*TileSize;state.drawnZ=-(h.y+0.5f)*TileSize;
+                Aura(state.drawnX,state.drawnZ,0.8f,0.6f,1.0f,24);
+                break;
+            }
         }
 
         // A spell, cast the way she faces (in 3D, it flies from her hand along the bolt's path).
@@ -1181,7 +1376,36 @@ namespace MikuMikuDesktopPerch
             {
                 if((key==VK_RETURN||key==VK_ESCAPE)&&!repeat&&GetTickCount64()-state.deadAt>=DefeatShown){Finish();return;}
             }
+            else if(const auto offer=game.SkillOffer();!offer.empty()&&game.GetState()==State::Playing)
+            {
+                // A new skill to choose: a number for it (nothing else meanwhile but going home).
+                size_t i=offer.size();
+                if(key>='1'&&key<'1'+static_cast<int>(offer.size()))i=static_cast<size_t>(key-'1');
+                else if(key>=VK_NUMPAD1&&key<VK_NUMPAD1+static_cast<int>(offer.size()))i=static_cast<size_t>(key-VK_NUMPAD1);
+                if(i<offer.size()&&!repeat)
+                {
+                    game.ChooseSkill(offer[i]);
+                    // E uses the one just learned.
+                    const auto learned=game.Learned();
+                    state.skill=static_cast<size_t>(std::find(learned.begin(),learned.end(),offer[i])-learned.begin());
+                }
+                else if(key==VK_ESCAPE)state.confirmQuit=true;
+            }
             else if(key==VK_ESCAPE)state.confirmQuit=true;
+            else if(key=='Q'&&!repeat){const auto n=game.Learned().size();if(n)state.skill=(state.skill+1)%n;}
+            else if(key>=VK_F1&&key<=VK_F12&&!repeat)
+            {
+                // F1-F12: the skill on that key at once; with Shift, the one Q chose put on it.
+                const int n=static_cast<int>(key-VK_F1)+1;
+                const auto learned=game.Learned();
+                if(GetKeyState(VK_SHIFT)&0x8000){if(!learned.empty())game.PutSkillOnKey(n,learned[state.skill%learned.size()]);}
+                else if(Dungeon::SkillKind kind;game.SkillOnKey(n,kind)&&game.GetState()==State::Playing&&!Underway())
+                {
+                    state.skill=static_cast<size_t>(std::find(learned.begin(),learned.end(),kind)-learned.begin());
+                    UseSkill();
+                }
+            }
+            else if(key=='E'&&!repeat&&game.GetState()==State::Playing&&!Underway())UseSkill();
             else if(key=='M'&&state.renderer){state.show3D=!state.show3D;PlaceView();}
             else if(key=='V'&&Showing3D())state.behind=!state.behind;
             else if(key=='Z'&&!repeat){state.showBook=true;PlaceView();}
@@ -1256,6 +1480,10 @@ namespace MikuMikuDesktopPerch
             case WM_KEYDOWN:
                 OnKey(wParam,(lParam&(1<<30))!=0);
                 return 0;
+            case WM_SYSKEYDOWN:
+                // F10 (a skill's key) comes as a system key; Alt with others stays the system's.
+                if(wParam==VK_F10){OnKey(wParam,(lParam&(1<<30))!=0);return 0;}
+                break;
             case WM_PAINT:
             {
                 PAINTSTRUCT ps;
@@ -1301,6 +1529,10 @@ namespace MikuMikuDesktopPerch
             case WM_KEYDOWN:
                 OnKey(wParam,(lParam&(1<<30))!=0);
                 return 0;
+            case WM_SYSKEYDOWN:
+                // F10 (a skill's key) comes as a system key; Alt with others stays the system's.
+                if(wParam==VK_F10){OnKey(wParam,(lParam&(1<<30))!=0);return 0;}
+                break;
             case WM_LBUTTONDOWN:
                 SetFocus(state.window);
                 return 0;
@@ -1800,6 +2032,51 @@ namespace MikuMikuDesktopPerch
                 shine(XMVectorScale(sum,1.0f/n),TileSize*3.0f,1.4f*k,0.65f*k,0.2f*k);
                 if(b>=FireFrom&&b<=FireTo)shine(XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(state.mouth.at)),TileSize*1.6f,1.0f,0.6f,0.25f);
             }
+        }
+        // The vacuum blade: a pale crescent flying two tiles from her as her sword swings.
+        if(state.waveTime>=0)
+        {
+            state.waveTime+=dt;
+            const float u=static_cast<float>((state.waveTime-MascotModel::StrikeHit*0.8)/0.22);
+            if(u>1.3f)state.waveTime=-1;
+            else if(u>0)
+            {
+                const float d=std::min(u,1.0f)*2.0f*TileSize,fade=u<1?1.0f:1.0f-(u-1.0f)/0.3f;
+                const float cx=state.waveX+state.waveDX*d,cz=state.waveZ+state.waveDZ*d;
+                for(int i=-4;i<=4;++i)
+                {
+                    const float k=i/4.0f,back=2.2f*k*k;
+                    MascotRenderer::Particle q;
+                    q.position={cx-state.waveDZ*k*4.0f-state.waveDX*back,5.0f,cz+state.waveDX*k*4.0f-state.waveDZ*back};
+                    q.size=0.9f-0.4f*std::abs(k);q.color={0.75f,0.95f,1.0f,fade*(1.0f-0.5f*std::abs(k))};q.angle=clock*6.0f+i;
+                    sparks.push_back(q);
+                }
+                halo(XMVectorSet(cx,5.0f,cz,0),4.0f,0.6f,0.9f,1.0f,0.35f*fade);
+            }
+        }
+        // While a skill works on her (might, guard, focus): a sparkle now and then at her feet;
+        // over a sleeping monster, a sleepy one.
+        {
+            const auto& h=game.Hero();
+            auto every=[&](double period,double offset){return std::fmod(state.monsterClock+offset,period)<dt;};
+            if(h.powerTurns>0&&every(0.35,0.0))Aura(state.drawnX,state.drawnZ,1.0f,0.45f,0.3f,1);
+            if(h.guardTurns>0&&every(0.35,0.12))Aura(state.drawnX,state.drawnZ,0.45f,0.7f,1.0f,1);
+            if(h.focusTurns>0&&every(0.3,0.2))Aura(state.drawnX,state.drawnZ,1.0f,0.8f,0.4f,1);
+            if(h.hasteTurns>0&&every(0.25,0.05))Aura(state.drawnX,state.drawnZ,0.6f,1.0f,0.95f,1);
+            if(h.regenTurns>0&&every(0.4,0.3))Aura(state.drawnX,state.drawnZ,0.55f,1.0f,0.7f,1);
+            if(h.sorceryTurns>0&&every(0.4,0.15))Aura(state.drawnX,state.drawnZ,0.85f,0.6f,1.0f,1);
+            // Slowed or weakened monsters: a sparkle now and then in that colour.
+            for(const auto& m:state.shown)
+                if((m.slow>0||m.weak>0)&&game.Visible(m.x,m.y)&&every(0.7,m.uid*0.53))
+                    if(const auto it=state.looks.find(m.uid);it!=state.looks.end())
+                        Aura(it->second.x,it->second.z,m.slow>0?0.5f:0.7f,m.slow>0?0.75f:0.7f,m.slow>0?1.0f:0.65f,1);
+            for(const auto& m:state.shown)
+                if(m.asleep>0&&game.Visible(m.x,m.y)&&every(0.6,m.uid*0.37))
+                    if(const auto it=state.looks.find(m.uid);it!=state.looks.end())
+                    {
+                        Spark z{{it->second.x,8.0f+6.0f*m.size,it->second.z},{1.5f,7.0f,0},0.8f,{0.75f,0.6f,1.0f},0,1.2};
+                        state.burst.push_back(z);
+                    }
         }
         // The flash where a blow landed.
         if(state.flashAge>=0)

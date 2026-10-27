@@ -50,6 +50,8 @@ namespace MikuMikuDesktopPerch::Dungeon
         int size=0;         // 1: its body takes the 3x3 tiles round (x, y) (the dragon)
         int uid=0;          // which one it is (for drawing it as it goes from tile to tile)
         bool struck=false;  // it went for her in its last turn (a blow, a theft, fire)
+        int asleep=0;       // turns it sleeps (a skill; a blow wakes it)
+        int slow=0,weak=0;  // turns it acts only every other turn, its blows are weaker (skills)
     };
 
     // Whether monster m's body is on tile (x, y).
@@ -69,6 +71,10 @@ namespace MikuMikuDesktopPerch::Dungeon
         int baseHp=30,baseMp=10,baseAtk=5,baseDef=2,baseMag=4;
         int gold=0,food=100,keys=0;
         int jumpWait=0;   // turns before she can jump again
+        // What her skills do for her, each for the turns left (0: not now): attack and defence
+        // up, now and then a second action (haste), HP back every turn (regen), magic up, and
+        // her next sword blow twice as hard (focus, lost if not used in time).
+        int powerTurns=0,guardTurns=0,hasteTurns=0,regenTurns=0,sorceryTurns=0,focusTurns=0;
         std::vector<Item> bag;
         int weapon=-1,armor=-1,accessory=-1;   // index in bag, or -1
         int MaxHp() const;
@@ -84,6 +90,9 @@ namespace MikuMikuDesktopPerch::Dungeon
     struct Record
     {
         int best=0,runs=0,traps=0,bought=0,fires=0;
+        int skill=0;   // skill points, kept over all her adventures (the skill level)
+        std::set<std::wstring> skills;   // the skills she has learned (by id), one chosen at each new skill level
+        std::map<int,std::wstring> skillKeys;   // F1..F12 (1..12): the skill on that key (by id)
         std::wstring dailyDate;   // YYYY-MM-DD of dailyBest
         int dailyBest=0;
         std::map<std::wstring,int> kills;   // by monster id
@@ -96,6 +105,18 @@ namespace MikuMikuDesktopPerch::Dungeon
         void Load(const std::wstring& path);
         bool Save(const std::wstring& path) const;
     };
+
+    // What she can learn (kept over her adventures): at each new skill level she chooses one of
+    // three she has not learned. Each for its MP, used the way she faces or on herself; each
+    // only a little help.
+    enum class SkillKind {Wave,Heal,Guide,Sleep,Power,Guard,Treasure,TrapSight,Drain,Satiety,Focus,Teleport,Haste,Regen,Sorcery,Slow,Weaken};
+    struct Skill {SkillKind kind;const wchar_t* id;int mp;const wchar_t* ja;const wchar_t* en;const wchar_t* aboutJa;const wchar_t* aboutEn;};
+    const std::vector<Skill>& Skills();
+    const Skill& SkillOf(SkillKind kind);
+    // The skill level for these skill points, and the points the next level needs (0 at the top).
+    int SkillLevelFor(int points);
+    int SkillPointsFor(int level);
+    static constexpr int MaxSkillLevel=20;
 
     // The titles, in the order the records list them.
     struct Title {const char* id;const wchar_t* ja;const wchar_t* en;const wchar_t* hintJa;const wchar_t* hintEn;};
@@ -138,6 +159,25 @@ namespace MikuMikuDesktopPerch::Dungeon
         // turns before the next.
         bool Jump(bool back);
         bool Cast();
+        // Skills: her skill level (from the record), those learned (in Skills()'s order), and
+        // one used (false when it cannot be: not learned, too little MP). Using one takes a turn.
+        int SkillLevel() const;
+        int SkillPoints() const {return record?record->skill:0;}
+        std::vector<SkillKind> Learned() const;
+        bool UseSkill(SkillKind kind);
+        // A new skill to choose (she has a skill level more than the skills she knows, and some
+        // left to learn): three she has not learned (fewer when fewer are left; the same three
+        // until she chooses), empty when there is none to choose; and one chosen from them.
+        std::vector<SkillKind> SkillOffer() const;
+        bool ChooseSkill(SkillKind kind);
+        // The function keys F1..F12 (n 1..12): the skill on one (false when none), and one put on
+        // it (moved there from another key). A skill learned goes on the first free key.
+        bool SkillOnKey(int n,SkillKind& kind) const;
+        void PutSkillOnKey(int n,SkillKind kind);
+        int KeyOfSkill(SkillKind kind) const;   // 0: on none
+        // On this floor: the stairs' way shown (Guide), the things lying about sensed (Treasure).
+        bool Guided() const {return guided;}
+        bool Sensed() const {return sensed;}
         bool Rest();             // waits a turn, looking for traps around her
         bool Use(int index);
         bool Drop(int index);    // in a shop, sold for half its price; elsewhere, left behind
@@ -193,6 +233,8 @@ namespace MikuMikuDesktopPerch::Dungeon
         void Hit(Monster& m,int damage,const wchar_t* how,bool magic);
         void Hurt(int damage,const std::wstring& by);
         void GainXp(int xp);
+        void GainSkill(int points);
+        void FillSkillKeys();
         void Say(Event event,const std::wstring& line,const std::wstring& facts,int weight);
         void Note(const std::wstring& text);
         void Arrived();
@@ -236,6 +278,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         int magicKills=0,casts=0;
         bool daily=false,hurtOnFloor=false,saved=false,houseWoke=false,hungryTold=false,lowTold=false;
         bool airborne=false;   // she is in the air this turn (a jump)
+        bool guided=false,sensed=false;
         bool flooded=false;
         int leapt=0;           // the jump being made (Arrive): 1 forward, -1 back
         std::uint32_t seed=1,random=1;

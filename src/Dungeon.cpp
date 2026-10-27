@@ -3,6 +3,7 @@
 #include "HttpJson.hpp"
 #include "Text.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -151,6 +152,9 @@ namespace MikuMikuDesktopPerch::Dungeon
             else if(key=="traps")traps=n;
             else if(key=="bought")bought=n;
             else if(key=="fires")fires=n;
+            else if(key=="skill")skill=n;
+            else if(key.rfind("skill.",0)==0)skills.insert(name);
+            else if(key.rfind("skillkey.",0)==0){const int k=_wtoi(name.c_str());if(k>=1&&k<=12)skillKeys[k]=value;}
             else if(key=="dailyDate")dailyDate=value;
             else if(key=="dailyBest")dailyBest=n;
             else if(key.rfind("kill.",0)==0)kills[name]=n;
@@ -179,13 +183,15 @@ namespace MikuMikuDesktopPerch::Dungeon
     bool Record::Save(const std::wstring& path) const
     {
         std::string text="best="+std::to_string(best)+"\nruns="+std::to_string(runs)+"\ntraps="+std::to_string(traps)+
-                         "\nbought="+std::to_string(bought)+"\nfires="+std::to_string(fires)+
+                         "\nbought="+std::to_string(bought)+"\nfires="+std::to_string(fires)+"\nskill="+std::to_string(skill)+
                          "\ndailyDate="+Net::Utf8(dailyDate)+"\ndailyBest="+std::to_string(dailyBest)+"\n";
         for(const auto& [id,n]:kills)text+="kill."+Net::Utf8(id)+"="+std::to_string(n)+"\n";
         for(const auto& id:items)text+="item."+Net::Utf8(id)+"=1\n";
         for(const auto& [id,f]:treasures)
             text+="treasure."+Net::Utf8(id)+"="+Net::Utf8(f.date)+"|"+std::to_string(f.floor)+"|"+Net::Utf8(f.where)+"|"+std::to_string(f.count)+"\n";
         for(const auto& id:titles)text+="title."+Net::Utf8(id)+"=1\n";
+        for(const auto& id:skills)text+="skill."+Net::Utf8(id)+"=1\n";
+        for(const auto& [k,id]:skillKeys)text+="skillkey."+std::to_string(k)+"="+Net::Utf8(id)+"\n";
         std::ofstream out(std::filesystem::path(path),std::ios::binary|std::ios::trunc);
         out<<text;
         return static_cast<bool>(out);
@@ -193,9 +199,54 @@ namespace MikuMikuDesktopPerch::Dungeon
 
     int Player::MaxHp() const {int v=baseHp;for(const int i:{weapon,armor,accessory})if(i>=0)v+=bag[i].hp;return v;}
     int Player::MaxMp() const {int v=baseMp;for(const int i:{weapon,armor,accessory})if(i>=0)v+=bag[i].mp;return v;}
-    int Player::Atk() const {int v=baseAtk;for(const int i:{weapon,armor,accessory})if(i>=0)v+=bag[i].atk;return v;}
-    int Player::Def() const {int v=baseDef;for(const int i:{weapon,armor,accessory})if(i>=0)v+=bag[i].def;return v;}
-    int Player::Mag() const {int v=baseMag;for(const int i:{weapon,armor,accessory})if(i>=0)v+=bag[i].mag;return v;}
+    int Player::Atk() const {int v=baseAtk;for(const int i:{weapon,armor,accessory})if(i>=0)v+=bag[i].atk;return powerTurns>0?v+std::max(1,v*3/10):v;}
+    int Player::Def() const {int v=baseDef;for(const int i:{weapon,armor,accessory})if(i>=0)v+=bag[i].def;return guardTurns>0?v+std::max(1,v/2):v;}
+
+    const std::vector<Skill>& Skills()
+    {
+        static const std::vector<Skill> list{
+            {SkillKind::Wave,L"wave",1,L"真空波",L"Vacuum blade",L"前方2マス先まで風の刃を飛ばす",L"a blade of wind up to 2 tiles ahead"},
+            {SkillKind::Heal,L"heal",3,L"ヒール",L"Heal",L"HPを回復する",L"restores HP"},
+            {SkillKind::Guide,L"guide",2,L"道しるべ",L"Guide",L"この階の階段の方向がわかる",L"which way the stairs lie on this floor"},
+            {SkillKind::Sleep,L"sleep",3,L"スリープ",L"Sleep",L"まわり2マスの敵を眠らせる（攻撃で目覚める）",L"monsters within 2 tiles sleep (a blow wakes them)"},
+            {SkillKind::Power,L"power",3,L"ちから",L"Might",L"しばらく攻撃力が上がる",L"raises her attack for a while"},
+            {SkillKind::Guard,L"guard",3,L"まもり",L"Guard",L"しばらく防御力が上がる",L"raises her defence for a while"},
+            {SkillKind::Treasure,L"treasure",2,L"宝さがし",L"Treasure sense",L"宝箱・ゴールド・鍵の場所が地図にわかる",L"chests, gold and keys shown on the map"},
+            {SkillKind::TrapSight,L"traps",1,L"罠見破り",L"Trap sight",L"まわり5マスの罠を見つける",L"finds the traps within 5 tiles"},
+            {SkillKind::Drain,L"drain",2,L"吸収",L"Drain",L"目の前の敵を攻撃し、HPを吸い取る",L"strikes the monster in front, taking HP"},
+            {SkillKind::Satiety,L"satiety",3,L"腹もち",L"Satiety",L"おなかが少しふくれる",L"fills her up a little"},
+            {SkillKind::Focus,L"focus",1,L"気合いため",L"Focus",L"次の剣の一撃が2倍の強さになる",L"her next sword blow strikes twice as hard"},
+            {SkillKind::Teleport,L"teleport",3,L"テレポート",L"Teleport",L"別の部屋へ飛んで逃げる",L"to another room on this floor, away"},
+            {SkillKind::Haste,L"haste",3,L"はやさ",L"Haste",L"しばらく、ときどき2回行動できる",L"for a while, now and then she acts twice"},
+            {SkillKind::Regen,L"regen",3,L"さいせい",L"Regen",L"しばらく毎ターンHPが回復する",L"for a while, HP comes back every turn"},
+            {SkillKind::Sorcery,L"sorcery",3,L"まりょく",L"Sorcery",L"しばらく魔法の威力が上がる",L"for a while her magic hits harder"},
+            {SkillKind::Slow,L"slow",2,L"スロウ",L"Slow",L"まわり2マスの敵の動きを遅くする",L"slows monsters within 2 tiles"},
+            {SkillKind::Weaken,L"weaken",2,L"よわらせ",L"Weaken",L"まわり2マスの敵の攻撃を弱める",L"weakens the blows of monsters within 2 tiles"}};
+        return list;
+    }
+
+    const Skill& SkillOf(SkillKind kind)
+    {
+        const auto& list=Skills();
+        return *std::find_if(list.begin(),list.end(),[&](const Skill& s){return s.kind==kind;});
+    }
+
+    // Points for each level: 15 for the second, then more each time (40, 80, 140, 220, 320, ...).
+    int SkillPointsFor(int level)
+    {
+        if(level<=1)return 0;
+        int points=15,step=25;
+        for(int l=3;l<=level;++l){points+=step;step+=(l<6?15:20);}
+        return points;
+    }
+
+    int SkillLevelFor(int points)
+    {
+        int level=1;
+        while(level<MaxSkillLevel&&points>=SkillPointsFor(level+1))++level;
+        return level;
+    }
+    int Player::Mag() const {int v=baseMag;for(const int i:{weapon,armor,accessory})if(i>=0)v+=bag[i].mag;return sorceryTurns>0?v+std::max(1,v/2):v;}
 
     int Game::Random(int lo,int hi)
     {
@@ -393,6 +444,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         floor=1;turns=0;kills=0;rested=0;magicKills=0;casts=0;
         saved=false;
         log.clear();talks.clear();newTitles.clear();
+        FillSkillKeys();
         Generate();
         Arrived();
     }
@@ -410,7 +462,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         rooms.clear();monsters.clear();chests.clear();bolt.clear();flame.clear();born.clear();
         traps.clear();wares.clear();golds.clear();fires.clear();keysOnFloor.clear();
         state=State::Playing;
-        hurtOnFloor=false;houseWoke=false;
+        hurtOnFloor=false;houseWoke=false;guided=false;sensed=false;
         // From the third floor, now and then (never a boss's floor), the floor is under shallow
         // water: from the seed and the floor apart from the rest, so the floors stay as they were.
         flooded=floor>=3&&floor%5!=0&&((seed*2654435761u)^(static_cast<std::uint32_t>(floor)*40503u))%100<30;
@@ -663,6 +715,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                 Fmt(T(L"ダンジョンの{0}階に着きました",L"You reached floor {0} of the dungeon"),{n}),3);
         if(floor%5==0)Note(T(L"この階のどこかに、ボスがいる。",L"A boss is somewhere on this floor."));
         if(flooded)Note(T(L"この階は水浸しだ。",L"This floor is flooded."));
+        if(floor>1)GainSkill(2);
     }
 
     void Game::Reveal()
@@ -773,6 +826,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     {
         m.hp-=damage;
         m.awake=true;
+        if(m.asleep>0){m.asleep=0;if(m.hp>0)Note(Fmt(T(L"{0}は目を覚ました！",L"The {0} woke up!"),{m.name}));}
         Note(Fmt(T(L"{0}、{1}に{2}のダメージ。",L"{0} {1} for {2}."),{how,m.name,std::to_wstring(damage)}));
         if(m.hp>0)
         {
@@ -854,6 +908,7 @@ namespace MikuMikuDesktopPerch::Dungeon
             Say(Event::Kill,LINE({L"やったね！",L"Nice!"},{L"よし、倒した！",L"Got it!"},{L"ふう、片付いた。",L"Phew, done."}),
                 Fmt(T(L"{0}を倒しました",L"You defeated a {0}"),{m.name}),0);
         GainXp(m.xp);
+        GainSkill(m.boss?10:1);
     }
 
     // Hurt by a monster or a trap. Close enough to the user, she holds on once at 1 HP.
@@ -1042,8 +1097,10 @@ namespace MikuMikuDesktopPerch::Dungeon
         const auto target=std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return Occupies(m,x,y);});
         if(target!=monsters.end())
         {
-            const int damage=std::max(1,player.Atk()+Random(0,player.Atk()/2)-target->def/2);
-            Hit(*target,damage,T(L"剣で攻撃",L"Sword hits"),false);
+            int damage=std::max(1,player.Atk()+Random(0,player.Atk()/2)-target->def/2);
+            const bool focused=player.focusTurns>0;
+            if(focused){player.focusTurns=0;damage*=2;}
+            Hit(*target,damage,focused?T(L"気合いの一撃",L"A focused blow hits"):T(L"剣で攻撃",L"Sword hits"),false);
             if(target->hp<=0)monsters.erase(target);
             EndTurn();
             return true;
@@ -1130,6 +1187,276 @@ namespace MikuMikuDesktopPerch::Dungeon
         // Counted from the end of this turn.
         player.jumpWait=JumpWait+1;
         return Arrive(player.x+dx*reach,player.y+dy*reach);
+    }
+
+    int Game::SkillLevel() const {return SkillLevelFor(SkillPoints());}
+
+    std::vector<SkillKind> Game::Learned() const
+    {
+        std::vector<SkillKind> out;
+        if(record)for(const auto& s:Skills())if(record->skills.count(s.id))out.push_back(s.kind);
+        return out;
+    }
+
+    // Skill points (kept in the record): a new level now and then, and a new skill to choose
+    // with it.
+    void Game::GainSkill(int points)
+    {
+        if(!record||points<=0)return;
+        const int before=SkillLevel();
+        record->skill+=points;
+        const int after=SkillLevel();
+        if(after==before)return;
+        Note(Fmt(T(L"技レベルが{0}になった！",L"Skill level {0}!"),{std::to_wstring(after)}));
+        if(!SkillOffer().empty())
+            Say(Event::LevelUp,LINE({L"技レベルが上がったよ！新しい技、どれにしよう？",L"My skill level went up! Which new skill should I learn?"}),
+                Fmt(T(L"冒険を重ねて技レベルが{0}になり、新しい技を1つ覚えられます",L"Through your adventures your skill level reached {0}: you can learn a new skill"),{std::to_wstring(after)}),5);
+    }
+
+    std::vector<SkillKind> Game::SkillOffer() const
+    {
+        const auto learned=Learned();
+        if(!record||SkillLevel()-1<=static_cast<int>(learned.size()))return {};
+        std::vector<SkillKind> left;
+        for(const auto& s:Skills())if(!record->skills.count(s.id))left.push_back(s.kind);
+        // Shuffled the same way until she chooses (from what she knows and her level).
+        std::uint32_t r=0x9E3779B9u^(static_cast<std::uint32_t>(learned.size())*2654435761u)^(static_cast<std::uint32_t>(SkillLevel())*40503u);
+        for(size_t i=left.size();i>1;--i)
+        {
+            r^=r<<13;r^=r>>17;r^=r<<5;
+            std::swap(left[i-1],left[r%i]);
+        }
+        if(left.size()>3)left.resize(3);
+        return left;
+    }
+
+    // Each skill learned on a function key (the first free one; none when all twelve are taken).
+    void Game::FillSkillKeys()
+    {
+        if(!record)return;
+        for(auto it=record->skillKeys.begin();it!=record->skillKeys.end();)
+            it=record->skills.count(it->second)?std::next(it):record->skillKeys.erase(it);
+        for(const auto& s:Skills())
+        {
+            if(!record->skills.count(s.id)||KeyOfSkill(s.kind))continue;
+            for(int k=1;k<=12;++k)if(!record->skillKeys.count(k)){record->skillKeys[k]=s.id;break;}
+        }
+    }
+
+    bool Game::SkillOnKey(int n,SkillKind& kind) const
+    {
+        if(!record)return false;
+        const auto it=record->skillKeys.find(n);
+        if(it==record->skillKeys.end())return false;
+        for(const auto& s:Skills())if(it->second==s.id&&record->skills.count(s.id)){kind=s.kind;return true;}
+        return false;
+    }
+
+    int Game::KeyOfSkill(SkillKind kind) const
+    {
+        if(!record)return 0;
+        for(const auto& [k,id]:record->skillKeys)if(id==SkillOf(kind).id)return k;
+        return 0;
+    }
+
+    void Game::PutSkillOnKey(int n,SkillKind kind)
+    {
+        if(!record||n<1||n>12||!record->skills.count(SkillOf(kind).id))return;
+        if(const int was=KeyOfSkill(kind))record->skillKeys.erase(was);
+        record->skillKeys[n]=SkillOf(kind).id;
+        Note(Fmt(T(L"F{0}に「{1}」を割り当てた。",L"{1} is on F{0} now."),{std::to_wstring(n),std::wstring(English()?SkillOf(kind).en:SkillOf(kind).ja)}));
+    }
+
+    bool Game::ChooseSkill(SkillKind kind)
+    {
+        const auto offer=SkillOffer();
+        if(std::find(offer.begin(),offer.end(),kind)==offer.end())return false;
+        const Skill& s=SkillOf(kind);
+        record->skills.insert(s.id);
+        FillSkillKeys();
+        const std::wstring name=English()?s.en:s.ja;
+        const int key=KeyOfSkill(kind);
+        Note(key?Fmt(T(L"新しい技「{0}」を覚えた！（F{1}ですぐ使える）",L"Learned a new skill: {0}! (F{1} uses it)"),{name,std::to_wstring(key)})
+                :Fmt(T(L"新しい技「{0}」を覚えた！（Q：技を選ぶ　E：使う）",L"Learned a new skill: {0}! (Q: choose a skill  E: use it)"),{name}));
+        Say(Event::LevelUp,Fmt(LINE({L"「{0}」を覚えたよ！",L"I learned {0}!"},{L"「{0}」、使ってみよう！",L"{0}! Let's try it!"}),{name}),
+            Fmt(T(L"新しい技「{0}」を覚えました（{1}）",L"You learned a new skill, {0} ({1})"),{name,English()?s.aboutEn:s.aboutJa}),5);
+        return true;
+    }
+
+    bool Game::UseSkill(SkillKind kind)
+    {
+        if(state!=State::Playing)return false;
+        const auto learned=Learned();
+        if(std::find(learned.begin(),learned.end(),kind)==learned.end())return false;
+        const Skill* s=&SkillOf(kind);
+        const std::wstring name=English()?s->en:s->ja;
+        if(player.mp<s->mp){Note(T(L"MPが足りない。",L"Not enough MP."));return false;}
+        player.mp-=s->mp;
+        bolt.clear();flame.clear();
+        const int level=SkillLevel();
+        switch(kind)
+        {
+        case SkillKind::Wave:
+        {
+            // Up to two tiles the way she faces, the first monster there (not through walls).
+            int x=player.x,y=player.y;
+            bool hit=false;
+            for(int step=0;step<2&&!hit;++step)
+            {
+                x+=player.dirX;y+=player.dirY;
+                if(At(x,y)==Tile::Wall||At(x,y)==Tile::Door)break;
+                const auto target=std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return Occupies(m,x,y);});
+                if(target!=monsters.end())
+                {
+                    const int atk=player.Atk();
+                    Hit(*target,std::max(1,atk*(7+level/3)/10+Random(0,atk/3)-target->def/2),T(L"真空波で",L"The vacuum blade hits"),false);
+                    if(target->hp<=0)monsters.erase(target);
+                    hit=true;
+                }
+            }
+            if(!hit)Note(T(L"真空波は何にも当たらなかった。",L"The vacuum blade hit nothing."));
+            break;
+        }
+        case SkillKind::Heal:
+        {
+            const int amount=std::max(5,player.MaxHp()*(25+2*level)/100);
+            player.hp=std::min(player.MaxHp(),player.hp+amount);
+            Note(Fmt(T(L"ヒール！HPが{0}回復した。",L"Heal! Got back {0} HP."),{std::to_wstring(amount)}));
+            break;
+        }
+        case SkillKind::Guide:
+        {
+            guided=true;
+            for(int sy=0;sy<Height;++sy)
+                for(int sx=0;sx<Width;++sx)
+                {
+                    if(At(sx,sy)!=Tile::Stairs)continue;
+                    const int dx=sx-player.x,dy=sy-player.y;
+                    // Eight ways, north up the map.
+                    static const wchar_t* waysJa[8]={L"東",L"南東",L"南",L"南西",L"西",L"北西",L"北",L"北東"};
+                    static const wchar_t* waysEn[8]={L"east",L"south-east",L"south",L"south-west",L"west",L"north-west",L"north",L"north-east"};
+                    const int way=(static_cast<int>(std::lround(std::atan2(static_cast<double>(dy),static_cast<double>(dx))/(3.14159265358979/4)))+8)%8;
+                    const int tiles=std::max(std::abs(dx),std::abs(dy));
+                    Note(Fmt(T(L"道しるべ：階段は{0}の方、{1}マスほど先。（地図に矢印）",L"Guide: the stairs lie {0}, about {1} tiles away. (arrow on the map)"),
+                             {English()?waysEn[way]:waysJa[way],std::to_wstring(tiles)}));
+                }
+            break;
+        }
+        case SkillKind::Sleep:
+        {
+            // Those within two tiles of her (a big one's body counted), for a few turns; the
+            // dragon only for two.
+            int slept=0;
+            for(auto& m:monsters)
+            {
+                const int ax=std::max(0,std::abs(player.x-m.x)-m.size),ay=std::max(0,std::abs(player.y-m.y)-m.size);
+                if(std::max(ax,ay)>2||m.hp<=0)continue;
+                m.asleep=m.boss?2:4+level/3;
+                m.charging=false;
+                ++slept;
+            }
+            Note(slept>0?Fmt(T(L"スリープ！{0}体が眠った。",L"Sleep! {0} fell asleep."),{std::to_wstring(slept)})
+                        :T(L"スリープ…まわりにモンスターはいなかった。",L"Sleep... there was no monster near."));
+            break;
+        }
+        case SkillKind::Power:
+            player.powerTurns=15+level;
+            Note(Fmt(T(L"ちから！しばらく攻撃力が上がる（{0}ターン）。",L"Might! Her attack is up for a while ({0} turns)."),{std::to_wstring(player.powerTurns)}));
+            break;
+        case SkillKind::Guard:
+            player.guardTurns=15+level;
+            Note(Fmt(T(L"まもり！しばらく防御力が上がる（{0}ターン）。",L"Guard! Her defence is up for a while ({0} turns)."),{std::to_wstring(player.guardTurns)}));
+            break;
+        case SkillKind::Treasure:
+        {
+            sensed=true;
+            const size_t n=chests.size()+golds.size()+keysOnFloor.size();
+            Note(Fmt(T(L"宝さがし：この階には宝箱・ゴールド・鍵が{0}つある。（地図に印）",L"Treasure sense: {0} chests, heaps of gold and keys on this floor. (marked on the map)"),{std::to_wstring(n)}));
+            break;
+        }
+        case SkillKind::TrapSight:
+        {
+            int found=0;
+            for(auto& t:traps)
+                if(!t.found&&std::abs(t.x-player.x)<=5&&std::abs(t.y-player.y)<=5){t.found=true;++found;}
+            Note(found>0?Fmt(T(L"罠見破り：罠を{0}つ見つけた！",L"Trap sight: found {0} traps!"),{std::to_wstring(found)})
+                        :T(L"罠見破り：まわりに罠はないようだ。",L"Trap sight: no traps near."));
+            break;
+        }
+        case SkillKind::Drain:
+        {
+            const int x=player.x+player.dirX,y=player.y+player.dirY;
+            const auto target=std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return Occupies(m,x,y);});
+            if(target==monsters.end()){Note(T(L"吸収…目の前に何もいなかった。",L"Drain... there was nothing in front."));break;}
+            const int atk=player.Atk();
+            const int damage=std::max(1,atk*8/10+Random(0,atk/3)-target->def/2);
+            Hit(*target,damage,T(L"吸収で",L"Drain hits"),false);
+            if(target->hp<=0)monsters.erase(target);
+            const int back=std::max(1,damage/2);
+            player.hp=std::min(player.MaxHp(),player.hp+back);
+            Note(Fmt(T(L"HPが{0}回復した。",L"Got back {0} HP."),{std::to_wstring(back)}));
+            break;
+        }
+        case SkillKind::Satiety:
+            player.food=std::min(100,player.food+20+level);
+            hungryTold=false;
+            Note(T(L"腹もち：おなかが少しふくれた。",L"Satiety: she feels a little fuller."));
+            break;
+        case SkillKind::Focus:
+            player.focusTurns=10;
+            Note(T(L"気合いため！次の剣の一撃が2倍になる（10ターンのうちに）。",L"Focus! Her next sword blow strikes twice as hard (within 10 turns)."));
+            break;
+        case SkillKind::Haste:
+            player.hasteTurns=10+level/2;
+            Note(Fmt(T(L"はやさ！しばらく、ときどき2回行動できる（{0}ターン）。",L"Haste! For a while she now and then acts twice ({0} turns)."),{std::to_wstring(player.hasteTurns)}));
+            break;
+        case SkillKind::Regen:
+            player.regenTurns=10+level/2;
+            Note(Fmt(T(L"さいせい！しばらく毎ターンHPが回復する（{0}ターン）。",L"Regen! For a while her HP comes back every turn ({0} turns)."),{std::to_wstring(player.regenTurns)}));
+            break;
+        case SkillKind::Sorcery:
+            player.sorceryTurns=15+level;
+            Note(Fmt(T(L"まりょく！しばらく魔法の威力が上がる（{0}ターン）。",L"Sorcery! Her magic hits harder for a while ({0} turns)."),{std::to_wstring(player.sorceryTurns)}));
+            break;
+        case SkillKind::Slow:case SkillKind::Weaken:
+        {
+            // Those within two tiles of her (a big one's body counted), for some turns.
+            int n=0;
+            for(auto& m:monsters)
+            {
+                const int ax=std::max(0,std::abs(player.x-m.x)-m.size),ay=std::max(0,std::abs(player.y-m.y)-m.size);
+                if(std::max(ax,ay)>2||m.hp<=0)continue;
+                (kind==SkillKind::Slow?m.slow:m.weak)=(kind==SkillKind::Slow?6:8)+level/3;
+                m.awake=true;
+                ++n;
+            }
+            if(kind==SkillKind::Slow)
+                Note(n>0?Fmt(T(L"スロウ！{0}体の動きが遅くなった。",L"Slow! {0} slowed down."),{std::to_wstring(n)}):T(L"スロウ…まわりにモンスターはいなかった。",L"Slow... there was no monster near."));
+            else
+                Note(n>0?Fmt(T(L"よわらせ！{0}体の攻撃が弱まった。",L"Weaken! {0} hit weaker now."),{std::to_wstring(n)}):T(L"よわらせ…まわりにモンスターはいなかった。",L"Weaken... there was no monster near."));
+            break;
+        }
+        case SkillKind::Teleport:
+        {
+            // A floor tile in a room other than hers (not a vault, nothing there).
+            std::vector<std::pair<int,int>> spots;
+            const int here=RoomAt(player.x,player.y);
+            for(int y=0;y<Height;++y)
+                for(int x=0;x<Width;++x)
+                {
+                    const int r=RoomAt(x,y);
+                    if(r<0||r==here||rooms[r].kind==RoomKind::Vault||At(x,y)!=Tile::Floor||!Empty(x,y))continue;
+                    spots.push_back({x,y});
+                }
+            if(spots.empty()){Note(T(L"テレポート…うまくいかなかった。",L"Teleport... it didn't work."));break;}
+            const auto [x,y]=spots[Random(0,static_cast<int>(spots.size())-1)];
+            player.x=x;player.y=y;
+            Note(T(L"テレポート！別の部屋へ飛んだ。",L"Teleport! She is in another room."));
+            break;
+        }
+        }
+        EndTurn();
+        return true;
     }
 
     bool Game::Cast()
@@ -1290,6 +1617,15 @@ namespace MikuMikuDesktopPerch::Dungeon
     {
         ++turns;
         if(player.jumpWait>0)--player.jumpWait;
+        // Her skills' help wears off as the turns pass (regen heals as it goes).
+        if(player.regenTurns>0)player.hp=std::min(player.MaxHp(),player.hp+2+SkillLevel()/5);
+        auto wear=[&](int& turns,const wchar_t* ja,const wchar_t* en){if(turns>0&&--turns==0)Note(T(ja,en));};
+        wear(player.powerTurns,L"攻撃力が元に戻った。",L"Her attack is back to normal.");
+        wear(player.guardTurns,L"防御力が元に戻った。",L"Her defence is back to normal.");
+        wear(player.hasteTurns,L"はやさの効果が切れた。",L"Haste wore off.");
+        wear(player.regenTurns,L"さいせいの効果が切れた。",L"Regen wore off.");
+        wear(player.sorceryTurns,L"魔力が元に戻った。",L"Her magic is back to normal.");
+        wear(player.focusTurns,L"気合いが抜けてしまった。",L"Her focus faded.");
         // Hungrier by the turn (gently): empty, she no longer heals and slowly weakens, never below 1 HP.
         if(turns%12==0&&player.food>0)
         {
@@ -1319,7 +1655,9 @@ namespace MikuMikuDesktopPerch::Dungeon
             if(turns%8==0)player.mp=std::min(player.MaxMp(),player.mp+1);
         }
         else if(turns%4==0&&player.hp>1)--player.hp;
-        MonstersAct();
+        // Hasted, now and then she moves again before the monsters do.
+        if(player.hasteTurns>0&&Random(1,100)<=35)Note(T(L"すばやく動いた！もう一度行動できる。",L"Quick! She can act again."));
+        else MonstersAct();
         if(state!=State::Dead)Reveal();
     }
 
@@ -1334,7 +1672,19 @@ namespace MikuMikuDesktopPerch::Dungeon
         {
             if(monsters[i].hp<=0)continue;
             Monster& m=monsters[i];
+            // What her skills did to it wears off as the turns pass.
+            if(m.weak>0&&--m.weak==0&&Visible(m.x,m.y))Note(Fmt(T(L"{0}の力が戻った。",L"The {0} is strong again."),{m.name}));
+            const bool slowed=m.slow>0;
+            if(m.slow>0&&--m.slow==0&&Visible(m.x,m.y))Note(Fmt(T(L"{0}の動きが元に戻った。",L"The {0} moves normally again."),{m.name}));
             if(!m.awake)continue;
+            // Slowed: it acts only every other turn.
+            if(slowed&&(turns&1))continue;
+            // Asleep: it does nothing until it wakes (a blow wakes it at once).
+            if(m.asleep>0)
+            {
+                if(--m.asleep==0)Note(Fmt(T(L"{0}が目を覚ました。",L"The {0} woke up."),{m.name}));
+                continue;
+            }
             // How far she is from its body's edge (a big one's body is wider than a tile).
             const int dx=player.x-m.x,dy=player.y-m.y;
             const int ax=std::max(0,std::abs(dx)-m.size),ay=std::max(0,std::abs(dy)-m.size),gap=ax+ay;
@@ -1381,7 +1731,8 @@ namespace MikuMikuDesktopPerch::Dungeon
                         Note(Fmt(T(L"{0}が炎を吐いた！…跳んでかわした！",L"The {0} breathes fire! ...she leapt clear!"),{m.name}));
                         continue;
                     }
-                    const int damage=std::max(2,m.atk+Random(0,m.atk/2)-player.Def()/3);
+                    int damage=std::max(2,m.atk+Random(0,m.atk/2)-player.Def()/3);
+                    if(m.weak>0)damage=std::max(1,damage*6/10);
                     Note(Fmt(T(L"{0}が炎を吐いた！{1}のダメージ。",L"The {0} breathes fire for {1}!"),{m.name,std::to_wstring(damage)}));
                     if(Random(1,100)<=50)Say(Event::Trap,LINE({L"あつっ！炎だ！",L"Hot! Fire!"},{L"まっすぐ並ばないようにしよう！",L"Let's not stand in line with it!"}),
                                              Fmt(T(L"ボスのドラゴンが炎を吐いて、{0}のダメージを受けました",L"The boss dragon breathed fire at you for {0} damage"),{std::to_wstring(damage)}),2);
@@ -1431,6 +1782,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                     continue;
                 }
                 int damage=std::max(1,m.atk+Random(0,m.atk/3)-player.Def()/2);
+                if(m.weak>0)damage=std::max(1,damage*6/10);
                 m.struck=true;
                 if(m.charging)
                 {
