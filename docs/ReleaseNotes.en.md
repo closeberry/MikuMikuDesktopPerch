@@ -2,6 +2,23 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.3.0
+
+### New
+
+- **Dungeon**: "Go to the dungeon" in the right-click menu opens a window where you and that character explore a randomly made dungeon, turn by turn. Meanwhile she leaves the desktop and walks the dungeon in 3D, fights with a sword, casts magic, and talks about what happens in a speech bubble (in her own words with the LLM)
+  - Keys: arrow keys or WASD to move, moving into a monster attacks with the sword, F for magic, Space to wait or look for traps, number keys to use or equip, Shift with a direction to jump ahead, step back or step aside (nothing can hurt her in the air), M to switch between the 2D map and 3D, V to switch cameras, P for a picture, Z for the records
+  - There are chests, traps, shops (Enter buys, Shift with a number sells), locked vaults, monster houses, dark rooms, campfires to rest at (press C beside one to talk with her), crystal rooms and flooded floors, and a boss every five floors. Each kind of monster has its own shape and ways, and the dragon breathes fire. The walls and floors change as you go deeper, and stairs once found are marked on the small map
+  - Skills: skill points add up across adventures, and at each new skill level she learns one of three random skills she does not know yet (vacuum blade, heal, sleep, haste, teleport and more, seventeen in all). Learned skills are ready on F1-F12, and the effects that make her stronger or monsters weaker wear off after some turns
+  - The deepest floor, the records (monsters defeated, things and treasures found) and titles are kept for each character. Press T at the very start to play today's dungeon, the same for the whole day
+  - The memory for drawing it in 3D is taken only while the dungeon is open; "Draw the 3D view light" under Advanced in the settings makes it lighter still
+  - See `docs/Dungeon.md` (in Japanese)
+- **Look at a treasure**: with "Look at a treasure" in the right-click menu, she turns aside, holds a treasure brought home from the dungeon on her palm and says when and where you found it (the others lean in to see). See `docs/Treasures.md` (in Japanese)
+
+### Changed
+
+- "Every minute" for how often the characters chat with each other. With it, a chat longer than a minute is followed by the next as soon as it ends
+
 ## 1.2.9
 
 ### New
