@@ -7,7 +7,7 @@ struct VSInput
     float3 position : POSITION;
     float3 normal : NORMAL;
     float4 color : COLOR;
-    float4 wall : TEXCOORD1;   // a wall top: its tile's middle (x, y), how far it sinks (z), floor straight beyond it (w)
+    float4 wall : TEXCOORD1;   // a wall top: its tile's middle (x, y), how far it sinks (z), floor straight beyond it (w); on a monster, where on it (x, y, w)
 };
 
 struct VSOutput
@@ -16,6 +16,7 @@ struct VSOutput
     float3 world : TEXCOORD0;
     float3 normal : NORMAL;
     float4 color : COLOR0;
+    float3 local : TEXCOORD1;   // where on a monster (its grime's pattern)
 };
 
 static const float Tile = 10;   // a tile's side (DungeonWindow's TileSize)
@@ -47,5 +48,6 @@ VSOutput main(VSInput i)
     o.world = p;
     o.normal = i.normal;
     o.color = i.color;
+    o.local = i.wall.xyw;
     return o;
 }

@@ -6,6 +6,7 @@
 #include "Log.hpp"
 #include "MascotRenderer.hpp"
 #include "MascotModel.hpp"
+#include "MonsterArt.hpp"
 #include "TreasureArt.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -298,7 +299,21 @@ namespace MikuMikuDesktopPerch
             auto rgba=[](float r,float g,float b,float k,float pattern,float (&c)[4]){c[0]=r*k;c[1]=g*k;c[2]=b*k;c[3]=pattern;};
             auto light=[&](int x,int y){return game.Visible(x,y)?1.0f:0.5f;};
             constexpr float T=TileSize,gap=0;
-            constexpr float floorColor[3]={0.50f,0.46f,0.58f},wallColor[3]={0.54f,0.38f,0.33f},ceilingColor[3]={0.85f,0.78f,0.80f};   // bright: lit only by the torch from below
+            // Each stretch of five floors (to its boss) has its own look (GeometryPS): old bricks,
+            // mossy stone ruins, an ice cave, a lava cave, an amethyst abyss, then round again.
+            // The look goes to the shader with the pattern, in the colour's alpha.
+            struct Look {float floor[3],wall[3],ceiling[3];};   // the ceiling bright: lit only by the torch from below
+            static constexpr Look Looks[]={
+                {{0.50f,0.46f,0.58f},{0.54f,0.38f,0.33f},{0.85f,0.78f,0.80f}},
+                {{0.50f,0.50f,0.44f},{0.52f,0.52f,0.46f},{0.72f,0.74f,0.66f}},
+                {{0.70f,0.82f,0.94f},{0.52f,0.66f,0.82f},{0.82f,0.90f,1.00f}},
+                {{0.34f,0.28f,0.26f},{0.32f,0.26f,0.24f},{0.42f,0.32f,0.30f}},
+                {{0.44f,0.38f,0.56f},{0.34f,0.28f,0.46f},{0.52f,0.44f,0.62f}}};
+            const int look=((game.Floor()-1)/5)%static_cast<int>(std::size(Looks));
+            const auto& floorColor=Looks[look].floor;
+            const auto& wallColor=Looks[look].wall;
+            const auto& ceilingColor=Looks[look].ceiling;
+            const float floorPattern=Stones+0.02f*look,wallPattern=Bricks+0.02f*look;
             // The vertices added since from, above bottom, may sink (a wall's top, where it would
             // hide her: GeometryVS works out how far as she walks and the camera moves), down to
             // lowest, for the wall of tile (x, y); floorBeyond: floor straight above it on the map.
@@ -316,10 +331,10 @@ namespace MikuMikuDesktopPerch
                     if(game.At(x,y)==Dungeon::Tile::Wall||!game.Seen(x,y))continue;
                     const float k=game.Visible(x,y)?1.0f:0.45f;
                     const float x0=x*T,x1=(x+1)*T,z1=-y*T,z0=-(y+1)*T;
-                    with(shade(floorColor,k,Stones),[&](const float (&c)[4]){quad({x0+gap,0,z0+gap},{x1-gap,0,z0+gap},{x1-gap,0,z1-gap},{x0+gap,0,z1-gap},{0,1,0},c);});
+                    with(shade(floorColor,k,floorPattern),[&](const float (&c)[4]){quad({x0+gap,0,z0+gap},{x1-gap,0,z0+gap},{x1-gap,0,z1-gap},{x0+gap,0,z1-gap},{0,1,0},c);});
                     // Seen from behind her, a ceiling of slabs at the top of the walls (facing down).
                     if(state.behind)
-                        with(shade(ceilingColor,k,Stones),[&](const float (&c)[4]){quad({x0,WallHeight,z1},{x1,WallHeight,z1},{x1,WallHeight,z0},{x0,WallHeight,z0},{0,-1,0},c);});
+                        with(shade(ceilingColor,k,floorPattern),[&](const float (&c)[4]){quad({x0,WallHeight,z1},{x1,WallHeight,z1},{x1,WallHeight,z0},{x0,WallHeight,z0},{0,-1,0},c);});
                     if(game.At(x,y)==Dungeon::Tile::Door)
                     {
                         // A heavy wooden door with iron bands, bricks above it up to the ceiling.
@@ -328,7 +343,7 @@ namespace MikuMikuDesktopPerch
                         box(x0+0.04f*T,0,z0+0.04f*T,x1-0.04f*T,DoorHeight,z1-0.04f*T,wood);
                         for(const float h:{0.3f,0.75f})box(x0+0.02f*T,DoorHeight*h,z0+0.02f*T,x1-0.02f*T,DoorHeight*h+0.35f,z1-0.02f*T,iron);
                         const size_t from=out.size();
-                        with(shade(wallColor,k,Bricks),[&](const float (&c)[4]){box(x0,DoorHeight,z0,x1,WallHeight,z1,c);});
+                        with(shade(wallColor,k,wallPattern),[&](const float (&c)[4]){box(x0,DoorHeight,z0,x1,WallHeight,z1,c);});
                         sinking(from,x,y,DoorHeight,DoorHeight,game.At(x,y-1)!=Dungeon::Tile::Wall);
                     }
                     if(game.At(x,y)==Dungeon::Tile::Stairs)
@@ -362,7 +377,7 @@ namespace MikuMikuDesktopPerch
                     const float k=lit?1.0f:0.45f,h=WallHeight;
                     const float x0=x*T,x1=(x+1)*T,z1=-y*T,z0=-(y+1)*T;
                     const size_t from=out.size();
-                    with(shade(wallColor,k,Bricks),[&](const float (&c)[4]){box(x0,0,z0,x1,h,z1,c);});
+                    with(shade(wallColor,k,wallPattern),[&](const float (&c)[4]){box(x0,0,z0,x1,h,z1,c);});
                     with(shade(rockTop,k),[&](const float (&c)[4]){quad({x0,h+0.02f,z0},{x1,h+0.02f,z0},{x1,h+0.02f,z1},{x0,h+0.02f,z1},{0,1,0},c);});
                     sinking(from,x,y,0,NearWallHeight,floorAbove);
                 }
@@ -472,16 +487,15 @@ namespace MikuMikuDesktopPerch
             for(const auto& m:game.Monsters())
                 if(game.Visible(m.x,m.y))
                 {
-                    // A body and a head in its colour, bigger for a boss.
-                    const float cx=(m.x+0.5f)*T,cz=-(m.y+0.5f)*T,s=m.boss?1.6f:1.0f;
-                    const float r=((m.color>>16)&255)/255.0f,g=((m.color>>8)&255)/255.0f,b=(m.color&255)/255.0f;
-                    const float body[4]={r,g,b,1},head[4]={r*0.85f,g*0.85f,b*0.85f,1};
-                    box(cx-0.3f*T*s,0,cz-0.3f*T*s,cx+0.3f*T*s,0.6f*T*s,cz+0.3f*T*s,body);
-                    box(cx-0.2f*T*s,0.6f*T*s,cz-0.2f*T*s,cx+0.2f*T*s,0.95f*T*s,cz+0.2f*T*s,head);
+                    // Its own shape (MonsterArt), turned toward her.
+                    const float cx=(m.x+0.5f)*T,cz=-(m.y+0.5f)*T;
+                    const auto& h=game.Hero();
+                    const float yaw=std::atan2(static_cast<float>(h.x-m.x),-static_cast<float>(h.y-m.y));
+                    const float tall=AddMonster(out,m,cx,cz,yaw);
                     // Its health above it when hurt.
                     if(m.hp<m.maxHp)
                     {
-                        const float w=0.8f*T,left=cx-w/2,top=1.15f*T*s,f=static_cast<float>(std::max(0,m.hp))/m.maxHp;
+                        const float w=(0.8f+1.6f*m.size)*T,left=cx-w/2,top=tall+0.15f*T,f=static_cast<float>(std::max(0,m.hp))/m.maxHp;
                         const float back[4]={0.15f,0.12f,0.18f,1},red[4]={0.9f,0.3f,0.3f,1};
                         box(left,top,cz-0.05f*T,left+w,top+0.08f*T,cz+0.05f*T,back);
                         box(left,top+0.01f*T,cz-0.07f*T,left+w*f,top+0.09f*T,cz+0.07f*T,red);
@@ -769,10 +783,12 @@ namespace MikuMikuDesktopPerch
                 if(game.Visible(m.x,m.y))
                 {
                     const PointF p=at(m.x,m.y);
-                    const float grow=m.boss?tile*0.25f:0;
+                    // A big one over all the tiles it takes.
+                    const float grow=tile*m.size+(m.boss?tile*0.1f:0);
                     SolidBrush body(Argb(m.color));
                     g.FillEllipse(&body,p.X+tile*0.08f-grow,p.Y+tile*0.08f-grow,tile*0.84f+2*grow,tile*0.84f+2*grow);
-                    Text(g,m.name.substr(0,1),p.X+tile*0.18f,p.Y+tile*0.06f,tile*0.6f,Color(255,20,18,28),true);
+                    const float letter=tile*0.6f*(1+m.size);
+                    Text(g,m.name.substr(0,1),p.X+tile/2-letter*0.55f,p.Y+tile/2-letter*0.7f,letter,Color(255,20,18,28),true);
                     if(m.hp<m.maxHp)Bar(g,p.X,p.Y-tile*0.2f-grow,tile,tile*0.12f,m.hp,m.maxHp,Color(255,230,80,80));
                 }
 
@@ -924,7 +940,7 @@ namespace MikuMikuDesktopPerch
             auto& game=state.game;
             const auto& h=game.Hero();
             bool foe=false;
-            for(const auto& m:game.Monsters())if(m.x==h.x+dx&&m.y==h.y+dy)foe=true;
+            for(const auto& m:game.Monsters())if(Dungeon::Occupies(m,h.x+dx,h.y+dy))foe=true;
             game.StepOffStairs();
             const int tx=h.x+dx,ty=h.y+dy;
             if(game.Move(dx,dy)&&foe){state.strikeAsked=Strike::Sword;state.strikeAskedAt=GetTickCount64();state.strikeTile={tx,ty};}
@@ -1435,7 +1451,7 @@ namespace MikuMikuDesktopPerch
             if(before<state.strikeLands&&state.strikeTime>=state.strikeLands&&state.strikeTile.first>=0)
             {
                 const auto [x,y]=state.strikeTile;
-                const bool fell=std::none_of(game.Monsters().begin(),game.Monsters().end(),[&](const Dungeon::Monster& m){return m.x==x&&m.y==y;});
+                const bool fell=std::none_of(game.Monsters().begin(),game.Monsters().end(),[&](const Dungeon::Monster& m){return Dungeon::Occupies(m,x,y);});
                 const XMFLOAT3 at{(x+0.5f)*TileSize,6.0f,-(y+0.5f)*TileSize};
                 std::uint32_t seed=static_cast<std::uint32_t>(GetTickCount64());
                 auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};

@@ -96,6 +96,7 @@
     <ClCompile Include="src\Album.cpp" />
     <ClCompile Include="src\Dungeon.cpp" />
     <ClCompile Include="src\DungeonWindow.cpp" />
+    <ClCompile Include="src\MonsterArt.cpp" />
     <ClCompile Include="src\TreasureArt.cpp" />
     <ClCompile Include="src\Speech.cpp" />
     <ClCompile Include="src\MascotModel.cpp" />
@@ -136,6 +137,7 @@
     <ClInclude Include="src\Album.hpp" />
     <ClInclude Include="src\Dungeon.hpp" />
     <ClInclude Include="src\DungeonWindow.hpp" />
+    <ClInclude Include="src\MonsterArt.hpp" />
     <ClInclude Include="src\TreasureArt.hpp" />
     <ClInclude Include="src\Speech.hpp" />
     <ClInclude Include="src\third_party\LipSyncCore.hpp" />

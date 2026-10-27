@@ -38,6 +38,7 @@ namespace MikuMikuDesktopPerch
             float color[4];
             // A wall top that sinks when it would hide the hero (GeometryVS): its tile's middle
             // (x, z), how far it can sink (0: it stays), and 1 when floor lies straight beyond it.
+            // On a monster (its sinking 0): where on the monster it is (x, y, -, z), for its grime.
             float wall[4];
         };
 

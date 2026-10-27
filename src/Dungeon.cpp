@@ -225,7 +225,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     {
         const Tile t=At(x,y);
         if(t==Tile::Wall||t==Tile::Door||(x==player.x&&y==player.y))return false;
-        if(std::any_of(monsters.begin(),monsters.end(),[&](const Monster& m){return m.x==x&&m.y==y;}))return false;
+        if(std::any_of(monsters.begin(),monsters.end(),[&](const Monster& m){return Occupies(m,x,y);}))return false;
         if(std::any_of(fires.begin(),fires.end(),[&](const Fire& f){return f.x==x&&f.y==y;}))return false;
         return std::none_of(chests.begin(),chests.end(),[&](const Chest& c){return c.x==x&&c.y==y;});
     }
@@ -608,7 +608,20 @@ namespace MikuMikuDesktopPerch::Dungeon
             if(const int r=otherRoom({RoomKind::Vault,RoomKind::Shop});r>=0)
                 if(const auto [x,y]=place(r);x>=0){Monster m=RandomMonster(false);m.x=x;m.y=y;monsters.push_back(m);}
         if(bossFloor)
-            if(const auto [x,y]=place(goal);x>=0){Monster m=RandomMonster(true);m.x=x;m.y=y;monsters.push_back(m);}
+        {
+            // The dragon is huge: it takes 3x3 tiles of the room (all of them clear floor), or
+            // one where the room is too small for that.
+            Monster m=RandomMonster(true);
+            for(int tries=0;tries<200&&m.size==0;++tries)
+            {
+                const auto [x,y]=spot(rooms[goal]);
+                bool clear=true;
+                for(int oy=-1;oy<=1&&clear;++oy)for(int ox=-1;ox<=1&&clear;++ox)clear=Empty(x+ox,y+oy);
+                if(clear){m.x=x;m.y=y;m.size=1;}
+            }
+            if(m.size==0)if(const auto [x,y]=place(goal);x>=0){m.x=x;m.y=y;}
+            if(m.size>0||m.x>0)monsters.push_back(m);
+        }
         // From here on, the floor's play has its own run of chance.
         random^=static_cast<std::uint32_t>(turns)*0x85EBCA6Bu+1;
         Reveal();
@@ -1019,12 +1032,12 @@ namespace MikuMikuDesktopPerch::Dungeon
         bolt.clear();flame.clear();
         player.dirX=dx;player.dirY=dy;
         const int x=player.x+dx,y=player.y+dy;
-        const auto target=std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return m.x==x&&m.y==y;});
+        const auto target=std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return Occupies(m,x,y);});
         if(target!=monsters.end())
         {
             const int damage=std::max(1,player.Atk()+Random(0,player.Atk()/2)-target->def/2);
             Hit(*target,damage,T(L"剣で攻撃",L"Sword hits"),false);
-            if(target->hp<=0)monsters.erase(std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return m.x==x&&m.y==y;}));
+            if(target->hp<=0)monsters.erase(target);
             EndTurn();
             return true;
         }
@@ -1073,12 +1086,12 @@ namespace MikuMikuDesktopPerch::Dungeon
             x+=player.dirX;y+=player.dirY;
             if(At(x,y)==Tile::Wall||At(x,y)==Tile::Door)break;
             bolt.push_back({x,y});
-            const auto target=std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return m.x==x&&m.y==y;});
+            const auto target=std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return Occupies(m,x,y);});
             if(target!=monsters.end())
             {
                 const int mag=player.Mag();
                 Hit(*target,std::max(1,mag*2+Random(0,mag)-target->def/2),T(L"魔法が当たって",L"Magic hits"),true);
-                if(target->hp<=0)monsters.erase(std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return m.x==x&&m.y==y;}));
+                if(target->hp<=0)monsters.erase(target);
                 EndTurn();
                 return true;
             }
@@ -1261,7 +1274,9 @@ namespace MikuMikuDesktopPerch::Dungeon
             if(monsters[i].hp<=0)continue;
             Monster& m=monsters[i];
             if(!m.awake)continue;
-            const int dx=player.x-m.x,dy=player.y-m.y,gap=std::abs(dx)+std::abs(dy);
+            // How far she is from its body's edge (a big one's body is wider than a tile).
+            const int dx=player.x-m.x,dy=player.y-m.y;
+            const int ax=std::max(0,std::abs(dx)-m.size),ay=std::max(0,std::abs(dy)-m.size),gap=ax+ay;
             const bool inWall=At(m.x,m.y)==Tile::Wall;   // a ghost passing through: it cannot strike from there
             // A goblin with her gold runs: two steps a turn, away from her, and after a few
             // turns it is gone for good (with the gold).
@@ -1283,14 +1298,15 @@ namespace MikuMikuDesktopPerch::Dungeon
                 continue;
             }
             // The dragon breathes fire along a straight, open line (2-5 tiles), now and then.
-            if(m.boss&&--m.breath<=0&&(dx==0||dy==0)&&gap>=2&&gap<=5&&Random(1,100)<=50)
+            if(m.boss&&--m.breath<=0&&(ax==0||ay==0)&&gap>=2&&gap<=5&&Random(1,100)<=50)
             {
-                const int sx=dx>0?1:dx<0?-1:0,sy=dy>0?1:dy<0?-1:0;
+                // From the edge of its body straight at her.
+                const int sx=ay==0?(dx>0?1:-1):0,sy=ax==0?(dy>0?1:-1):0;
                 std::vector<std::pair<int,int>> line;
                 bool open=true;
                 for(int k=1;k<=gap;++k)
                 {
-                    const int x=m.x+sx*k,y=m.y+sy*k;
+                    const int x=sx?m.x+sx*(m.size+k):player.x,y=sy?m.y+sy*(m.size+k):player.y;
                     if(At(x,y)==Tile::Wall||At(x,y)==Tile::Door){open=false;break;}
                     line.push_back({x,y});
                 }
@@ -1357,7 +1373,7 @@ namespace MikuMikuDesktopPerch::Dungeon
             const std::pair<int,int> first=std::abs(dx)>=std::abs(dy)?std::pair{sx,0}:std::pair{0,sy};
             const std::pair<int,int> second=std::abs(dx)>=std::abs(dy)?std::pair{0,sy}:std::pair{sx,0};
             for(const auto& [mx,my]:{first,second})
-                if((mx||my)&&(m.id==L"Ghost"?Passable(m.x+mx,m.y+my):Free(m.x+mx,m.y+my))){m.x+=mx;m.y+=my;break;}
+                if((mx||my)&&(m.id==L"Ghost"?Passable(m.x+mx,m.y+my):m.size>0?FreeFor(m,m.x+mx,m.y+my):Free(m.x+mx,m.y+my))){m.x+=mx;m.y+=my;break;}
         }
         // Gone (a goblin that got away).
         monsters.erase(std::remove_if(monsters.begin(),monsters.end(),[](const Monster& m){return m.hp<=0;}),monsters.end());
@@ -1368,7 +1384,24 @@ namespace MikuMikuDesktopPerch::Dungeon
     {
         if(x<1||y<1||x>=Width-1||y>=Height-1||(x==player.x&&y==player.y))return false;
         if(At(x,y)!=Tile::Wall)return Free(x,y);
-        return std::none_of(monsters.begin(),monsters.end(),[&](const Monster& o){return o.x==x&&o.y==y;});
+        return std::none_of(monsters.begin(),monsters.end(),[&](const Monster& o){return Occupies(o,x,y);});
+    }
+
+    // Whether monster m (a big one too) could stand with its middle on (x, y): all its body on
+    // open floor, clear of her, the others, campfires and chests.
+    bool Game::FreeFor(const Monster& m,int x,int y) const
+    {
+        for(int oy=-m.size;oy<=m.size;++oy)
+            for(int ox=-m.size;ox<=m.size;++ox)
+            {
+                const int tx=x+ox,ty=y+oy;
+                const Tile t=At(tx,ty);
+                if(t==Tile::Wall||t==Tile::Door||(tx==player.x&&ty==player.y))return false;
+                if(std::any_of(monsters.begin(),monsters.end(),[&](const Monster& o){return &o!=&m&&Occupies(o,tx,ty);}))return false;
+                if(std::any_of(fires.begin(),fires.end(),[&](const Fire& f){return f.x==tx&&f.y==ty;}))return false;
+                if(std::any_of(chests.begin(),chests.end(),[&](const Chest& c){return c.x==tx&&c.y==ty;}))return false;
+            }
+        return true;
     }
 
     // A step away from her (the one that leaves it furthest), if there is one.

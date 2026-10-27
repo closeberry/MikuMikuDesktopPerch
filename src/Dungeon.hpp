@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <map>
 #include <set>
@@ -46,7 +47,11 @@ namespace MikuMikuDesktopPerch::Dungeon
         int stolen=0;       // gold a goblin carries off (hers again when it falls)
         int breath=0;       // turns before the dragon can breathe fire again
         int fleeing=0;      // turns a goblin has run with the gold
+        int size=0;         // 1: its body takes the 3x3 tiles round (x, y) (the dragon)
     };
+
+    // Whether monster m's body is on tile (x, y).
+    inline bool Occupies(const Monster& m,int x,int y){return std::abs(x-m.x)<=m.size&&std::abs(y-m.y)<=m.size;}
 
     struct Chest {int x=0,y=0;Item item;};
     struct Room {int x=0,y=0,w=0,h=0;RoomKind kind=RoomKind::Normal;};
@@ -170,6 +175,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         void EndTurn();
         void MonstersAct();
         bool Passable(int x,int y) const;
+        bool FreeFor(const Monster& m,int x,int y) const;
         void Flee(Monster& m);
         void Wander(Monster& m);
         void Hit(Monster& m,int damage,const wchar_t* how,bool magic);
