@@ -2143,6 +2143,31 @@ namespace MikuMikuDesktopPerch
     }
 
     bool MascotModel::Present(int side,double seconds){return !impl->shotActive&&impl->motion.Present(side,seconds);}
+    bool MascotModel::Strike(bool magic){return !impl->shotActive&&impl->motion.Strike(magic);}
+
+    bool MascotModel::Grip(int side,std::array<float,3>& middle,std::array<float,3>& along) const
+    {
+        const auto& m=*impl;
+        if(!m.solver)return false;
+        const int wrist=side==0?m.FindBone({L"左手首"}):m.FindBone({L"右手首"});
+        const int index=side==0?m.FindBone({L"左人指１",L"左人指1"}):m.FindBone({L"右人指１",L"右人指1"});
+        const int little=side==0?m.FindBone({L"左小指１",L"左小指1"}):m.FindBone({L"右小指１",L"右小指1"});
+        const int elbow=side==0?m.FindBone({L"左ひじ"}):m.FindBone({L"右ひじ"});
+        const size_t count=m.solver->boneMatrices.size();
+        for(int b:{wrist,index,little,elbow})if(b<0||static_cast<size_t>(b)>=count)return false;
+        auto at=[&](int bone){
+            return DirectX::XMVector3Transform(DirectX::XMLoadFloat3(&m.pmx->bones[bone].position),DirectX::XMMatrixTranspose(m.solver->boneMatrices[bone]));
+        };
+        const auto knuckles=DirectX::XMVectorLerp(at(index),at(little),0.5f);
+        const auto grip=DirectX::XMVectorLerp(at(wrist),knuckles,0.8f);
+        // Held as a sword is in a cut: along the forearm, tipped a little past the thumb.
+        const auto forearm=DirectX::XMVector3Normalize(DirectX::XMVectorSubtract(knuckles,at(elbow)));
+        const auto thumb=DirectX::XMVector3Normalize(DirectX::XMVectorSubtract(at(index),at(little)));
+        const auto way=DirectX::XMVector3Normalize(DirectX::XMVectorAdd(forearm,DirectX::XMVectorScale(thumb,0.25f)));
+        middle={DirectX::XMVectorGetX(grip),DirectX::XMVectorGetY(grip),DirectX::XMVectorGetZ(grip)};
+        along={DirectX::XMVectorGetX(way),DirectX::XMVectorGetY(way),DirectX::XMVectorGetZ(way)};
+        return true;
+    }
     void MascotModel::EndGestures(){impl->motion.EndGestures();}
 
     bool MascotModel::HeadPosition(std::array<float,3>& position) const

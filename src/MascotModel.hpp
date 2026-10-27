@@ -155,6 +155,14 @@ namespace MikuMikuDesktopPerch
         // Hold a forearm out in front, palm up, as if showing something on it, for seconds
         // (standing only; False when it cannot now).
         bool Present(int side,double seconds);
+        // A sword's cut or a spell cast (the right hand), the dungeon's attacks; see
+        // GeneratedMotion::Strike. False when it cannot now.
+        bool Strike(bool magic);
+        static constexpr double StrikeHit=0.32;   // seconds in: the cut lands, the spell leaves the hand
+        // A fist's grip from the latest solve (model space): its middle, and the way a sword held
+        // in it points (along the forearm, tipped toward the thumb). False on a model without
+        // those bones.
+        bool Grip(int side,std::array<float,3>& middle,std::array<float,3>& along) const;
         void EndGestures();   // the gesture and reaction playing fade out
         // Between the eyes (左目 and 右目, or the one there is) from the latest solve; the head
         // bone when there is neither.

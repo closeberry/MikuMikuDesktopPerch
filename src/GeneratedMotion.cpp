@@ -652,7 +652,7 @@ namespace MikuMikuDesktopPerch
             {L"neck",Gesture::NeckStretch},{L"nod",Gesture::Nod},{L"drowse",Gesture::Drowse},{L"sway",Gesture::Sway},
             {L"twist",Gesture::Twist},{L"peek",Gesture::Peek},{L"bounce",Gesture::Bounce},{L"tap",Gesture::TapFoot},
             {L"pat",Gesture::PatHead},{L"surprised",Gesture::Surprised},{L"curious",Gesture::Curious},{L"shynod",Gesture::ShyNod},
-            {L"present",Gesture::Present}};
+            {L"present",Gesture::Present},{L"slash",Gesture::Slash},{L"cast",Gesture::Cast}};
     }
 
     std::vector<std::pair<std::wstring,std::wstring>> GeneratedMotion::IdleGestureList()
@@ -699,6 +699,17 @@ namespace MikuMikuDesktopPerch
         reactionSide=side==0?0:1;
         reactionTime=0;
         reactionLength=seconds;
+        reactionWeight=0;
+        return true;
+    }
+
+    bool GeneratedMotion::Strike(bool magic)
+    {
+        if(overrides.empty()||activity!=Activity::Idle)return false;
+        reaction=magic?Gesture::Cast:Gesture::Slash;reactionCut=-1;
+        reactionSide=1;
+        reactionTime=0;
+        reactionLength=magic?1.25:1.15;
         reactionWeight=0;
         return true;
     }
@@ -837,6 +848,74 @@ namespace MikuMikuDesktopPerch
             neck(-16.0f*Deg,-out*14.0f*Deg,0);
             face(rig.smileMouth,0.4f);
             break;
+        case Gesture::Slash:
+        {
+            // A full-strength cut at what stands in front of her. She draws the sword in her fist
+            // up over her shoulder, leaning back and turning that shoulder away; then steps in
+            // with that foot, sinks, and brings it down hard in front of her (quicker and quicker
+            // to the blow), the body leaning into it and the other arm swinging back. She holds
+            // the follow-through a moment, then eases up.
+            const float hit=static_cast<float>(StrikeHit);
+            const float wind=ramp(0.0f,hit-0.12f);
+            const float c=std::clamp((a-(hit-0.10f))/0.10f,0.0f,1.0f);
+            const float cut=c*c;
+            const float settle=ramp(hit+0.30f,0.45f);
+            const float lunge=Smooth(c)*(1.0f-0.6f*settle);
+            const float back=wind*(1.0f-Smooth(c));
+            const XMVECTOR up=XMVectorSet(S.x+out*0.08f*L,S.y+0.40f*L,S.z+0.10f*L,0);
+            const XMVECTOR down=XMVectorSet(-out*0.03f*L,hipY+0.14f*L,S.z-0.66f*L,0);
+            const XMVECTOR wrist=XMVectorAdd(mix(up,down,cut),XMVectorSet(0,0.08f*L*std::sin(XM_PI*cut),-0.18f*L*std::sin(XM_PI*cut),0));
+            ReachArm(g,s,wrist,mix(XMVectorSet(out,0.5f,0.6f,0),XMVectorSet(out,-0.3f,0.5f,0),cut),1.0f,true);
+            CurlFingers(g,s,{0.95f,0.95f,0.95f,0.95f});
+            hang(1-s,-30.0f*Deg*lunge+10.0f*Deg*back,12.0f*Deg,(25.0f+20.0f*lunge)*Deg);
+            CurlFingers(g,1-s,{0.6f,0.65f,0.7f,0.75f});
+            turn(rig.upperBody,(10.0f*back-32.0f*lunge)*Deg,out*(-26.0f*back+14.0f*lunge)*Deg,0);
+            turn(rig.lowerBody,0,out*(-8.0f*back+6.0f*lunge)*Deg,0);
+            neck((-6.0f*back+10.0f*lunge)*Deg,-out*(-14.0f*back+8.0f*lunge)*Deg,0);
+            // The step in: the sword side's foot forward (up a little on the way), the hips after
+            // it and lower.
+            if(rig.legIK[s]>=0)
+            {
+                auto& k=KeyOf(g,rig.legIK[s]).position;
+                k.z-=0.38f*L*lunge;k.y+=0.08f*L*std::sin(XM_PI*c);
+            }
+            if(rig.center>=0)KeyOf(g,rig.center).position.z-=0.18f*L*lunge;
+            if(rig.groove>=0)KeyOf(g,rig.groove).position.y-=0.03f*L*back+0.08f*L*lunge;
+            face(rig.mouthOpen,0.5f*Smooth(c)*(1.0f-settle));
+            break;
+        }
+        case Gesture::Cast:
+        {
+            // A full-strength spell with both hands: drawn back to her side, palms together as
+            // the power gathers (she sinks and leans back), then thrust out in front, palms
+            // forward, with a step in and the body leaning after them. Held, then eased off.
+            const float hit=static_cast<float>(StrikeHit);
+            const float charge=ramp(0.0f,hit-0.08f);
+            const float c=std::clamp((a-(hit-0.08f))/0.08f,0.0f,1.0f);
+            const float push=1.0f-(1.0f-c)*(1.0f-c);
+            const float settle=ramp(hit+0.35f,0.45f);
+            const float thrust=push*(1.0f-0.5f*settle);
+            const float back=charge*(1.0f-push);
+            both([&](int side,float o){
+                const XMVECTOR drawn=XMVectorSet(out*0.22f*L+o*0.03f*L,S.y-0.24f*L,S.z+0.02f*L,0);
+                const XMVECTOR front=XMVectorSet(o*0.06f*L,S.y-0.04f*L,S.z-0.70f*L,0);
+                ReachArm(g,side,mix(drawn,front,push),XMVectorSet(o,-0.6f,0.4f,0),1.0f,true);
+                AimHand(g,side,XMVector3Normalize(mix(XMVectorSet(0,0.2f,-1,0),XMVectorSet(-o*0.15f,1,-0.3f,0),push)),
+                        XMVector3Normalize(mix(XMVectorSet(-o,0,0,0),XMVectorSet(0,0,-1,0),push)));
+                CurlFingers(g,side,{0.05f,0.05f,0.08f,0.1f});
+            });
+            turn(rig.upperBody,(10.0f*back-26.0f*thrust)*Deg,-out*20.0f*Deg*back,0);
+            neck((-5.0f*back+8.0f*thrust)*Deg,out*12.0f*Deg*back,0);
+            if(rig.legIK[s]>=0)
+            {
+                auto& k=KeyOf(g,rig.legIK[s]).position;
+                k.z-=0.26f*L*thrust;k.y+=0.06f*L*std::sin(XM_PI*c);
+            }
+            if(rig.center>=0)KeyOf(g,rig.center).position.z-=0.12f*L*thrust;
+            if(rig.groove>=0)KeyOf(g,rig.groove).position.y-=0.06f*L*back+0.06f*L*thrust;
+            face(rig.mouthOpen,0.4f*push*(1.0f-settle));
+            break;
+        }
         case Gesture::LookAtPalm:
             // Looking down at the open palm held in front of the chest.
             ReachArm(g,s,XMVectorSet(out*0.06f*L,S.y-0.16f*L,S.z-0.40f*L,0),XMVectorSet(out,-1,-0.1f,0));
@@ -1333,7 +1412,7 @@ namespace MikuMikuDesktopPerch
             reactionLength=std::min(reactionLength,reactionTime+0.5);
         if(reactionCut>=0)reactionCut-=dt;
         if(reactionTime>=reactionLength||(reactionCut<=0&&reactionCut>-1)){reaction=Gesture::None;reactionWeight=0;reactionCut=-1;return;}
-        const double blendIn=reaction==Gesture::Surprised?0.12:0.3;
+        const double blendIn=reaction==Gesture::Slash||reaction==Gesture::Cast?0.15:reaction==Gesture::Surprised?0.12:0.3;
         reactionWeight=Smooth(static_cast<float>(std::min({reactionTime/blendIn,(reactionLength-reactionTime)/ReactionBlendOut,1.0})));
         if(reactionCut>0)reactionWeight*=Smooth(static_cast<float>(reactionCut/CutBlend));
         std::vector<Key> g=keys;
@@ -1468,8 +1547,17 @@ namespace MikuMikuDesktopPerch
             // as the arm comes forward.
             const float lag=std::cos(XM_2PI*(p-0.03f));
             const float swing0=-g.armSwing*a*lag,swing1=g.armSwing*a*lag;
-            arms(swing0,swing1,rig.armLower[0],rig.armLower[1],
-                 g.elbow+0.3f*std::max(0.0f,swing0),g.elbow+0.3f*std::max(0.0f,swing1));
+            if(activity==Activity::Run)
+            {
+                // Running: the hands lightly closed, and the elbow closing as the arm comes
+                // forward and opening as it goes back, so each fist pumps up to the chest and
+                // down to the hip in time with the steps.
+                arms(swing0,swing1,rig.armLower[0],rig.armLower[1],g.elbow+0.6f*swing0,g.elbow+0.6f*swing1);
+                for(int side=0;side<2;++side)CurlFingers(keys,side,{0.65f,0.7f,0.75f,0.8f});
+            }
+            else
+                arms(swing0,swing1,rig.armLower[0],rig.armLower[1],
+                     g.elbow+0.3f*std::max(0.0f,swing0),g.elbow+0.3f*std::max(0.0f,swing1));
         };
 
         switch(activity)

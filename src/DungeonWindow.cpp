@@ -35,6 +35,8 @@ namespace MikuMikuDesktopPerch
         constexpr ULONGLONG WordsHold=3000,AskEvery=12000,AskWait=9000;
         constexpr ULONGLONG DefeatShown=1500;   // the defeat stays at least this long before a key takes her home
 
+        enum class Strike {None,Sword,Magic};   // her attacks, shown in 3D
+
         struct
         {
             HWND window=nullptr;
@@ -71,6 +73,14 @@ namespace MikuMikuDesktopPerch
             bool firstPerson=false;           // behind her with a wall close behind: seen through her eyes
             float firstBlend=0;               // easing into it (0: behind her, 1: her eyes)
             float eyeHeight=15;               // her eyes' height, eased (her walk bobs it)
+            // Her attacks in 3D: one asked for (she cuts or casts as soon as she stands), and
+            // the one playing, with how long it has, the sword tip's recent places (its trail) and
+            // how far the spell flies (tiles).
+            Strike strikeAsked=Strike::None,strike=Strike::None;
+            ULONGLONG strikeAskedAt=0;
+            double strikeTime=0;
+            std::vector<DirectX::XMFLOAT3> trail;
+            float boltTiles=0;
             // What she says (in the bubble under the view): her own line, or the LLM's as it
             // comes (waiting: asked, "…" until it does). weight: how much it matters.
             struct
@@ -451,11 +461,7 @@ namespace MikuMikuDesktopPerch
                         box(left,top+0.01f*T,cz-0.07f*T,left+w*f,top+0.09f*T,cz+0.07f*T,red);
                     }
                 }
-            for(const auto& [x,y]:game.Bolt())
-            {
-                const float cx=(x+0.5f)*T,cz=-(y+0.5f)*T,glow[4]={1.0f,0.92f,0.55f,Glow};
-                box(cx-0.12f*T,0.45f*T,cz-0.12f*T,cx+0.12f*T,0.69f*T,cz+0.12f*T,glow);
-            }
+            // The spell's path is not marked here: its light flies along it (TickDungeonWindow).
             return out;
         }
 
@@ -870,9 +876,37 @@ namespace MikuMikuDesktopPerch
         bool Underway()
         {
             if(!Showing3D()||!state.placed)return false;
+            // An attack still swinging counts too: the next waits for it.
+            if(state.strikeAsked!=Strike::None||(state.strike!=Strike::None&&state.strikeTime<0.6))return true;
             const auto& h=state.game.Hero();
             const float dx=(h.x+0.5f)*TileSize-state.drawnX,dz=-(h.y+0.5f)*TileSize-state.drawnZ;
             return dx*dx+dz*dz>TileSize*TileSize*0.11f;
+        }
+
+        // A step, or a cut at the monster there (in 3D, her sword swings).
+        void Step(int dx,int dy)
+        {
+            auto& game=state.game;
+            const auto& h=game.Hero();
+            bool foe=false;
+            for(const auto& m:game.Monsters())if(m.x==h.x+dx&&m.y==h.y+dy)foe=true;
+            game.StepOffStairs();
+            if(game.Move(dx,dy)&&foe){state.strikeAsked=Strike::Sword;state.strikeAskedAt=GetTickCount64();}
+        }
+
+        // A spell, cast the way she faces (in 3D, it flies from her hand along the bolt's path).
+        void Cast()
+        {
+            auto& game=state.game;
+            if(!game.Cast())return;
+            const auto& h=game.Hero();
+            state.boltTiles=static_cast<float>(Dungeon::Game::MagicRange);
+            if(!game.Bolt().empty())
+            {
+                const auto& [x,y]=game.Bolt().back();
+                state.boltTiles=static_cast<float>(std::max(std::abs(x-h.x),std::abs(y-h.y)));
+            }
+            state.strikeAsked=Strike::Magic;state.strikeAskedAt=GetTickCount64();
         }
 
         constexpr ULONGLONG RunAfter=250;   // milliseconds a move key is held before she runs
@@ -979,14 +1013,14 @@ namespace MikuMikuDesktopPerch
                     // Behind her: up goes the way she faces, left and right turn her, down turns
                     // her round. Turning takes no turn.
                     const auto& h=game.Hero();
-                    if(dy<0){game.StepOffStairs();game.Move(h.dirX,h.dirY);}
+                    if(dy<0)Step(h.dirX,h.dirY);
                     else if(dx<0)game.Face(h.dirY,-h.dirX);
                     else if(dx>0)game.Face(-h.dirY,h.dirX);
                     else game.Face(-h.dirX,-h.dirY);
                 }
-                else if(dx||dy){game.StepOffStairs();game.Move(dx,dy);}
+                else if(dx||dy)Step(dx,dy);
                 else if(game.GetState()!=State::Playing)return;
-                else if(key=='F')game.Cast();
+                else if(key=='F')Cast();
                 // One turn a press: held down, it does not keep waiting (nor looking for traps).
                 else if((key==VK_SPACE||key==VK_OEM_PERIOD)&&!repeat)game.Rest();
                 else
@@ -1151,8 +1185,7 @@ namespace MikuMikuDesktopPerch
             if((GetAsyncKeyState(static_cast<int>(state.queuedKey))&0x8000)&&GetForegroundWindow()==state.window&&
                state.game.GetState()!=Dungeon::Game::State::Dead&&!state.confirmQuit&&StepFor(state.queuedKey,sx,sy))
             {
-                state.game.StepOffStairs();
-                state.game.Move(sx,sy);
+                Step(sx,sy);
                 Listen();
                 InvalidateRect(state.window,nullptr,FALSE);
             }
@@ -1171,8 +1204,7 @@ namespace MikuMikuDesktopPerch
                 if(GetTickCount64()-state.heldSince>=RunAfter)state.hurry=true;
                 if(state.hurry&&!Underway())
                 {
-                    state.game.StepOffStairs();
-                    state.game.Move(sx,sy);
+                    Step(sx,sy);
                     Listen();
                     InvalidateRect(state.window,nullptr,FALSE);
                 }
@@ -1218,7 +1250,114 @@ namespace MikuMikuDesktopPerch
         // Her walks on the desktop leave センター shifted sideways in the model (the window
         // follows it there): taken back out, or she would stand off her tile, and the shift would
         // swing round with her as she turns.
-        r.SetModelTransform(XMMatrixTranslation(-model.RootOffset(),0,0)*XMMatrixRotationY(state.drawnAngle)*XMMatrixTranslation(state.drawnX,0,state.drawnZ));
+        const XMMATRIX world=XMMatrixTranslation(-model.RootOffset(),0,0)*XMMatrixRotationY(state.drawnAngle)*XMMatrixTranslation(state.drawnX,0,state.drawnZ);
+        r.SetModelTransform(world);
+
+        // Her attack: started once she stands (asked for while she still walked or turned, it
+        // waits a moment, then is let go). The sword is light in her fist, a blade of sparks
+        // with a trail where its tip went through the cut; the spell gathers in her palm and
+        // flies along the bolt's path.
+        if(state.strikeAsked!=Strike::None)
+        {
+            if(model.Strike(state.strikeAsked==Strike::Magic))
+            {
+                state.strike=state.strikeAsked;
+                state.strikeTime=0;
+                state.trail.clear();
+                state.strikeAsked=Strike::None;
+            }
+            else if(GetTickCount64()-state.strikeAskedAt>600)state.strikeAsked=Strike::None;
+        }
+        std::vector<MascotRenderer::Particle> sparks;
+        if(state.strike!=Strike::None)
+        {
+            state.strikeTime+=dt;
+            const float t=static_cast<float>(state.strikeTime),hit=static_cast<float>(MascotModel::StrikeHit);
+            auto place=[&](FXMVECTOR p,float size,float r,float g,float b,float a,float angle=0){
+                MascotRenderer::Particle q;
+                q.position={XMVectorGetX(p),XMVectorGetY(p),XMVectorGetZ(p)};
+                q.size=size;q.color={r,g,b,std::clamp(a,0.0f,1.0f)};q.angle=angle;
+                sparks.push_back(q);
+            };
+            auto toWorld=[&](const std::array<float,3>& p){return XMVector3TransformCoord(XMVectorSet(p[0],p[1],p[2],0),world);};
+            if(state.strike==Strike::Sword)
+            {
+                std::array<float,3> middle,along;
+                if(t>1.15f)state.strike=Strike::None;
+                else if(model.Grip(1,middle,along))
+                {
+                    const float shown=std::clamp(t/0.1f,0.0f,1.0f)*std::clamp((1.15f-t)/0.3f,0.0f,1.0f);
+                    const XMVECTOR base=toWorld(middle);
+                    const XMVECTOR way=XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(along[0],along[1],along[2],0),world));
+                    constexpr float Blade=7.5f;
+                    for(int i=0;i<16;++i)
+                    {
+                        const float f=0.6f+Blade*i/15.0f;
+                        place(XMVectorAdd(base,XMVectorScale(way,f)),0.45f-0.15f*i/15.0f,0.65f,0.85f,1.0f,shown*0.9f);
+                    }
+                    // The tip's trail, through the cut only.
+                    if(t>hit-0.11f&&t<hit+0.05f)
+                    {
+                        XMFLOAT3 tip;
+                        XMStoreFloat3(&tip,XMVectorAdd(base,XMVectorScale(way,Blade)));
+                        state.trail.push_back(tip);
+                    }
+                    const size_t n=state.trail.size();
+                    for(size_t i=0;i<n;++i)
+                    {
+                        const float age=static_cast<float>(n-i)/std::max<size_t>(n,1);
+                        const XMVECTOR tip=XMLoadFloat3(&state.trail[i]);
+                        // Each tip and halfway down its blade, fading as the cut goes on.
+                        const float fade=std::clamp((hit+0.35f-t)/0.3f,0.0f,1.0f)*(1.0f-0.6f*age);
+                        place(tip,0.9f,0.75f,0.9f,1.0f,fade*0.8f);
+                        place(XMVectorLerp(tip,base,0.35f),0.7f,0.75f,0.9f,1.0f,fade*0.5f);
+                    }
+                }
+            }
+            else
+            {
+                std::array<float,3> palm,other;
+                const auto& h=game.Hero();
+                const XMVECTOR forward=XMVector3Normalize(XMVectorSet(static_cast<float>(h.dirX),0,-static_cast<float>(h.dirY),0));
+                const float speed=TileSize*12.0f,reach=state.boltTiles*TileSize;
+                if(t>std::max(hit+reach/speed+0.35f,1.25f))state.strike=Strike::None;
+                else if(model.PalmPosition(1,palm))
+                {
+                    // Between her two palms (both hands cast it).
+                    if(model.PalmPosition(0,other))for(int i=0;i<3;++i)palm[i]=(palm[i]+other[i])*0.5f;
+                    const XMVECTOR hand=XMVectorAdd(toWorld(palm),XMVectorScale(forward,0.8f));
+                    if(t<hit)
+                    {
+                        // Gathering: sparks circling in to the palm, brighter as they come.
+                        const float k=t/hit;
+                        for(int i=0;i<6;++i)
+                        {
+                            const float a=XM_2PI*i/6.0f+t*9.0f,radius=3.0f*(1.0f-k);
+                            place(XMVectorAdd(hand,XMVectorSet(radius*std::cos(a),radius*std::sin(a),radius*0.5f*std::sin(a*0.7f),0)),0.5f,1.0f,0.75f,0.4f,k);
+                        }
+                        place(hand,1.5f+2.0f*k,1.0f,0.8f,0.45f,k);
+                    }
+                    else
+                    {
+                        // Flying the way she faces in an arc (over her head's height, so it shows from
+                        // behind her too) down to a monster's middle at the end of the path, where
+                        // it bursts and fades.
+                        const float flown=std::min((t-hit)*speed,reach);
+                        const float end=std::clamp((t-hit-reach/speed)/0.35f,0.0f,1.0f);
+                        const float from=XMVectorGetY(hand),arc=std::min(10.0f,reach*0.3f);
+                        auto path=[&](float d){
+                            const float f=reach>0?d/reach:1.0f;
+                            const XMVECTOR p=XMVectorAdd(hand,XMVectorScale(forward,d));
+                            return XMVectorSetY(p,from+(7.0f-from)*f+arc*std::sin(XM_PI*f));
+                        };
+                        place(path(flown),4.0f+6.0f*end,1.0f,0.8f,0.45f,1.0f-end,t*4.0f);
+                        for(int i=1;i<=8;++i)
+                            place(path(std::max(0.0f,flown-i*1.5f)),2.6f-0.25f*i,1.0f,0.7f,0.35f,(1.0f-end)*(1.0f-i/9.0f),t*3.0f+i);
+                    }
+                }
+            }
+        }
+        r.SetParticles(sparks);
         r.SetTorch(state.drawnX,state.drawnZ,TileSize*(state.behind?9.0f:7.0f));
 
         // The camera: from above and behind the map's bottom edge (as in Shiren), or behind her

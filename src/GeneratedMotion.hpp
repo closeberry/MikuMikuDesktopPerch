@@ -45,7 +45,9 @@ namespace MikuMikuDesktopPerch
                             // Click reactions only (never picked at random).
                             PatHead,Surprised,Curious,ShyNod,
                             // Asked for alone (Present): showing something on an open palm.
-                            Present};
+                            Present,
+                            // Asked for alone (Strike, the dungeon): a sword's cut, a spell cast.
+                            Slash,Cast};
         static constexpr int GestureCount=37;
 
         // T-stance correction of one side: keys are generated in the corrected (A-stance) frame.
@@ -102,6 +104,12 @@ namespace MikuMikuDesktopPerch
         // Hold a forearm out in front, palm up, as if showing something on it, for seconds
         // (side 0: the left hand), as a reaction (over an idle VMD too). False when it cannot now.
         bool Present(int side,double seconds);
+        // A cut with a sword held in the right fist (over the shoulder and down across the body),
+        // or a spell cast (the right palm thrust out in front), as a reaction: quick in. The cut
+        // lands, or the spell leaves the hand, StrikeHit seconds in. False when it cannot now
+        // (not standing).
+        bool Strike(bool magic);
+        static constexpr double StrikeHit=MascotModel::StrikeHit;
         // Fade out the gesture and the click reaction playing (from the weight each has now), and
         // hold off the next gesture for a few seconds.
         void EndGestures();
