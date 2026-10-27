@@ -44,7 +44,8 @@ namespace MikuMikuDesktopPerch
     // where it looks, raised and moved back from the default, in her upper body's lengths, and
     // how far round her in radians).
     void SetMahjongCamera(float pitch,float distance,float y,float z,float yaw);
-    // Diagnostics (--mahjong-reach): once seated, she reaches for her river's next place at once.
+    // Diagnostics (--mahjong-reach): once seated, she touches a tile of hers as at a discard, and
+    // her newest river tile fades in again.
     void ReachMahjongForTest();
 
     // Diagnostics (--mahjong-shot): a game played by a simple player for moves steps (or to the

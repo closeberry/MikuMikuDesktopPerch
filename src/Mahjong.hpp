@@ -163,6 +163,10 @@ namespace MikuMikuDesktopPerch::Mahjong
         int SeatWind(int who) const {return who==dealer?East:West;}
         const RoundEnd& Ended() const {return ended;}
         bool HerTurnDrawn() const {return herDrawn;}
+        // Her turn, with a tile drawn (or after a call): the tile she will discard (an index as
+        // Discard takes, her drawn tile at her hand's size), chosen now and kept for her Step,
+        // so it can be shown before it goes; -1 when she has none to discard.
+        int HerNextDiscard();
         // Her last call (Japanese and English) and a count that grows with each.
         const wchar_t* HerCallJa() const {return callJa;}
         const wchar_t* HerCallEn() const {return callEn;}
@@ -204,6 +208,8 @@ namespace MikuMikuDesktopPerch::Mahjong
         bool calledYet=false;          // a call this hand (no first-turn yaku after one)
         bool rinshan=false;            // the draw now is after a kan
         bool herDrawn=false;           // her turn: she has drawn (or called), and discards next
+        int planned=-1;                // HerNextDiscard's choice (-1: not chosen yet)
+        bool plannedRiichi=false;
         Phase phase=Phase::YourTurn;
         RoundEnd ended;
         const wchar_t* callJa=L"";

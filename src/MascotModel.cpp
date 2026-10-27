@@ -2144,9 +2144,9 @@ namespace MikuMikuDesktopPerch
 
     bool MascotModel::Present(int side,double seconds){return !impl->shotActive&&impl->motion.Present(side,seconds);}
     bool MascotModel::Strike(bool magic){return !impl->shotActive&&impl->motion.Strike(magic);}
-    bool MascotModel::Reach(int side,const std::array<float,3>& fromHead,double seconds)
+    bool MascotModel::Reach(int side,const std::array<float,3>& fromHead,double seconds,bool tap)
     {
-        return !impl->shotActive&&impl->motion.Reach(side,DirectX::XMFLOAT3(fromHead[0],fromHead[1],fromHead[2]),seconds);
+        return !impl->shotActive&&impl->motion.Reach(side,DirectX::XMFLOAT3(fromHead[0],fromHead[1],fromHead[2]),seconds,tap);
     }
 
     bool MascotModel::Grip(int side,std::array<float,3>& middle,std::array<float,3>& along) const

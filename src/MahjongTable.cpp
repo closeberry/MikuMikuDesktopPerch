@@ -57,6 +57,7 @@ namespace MikuMikuDesktopPerch::Mahjong
         }
         wall=2*DrawsEach;
         calledYet=rinshan=herDrawn=false;
+        planned=-1;
         ended=RoundEnd{};
         callJa=callEn=L"";
         if(dealer==You)Draw(You);
@@ -227,7 +228,7 @@ namespace MikuMikuDesktopPerch::Mahjong
         ++me.draws;
         rinshan=false;
         if(who==You)phase=Phase::YourTurn;
-        else {phase=Phase::HerTurn;herDrawn=true;}
+        else {phase=Phase::HerTurn;herDrawn=true;planned=-1;}
     }
 
     void Table::KanDraw(int who)
@@ -244,7 +245,7 @@ namespace MikuMikuDesktopPerch::Mahjong
         me.hasDrawn=true;
         rinshan=true;
         if(who==You)phase=Phase::YourTurn;
-        else {phase=Phase::HerTurn;herDrawn=true;}
+        else {phase=Phase::HerTurn;herDrawn=true;planned=-1;}
     }
 
     void Table::Discard(int index,bool riichi)
@@ -377,7 +378,7 @@ namespace MikuMikuDesktopPerch::Mahjong
         {
             HerSays(L"ポン",L"Pon");
             phase=Phase::HerTurn;
-            herDrawn=true;
+            herDrawn=true;planned=-1;
         }
     }
 
@@ -445,11 +446,19 @@ namespace MikuMikuDesktopPerch::Mahjong
         HerDiscard();
     }
 
+    int Table::HerNextDiscard()
+    {
+        if(phase!=Phase::HerTurn||!herDrawn)return -1;
+        if(planned<0){plannedRiichi=false;planned=ChooseDiscard(Her,CareNow(),plannedRiichi);}
+        return planned;
+    }
+
     void Table::HerDiscard()
     {
-        bool riichi=false;
-        const int index=ChooseDiscard(Her,CareNow(),riichi);
+        const int index=HerNextDiscard();
+        const bool riichi=plannedRiichi;
         herDrawn=false;
+        planned=-1;
         DiscardFor(Her,index,riichi);
     }
 

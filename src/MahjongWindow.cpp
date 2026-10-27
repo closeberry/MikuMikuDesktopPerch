@@ -39,6 +39,7 @@ namespace MikuMikuDesktopPerch
         constexpr ULONGLONG RiichiShowDrawn=450;   // after riichi, the drawn tile is seen this long before it goes
         constexpr ULONGLONG ReachLead=600;         // her hand starts out this long before her discard (it is out 0.6 s in)
         constexpr ULONGLONG HerDiscardWait3D=650;  // at the 3D table: time for her hand to go out after her draw
+        constexpr double FadeSeconds=0.6;          // her discard fading into her river
         // Sizes in logical pixels (at 96 dpi, at the size the window opens).
         constexpr float BaseWidth=1180,BaseHeight=840;
         constexpr float HandW=46,HandH=62,RiverW=30,RiverH=40,SmallW=26,SmallH=35,BackW=26,BackH=36;
@@ -85,6 +86,13 @@ namespace MikuMikuDesktopPerch
             // river's last tile and the place of its next, her drawn tile, her newest meld.
             std::array<std::array<float,3>,2> lastRiverSpot{},nextRiverSpot{};
             std::array<float,3> herDrawnSpot{},herMeldSpot{};
+            std::vector<std::array<float,3>> herHandSpots;   // on top of each of her standing tiles (the drawn one last)
+            std::array<float,3> touched{};   // the tile of hers she reached for (it vanishes from there)
+            // Her newest river tile fading in (left out of the table, drawn each frame) since
+            // fadeSince (seconds of the clock below), where and how it lies.
+            bool fading=false;
+            double fadeSince=0,clock=0;
+            struct Lying {float x=0,z=0;Piece piece;int turn=0;bool dim=false;} fadingTile;
             // What of hers was seen last frame (sparkles where her tiles come), and the river
             // she reached for last (one reach a discard).
             int seenRiver=-1,seenMelds=-1;
@@ -95,6 +103,7 @@ namespace MikuMikuDesktopPerch
             std::vector<Spark> sparks;
             std::mt19937 sparkRandom{12345};
             bool testReach=false;            // diagnostics: reach once seated
+            double testVanishAt=0;           // and then (on the clock) the tile goes
         } state;
 
         // Where the parts of the window go, in logical pixels: her side on top, her river, the
@@ -536,6 +545,7 @@ namespace MikuMikuDesktopPerch
             state.seenDrawn=false;
             state.reachedRiver=static_cast<size_t>(-1);
             state.sparks.clear();
+            state.fading=false;
             return true;
         }
 
@@ -567,6 +577,7 @@ namespace MikuMikuDesktopPerch
                 for(const auto& m:seat.melds)out.push_back(static_cast<int>(m.kind)*64+m.tile);
                 out.push_back(-2);
             }
+            out.push_back(state.fading?1:0);
             const auto& you=state.table.Of(Mahjong::You);
             const int n=static_cast<int>(you.hand.size());
             for(int i=0;i<n+(you.hasDrawn?1:0);++i)
@@ -628,6 +639,50 @@ namespace MikuMikuDesktopPerch
         float SeatZ(){return 0.15f*state.upper+SeatDepth();}
         float FloorY(){return -0.5f*state.hips;}
 
+
+        // A tile's face on the atlas (u, v at its corners: top left, top right, bottom right,
+        // bottom left), turned by turn corners.
+        void FaceUv(const Piece& p,float (&uv)[8],int turn)
+        {
+            const int at=p.red&&p.kind<Mahjong::East?Mahjong::Kinds+p.kind/9:p.kind;
+            Bitmap* faces=Faces();
+            const float aw=faces?static_cast<float>(faces->GetWidth()):1,ah=faces?static_cast<float>(faces->GetHeight()):1;
+            const float u0=(at%AtlasColumns*TileSide+2)/aw,u1=((at%AtlasColumns+1)*TileSide-2)/aw;
+            const float v0=(at/AtlasColumns*TileTop+2)/ah,v1=((at/AtlasColumns+1)*TileTop-2)/ah;
+            const float corners[8]={u0,v0,u1,v0,u1,v1,u0,v1};
+            for(int k=0;k<4;++k){uv[k*2]=corners[((k+turn)%4)*2];uv[k*2+1]=corners[((k+turn)%4)*2+1];}
+        }
+
+        // A tile lying face up (or down) on the table, its middle at (x, z): turn 0 with its top
+        // away from you, 2 toward you (hers), 1 and 3 on its side (a riichi discard, yours and
+        // hers). appear below 1: coming into being, flat and the felt's colour at 0.
+        void LyingTile(Mesh& m,float x,float z,const Piece& p,int turn,bool faceUp,bool dim,float appear=1)
+        {
+            using V=std::array<float,3>;
+            const float D=state.upper,top=0.12f*state.hips+0.30f*D;
+            const float tw=0.085f*D,tl=0.115f*D,tt=0.06f*D*std::max(appear,0.05f);
+            const float felt[3]={0.09f,0.33f,0.22f};
+            auto tint=[&](float r,float g,float b,float (&c)[4]){
+                const float rgb[3]={r,g,b};
+                for(int k=0;k<3;++k)c[k]=felt[k]+(rgb[k]-felt[k])*appear;
+                c[3]=1;
+            };
+            float back[4],ivory[4],face[4];
+            tint(0.84f,0.47f,0.20f,back);
+            tint(0.95f,0.92f,0.84f,ivory);
+            dim?tint(0.62f,0.62f,0.64f,face):tint(1,1,1,face);
+            const float hx=(turn%2?tl:tw)/2,hz=(turn%2?tw:tl)/2;
+            const float y=top+tt*0.4f;
+            m.Box(x-hx,top,z-hz,x+hx,y,z+hz,back);
+            m.Box(x-hx,y,z-hz,x+hx,top+tt,z+hz,faceUp?ivory:back,false);
+            // The face: its corners from the far left round, as seen from your side.
+            const V a{x-hx,top+tt,z+hz},b{x+hx,top+tt,z+hz},c{x+hx,top+tt,z-hz},d{x-hx,top+tt,z-hz};
+            if(!faceUp){m.Quad(d,c,b,a,{0,1,0},back);return;}
+            float uv[8];
+            // Corner k of the face takes the picture's corner k+turn (0 top left, clockwise).
+            FaceUv(p,uv,turn);
+            m.Quad(a,b,c,d,{0,1,0},face,uv);
+        }
 
         // Her chair, where she sits at z: a cushioned seat from under her knees to behind her,
         // a back with two rails, four legs. Drawn on its own, as it moves in with her when she
@@ -811,29 +866,8 @@ namespace MikuMikuDesktopPerch
             // A tile lying face up, its middle at (x, z): turn 0 with its top away from you, 2
             // toward you (hers), 1 and 3 on its side (a riichi discard, yours and hers).
             const float tw=0.085f*D,tl=0.115f*D,tt=0.06f*D,gap=0.004f*D;
-            auto atlas=[&](const Piece& p,float (&uv)[8],int turn){
-                const int at=p.red&&p.kind<Mahjong::East?Mahjong::Kinds+p.kind/9:p.kind;
-                Bitmap* faces=Faces();
-                const float aw=faces?static_cast<float>(faces->GetWidth()):1,ah=faces?static_cast<float>(faces->GetHeight()):1;
-                const float u0=(at%AtlasColumns*TileSide+2)/aw,u1=((at%AtlasColumns+1)*TileSide-2)/aw;
-                const float v0=(at/AtlasColumns*TileTop+2)/ah,v1=((at/AtlasColumns+1)*TileTop-2)/ah;
-                // The picture's corners (top left, top right, bottom right, bottom left), turned.
-                const float corners[8]={u0,v0,u1,v0,u1,v1,u0,v1};
-                for(int k=0;k<4;++k){uv[k*2]=corners[((k+turn)%4)*2];uv[k*2+1]=corners[((k+turn)%4)*2+1];}
-            };
-            auto lying=[&](float x,float z,const Piece& p,int turn,bool faceUp,bool dim){
-                const float hx=(turn%2?tl:tw)/2,hz=(turn%2?tw:tl)/2;
-                const float y=top+tt*0.4f;
-                box(x-hx,top,z-hz,x+hx,y,z+hz,back);
-                box(x-hx,y,z-hz,x+hx,top+tt,z+hz,faceUp?ivory:back,false);
-                // The face: its corners from the far left round, as seen from your side.
-                const V a{x-hx,top+tt,z+hz},b{x+hx,top+tt,z+hz},c{x+hx,top+tt,z-hz},d{x-hx,top+tt,z-hz};
-                if(!faceUp){quad(d,c,b,a,{0,1,0},back);return;}
-                float uv[8];
-                // Corner k of the face takes the picture's corner k+turn (0 top left, clockwise).
-                atlas(p,uv,turn);
-                quad(a,b,c,d,{0,1,0},dim?faded:white,uv);
-            };
+            auto atlas=[&](const Piece& p,float (&uv)[8],int turn){FaceUv(p,uv,turn);};
+            auto lying=[&](float x,float z,const Piece& p,int turn,bool faceUp,bool dim){LyingTile(mesh,x,z,p,turn,faceUp,dim);};
 
             // The rivers, from the middle outward: yours toward you, hers toward her.
             for(int who:{Mahjong::You,Mahjong::Her})
@@ -843,12 +877,15 @@ namespace MikuMikuDesktopPerch
                 const float startX=3*(tw+gap)*side;               // from the left as each sees it
                 float x=startX;
                 int inRow=0,row=0;
-                for(const auto& r:river)
+                for(size_t i=0;i<river.size();++i)
                 {
+                    const auto& r=river[i];
                     if(inRow==6){++row;inRow=0;x=startX;}
                     const float w=(r.sideways?tl:tw)+gap;
                     const float z=zc+side*(0.16f*D+(row+0.5f)*(tl+gap)+(r.sideways?(tl-tw)/2:0));
-                    lying(x-side*w/2,z,r.piece,r.sideways?(who==Mahjong::You?1:3):(who==Mahjong::You?0:2),true,r.taken);
+                    const int turn=r.sideways?(who==Mahjong::You?1:3):(who==Mahjong::You?0:2);
+                    if(who==Mahjong::Her&&i+1==river.size()&&state.fading)state.fadingTile={x-side*w/2,z,r.piece,turn,r.taken};
+                    else lying(x-side*w/2,z,r.piece,turn,true,r.taken);
                     state.lastRiverSpot[who]={x-side*w/2,top+tt,z};
                     x-=side*w;
                     ++inRow;
@@ -869,6 +906,7 @@ namespace MikuMikuDesktopPerch
             const float w=0.09f*D,h=0.12f*D,d=0.065f*D;
             const int n=static_cast<int>(her.hand.size());
             const bool drawn=her.hasDrawn;
+            state.herHandSpots.clear();
             const float rowRight=(14*(w+gap)+0.05f*D)/2;   // a full hand's right end: her tiles stay put (her melds are at your left)
             const float zb=zNear-0.05f*D;   // the tiles' side toward her
             for(int i=0;i<n+(drawn?1:0);++i)
@@ -877,6 +915,7 @@ namespace MikuMikuDesktopPerch
                 box(x,top,zb-d,x+w,top+h,zb-d*0.45f,back);
                 box(x,top,zb-d*0.45f,x+w,top+h,zb,ivory);
                 if(i==n)state.herDrawnSpot={x+w/2,top+h,zb-d/2};
+                state.herHandSpots.push_back({x+w/2,top+h,zb-d/2});
             }
             // Her melds lying face up at her right (your left), before her hand, from the edge in.
             float mx=x0+0.08f*D;
@@ -1525,7 +1564,7 @@ namespace MikuMikuDesktopPerch
     {
         // A burst of sparkles rising from a tile (world units): stars, gold and white, and a
         // few soft glows; scale makes it smaller or bigger.
-        void Sparkle(const std::array<float,3>& at,float scale=1)
+        void Sparkle(const std::array<float,3>& at,float scale=1,bool vanish=false)
         {
             const float D=state.upper;
             std::uniform_real_distribution<float> any(0,1);
@@ -1543,13 +1582,13 @@ namespace MikuMikuDesktopPerch
                 k.size=(k.glow?0.05f:0.018f+0.016f*any(r))*D*scale;
                 k.angle=any(r)*DirectX::XM_2PI;
                 k.spin=(any(r)-0.5f)*8;
-                k.color=i%3==0?std::array<float,4>{1,1,1,1}:std::array<float,4>{1,0.84f,0.42f,1};
+                k.color=i%3==0?std::array<float,4>{1,1,1,1}:vanish?std::array<float,4>{0.62f,0.84f,1,1}:std::array<float,4>{1,0.84f,0.42f,1};
                 state.sparks.push_back(k);
             }
         }
 
-        // Her hand out to a spot on the table (world units), the nearer hand: as far as it
-        // reaches, the tile warping the rest of the way.
+        // Her light pat from above toward a spot on the table (world units), the nearer hand, in
+        // front of her chest: the tile warps (it is a touch of magic, not a reach).
         void ReachFor(MascotModel& model,const std::array<float,3>& spot)
         {
             std::array<float,3> head{};
@@ -1558,7 +1597,7 @@ namespace MikuMikuDesktopPerch
             const float hx=head[0]-model.RootOffset()+state.herX,hz=head[2]+state.herZ;
             // The wrist a hand's height over the tile, so the fingers stop above the table.
             const std::array<float,3> from{spot[0]-hx,spot[1]+0.07f*state.hips-head[1],spot[2]-hz};
-            model.Reach(spot[0]>0.25f*state.upper?0:1,from,1.65);
+            model.Reach(spot[0]>0.25f*state.upper?0:1,from,1.65,true);
         }
     }
 
@@ -1632,13 +1671,18 @@ namespace MikuMikuDesktopPerch
             if(u>=1)state.entrance=5;
         }
         else if(state.entrance==5){standing=0;state.herX=0;state.herZ=state.chairZ=seatZ;}
-        r.SetMovingGeometry(BuildChair(state.chairZ));
         const auto& her=state.table.Of(Mahjong::Her);
         if(auto scene=Scene();scene!=state.scene||state.scene.empty()){state.scene=std::move(scene);r.SetGeometry(BuildTable());}
         // Sparkles where her tiles come: her draw, her discard, her call (which she reaches for).
         if(state.seenRiver>=0)
         {
-            if(static_cast<int>(her.river.size())>state.seenRiver)Sparkle(state.lastRiverSpot[Mahjong::Her]);
+            if(static_cast<int>(her.river.size())>state.seenRiver)
+            {
+                // The tile she touched goes, and fades into her river.
+                Sparkle(state.touched,1.2f,true);
+                state.fading=true;
+                state.fadeSince=state.clock;
+            }
             if(her.hasDrawn&&!state.seenDrawn)Sparkle(state.herDrawnSpot,0.6f);
             if(static_cast<int>(her.melds.size())>state.seenMelds)
             {
@@ -1649,18 +1693,54 @@ namespace MikuMikuDesktopPerch
         state.seenRiver=static_cast<int>(her.river.size());
         state.seenMelds=static_cast<int>(her.melds.size());
         state.seenDrawn=her.hasDrawn;
-        if(state.testReach&&state.entrance==5)
+        // Diagnostics: as at her discard, she touches a tile of hers; 0.6 s on it vanishes and
+        // her newest river tile fades in again.
+        if(state.testReach&&state.entrance==5&&!state.herHandSpots.empty())
         {
             state.testReach=false;
-            ReachFor(model,state.nextRiverSpot[Mahjong::Her]);
-            Sparkle(state.nextRiverSpot[Mahjong::Her]);
+            state.touched=state.herHandSpots[state.herHandSpots.size()/3];
+            ReachFor(model,state.touched);
+            state.testVanishAt=state.clock+ReachLead/1000.0;
         }
-        // Before her discard, her hand goes out toward where it will lie.
-        if(state.entrance==5&&state.table.Now()==Phase::HerTurn&&her.hasDrawn&&state.reachedRiver!=her.river.size()&&
+        if(state.testVanishAt>0&&state.clock>=state.testVanishAt&&!her.river.empty())
+        {
+            state.testVanishAt=0;
+            Sparkle(state.touched,1.2f,true);
+            state.fading=true;
+            state.fadeSince=state.clock;
+        }
+        // Before her discard, her hand goes out to touch the tile in her hand (it vanishes
+        // from there and fades into her river).
+        if(state.table.Now()==Phase::HerTurn&&state.table.HerTurnDrawn()&&state.reachedRiver!=her.river.size()&&
            GetTickCount64()+ReachLead>=state.nextAt)
         {
             state.reachedRiver=her.river.size();
-            ReachFor(model,state.nextRiverSpot[Mahjong::Her]);
+            const int k=state.table.HerNextDiscard();
+            if(k>=0&&k<static_cast<int>(state.herHandSpots.size()))
+            {
+                state.touched=state.herHandSpots[static_cast<size_t>(k)];
+                if(state.entrance==5)ReachFor(model,state.touched);
+            }
+        }
+        // What moves: her chair, and her newest river tile fading in (gold sparkles rising from
+        // it as it comes; once whole, it joins the table).
+        state.clock+=dt;
+        {
+            Mesh moving;
+            moving.out=BuildChair(state.chairZ);
+            if(state.fading)
+            {
+                const float u=static_cast<float>((state.clock-state.fadeSince)/FadeSeconds);
+                if(u>=1)state.fading=false;
+                else
+                {
+                    const auto& f=state.fadingTile;
+                    LyingTile(moving,f.x,f.z,f.piece,f.turn,true,f.dim,u*u*(3-2*u));
+                    if(state.clock-dt<state.fadeSince+FadeSeconds*0.35&&state.clock>=state.fadeSince+FadeSeconds*0.35)
+                        Sparkle({f.x,0.12f*state.hips+0.30f*state.upper+0.06f*state.upper,f.z});
+                }
+            }
+            r.SetMovingGeometry(std::move(moving.out));
         }
         {
             std::vector<MascotRenderer::Particle> shown;

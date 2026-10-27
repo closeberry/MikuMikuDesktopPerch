@@ -705,13 +705,14 @@ namespace MikuMikuDesktopPerch
         return true;
     }
 
-    bool GeneratedMotion::Reach(int side,const XMFLOAT3& fromHead,double seconds)
+    bool GeneratedMotion::Reach(int side,const XMFLOAT3& fromHead,double seconds,bool tap)
     {
         if(overrides.empty()||(activity!=Activity::Idle&&activity!=Activity::Sit))return false;
         if(reaction!=Gesture::None&&reaction!=Gesture::Reach)return false;
         reaction=Gesture::Reach;reactionCut=-1;
         reactionSide=side==0?0:1;
         reachOffset=fromHead;
+        reachTap=tap;
         reactionTime=0;
         reactionLength=seconds;
         reactionWeight=0;
@@ -864,10 +865,20 @@ namespace MikuMikuDesktopPerch
             const XMVECTOR pivot=XMVectorSet(0,hipY,hipZ,0);
             const float extend=Smooth(std::clamp(std::min((a-0.3f)/0.3f,(len-static_cast<float>(ReactionBlendOut)-0.05f-a)/0.3f),0.0f,1.0f));
             const XMVECTOR close=XMVectorSet(S.x+out*0.02f*L,S.y-0.20f*L,S.z-0.14f*L,0);
-            XMVECTOR target=XMVectorLerp(close,XMVectorAdd(XMVectorSet(0,rig.headY,S.z,0),XMLoadFloat3(&reachOffset)),extend);
+            XMVECTOR goal=XMVectorAdd(XMVectorSet(0,rig.headY,S.z,0),XMLoadFloat3(&reachOffset));
+            if(reachTap)
+            {
+                // A light pat from above: out a little way toward it and a little up, then down
+                // and up again at the touch.
+                const XMVECTOR way=XMVectorMultiply(XMVectorSubtract(goal,close),XMVectorSet(1,0,1,0));
+                const float n=std::max(XMVectorGetX(XMVector3Length(way)),1e-4f);
+                const float pat=std::sin(std::clamp((a-0.5f)/0.3f,0.0f,1.0f)*XM_PI);
+                goal=XMVectorAdd(XMVectorAdd(close,XMVectorScale(way,std::min(n,0.12f*L)/n)),XMVectorSet(0,(0.06f-0.08f*pat)*L,0,0));
+            }
+            XMVECTOR target=XMVectorLerp(close,goal,extend);
             const float reach=rig.upperArm+0.75f*rig.foreArm;   // to the wrist (foreArm reaches the fingertips)
             const float d=XMVectorGetX(XMVector3Length(XMVectorSubtract(target,shoulder)));
-            const float lean=std::clamp((d-0.85f*reach)/(0.8f*reach),0.0f,1.0f)*22.0f*Deg;
+            const float lean=reachTap?0.0f:std::clamp((d-0.85f*reach)/(0.8f*reach),0.0f,1.0f)*22.0f*Deg;
             turn(rig.upperBody,-lean,0,0);
             // Where the point is as the leaning body sees it.
             target=XMVectorAdd(pivot,XMVector3Transform(XMVectorSubtract(target,pivot),XMMatrixRotationX(lean)));
@@ -875,8 +886,17 @@ namespace MikuMikuDesktopPerch
             const float far=0.95f*reach,dist=XMVectorGetX(XMVector3Length(to));
             if(dist>far)target=XMVectorAdd(shoulder,XMVectorScale(to,far/dist));
             ReachArm(g,s,target,XMVectorLerp(XMVectorSet(out*0.6f,-1,0.9f,0),XMVectorSet(out,-1,0.3f,0),extend),0.6f,true);
-            AimHand(g,s,XMVectorSet(-out*0.1f,-0.22f,-1,0),XMVectorSet(0,-1,0,0));   // fingers only a little down, clear of the table
-            CurlFingers(g,s,{0.35f,0.4f,0.45f,0.5f});
+            if(reachTap)
+            {
+                // The hand flat and relaxed, palm down, for the pat.
+                AimHand(g,s,XMVectorSet(-out*0.15f,-0.3f,-1,0),XMVectorSet(0,-1,0,0));
+                CurlFingers(g,s,{0.12f,0.15f,0.2f,0.25f});
+            }
+            else
+            {
+                AimHand(g,s,XMVectorSet(-out*0.1f,-0.22f,-1,0),XMVectorSet(0,-1,0,0));   // fingers only a little down, clear of the table
+                CurlFingers(g,s,{0.35f,0.4f,0.45f,0.5f});
+            }
             neck(-16.0f*Deg+lean*0.3f,0,0);
             break;
         }
