@@ -813,11 +813,13 @@ namespace MikuMikuDesktopPerch
             }
             if(hero.bag.empty()){Text(g,T(L"（なし）",L"(empty)"),px,y,static_cast<float>(Px(13)),grey);y+=line;}
             const bool fresh=game.Floor()==1&&game.Turns()==0&&!game.Daily();
-            const float help=ch-pad-line*(fresh?6.2f:5.2f);
-            std::wstring keys=state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\nShift＋↑：跳ぶ　↓：後ろへ跳ぶ　←→：横へ\n",
-                                                           L"Up: go  Left/Right: turn  Down: turn round\nShift+Up: jump  Down: step back  Left/Right: sidestep\n")
-                                                     :T(L"矢印・WASD：移動（敵へ：剣）\nShift＋方向：前へジャンプ・後ろへ跳ぶ・横へ\n",
-                                                        L"Arrows/WASD: move (into a foe: sword)\nShift+way: jump ahead, step back, sidestep\n");
+            const float help=ch-pad-line*(fresh?7.2f:6.2f);
+            // How to fight is said in plain words (newcomers did not guess that walking into a
+            // monster attacks it).
+            std::wstring keys=state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\n敵に向かって進むと、剣で攻撃\nShift＋↑：跳ぶ　↓：後ろへ跳ぶ　←→：横へ\n",
+                                                           L"Up: go  Left/Right: turn  Down: turn round\nWalk into a monster to strike it with the sword\nShift+Up: jump  Down: step back  Left/Right: sidestep\n")
+                                                     :T(L"矢印・WASD：移動\n敵に向かって進むと、剣で攻撃\nShift＋方向：前へジャンプ・後ろへ跳ぶ・横へ\n",
+                                                        L"Arrows/WASD: move\nWalk into a monster to strike it with the sword\nShift+way: jump ahead, step back, sidestep\n");
             keys+=T(L"F：魔法（MP3）　スペース：待つ・罠を探す\nEnter：買う　P：写真　Z：図鑑\nV：カメラ　M：2D/3D　Esc：帰る",
                     L"F: magic (3 MP)  Space: wait, find traps\nEnter: buy  P: picture  Z: records\nV: camera  M: 2D/3D  Esc: go home");
             if(fresh)keys+=T(L"\nT：今日のダンジョンで遊ぶ",L"\nT: play today's dungeon instead");
