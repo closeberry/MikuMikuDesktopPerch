@@ -79,49 +79,175 @@ namespace MikuMikuDesktopPerch::Mahjong
     // (a tsumo is paid as the sum the three others would pay in a 4-player game).
     int Payment(int basic,bool dealer,bool tsumo,int honba);
 
-    // The tiles nobody has seen yet (docs/Mahjong.md "見えない牌"): the wall and her hidden hand
-    // are made of these, chosen only when they have to be.
+    // How many tiles from waiting (0: waiting, -1: a winning shape), for 3n+1 or 3n+2 tiles not
+    // in melds: the least of four sets and a pair, seven pairs and the thirteen orphans (those
+    // two only with no melds).
+    int Shanten(const Counts& concealed,int melds);
+
+    // The wall: the tiles nobody holds or has seen, drawn from at random.
     struct Unseen
     {
         Counts tiles{};
         std::array<int,3> red{};   // red fives among them, by suit
         static Unseen All();       // the 136 tiles, a red five in each suit
         int Size() const;
-        // Seen now (drawn, discarded, shown): one of the kind, red or not.
+        // Taken out: one of the kind, red or not.
         void Take(int tile,bool redFive=false);
         // One at random, taken: whether it is a red five.
         int Draw(std::mt19937& rng,bool* redFive=nullptr);
     };
 
-    // How much a hand of hers is worth, by its basic points (docs/Mahjong.md "点数の帯"):
-    // below 5200 for a non-dealer, 5200 to 7700, mangan, haneman to sanbaiman, yakuman.
-    enum class Band {Cheap,Middle,Mangan,Haneman,Yakuman};
-    Band BandOf(int basic);
+    // The table of the 2-player game (docs/Mahjong.md): you against her, an East and a South
+    // round of two hands each (and the dealer's repeats). She plays her own hand from what she
+    // can see.
+    constexpr int You=0,Her=1;
+    constexpr int Hands=4;        // East 1, East 2, South 1, South 2
+    constexpr int DrawsEach=24;   // the live wall: 24 draws each, then the hand is drawn
 
-    // A hand of hers, made from unseen tiles.
-    struct Built
+    // A tile in play: its kind, and whether it is a red five.
+    struct Piece {int kind=0;bool red=false;};
+    struct RiverTile {Piece piece;bool sideways=false,taken=false;};   // sideways: riichi; taken: called by the other
+
+    struct Seat
     {
-        bool found=false;
-        Counts concealed{};          // the tiles not in melds (the winning tile included)
-        int win=-1;                  // the winning tile (-1: a hand that waits)
-        std::array<bool,3> red{};    // red fives among the concealed tiles (the ron tile aside), by suit
-        Score score;
-        Band band=Band::Cheap;
+        int points=25000;
+        std::vector<Piece> hand;      // in order (the drawn tile apart)
+        Piece drawn;                  // the tile just drawn
+        bool hasDrawn=false;
+        std::vector<Meld> melds;
+        int meldRed=0;                // red fives in the melds
+        std::vector<RiverTile> river;
+        bool riichi=false,doubleRiichi=false,ippatsu=false;
+        int draws=0;
+        bool passedWin=false;         // let a winning tile go since the last discard (furiten)
+        bool passedInRiichi=false;    // ... after riichi (furiten for good)
+        std::vector<int> passedAfterRiichi;   // kinds the other let go after this seat's riichi
     };
-    // A winning hand worth about band: with her melds, on ron (the tile another discarded; -1
-    // for a tsumo, its tile chosen among the unseen too). A ron is never on a wait she has
-    // discarded (discards: her river). s: the moment (tsumo and red are set here; red counts the
-    // red fives of her melds and the ron tile already). When no hand of the band can be made, a
-    // lower band; found is false when none at all.
-    Built BuildWin(const Unseen& unseen,const std::vector<Meld>& melds,int ron,const Counts& discards,
-                   Situation s,Band band,std::mt19937& rng);
-    // A hand that waits (for riichi, or shown at a draw), yaku aside. With discards, none of its
-    // waits is among them.
-    Built BuildTenpai(const Unseen& unseen,const std::vector<Meld>& melds,const Counts* discards,std::mt19937& rng);
 
-    // Diagnostics (--mahjong-build-test): builds count hands in random games, checks each against
-    // the tiles seen and the band asked for, and says how it went.
-    std::wstring CheckBuilding(int count,std::uint32_t seed);
+    struct RoundEnd
+    {
+        bool draw=false;              // the wall ran out
+        int winner=-1;
+        bool tsumo=false;
+        Score score;
+        std::vector<Piece> hand;      // the winner's concealed tiles, the winning tile last
+        std::vector<Meld> melds;
+        std::vector<int> ura;         // revealed for a riichi win
+        std::array<bool,2> tenpai{};  // at a draw
+        std::vector<Piece> herHand;   // at a draw, her hand if she waits
+        std::array<int,2> change{};   // points moved, by seat
+    };
+
+    // YourTurn: discard (or tsumo, kan, riichi). YourCall: her discard can be called (ron, pon,
+    // kan) or let go. HerTurn: she draws, then discards (Step each). RoundOver: the hand's end
+    // is shown (NextRound goes on). GameOver: the game's.
+    enum class Phase {YourTurn,YourCall,HerTurn,RoundOver,GameOver};
+
+    class Table
+    {
+    public:
+        // care: how carefully she plays (1: her best; less: now and then a looser discard or call,
+        // and less care against your riichi).
+        void NewGame(std::uint32_t seed,double care);
+        void NextRound();
+
+        Phase Now() const {return phase;}
+        const Seat& Of(int who) const {return seats[who];}
+        const std::vector<int>& Dora() const {return dora;}
+        int WallLeft() const {return wall;}
+        int Honba() const {return honba;}
+        int Sticks() const {return sticks;}
+        int RoundNumber() const {return round;}   // 1 to Hands (East 1, East 2, South 1, South 2)
+        int RoundWind() const {return round<=2?East:South;}
+        int Dealer() const {return dealer;}
+        int SeatWind(int who) const {return who==dealer?East:West;}
+        const RoundEnd& Ended() const {return ended;}
+        bool HerTurnDrawn() const {return herDrawn;}
+        // Her last call (Japanese and English) and a count that grows with each.
+        const wchar_t* HerCallJa() const {return callJa;}
+        const wchar_t* HerCallEn() const {return callEn;}
+        int HerCalls() const {return calls;}
+
+        // Yours, now.
+        std::vector<int> Waits() const;           // what your 13 tiles wait on
+        bool Furiten() const {return FuritenOf(You);}
+        bool CanTsumo() const {return phase==Phase::YourTurn&&CanTsumoFor(You);}
+        std::vector<int> RiichiDiscards() const;  // hand indices (hand.size() for the drawn tile) that leave you waiting
+        std::vector<int> KanKinds() const;        // closed or added kans you can make now
+        bool CanRon() const {return phase==Phase::YourCall&&CanRonFor(You);}
+        bool CanPon() const;
+        bool CanOpenKan() const;
+
+        // index: in your hand, or hand.size() for the drawn tile.
+        void Discard(int index,bool riichi=false);
+        void Tsumo();
+        void Kan(int kind);
+        void Ron();
+        void Pon();
+        void OpenKan();
+        void Pass();
+        // HerTurn: her draw (perhaps a tsumo), then her discard (perhaps riichi).
+        void Step();
+        // Your turn or call played as she would play it, at her best (diagnostics).
+        void PlayForYou();
+
+        // Every tile accounted for (diagnostics): the wall and those seen make four of each.
+        bool Consistent() const;
+
+    private:
+        std::mt19937 rng;
+        double care=1;
+        Unseen unseen;
+        std::array<Seat,2> seats;
+        std::vector<int> dora;
+        int wall=0,honba=0,sticks=0,round=1,dealer=You;
+        bool calledYet=false;          // a call this hand (no first-turn yaku after one)
+        bool rinshan=false;            // the draw now is after a kan
+        bool herDrawn=false;           // her turn: she has drawn (or called), and discards next
+        Phase phase=Phase::YourTurn;
+        RoundEnd ended;
+        const wchar_t* callJa=L"";
+        const wchar_t* callEn=L"";
+        int calls=0;
+        std::array<int,3> indicatorRed{};   // red fives among the dora and ura indicators
+        bool dealerStays=false,gameOver=false;
+        int nextHonba=0;
+
+        void Deal();
+        int DrawIndicator();
+        void Draw(int who);
+        void KanDraw(int who);
+        void DiscardFor(int who,int index,bool riichi);
+        void AfterDiscard(int who,const Piece& tile);
+        void HerDiscard();
+        void PonFor(int who);
+        void RonFor(int who);
+        void HerSays(const wchar_t* ja,const wchar_t* en){callJa=ja;callEn=en;++calls;}
+        bool Roll(double chance){return std::uniform_real_distribution<double>(0,1)(rng)<chance;}
+        Situation SituationOf(int who,bool tsumo) const;
+        Counts CountsOf(int who,bool withDrawn) const;
+        int RedOf(int who,bool withDrawn) const;
+        Counts RiverCounts(int who) const;
+        bool FuritenOf(int who) const;
+        bool CanTsumoFor(int who) const;
+        bool CanRonFor(int who) const;            // on the other's last discard
+        std::vector<int> RiichiDiscardsFor(int who) const;
+        // How she plays (or you, in PlayForYou): the hand index to discard and whether with
+        // riichi; whether to pon the other's last discard.
+        int ChooseDiscard(int who,double carefully,bool& riichi);
+        bool WantsPon(int who,double carefully);
+        Counts SeenBy(int who) const;             // the tiles who can see: the own hand, the rivers, the melds, the indicators
+        double Safety(int who,int kind) const;    // how safe kind is for who to discard against the other's riichi
+        double CareNow() const;
+        void Win(int who,bool tsumo,const Counts& concealed,const std::vector<Meld>& melds,int win,Situation s,std::vector<Piece> shown);
+        void WallEmpty();
+        void Settle();
+    };
+
+    // Diagnostics (--mahjong-play-test): plays count games, her against a player of yours who
+    // plays as she does at her best, and against a simple one; checks the tiles stay accounted
+    // for and the points add up, and says how the hands ended.
+    std::wstring CheckPlaying(int count,std::uint32_t seed);
 
     // Diagnostics (--mahjong-test): checks hands written one a line, and says how each came out.
     //   <tiles> [options] => <expected>      a winning hand (its tiles not in melds, the winning

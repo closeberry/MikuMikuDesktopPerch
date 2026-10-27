@@ -10,6 +10,7 @@
 #include "DungeonWindow.hpp"
 #include "Dungeon.hpp"
 #include "Mahjong.hpp"
+#include "MahjongWindow.hpp"
 #include "TreasureArt.hpp"
 #include <commctrl.h>
 #include "Voice.hpp"
@@ -58,7 +59,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr UINT IdTreasure=600;          // + the treasure's place in Dungeon::TreasureBook: look at it
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
@@ -1537,6 +1538,7 @@ namespace
             AppendMenuW(menu,MF_STRING,IdResetPose,T(L"ポーズと物理をリセット",L"Reset pose and physics"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         AppendMenuW(menu,MF_STRING,IdDungeon,T(L"ダンジョンへ行く",L"Go to the dungeon"));
+        AppendMenuW(menu,MF_STRING,IdMahjong,T(L"麻雀を打つ",L"Play mahjong"));
         // The treasures she brought home from it, each to look at on her palm.
         {
             HMENU treasures=CreatePopupMenu();
@@ -3685,6 +3687,20 @@ namespace
         return true;
     }
 
+    // docs/Mahjong.md: a game against her in its own window (she stays on the desktop).
+    void OpenMahjong(Mascot& m)
+    {
+        if(MahjongWindowOpen()||app.diagnostic){ShowMahjongWindow(m.hwnd,{},{});return;}
+        Trace(L"%.1f mahjong: start (%s)",app.clock,m.modelPath.c_str());
+        const DungeonHero face=DungeonHeroOf(m);
+        MahjongOpponent her;
+        her.name=face.name;
+        her.face=face.face;
+        her.faceSize=face.faceSize;
+        her.bond=app.settings.bond?m.bond.Stage():0;
+        ShowMahjongWindow(m.hwnd,her,{});
+    }
+
     void OpenDungeon(Mascot& m)
     {
         if(DungeonWindowOpen()||app.diagnostic){ShowDungeonWindow(m.hwnd,{},{});return;}
@@ -4259,6 +4275,9 @@ namespace
             break;
         case IdAlbumShot:
             TakeManualShot();
+            break;
+        case IdMahjong:
+            OpenMahjong(m);
             break;
         case IdDungeon:
             OpenDungeon(m);
@@ -5212,11 +5231,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return report.find(L" 0 failed")!=std::wstring::npos?0:1;
         }
-        // --mahjong-build-test <out.txt> [count] [seed]: her winning and waiting hands built in
-        // random games (count of them, 2000 by default), checked against the tiles seen.
-        if(argc>=3&&std::wstring(argv[1])==L"--mahjong-build-test")
+        // --mahjong-tiles <out.png>: every mahjong tile's face.
+        if(argc>=3&&std::wstring(argv[1])==L"--mahjong-tiles")
         {
-            const std::wstring report=Mahjong::CheckBuilding(argc>=4?_wtoi(argv[3]):2000,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
+            const bool saved=SaveMahjongTiles(argv[2]);
+            LocalFree(argv);
+            return saved?0:1;
+        }
+        // --mahjong-shot <out.png> [moves] [seed]: the mahjong window after some moves.
+        if(argc>=3&&std::wstring(argv[1])==L"--mahjong-shot")
+        {
+            const bool saved=SaveMahjongShot(argv[2],argc>=4?_wtoi(argv[3]):20,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
+            LocalFree(argv);
+            return saved?0:1;
+        }
+        // --mahjong-play-test <out.txt> [count] [seed]: whole games against her (count of them each
+        // way, 300 by default; see Mahjong::CheckPlaying), the tiles and points checked throughout.
+        if(argc>=3&&std::wstring(argv[1])==L"--mahjong-play-test")
+        {
+            const std::wstring report=Mahjong::CheckPlaying(argc>=4?_wtoi(argv[3]):300,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
             if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
             {
                 fputws(report.c_str(),out);

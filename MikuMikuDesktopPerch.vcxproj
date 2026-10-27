@@ -97,6 +97,8 @@
     <ClCompile Include="src\Dungeon.cpp" />
     <ClCompile Include="src\DungeonWindow.cpp" />
     <ClCompile Include="src\Mahjong.cpp" />
+    <ClCompile Include="src\MahjongTable.cpp" />
+    <ClCompile Include="src\MahjongWindow.cpp" />
     <ClCompile Include="src\MonsterArt.cpp" />
     <ClCompile Include="src\PropArt.cpp" />
     <ClCompile Include="src\TreasureArt.cpp" />
@@ -140,6 +142,7 @@
     <ClInclude Include="src\Dungeon.hpp" />
     <ClInclude Include="src\DungeonWindow.hpp" />
     <ClInclude Include="src\Mahjong.hpp" />
+    <ClInclude Include="src\MahjongWindow.hpp" />
     <ClInclude Include="src\MonsterArt.hpp" />
     <ClInclude Include="src\PropArt.hpp" />
     <ClInclude Include="src\ShapeBuilder.hpp" />

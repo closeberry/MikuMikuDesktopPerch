@@ -64,3 +64,7 @@ FLOAT IDLECLIP "idle\\float.vmd"
 KNEEBEND IDLECLIP "idle\\kneebend.vmd"
 SPIN IDLECLIP "idle\\spin.vmd"
 LISTEN IDLECLIP "idle\\listen.vmd"
+
+// The mahjong tiles' faces (see docs/Mahjong.md): 150x200 each, ten across, the 34 kinds in
+// order and then the red fives.
+TILES MAHJONGTILES "mahjong\\tiles.png"

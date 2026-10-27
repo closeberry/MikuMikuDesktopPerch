@@ -56,3 +56,15 @@ waits 19m19p19s1234567z => 19m19p19s1234567z
 waits 1133557799m11p2p => 2p
 waits 147m258p369s1234z => none
 discards 12345m55p9s => 9s
+
+# 向聴数（0がテンパイ、-1が和了の形）。牌のあとの数は副露の数
+shanten 123m456p789s1234z5z => 2
+shanten 123m456p789s11z23s => 0
+shanten 123m456p789s11z234s => -1
+shanten 1m4m7m2p5p8p3s6s9s1234z => 6
+shanten 19m19p19s1234567z => 0
+shanten 19m19p19s123456z9s => 0
+shanten 1122m3344p5566s7z => 0
+shanten 1122m3344p56s7z12z => 2
+shanten 12m45p78s11z 2 => 1
+shanten 13m46p79s159s1234z => 4
