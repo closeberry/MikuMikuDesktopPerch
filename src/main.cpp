@@ -1535,7 +1535,7 @@ namespace
         else
             AppendMenuW(menu,MF_STRING,IdResetPose,T(L"ポーズと物理をリセット",L"Reset pose and physics"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
-        AppendMenuW(menu,MF_STRING,IdDungeon,T(L"ダンジョンへ行く（試作）",L"Go to the dungeon (prototype)"));
+        AppendMenuW(menu,MF_STRING,IdDungeon,T(L"ダンジョンへ行く",L"Go to the dungeon"));
         // The treasures she brought home from it, each to look at on her palm.
         {
             HMENU treasures=CreatePopupMenu();

@@ -503,6 +503,15 @@ namespace MikuMikuDesktopPerch
             if(onEnd)onEnd(result);
         }
 
+        float TextWidth(Graphics& g,const std::wstring& text,float size)
+        {
+            FontFamily family(L"Yu Gothic UI");
+            Font font(family.IsAvailable()?&family:FontFamily::GenericSansSerif(),size,FontStyleRegular,UnitPixel);
+            RectF box;
+            g.MeasureString(text.c_str(),static_cast<INT>(text.size()),&font,PointF(0,0),&box);
+            return box.Width;
+        }
+
         // Returns its width.
         float Text(Graphics& g,const std::wstring& text,float x,float y,float size,Color color,bool bold=false)
         {
@@ -603,10 +612,25 @@ namespace MikuMikuDesktopPerch
                        {std::to_wstring(r.best),std::to_wstring(r.runs),daily}),area.X+pad,y+line*1.5f,size,dim);
             {
                 // Her skill level and the skills she knows.
-                std::wstring skills;
-                for(const auto& k:Dungeon::Skills())if(r.skills.count(k.id))skills+=(skills.empty()?L"":T(L"・",L", "))+std::wstring(English()?k.en:k.ja);
-                Text(g,Fmt(T(L"技レベル：{0}　覚えた技：{1}",L"Skill level: {0}   Skills: {1}"),{std::to_wstring(Dungeon::SkillLevelFor(r.skill)),skills.empty()?T(L"まだない",L"none yet"):skills}),
-                     area.X+pad,y+line*2.5f,size,dim);
+                // When they are many, they go on to a second line, broken between two skills.
+                std::wstring text=Fmt(T(L"技レベル：{0}　覚えた技：",L"Skill level: {0}   Skills: "),{std::to_wstring(Dungeon::SkillLevelFor(r.skill))});
+                std::wstring row=text;
+                bool first=true,two=false;
+                for(const auto& k:Dungeon::Skills())
+                {
+                    if(!r.skills.count(k.id))continue;
+                    const std::wstring name=English()?k.en:k.ja;
+                    const std::wstring next=row+(first?L"":T(L"・",L", "))+name;
+                    if(!first&&TextWidth(g,next,size)>area.Width-pad*2)
+                    {
+                        text+=T(L"・",L",")+std::wstring(L"\n")+name;row=name;two=true;
+                    }
+                    else{text+=(first?L"":T(L"・",L", "))+name;row=next;}
+                    first=false;
+                }
+                if(first)text+=T(L"まだない",L"none yet");
+                Text(g,text,area.X+pad,y+line*2.5f,size,dim);
+                y+=two?line*1.1f:0.0f;
             }
             y+=line*4.2f;
             const float c1=area.X+pad,c2=area.X+area.Width*0.27f,c3=area.X+area.Width*0.55f;
@@ -624,8 +648,12 @@ namespace MikuMikuDesktopPerch
             y1+=line*0.6f;
             // Treasures as their pictures, five to a row (the ones not found yet, a "?").
             const auto treasures=Dungeon::TreasureBook();
-            Text(g,Fmt(T(L"宝物（{0}/{1}）　デスクトップで眺められます",L"Treasures ({0}/{1})  to look at on the desktop"),
-                       {std::to_wstring(r.treasures.size()),std::to_wstring(treasures.size())}),c1,y1,size,gold,true);y1+=line*1.2f;
+            {
+                const float wide=Text(g,Fmt(T(L"宝物（{0}/{1}）",L"Treasures ({0}/{1})"),
+                                            {std::to_wstring(r.treasures.size()),std::to_wstring(treasures.size())}),c1,y1,size,gold,true);
+                Text(g,T(L"デスクトップで眺められます",L"seen on the desktop"),c1+wide,y1+size*0.12f,size*0.85f,dim);
+                y1+=line*1.2f;
+            }
             const float cell=std::min((c2-c1-pad)/5,line*2.6f);
             SolidBrush slot(Color(255,40,36,56));
             for(size_t i=0;i<treasures.size();++i)
@@ -831,7 +859,7 @@ namespace MikuMikuDesktopPerch
                                {std::wstring(English()?k.en:k.ja),std::to_wstring(k.mp),fkey?L" F"+std::to_wstring(fkey):std::wstring()}),
                          px,y,static_cast<float>(Px(13)),gold);
                     y+=line;
-                    // Which skill is on which function key, three to a line; one whose effect
+                    // Which skill is on which function key, as many to a line as fit; one whose effect
                     // is on now (on her, the floor or the monsters) shines.
                     auto working=[&](Dungeon::SkillKind kind)
                     {
@@ -855,13 +883,14 @@ namespace MikuMikuDesktopPerch
                     };
                     const float size=static_cast<float>(Px(12));
                     float x=px;
-                    int onRow=0;
+                    bool onRow=false;
                     for(int n=1;n<=12;++n)
                     {
                         Dungeon::SkillKind kind;
                         if(!game.SkillOnKey(n,kind))continue;
                         const auto& s=Dungeon::SkillOf(kind);
                         const std::wstring item=Fmt(L"F{0} {1}",{std::to_wstring(n),std::wstring(English()?s.en:s.ja)});
+                        if(onRow&&x+TextWidth(g,item,size)>px+panel-pad*2){x=px;y+=line*0.85f;}
                         float wide;
                         if(working(kind))
                         {
@@ -871,7 +900,7 @@ namespace MikuMikuDesktopPerch
                         }
                         else wide=Text(g,item,x,y,size,grey);
                         x+=wide+size*0.6f;
-                        if(++onRow==3){x=px;y+=line*0.85f;onRow=0;}
+                        onRow=true;
                     }
                     if(onRow)y+=line*0.85f;
                 }
@@ -958,9 +987,9 @@ namespace MikuMikuDesktopPerch
             // How to fight is said in plain words (newcomers did not guess that walking into a
             // monster attacks it).
             std::wstring keys=state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\n敵に向かって進むと、剣で攻撃\nShift＋↑：跳ぶ　↓：後ろへ跳ぶ　←→：横へ\n",
-                                                           L"Up: go  Left/Right: turn  Down: turn round\nWalk into a monster to strike it with the sword\nShift+Up: jump  Down: step back  Left/Right: sidestep\n")
+                                                           L"Up: go  Left/Right: turn  Down: turn round\nWalk into a monster to attack it\nShift+Up: jump  Down: step back  Left/Right: sidestep\n")
                                                      :T(L"矢印・WASD：移動\n敵に向かって進むと、剣で攻撃\nShift＋方向：前へジャンプ・後ろへ跳ぶ・横へ\n",
-                                                        L"Arrows/WASD: move\nWalk into a monster to strike it with the sword\nShift+way: jump ahead, step back, sidestep\n");
+                                                        L"Arrows/WASD: move\nWalk into a monster to attack it\nShift+way: jump ahead, step back, sidestep\n");
             // Shops too (newcomers did not find how to sell).
             keys+=T(L"F：魔法（MP3）　スペース：待つ・罠を探す\nお店　Enter：買う　Shift＋数字：売る\nP：写真　Z：図鑑\nV：カメラ　M：2D/3D　Esc：帰る",
                     L"F: magic (3 MP)  Space: wait, find traps\nShop  Enter: buy  Shift+number: sell\nP: picture  Z: records\nV: camera  M: 2D/3D  Esc: go home");
@@ -981,7 +1010,7 @@ namespace MikuMikuDesktopPerch
                 for(size_t i=0;i<offer.size();++i)
                 {
                     const auto& k=Dungeon::SkillOf(offer[i]);
-                    ask+=Fmt(L"\n{0}：{1}（MP{2}）　{3}",{std::to_wstring(i+1),std::wstring(English()?k.en:k.ja),std::to_wstring(k.mp),std::wstring(English()?k.aboutEn:k.aboutJa)});
+                    ask+=Fmt(T(L"\n{0}：{1}（MP{2}）　{3}",L"\n{0}: {1} ({2} MP)  {3}"),{std::to_wstring(i+1),std::wstring(English()?k.en:k.ja),std::to_wstring(k.mp),std::wstring(English()?k.aboutEn:k.aboutJa)});
                 }
             }
             else if(game.GetState()==Dungeon::Game::State::AtStairs)

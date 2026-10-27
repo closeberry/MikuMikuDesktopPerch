@@ -306,7 +306,7 @@ namespace MikuMikuDesktopPerch
             Combo(IdGpu,170,y+162,266);
             FillGpus();
             // Read when the dungeon opens: no restart.
-            Group(T(L"ダンジョン（試作）",L"Dungeon (prototype)"),y+202,52);
+            Group(T(L"ダンジョン",L"Dungeon"),y+202,52);
             CheckBox(IdDungeonLight,T(L"3Dを軽く表示する（アンチエイリアスなし、テクスチャ512、解像度75%）",L"Draw the 3D view light (no antialiasing, 512 textures, 75% resolution)"),28,y+224,410,s.dungeonLight);
             state.page=-1;
             y=top+138+166;

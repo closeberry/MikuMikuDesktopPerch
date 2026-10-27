@@ -208,20 +208,20 @@ namespace MikuMikuDesktopPerch::Dungeon
             {SkillKind::Wave,L"wave",1,L"真空波",L"Vacuum blade",L"前方2マス先まで風の刃を飛ばす",L"a blade of wind up to 2 tiles ahead"},
             {SkillKind::Heal,L"heal",3,L"ヒール",L"Heal",L"HPを回復する",L"restores HP"},
             {SkillKind::Guide,L"guide",2,L"道しるべ",L"Guide",L"この階の階段の方向がわかる",L"which way the stairs lie on this floor"},
-            {SkillKind::Sleep,L"sleep",3,L"スリープ",L"Sleep",L"まわり2マスの敵を眠らせる（攻撃で目覚める）",L"monsters within 2 tiles sleep (a blow wakes them)"},
+            {SkillKind::Sleep,L"sleep",3,L"スリープ",L"Sleep",L"まわり2マスの敵を眠らせる（攻撃で目覚める）",L"nearby monsters sleep till struck"},
             {SkillKind::Power,L"power",3,L"ちから",L"Might",L"しばらく攻撃力が上がる",L"raises her attack for a while"},
             {SkillKind::Guard,L"guard",3,L"まもり",L"Guard",L"しばらく防御力が上がる",L"raises her defence for a while"},
-            {SkillKind::Treasure,L"treasure",2,L"宝さがし",L"Treasure sense",L"宝箱・ゴールド・鍵の場所が地図にわかる",L"chests, gold and keys shown on the map"},
+            {SkillKind::Treasure,L"treasure",2,L"宝さがし",L"Treasure sense",L"宝箱・ゴールド・鍵の場所が地図にわかる",L"chests, gold and keys on the map"},
             {SkillKind::TrapSight,L"traps",1,L"罠見破り",L"Trap sight",L"まわり5マスの罠を見つける",L"finds the traps within 5 tiles"},
             {SkillKind::Drain,L"drain",2,L"吸収",L"Drain",L"目の前の敵を攻撃し、HPを吸い取る",L"strikes the monster in front, taking HP"},
             {SkillKind::Satiety,L"satiety",3,L"腹もち",L"Satiety",L"おなかが少しふくれる",L"fills her up a little"},
-            {SkillKind::Focus,L"focus",1,L"気合いため",L"Focus",L"次の剣の一撃が2倍の強さになる",L"her next sword blow strikes twice as hard"},
-            {SkillKind::Teleport,L"teleport",3,L"テレポート",L"Teleport",L"別の部屋へ飛んで逃げる",L"to another room on this floor, away"},
-            {SkillKind::Haste,L"haste",3,L"はやさ",L"Haste",L"しばらく、ときどき2回行動できる",L"for a while, now and then she acts twice"},
+            {SkillKind::Focus,L"focus",1,L"気合いため",L"Focus",L"次の剣の一撃が2倍の強さになる",L"next sword blow hits twice as hard"},
+            {SkillKind::Teleport,L"teleport",3,L"テレポート",L"Teleport",L"別の部屋へ飛んで逃げる",L"flee to another room on this floor"},
+            {SkillKind::Haste,L"haste",3,L"はやさ",L"Haste",L"しばらく、ときどき2回行動できる",L"for a while, she sometimes acts twice"},
             {SkillKind::Regen,L"regen",3,L"さいせい",L"Regen",L"しばらく毎ターンHPが回復する",L"for a while, HP comes back every turn"},
             {SkillKind::Sorcery,L"sorcery",3,L"まりょく",L"Sorcery",L"しばらく魔法の威力が上がる",L"for a while her magic hits harder"},
             {SkillKind::Slow,L"slow",2,L"スロウ",L"Slow",L"まわり2マスの敵の動きを遅くする",L"slows monsters within 2 tiles"},
-            {SkillKind::Weaken,L"weaken",2,L"よわらせ",L"Weaken",L"まわり2マスの敵の攻撃を弱める",L"weakens the blows of monsters within 2 tiles"}};
+            {SkillKind::Weaken,L"weaken",2,L"よわらせ",L"Weaken",L"まわり2マスの敵の攻撃を弱める",L"monsters within 2 tiles hit softer"}};
         return list;
     }
 
@@ -1371,7 +1371,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         {
             sensed=true;
             const size_t n=chests.size()+golds.size()+keysOnFloor.size();
-            Note(Fmt(T(L"宝さがし：この階には宝箱・ゴールド・鍵が{0}つある。（地図に印）",L"Treasure sense: {0} chests, heaps of gold and keys on this floor. (marked on the map)"),{std::to_wstring(n)}));
+            Note(Fmt(T(L"宝さがし：この階には宝箱・ゴールド・鍵が{0}つある。（地図に印）",L"Treasure sense: {0} chests, gold and keys here (on the map)."),{std::to_wstring(n)}));
             break;
         }
         case SkillKind::TrapSight:
