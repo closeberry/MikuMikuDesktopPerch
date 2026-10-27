@@ -48,6 +48,9 @@ namespace MikuMikuDesktopPerch
             XMFLOAT4 motionInfo;
             XMFLOAT4 blurInfo;
             std::uint32_t blurFlags[4];
+            // Point lights: world position and radius, colour, and the position and radius in
+            // the model's own space (its vertices are skinned there).
+            XMFLOAT4 lightPlaces[MascotRenderer::MaxLights],lightColors[MascotRenderer::MaxLights],modelLightPlaces[MascotRenderer::MaxLights];
         };
         // Motion blur: the share of a frame's motion smeared (a film camera's half-open
         // shutter), and the longest smear as a share of the drawn height at 30 fps (longer at
@@ -57,7 +60,7 @@ namespace MikuMikuDesktopPerch
         {
             XMFLOAT3 position; float size;
             XMFLOAT4 color;
-            float angle; float pad[3];
+            float angle,glow; float pad[2];
         };
         struct MaterialConstants
         {
@@ -892,6 +895,11 @@ namespace MikuMikuDesktopPerch
         particles.assign(list.begin(),list.begin()+static_cast<std::ptrdiff_t>(std::min(list.size(),MaxParticles)));
     }
 
+    void MascotRenderer::SetLights(const std::vector<PointLight>& list)
+    {
+        lights.assign(list.begin(),list.begin()+static_cast<std::ptrdiff_t>(std::min(list.size(),MaxLights)));
+    }
+
     POINT MascotRenderer::Project(const std::array<float,3>& world) const
     {
         const XMMATRIX vp=XMLoadFloat4x4(&view)*XMLoadFloat4x4(&projection);
@@ -947,6 +955,18 @@ namespace MikuMikuDesktopPerch
         scene.viewportSize={static_cast<float>(width),static_cast<float>(height)};
         scene.torchXZ={torch.x,torch.y};
         scene.torchRadius=torch.z;
+        {
+            const XMMATRIX toModel=XMMatrixInverse(nullptr,w);
+            const float shrink=1.0f/std::max(1e-4f,XMVectorGetX(XMVector3Length(w.r[0])));
+            for(size_t i=0;i<MaxLights;++i)
+            {
+                const PointLight l=i<lights.size()?lights[i]:PointLight{};
+                const XMVECTOR at=XMVector3TransformCoord(XMVectorSet(l.position[0],l.position[1],l.position[2],0),toModel);
+                scene.lightPlaces[i]={l.position[0],l.position[1],l.position[2],l.radius};
+                scene.lightColors[i]={l.color[0],l.color[1],l.color[2],0};
+                scene.modelLightPlaces[i]={XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at),l.radius*shrink};
+            }
+        }
         {
             // The light looks at the camera's target from far enough to see all the camera
             // sees (the model never leaves the window), straight down its direction.
@@ -1046,7 +1066,7 @@ namespace MikuMikuDesktopPerch
         for(size_t i=0;i<particles.size();++i)
         {
             const auto& q=particles[i];
-            const GpuParticle g{{q.position[0],q.position[1],q.position[2]},q.size,{q.color[0],q.color[1],q.color[2],q.color[3]},q.angle,{}};
+            const GpuParticle g{{q.position[0],q.position[1],q.position[2]},q.size,{q.color[0],q.color[1],q.color[2],q.color[3]},q.angle,q.glow?1.0f:0.0f,{}};
             std::memcpy(f.mapped+particleOffset+i*sizeof(GpuParticle),&g,sizeof(g));
         }
         if(f.dynamicRevision!=model.DynamicRevision())

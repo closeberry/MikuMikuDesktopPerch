@@ -17,6 +17,8 @@ namespace MikuMikuDesktopPerch
     // A shop's goods: the mat she stands on to buy, the thing on it.
     void AddGoods(Geometry& out,float x,float z,const Dungeon::Item& item,float k);
     void AddCampfire(Geometry& out,float x,float z,bool burning,float k);
+    // A burning campfire's flames at time (seconds), drawn every frame: they flicker.
+    void AddFlames(Geometry& out,float x,float z,float time,float k);
     // Steps down into the floor from a landing at the tile's middle (where she stands).
     void AddStairs(Geometry& out,float x,float z,float k);
     // A door filling its tile up to height (alongZ: the passage runs along z through it).

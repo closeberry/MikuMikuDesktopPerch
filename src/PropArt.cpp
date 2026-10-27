@@ -171,7 +171,8 @@ namespace MikuMikuDesktopPerch
 
     void AddCampfire(Geometry& out,float x,float z,bool burning,float k)
     {
-        // A ring of stones round logs leant together; flames when it still burns, ash after.
+        // A ring of stones round logs leant together; glowing embers when it still burns (the
+        // flames are AddFlames, every frame), ash after.
         Shapes s=At(out,x,z,k);
         const Colour stone{0.46f,0.44f,0.42f,Stone},log{0.42f,0.26f,0.13f,Wood},charred{0.10f,0.08f,0.07f,Lit};
         for(int i=0;i<9;++i)
@@ -187,13 +188,6 @@ namespace MikuMikuDesktopPerch
         }
         if(burning)
         {
-            s.Limb({0,0.4f,0},{0,4.8f,0},1.5f,0.05f,{1.0f,0.45f,0.10f,Glow},10);
-            s.Limb({0.2f,0.5f,0.1f},{0.1f,3.6f,0},0.95f,0.05f,{1.0f,0.80f,0.30f,Glow},8);
-            for(int i=0;i<3;++i)
-            {
-                const float a=XM_2PI*i/3+1.0f;
-                s.Limb({0.9f*std::cos(a),0.4f,0.9f*std::sin(a)},{1.1f*std::cos(a),2.6f,1.1f*std::sin(a)},0.6f,0.03f,{1.0f,0.55f,0.15f,Glow},6);
-            }
             for(int i=0;i<5;++i)
             {
                 const float a=XM_2PI*i/5;
@@ -201,6 +195,34 @@ namespace MikuMikuDesktopPerch
             }
         }
         else s.Ellipsoid({0,0.1f,0},{1.8f,0.15f,1.8f},{0.32f,0.30f,0.29f,Stone});
+    }
+
+    void AddFlames(Geometry& out,float x,float z,float time,float k)
+    {
+        // Tongues of flame, each rising, swaying and shrinking on its own rhythm (sums of
+        // waves that never line up), the inner ones yellow and the outer ones red.
+        Shapes s=At(out,x,z,k);
+        auto wave=[&](float seed){return 0.5f*std::sin(time*7.3f+seed)+0.3f*std::sin(time*13.1f+seed*2.7f)+0.2f*std::sin(time*21.7f+seed*4.1f);};
+        struct Tongue {float a,r,height,width;Colour c;};
+        const Tongue tongues[]={
+            {0,0,4.0f,1.5f,{0.95f,0.30f,0.05f,Glow}},
+            {0.6f,0.1f,5.4f,0.75f,{1.0f,0.70f,0.20f,Glow}},
+            {1.0f,0.9f,2.6f,0.6f,{0.90f,0.22f,0.04f,Glow}},
+            {3.1f,0.9f,2.8f,0.6f,{0.95f,0.35f,0.06f,Glow}},
+            {5.2f,0.9f,2.4f,0.6f,{0.90f,0.26f,0.05f,Glow}},
+            {2.2f,0.3f,2.4f,0.45f,{1.0f,0.92f,0.55f,Glow}}};
+        int n=0;
+        for(const auto& t:tongues)
+        {
+            const float seed=1.7f*n++;
+            const float tall=t.height*(1.0f+0.22f*wave(seed)),sway=0.35f*t.height*wave(seed+5.0f)/4.8f;
+            const float lean=0.25f*t.height*wave(seed+9.0f)/4.8f;
+            const XMFLOAT3 foot{t.r*std::cos(t.a),0.4f,t.r*std::sin(t.a)};
+            // Bent: the lower half straight up, the tip swaying.
+            const XMFLOAT3 mid{foot.x+sway*0.3f,0.4f+tall*0.5f,foot.z+lean*0.3f},tip{foot.x+sway,0.4f+tall,foot.z+lean};
+            s.Limb(foot,mid,t.width,t.width*0.6f,t.c,8);
+            s.Limb(mid,tip,t.width*0.6f,0.03f,t.c,8);
+        }
     }
 
     void AddStairs(Geometry& out,float x,float z,float k)

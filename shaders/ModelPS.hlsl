@@ -77,6 +77,8 @@ PSOutput main(PSInput input)
         float3 h = normalize(toLight - eyeDir);
         color.rgb += Specular * LightColor * pow(max(0, dot(h, n)), Shininess) * lit;
     }
+    // Fire and magic nearby tint her.
+    color.rgb *= 1 + PointLights(input.worldPosition, n, true);
     color = saturate(color);
     clip(color.a - 1.0 / 255.0);
     PSOutput output;

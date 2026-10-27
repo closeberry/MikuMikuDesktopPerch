@@ -21,7 +21,31 @@ cbuffer Scene : register(b0)
     float4 BlurInfo;        // x: shutter (share of a frame's motion smeared), y: longest smear (pixels),
                             // zw: drawn pixels per window pixel (below 1 when the frame is scaled up)
     uint4 BlurFlags;        // x: motion blur on, y: index of last frame's bones in Bones
+    // Point lights of fire and magic (MascotRenderer::SetLights): xyz and the radius they fade
+    // out at (0: none), their colours, and their places in the model's own space.
+    float4 LightPlaces[8];
+    float4 LightColors[8];
+    float4 ModelLightPlaces[8];
 };
+
+// The point lights' light at p (world, or the model's own space) on a surface facing n:
+// fading with the square toward each one's radius, softly toward the side turned away.
+float3 PointLights(float3 p, float3 n, bool inModel)
+{
+    float3 sum = 0;
+    [unroll] for (int i = 0; i < 8; ++i)
+    {
+        const float4 l = inModel ? ModelLightPlaces[i] : LightPlaces[i];
+        if (l.w <= 0)
+            continue;
+        const float3 d = l.xyz - p;
+        const float distance = length(d);
+        float f = saturate(1 - distance / l.w);
+        f *= f;
+        sum += LightColors[i].rgb * f * (0.35 + 0.65 * saturate(dot(n, d / max(distance, 1e-3))));
+    }
+    return sum;
+}
 
 // How far a point moved on screen since last frame, in pixels (from its clip positions now and then).
 float2 ScreenMotion(float4 now, float4 prev)

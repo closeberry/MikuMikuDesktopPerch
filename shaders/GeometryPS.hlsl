@@ -6,7 +6,7 @@
 // stretch of floors they belong to (Theme, added to the alpha in steps of 0.02): 0 old bricks,
 // 1 mossy stone ruins, 2 an ice cave, 3 a lava cave, 4 an amethyst abyss. Lit half by the
 // scene's light, half ambient, and by a torch around the hero (TorchXZ, TorchRadius) that fades
-// into darkness; a lava cave's cracks glow by themselves.
+// into darkness, and by fire and magic nearby (PointLights); a lava cave's cracks glow by themselves.
 #include "Scene.hlsli"
 
 struct VSOutput
@@ -267,7 +267,7 @@ float4 main(VSOutput i) : SV_Target
     else if (pattern == 2)
         rgb = Wall(theme, rgb, abs(i.normal.x) > 0.5 ? i.world.z : i.world.x, i.world.y, glow);
     const float lit = saturate(dot(normalize(i.normal), -normalize(LightDir)));
-    float light = 0.55 + 0.6 * lit;
+    float3 light = 0.55 + 0.6 * lit;
     if (TorchRadius > 0)
     {
         const float d = distance(i.world.xz, TorchXZ);
@@ -280,5 +280,7 @@ float4 main(VSOutput i) : SV_Target
         const float3 bounce = reflect(normalize(LightDir), normalize(i.normal));
         glow += shine * pow(saturate(dot(bounce, -view)), 18) * light;
     }
+    // Fire and magic nearby.
+    light += PointLights(i.world, normalize(i.normal), false);
     return float4(rgb * light + glow, 1);
 }

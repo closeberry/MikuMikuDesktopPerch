@@ -28,8 +28,18 @@ namespace MikuMikuDesktopPerch
             float size=0;                    // half the quad's side
             std::array<float,4> color{};     // straight alpha
             float angle=0;
+            bool glow=false;                 // a soft round halo instead of a star (fire, magic)
         };
         static constexpr size_t MaxParticles=512;
+        // A light of fire or magic at a point (world units), fading out at radius: on the
+        // geometry and the model, added to the scene's light.
+        struct PointLight
+        {
+            float position[3]{};
+            float radius=0;
+            float color[3]{};
+        };
+        static constexpr size_t MaxLights=8;
         // Plain lit geometry in world space (SetGeometry): the dungeon's floor, walls and things.
         struct GeometryVertex
         {
@@ -73,6 +83,8 @@ namespace MikuMikuDesktopPerch
         // A light around (x, z) on the ground that fades to darkness at radius, on the geometry
         // only (the dungeon's torch); radius 0: none.
         void SetTorch(float x,float z,float radius){torch={x,z,radius};}
+        // The point lights this frame (MaxLights at most; the rest are left out).
+        void SetLights(const std::vector<PointLight>& list);
         // Geometry that changes every frame (the dungeon's monsters as they walk and strike),
         // drawn as SetGeometry's is, copied to the GPU each frame.
         void SetMovingGeometry(std::vector<GeometryVertex> vertices){moving=std::move(vertices);}
@@ -235,6 +247,7 @@ namespace MikuMikuDesktopPerch
         UINT geometryCount=0;
         std::array<float,4> background{0,0,0,0};
         DirectX::XMFLOAT3 torch{0,0,0};
+        std::vector<PointLight> lights;
         std::vector<Texture> textures;
         std::array<Texture,10> sharedToons;
         Texture white;

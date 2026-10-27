@@ -107,6 +107,8 @@ namespace MikuMikuDesktopPerch
             std::pair<int,int> strikeTile{-1,-1};
             double strikeLands=0;
             std::vector<Spark> burst;   // flying from a hit
+            DirectX::XMFLOAT3 flashAt{};   // and a flash of light there, for a moment
+            double flashAge=-1;
             // The monsters as last shown (the game's, taken once her blow has landed), and how
             // each is drawn (by its uid).
             std::vector<Dungeon::Monster> shown;
@@ -136,6 +138,27 @@ namespace MikuMikuDesktopPerch
         } state;
 
         bool ByFire();
+
+        // The crystals along the edges of the crystal rooms seen: their tile, where they stand
+        // (world units, pushed toward the room's wall), how tall, and the seed of their shape.
+        struct CrystalSpot {int tx,ty;float x,z,height;int seed;};
+        std::vector<CrystalSpot> CrystalSpots(const Dungeon::Game& game)
+        {
+            std::vector<CrystalSpot> spots;
+            for(const auto& r:game.Rooms())
+            {
+                if(r.kind!=Dungeon::RoomKind::Crystal)continue;
+                for(int y=r.y;y<r.y+r.h;++y)
+                    for(int x=r.x;x<r.x+r.w;++x)
+                    {
+                        const bool edge=x==r.x||y==r.y||x==r.x+r.w-1||y==r.y+r.h-1;
+                        if(!edge||(x*7+y*3)%3!=0||!game.Seen(x,y)||game.At(x,y)!=Dungeon::Tile::Floor)continue;
+                        const float dx=x==r.x?-0.3f:x==r.x+r.w-1?0.3f:0,dz=y==r.y?-0.3f:y==r.y+r.h-1?0.3f:0;
+                        spots.push_back({x,y,(x+0.5f+dx)*TileSize,-(y+0.5f+dz)*TileSize,(0.5f+0.12f*((x+y)%4))*TileSize,x*7+y*3});
+                    }
+            }
+            return spots;
+        }
 
         int Px(int logical){return MulDiv(logical,state.window?static_cast<int>(GetDpiForWindow(state.window)):96,96);}
 
@@ -393,18 +416,7 @@ namespace MikuMikuDesktopPerch
                     sinking(from,x,y,0,NearWallHeight,floorAbove);
                 }
             // Crystals glowing along the edges of a crystal room.
-            for(const auto& r:game.Rooms())
-            {
-                if(r.kind!=Dungeon::RoomKind::Crystal)continue;
-                for(int y=r.y;y<r.y+r.h;++y)
-                    for(int x=r.x;x<r.x+r.w;++x)
-                    {
-                        const bool edge=x==r.x||y==r.y||x==r.x+r.w-1||y==r.y+r.h-1;
-                        if(!edge||(x*7+y*3)%3!=0||!game.Seen(x,y)||game.At(x,y)!=Dungeon::Tile::Floor)continue;
-                        const float k=light(x,y),dx=x==r.x?-0.3f:x==r.x+r.w-1?0.3f:0,dz=y==r.y?-0.3f:y==r.y+r.h-1?0.3f:0;
-                        AddCrystals(out,(x+0.5f+dx)*T,-(y+0.5f+dz)*T,(0.5f+0.12f*((x+y)%4))*T,x*7+y*3,k);
-                    }
-            }
+            for(const auto& c:CrystalSpots(game))AddCrystals(out,c.x,c.z,c.height,c.seed,light(c.tx,c.ty));
             for(const auto& t:game.Traps())
                 if(t.found&&game.Seen(t.x,t.y))AddTrap(out,(t.x+0.5f)*T,-(t.y+0.5f)*T,t.kind,light(t.x,t.y));
             for(const auto& g:game.Golds())
@@ -1362,6 +1374,25 @@ namespace MikuMikuDesktopPerch
             else if(GetTickCount64()-state.strikeAskedAt>600)state.strikeAsked=Strike::None;
         }
         std::vector<MascotRenderer::Particle> sparks;
+        // Fire and magic light what is near them (most wanted first: the attack's own light,
+        // then the campfires nearest her).
+        std::vector<MascotRenderer::PointLight> lights;
+        auto shine=[&](FXMVECTOR p,float radius,float r,float g,float b){
+            MascotRenderer::PointLight l;
+            l.position[0]=XMVectorGetX(p);l.position[1]=XMVectorGetY(p);l.position[2]=XMVectorGetZ(p);
+            l.radius=radius;l.color[0]=r;l.color[1]=g;l.color[2]=b;
+            lights.push_back(l);
+        };
+        // A soft halo of light around fire and magic.
+        auto halo=[&](FXMVECTOR p,float size,float r,float g,float b,float a){
+            MascotRenderer::Particle q;
+            q.position={XMVectorGetX(p),XMVectorGetY(p),XMVectorGetZ(p)};
+            q.size=size;q.color={r,g,b,std::clamp(a,0.0f,1.0f)};q.glow=true;
+            sparks.push_back(q);
+        };
+        // How bright a flame is at t, about 1: waves that never line up.
+        auto flicker=[](float t,float seed){return 1.0f+0.08f*std::sin(t*9.1f+seed)+0.05f*std::sin(t*17.3f+seed*2.1f)+0.04f*std::sin(t*29.9f+seed*3.7f);};
+        const float clock=static_cast<float>(state.monsterClock);
         if(state.strike!=Strike::None)
         {
             const double before=state.strikeTime;
@@ -1374,6 +1405,8 @@ namespace MikuMikuDesktopPerch
                 for(const auto& m:state.shown)
                     if(Dungeon::Occupies(m,x,y))if(const auto it=state.looks.find(m.uid);it!=state.looks.end())it->second.flinch=0;
                 const XMFLOAT3 at{(x+0.5f)*TileSize,6.0f,-(y+0.5f)*TileSize};
+                state.flashAt=at;
+                state.flashAge=0;
                 std::uint32_t seed=static_cast<std::uint32_t>(GetTickCount64());
                 auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};
                 for(int i=0;i<(fell?30:16);++i)
@@ -1408,6 +1441,8 @@ namespace MikuMikuDesktopPerch
                         const float f=0.6f+Blade*i/15.0f;
                         place(XMVectorAdd(base,XMVectorScale(way,f)),0.45f-0.15f*i/15.0f,0.65f,0.85f,1.0f,shown*0.9f);
                     }
+                    halo(XMVectorAdd(base,XMVectorScale(way,Blade*0.55f)),3.2f,0.55f,0.75f,1.0f,shown*0.35f);
+                    shine(XMVectorAdd(base,XMVectorScale(way,Blade*0.55f)),TileSize*1.0f,0.25f*shown,0.35f*shown,0.5f*shown);
                     // The tip's trail, through the cut only.
                     if(t>hit-0.11f&&t<hit+0.05f)
                     {
@@ -1424,6 +1459,7 @@ namespace MikuMikuDesktopPerch
                         const float fade=std::clamp((hit+0.35f-t)/0.3f,0.0f,1.0f)*(1.0f-0.6f*age);
                         place(tip,0.9f,0.75f,0.9f,1.0f,fade*0.8f);
                         place(XMVectorLerp(tip,base,0.35f),0.7f,0.75f,0.9f,1.0f,fade*0.5f);
+                        if(i%3==0)halo(XMVectorLerp(tip,base,0.2f),2.4f,0.6f,0.8f,1.0f,fade*0.3f);
                     }
                 }
             }
@@ -1449,6 +1485,9 @@ namespace MikuMikuDesktopPerch
                             place(XMVectorAdd(hand,XMVectorSet(radius*std::cos(a),radius*std::sin(a),radius*0.5f*std::sin(a*0.7f),0)),0.5f,1.0f,0.75f,0.4f,k);
                         }
                         place(hand,1.5f+2.0f*k,1.0f,0.8f,0.45f,k);
+                        const float f=flicker(t*1.5f,3.0f);
+                        halo(hand,(2.5f+4.5f*k)*f,1.0f,0.7f,0.35f,0.7f*k);
+                        shine(hand,TileSize*(0.6f+0.8f*k)*f,0.9f*k,0.6f*k,0.25f*k);
                     }
                     else
                     {
@@ -1464,6 +1503,10 @@ namespace MikuMikuDesktopPerch
                             return XMVectorSetY(p,from+(7.0f-from)*f+arc*std::sin(XM_PI*f));
                         };
                         place(path(flown),4.0f+6.0f*end,1.0f,0.8f,0.45f,1.0f-end,t*4.0f);
+                        const float f=flicker(t*1.5f,3.0f);
+                        halo(path(flown),(8.0f+8.0f*end)*f,1.0f,0.65f,0.3f,0.7f*(1.0f-end));
+                        halo(path(std::max(0.0f,flown-5.0f)),5.0f*f,1.0f,0.6f,0.25f,0.35f*(1.0f-end));
+                        shine(path(flown),TileSize*1.8f*f,1.0f*(1.0f-end),0.7f*(1.0f-end),0.3f*(1.0f-end));
                         for(int i=1;i<=8;++i)
                             place(path(std::max(0.0f,flown-i*1.5f)),2.6f-0.25f*i,1.0f,0.7f,0.35f,(1.0f-end)*(1.0f-i/9.0f),t*3.0f+i);
                     }
@@ -1489,6 +1532,10 @@ namespace MikuMikuDesktopPerch
                 if(age<0)continue;
                 const float fade=std::clamp(1.0f-(age-0.35f)/0.4f,0.0f,1.0f)*std::clamp(age/0.08f,0.0f,1.0f);
                 const auto [x,y]=state.flame[k];
+                const XMVECTOR middle=XMVectorSet((x+0.5f)*TileSize,4.0f,-(y+0.5f)*TileSize,0);
+                const float f=flicker(t*1.3f,static_cast<float>(k));
+                halo(middle,11.0f*f,1.0f,0.4f,0.1f,0.6f*fade);
+                if(k%2==0)shine(middle,TileSize*1.6f*f,0.9f*fade,0.4f*fade,0.1f*fade);
                 for(int j=0;j<10;++j)
                 {
                     // Each flame rises and sways on its own (j spreads them over the tile).
@@ -1521,7 +1568,93 @@ namespace MikuMikuDesktopPerch
             sparks.push_back(q);
         }
         state.burst.erase(std::remove_if(state.burst.begin(),state.burst.end(),[](const auto& s){return s.age>=s.life;}),state.burst.end());
+        // The flash where a blow landed.
+        if(state.flashAge>=0)
+        {
+            state.flashAge+=dt;
+            const float a=static_cast<float>(state.flashAge),f=1.0f-a/0.3f;
+            if(f<=0)state.flashAge=-1;
+            else
+            {
+                const XMVECTOR at=XMLoadFloat3(&state.flashAt);
+                halo(at,8.0f+14.0f*a,1.0f,0.9f,0.7f,0.8f*f);
+                shine(at,TileSize*1.6f,1.2f*f,1.05f*f,0.8f*f);
+            }
+        }
+        // The campfires in sight: a warm glow over the flames and on all around, flickering,
+        // and sparks rising from them.
+        {
+            std::vector<const Dungeon::Fire*> burning;
+            for(const auto& f:game.Fires())
+                if(!f.used&&game.Visible(f.x,f.y))burning.push_back(&f);
+            const auto& h=game.Hero();
+            std::sort(burning.begin(),burning.end(),[&](const Dungeon::Fire* a,const Dungeon::Fire* b){
+                return std::abs(a->x-h.x)+std::abs(a->y-h.y)<std::abs(b->x-h.x)+std::abs(b->y-h.y);});
+            for(const auto* f:burning)
+            {
+                const float x=(f->x+0.5f)*TileSize,z=-(f->y+0.5f)*TileSize,seed=static_cast<float>(f->x*7+f->y*13);
+                const float b=flicker(clock,seed);
+                halo(XMVectorSet(x,4.0f,z,0),10.0f*b,1.0f,0.45f,0.12f,0.32f*b);
+                halo(XMVectorSet(x,2.5f,z,0),5.0f*b,1.0f,0.75f,0.35f,0.3f*b);
+                if(lights.size()<MascotRenderer::MaxLights)
+                    shine(XMVectorSet(x,4.0f,z,0),TileSize*3.3f*(0.7f+0.3f*b),1.5f*b,0.7f*b,0.22f*b);
+                for(int j=0;j<7;++j)
+                {
+                    // Each spark rises and drifts, fading out as it goes, then starts again.
+                    const float p=std::fmod(clock*0.45f+j/7.0f+seed*0.37f,1.0f),a=seed+j*2.4f;
+                    MascotRenderer::Particle q;
+                    q.position={x+std::cos(a)*(0.6f+2.2f*p)+0.8f*std::sin(clock*2.3f+j),3.0f+p*15.0f,z+std::sin(a)*(0.6f+2.2f*p)};
+                    q.size=0.12f+0.3f*(1.0f-p);
+                    q.color={1.0f,0.55f+0.3f*(1.0f-p),0.2f,(1.0f-p)*std::clamp(p*8.0f,0.0f,1.0f)};
+                    q.angle=clock*3.0f+j;
+                    sparks.push_back(q);
+                }
+            }
+        }
+        // Crystals and magic circles (warp traps) in sight: a glow that swells and fades
+        // slowly, lighting what is near (the nearest few, after the fires).
+        {
+            struct Gleam {XMVECTOR at;float size,r,g,b,pulse;int distance;};
+            std::vector<Gleam> gleams;
+            const auto& h=game.Hero();
+            for(const auto& c:CrystalSpots(game))
+            {
+                if(!game.Visible(c.tx,c.ty))continue;
+                const float pulse=0.8f+0.2f*std::sin(clock*1.6f+c.seed*0.9f);
+                // The colour of its tallest crystal (AddCrystals).
+                static constexpr float colours[3][3]={{0.45f,0.85f,1.0f},{0.80f,0.60f,1.0f},{0.55f,0.95f,0.95f}};
+                const float* k=colours[c.seed%3];
+                gleams.push_back({XMVectorSet(c.x,c.height*0.5f,c.z,0),c.height*1.2f,k[0],k[1],k[2],pulse,std::abs(c.tx-h.x)+std::abs(c.ty-h.y)});
+            }
+            for(const auto& t:game.Traps())
+            {
+                if(!t.found||t.kind!=Dungeon::TrapKind::Warp||!game.Visible(t.x,t.y))continue;
+                const float x=(t.x+0.5f)*TileSize,z=-(t.y+0.5f)*TileSize,seed=static_cast<float>(t.x*5+t.y*11);
+                const float pulse=0.75f+0.25f*std::sin(clock*2.2f+seed);
+                gleams.push_back({XMVectorSet(x,1.0f,z,0),7.0f,0.75f,0.45f,1.0f,pulse,std::abs(t.x-h.x)+std::abs(t.y-h.y)});
+                // Motes of light circling up from it.
+                for(int j=0;j<5;++j)
+                {
+                    const float p=std::fmod(clock*0.35f+j/5.0f,1.0f),a=clock*1.2f+XM_2PI*j/5;
+                    MascotRenderer::Particle q;
+                    q.position={x+std::cos(a)*2.8f*(1.0f-0.4f*p),0.5f+p*9.0f,z+std::sin(a)*2.8f*(1.0f-0.4f*p)};
+                    q.size=0.35f*(1.0f-p)+0.1f;
+                    q.color={0.85f,0.65f,1.0f,(1.0f-p)*std::clamp(p*6.0f,0.0f,1.0f)};
+                    q.angle=a;
+                    sparks.push_back(q);
+                }
+            }
+            std::sort(gleams.begin(),gleams.end(),[](const Gleam& a,const Gleam& b){return a.distance<b.distance;});
+            for(const auto& g:gleams)
+            {
+                halo(g.at,g.size*(0.9f+0.1f*g.pulse),g.r,g.g,g.b,0.6f*g.pulse);
+                halo(g.at,g.size*0.45f,0.5f+0.5f*g.r,0.5f+0.5f*g.g,0.5f+0.5f*g.b,0.45f*g.pulse);
+                if(lights.size()<MascotRenderer::MaxLights)
+                    shine(XMVectorSetY(g.at,4.0f),TileSize*2.2f,0.9f*g.r*g.pulse,0.9f*g.g*g.pulse,0.9f*g.b*g.pulse);
+            }
+        }
         r.SetParticles(sparks);
+        r.SetLights(lights);
 
         // The monsters: taken from the game once her blow has landed (a fallen one goes then,
         // the others move on and strike back after it), then each glides to its tile, walking,
@@ -1585,6 +1718,10 @@ namespace MikuMikuDesktopPerch
                     bar(left,top+0.01f*TileSize,left+w*f,top+0.09f*TileSize,0.9f,0.3f,0.3f);
                 }
             }
+            // The campfires' flames, flickering.
+            for(const auto& f:game.Fires())
+                if(!f.used&&game.Seen(f.x,f.y))
+                    AddFlames(moving,(f.x+0.5f)*TileSize,-(f.y+0.5f)*TileSize,static_cast<float>(state.monsterClock)+f.x*1.3f+f.y*0.7f,game.Visible(f.x,f.y)?1.0f:0.5f);
             r.SetMovingGeometry(std::move(moving));
         }
         r.SetTorch(state.drawnX,state.drawnZ,TileSize*(state.behind?9.0f:7.0f));
