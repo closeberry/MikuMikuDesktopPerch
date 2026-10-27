@@ -186,7 +186,18 @@ namespace MikuMikuDesktopPerch
             return spots;
         }
 
-        int Px(int logical){return MulDiv(logical,state.window?static_cast<int>(GetDpiForWindow(state.window)):96,96);}
+        // Logical pixels (at 96 dpi) to the window's: by its dpi, and larger as the window grows
+        // past the size it opens at (1180x760 at most), so the panel, the log, their text and the
+        // gauges keep their share of it (up to a little over twice as large).
+        int Px(int logical)
+        {
+            if(!state.window)return logical;
+            const float dpi=static_cast<float>(GetDpiForWindow(state.window))/96.0f;
+            RECT client{};
+            GetClientRect(state.window,&client);
+            const float grow=std::min(static_cast<float>(client.right)/(1164.0f*dpi),static_cast<float>(client.bottom)/(721.0f*dpi));
+            return static_cast<int>(std::lround(logical*dpi*std::clamp(grow,1.0f,2.2f)));
+        }
 
         Color Argb(std::uint32_t c){return Color(static_cast<BYTE>(c>>24),static_cast<BYTE>(c>>16),static_cast<BYTE>(c>>8),static_cast<BYTE>(c));}
 
@@ -1211,7 +1222,16 @@ namespace MikuMikuDesktopPerch
             case WM_ERASEBKGND:
                 return 1;
             case WM_SIZE:
-                if(state.camp.edit){const RECT r=TalkBox();MoveWindow(state.camp.edit,r.left,r.top,r.right-r.left,r.bottom-r.top,TRUE);}
+                if(auto& c=state.camp;c.edit)
+                {
+                    // The talk box and its text grow with the window too.
+                    const RECT r=TalkBox();
+                    MoveWindow(c.edit,r.left,r.top,r.right-r.left,r.bottom-r.top,TRUE);
+                    const HFONT old=c.font;
+                    c.font=CreateFontW(-Px(15),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Yu Gothic UI");
+                    SendMessageW(c.edit,WM_SETFONT,reinterpret_cast<WPARAM>(c.font),TRUE);
+                    if(old)DeleteObject(old);
+                }
                 PlaceView();
                 InvalidateRect(hwnd,nullptr,FALSE);
                 return 0;
