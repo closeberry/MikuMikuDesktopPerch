@@ -35,6 +35,10 @@ namespace MikuMikuDesktopPerch
         // Her words in her own voice: asks the LLM about situation (a stage direction), the line
         // coming back through DungeonHeard. False when it cannot now (her own line is shown).
         std::function<bool(const std::wstring& situation)> talk;
+        // A talk by a campfire: what the user said, the facts of the adventure so far, and the
+        // talk before it (true: the user's, false: hers). Her answer comes back whole, as it
+        // grows, through DungeonHeard. False when the LLM cannot answer now.
+        std::function<bool(const std::wstring& said,const std::wstring& facts,const std::vector<std::pair<bool,std::wstring>>& before)> chat;
     };
 
     struct DungeonResult
@@ -49,8 +53,9 @@ namespace MikuMikuDesktopPerch
     void ShowDungeonWindow(HWND owner,const DungeonHero& hero,std::function<void(const DungeonResult&)> onEnd);
     bool DungeonWindowOpen();
 
-    // Her line asked for with DungeonHero::talk, as it comes in (done: the end; an empty line
-    // when done means none came, and her own line is shown).
+    // Her line asked for with DungeonHero::talk (or her answer by the campfire, DungeonHero::chat),
+    // as it comes in (done: the end; an empty line when done means none came, and her own line
+    // is shown).
     void DungeonHeard(const std::wstring& line,bool done);
 
     // Every frame while open: the 3D view drawn with her model as it is posed now. The view's

@@ -9,6 +9,7 @@
 #include "TreasureArt.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
+#include <commctrl.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -36,6 +37,18 @@ namespace MikuMikuDesktopPerch
         constexpr ULONGLONG DefeatShown=1500;   // the defeat stays at least this long before a key takes her home
 
         enum class Strike {None,Sword,Magic};   // her attacks, shown in 3D
+        // A spark flying from a hit (world units, per second), fading over its life.
+        struct Spark {DirectX::XMFLOAT3 at,speed;float size;float color[3];double age,life;};
+
+        // A talk by a campfire (C beside one, no monster about): the user writes in a box under
+        // the view and she answers in her bubble; what was said is kept while the box is open.
+        struct CampTalk
+        {
+            HWND edit=nullptr;
+            HFONT font=nullptr;
+            std::vector<std::pair<bool,std::wstring>> said;   // true: the user's
+            bool asking=false;                                // her answer is coming
+        };
 
         struct
         {
@@ -81,6 +94,16 @@ namespace MikuMikuDesktopPerch
             double strikeTime=0;
             std::vector<DirectX::XMFLOAT3> trail;
             float boltTiles=0;
+            // Where the attack lands (the tile cut at, the bolt's last), and when (seconds into
+            // it): the 3D scene waits for that before it shows what the attack did (a monster
+            // gone), and the hit flashes there.
+            std::pair<int,int> strikeTile{-1,-1};
+            double strikeLands=0;
+            std::vector<Spark> burst;   // flying from a hit
+            // The dragon's fire in 3D: the tiles it swept (from the dragon out), for a moment.
+            std::vector<std::pair<int,int>> flame;
+            int flameTurn=-1;
+            double flameTime=0;
             // What she says (in the bubble under the view): her own line, or the LLM's as it
             // comes (waiting: asked, "…" until it does). weight: how much it matters.
             struct
@@ -95,7 +118,10 @@ namespace MikuMikuDesktopPerch
             struct {std::wstring label;bool automatic=false;ULONGLONG at=0;} photo;
             std::wstring toast;   // a short note under the view ("saved to the album")
             ULONGLONG toastUntil=0;
+            CampTalk camp;
         } state;
+
+        bool ByFire();
 
         int Px(int logical){return MulDiv(logical,state.window?static_cast<int>(GetDpiForWindow(state.window)):96,96);}
 
@@ -737,6 +763,8 @@ namespace MikuMikuDesktopPerch
                 }
             SolidBrush flash(Color(150,255,236,140));
             for(const auto& [x,y]:game.Bolt()){const PointF p=at(x,y);g.FillEllipse(&flash,p.X+tile*0.2f,p.Y+tile*0.2f,tile*0.6f,tile*0.6f);}
+            SolidBrush fire(Color(170,255,110,50));
+            for(const auto& [x,y]:game.Flame()){const PointF p=at(x,y);g.FillEllipse(&fire,p.X+tile*0.1f,p.Y+tile*0.1f,tile*0.8f,tile*0.8f);}
             for(const auto& m:game.Monsters())
                 if(game.Visible(m.x,m.y))
                 {
@@ -819,7 +847,9 @@ namespace MikuMikuDesktopPerch
             keys+=T(L"F：魔法（MP3）　スペース：待つ・罠を探す\nEnter：買う　P：写真　Z：図鑑\nV：カメラ　M：2D/3D　Esc：帰る",
                     L"F: magic (3 MP)  Space: wait, find traps\nEnter: buy  P: picture  Z: records\nV: camera  M: 2D/3D  Esc: go home");
             if(fresh)keys+=T(L"\nT：今日のダンジョンで遊ぶ",L"\nT: play today's dungeon instead");
-            Text(g,keys,px,std::max(y,help),static_cast<float>(Px(12)),grey);
+            const bool fire=ByFire()&&!state.camp.edit;
+            if(fire)keys+=T(L"\nC：焚き火で話す",L"\nC: talk by the fire");
+            Text(g,keys,px,std::max(y,help-(fire?line:0.0f)),static_cast<float>(Px(12)),grey);
 
             // A question over everything when there is one.
             std::wstring ask;
@@ -842,7 +872,12 @@ namespace MikuMikuDesktopPerch
             float ly=top;
             g.SetClip(RectF(rx,top,rw,logHeight-pad));
             if(!state.toast.empty()&&GetTickCount64()<state.toastUntil){Text(g,state.toast,rx,ly,static_cast<float>(Px(13)),gold,true);ly+=line;}
-            if((Showing3D()||state.showBook)&&!ask.empty())
+            if(state.camp.edit)
+            {
+                // The talk: what it is above its box (the log waits meanwhile).
+                Text(g,T(L"焚き火で話す　Enter：話しかける　Esc：やめる",L"Talking by the fire   Enter: say it   Esc: stop"),rx,ly,static_cast<float>(Px(13)),gold,true);
+            }
+            else if((Showing3D()||state.showBook)&&!ask.empty())
             {
                 SolidBrush box(Color(255,40,34,58));
                 g.FillRectangle(&box,rx,ly,rw,top+logHeight-pad-ly);
@@ -891,7 +926,8 @@ namespace MikuMikuDesktopPerch
             bool foe=false;
             for(const auto& m:game.Monsters())if(m.x==h.x+dx&&m.y==h.y+dy)foe=true;
             game.StepOffStairs();
-            if(game.Move(dx,dy)&&foe){state.strikeAsked=Strike::Sword;state.strikeAskedAt=GetTickCount64();}
+            const int tx=h.x+dx,ty=h.y+dy;
+            if(game.Move(dx,dy)&&foe){state.strikeAsked=Strike::Sword;state.strikeAskedAt=GetTickCount64();state.strikeTile={tx,ty};}
         }
 
         // A spell, cast the way she faces (in 3D, it flies from her hand along the bolt's path).
@@ -901,10 +937,12 @@ namespace MikuMikuDesktopPerch
             if(!game.Cast())return;
             const auto& h=game.Hero();
             state.boltTiles=static_cast<float>(Dungeon::Game::MagicRange);
+            state.strikeTile={-1,-1};
             if(!game.Bolt().empty())
             {
                 const auto& [x,y]=game.Bolt().back();
                 state.boltTiles=static_cast<float>(std::max(std::abs(x-h.x),std::abs(y-h.y)));
+                state.strikeTile={x,y};
             }
             state.strikeAsked=Strike::Magic;state.strikeAskedAt=GetTickCount64();
         }
@@ -956,6 +994,110 @@ namespace MikuMikuDesktopPerch
             Listen();
         }
 
+        // Beside a campfire (or on its tile's edge), playing, with no monster awake in sight, and
+        // the LLM there to talk with: C opens the talk.
+        bool ByFire()
+        {
+            const auto& game=state.game;
+            if(!state.hero.chat||game.GetState()!=Dungeon::Game::State::Playing)return false;
+            const auto& h=game.Hero();
+            if(std::any_of(game.Monsters().begin(),game.Monsters().end(),[&](const Dungeon::Monster& m){return m.awake&&game.Visible(m.x,m.y);}))return false;
+            return std::any_of(game.Fires().begin(),game.Fires().end(),[&](const Dungeon::Fire& f){return std::abs(f.x-h.x)+std::abs(f.y-h.y)<=1;});
+        }
+
+        // The talk's box: under the view, right of her bubble (where the log is), below a line
+        // saying what it is.
+        RECT TalkBox()
+        {
+            RECT client{};
+            GetClientRect(state.window,&client);
+            const int panel=Px(250),logHeight=Px(128),pad=Px(10);
+            const int areaW=client.right-panel-2*pad,speechW=static_cast<int>(areaW*0.56f);
+            const int x=pad*2+speechW,w=std::max(Px(80),areaW-speechW-pad),top=client.bottom-logHeight+pad/2+Px(24);
+            return {x,top,x+w,top+Px(30)};
+        }
+
+        void CloseTalk()
+        {
+            auto& c=state.camp;
+            if(c.edit){DestroyWindow(c.edit);c.edit=nullptr;}
+            if(c.font){DeleteObject(c.font);c.font=nullptr;}
+            c.said.clear();
+            c.asking=false;
+            if(state.window){SetFocus(state.window);InvalidateRect(state.window,nullptr,FALSE);}
+        }
+
+        // The adventure so far, for her answers: where they are, how she is, what has happened.
+        std::wstring AdventureFacts()
+        {
+            const auto& game=state.game;
+            const auto& h=game.Hero();
+            std::wstring facts=Fmt(T(L"いまは{0}階、レベル{1}、HP{2}/{3}、{4}ゴールド、ここまでに{5}匹倒した。",L"Now on floor {0}, level {1}, HP {2}/{3}, {4} gold, {5} monsters defeated so far."),
+                                   {std::to_wstring(game.Floor()),std::to_wstring(h.level),std::to_wstring(h.hp),std::to_wstring(h.MaxHp()),std::to_wstring(h.gold),std::to_wstring(game.Kills())});
+            if(state.record.best>0)facts+=Fmt(T(L"これまでの最高は{0}階。",L" The deepest so far is floor {0}."),{std::to_wstring(state.record.best)});
+            const auto& log=game.Log();
+            if(!log.empty())
+            {
+                facts+=T(L"最近のできごと：",L" Lately: ");
+                const size_t from=log.size()>8?log.size()-8:0;
+                for(size_t i=from;i<log.size();++i)facts+=log[i]+(English()?L" ":L"");
+            }
+            return facts;
+        }
+
+        void SendTalk()
+        {
+            auto& c=state.camp;
+            auto& s=state.speech;
+            if(!c.edit||s.waiting)return;
+            wchar_t buffer[512]{};
+            GetWindowTextW(c.edit,buffer,512);
+            std::wstring said=buffer;
+            const size_t a=said.find_first_not_of(L" 　\t"),b=said.find_last_not_of(L" 　\t");
+            said=a==std::wstring::npos?std::wstring():said.substr(a,b-a+1);
+            if(said.empty())return;
+            SetWindowTextW(c.edit,L"");
+            const ULONGLONG now=GetTickCount64();
+            if(state.hero.chat&&state.hero.chat(said,AdventureFacts(),c.said))
+            {
+                c.said.push_back({true,said});
+                c.asking=true;
+                s.waiting=true;
+                s.fallback=T(L"うん…そうだね。",L"Mm... yeah.");
+                s.text=L"…";
+                s.weight=9;
+                s.since=s.asked=now;
+            }
+            else Say(T(L"ごめんね、いまはうまく話せないみたい…。",L"Sorry, I can't really talk right now..."),9);
+            InvalidateRect(state.window,nullptr,FALSE);
+        }
+
+        // The box's own keys: Enter sends, Esc closes (neither beeps).
+        LRESULT CALLBACK TalkKeys(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam,UINT_PTR,DWORD_PTR)
+        {
+            if(message==WM_KEYDOWN&&wParam==VK_RETURN){SendTalk();return 0;}
+            if(message==WM_KEYDOWN&&wParam==VK_ESCAPE){CloseTalk();return 0;}
+            if(message==WM_CHAR&&(wParam==L'\r'||wParam==27))return 0;
+            if(message==WM_GETDLGCODE)return DLGC_WANTALLKEYS;
+            return DefSubclassProc(hwnd,message,wParam,lParam);
+        }
+
+        void OpenTalk()
+        {
+            auto& c=state.camp;
+            if(c.edit){SetFocus(c.edit);return;}
+            const RECT r=TalkBox();
+            c.edit=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,r.left,r.top,r.right-r.left,r.bottom-r.top,
+                                   state.window,nullptr,GetModuleHandleW(nullptr),nullptr);
+            if(!c.edit)return;
+            c.font=CreateFontW(-Px(15),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Yu Gothic UI");
+            SendMessageW(c.edit,WM_SETFONT,reinterpret_cast<WPARAM>(c.font),TRUE);
+            SendMessageW(c.edit,EM_SETLIMITTEXT,200,0);
+            SetWindowSubclass(c.edit,TalkKeys,1,0);
+            SetFocus(c.edit);
+            InvalidateRect(state.window,nullptr,FALSE);
+        }
+
         // repeat: the key is held down (the keyboard's auto-repeat).
         void OnKey(WPARAM key,bool repeat)
         {
@@ -983,6 +1125,7 @@ namespace MikuMikuDesktopPerch
             else if(key=='M'&&state.renderer){state.show3D=!state.show3D;PlaceView();}
             else if(key=='V'&&Showing3D())state.behind=!state.behind;
             else if(key=='Z'&&!repeat){state.showBook=true;PlaceView();}
+            else if(key=='C'&&!repeat&&ByFire())OpenTalk();
             else if(key=='P'&&!repeat)QueuePhoto({},false);
             else if(key=='T'&&!repeat&&game.Floor()==1&&game.Turns()==0&&!game.Daily())StartAdventure(true);
             else if(game.GetState()==State::AtStairs&&key==VK_RETURN&&!repeat)game.Descend();
@@ -1058,6 +1201,7 @@ namespace MikuMikuDesktopPerch
             case WM_ERASEBKGND:
                 return 1;
             case WM_SIZE:
+                if(state.camp.edit){const RECT r=TalkBox();MoveWindow(state.camp.edit,r.left,r.top,r.right-r.left,r.bottom-r.top,TRUE);}
                 PlaceView();
                 InvalidateRect(hwnd,nullptr,FALSE);
                 return 0;
@@ -1065,6 +1209,7 @@ namespace MikuMikuDesktopPerch
                 if(!state.ended)Finish();
                 return 0;
             case WM_DESTROY:
+                CloseTalk();
                 ReleaseView();
                 state.window=nullptr;
                 state.face.reset();
@@ -1150,6 +1295,13 @@ namespace MikuMikuDesktopPerch
             if(line.empty())s.text=s.fallback;
             s.recent.push_back(s.text);
             while(s.recent.size()>4)s.recent.pop_front();
+            if(state.camp.asking)
+            {
+                state.camp.asking=false;
+                auto& said=state.camp.said;
+                said.push_back({false,s.text});
+                if(said.size()>16)said.erase(said.begin(),said.begin()+2);
+            }
         }
         InvalidateRect(state.window,nullptr,FALSE);
     }
@@ -1164,6 +1316,8 @@ namespace MikuMikuDesktopPerch
             const ULONGLONG now=GetTickCount64();
             if(s.waiting&&s.text==L"…"&&now-s.since>AskWait){s.waiting=false;s.text=s.fallback;InvalidateRect(state.window,nullptr,FALSE);}
             if(!state.toast.empty()&&now>=state.toastUntil){state.toast.clear();InvalidateRect(state.window,nullptr,FALSE);}
+            // Away from the fire (a monster about, or she has walked off): the talk ends.
+            if(state.camp.edit&&!state.camp.asking&&!ByFire())CloseTalk();
         }
         if(!Showing3D()||state.showBook)return;
         auto& r=*state.renderer;
@@ -1171,7 +1325,10 @@ namespace MikuMikuDesktopPerch
         // Rebuilt after each turn, and when the camera changes (the ceiling is there from behind
         // her only). The walls that would hide her sink by themselves (GeometryVS).
         const long long key=(static_cast<long long>(game.Floor())*100000+game.Turns())*8+static_cast<int>(game.GetState())*2+(state.behind?1:0);
-        if(key!=state.sceneKey)
+        // While her attack is on its way, the scene stays as it was (the monster still there)
+        // until the blow lands.
+        const bool waitingForBlow=state.strikeAsked!=Strike::None||(state.strike!=Strike::None&&state.strikeTime<state.strikeLands);
+        if(key!=state.sceneKey&&!waitingForBlow)
         {
             state.sceneKey=key;
             r.SetGeometry(BuildScene());
@@ -1263,6 +1420,7 @@ namespace MikuMikuDesktopPerch
             {
                 state.strike=state.strikeAsked;
                 state.strikeTime=0;
+                state.strikeLands=MascotModel::StrikeHit+(state.strike==Strike::Magic?state.boltTiles/12.0f:0.0);
                 state.trail.clear();
                 state.strikeAsked=Strike::None;
             }
@@ -1271,7 +1429,25 @@ namespace MikuMikuDesktopPerch
         std::vector<MascotRenderer::Particle> sparks;
         if(state.strike!=Strike::None)
         {
+            const double before=state.strikeTime;
             state.strikeTime+=dt;
+            // The blow lands: sparks fly from the monster there, and a puff where one fell.
+            if(before<state.strikeLands&&state.strikeTime>=state.strikeLands&&state.strikeTile.first>=0)
+            {
+                const auto [x,y]=state.strikeTile;
+                const bool fell=std::none_of(game.Monsters().begin(),game.Monsters().end(),[&](const Dungeon::Monster& m){return m.x==x&&m.y==y;});
+                const XMFLOAT3 at{(x+0.5f)*TileSize,6.0f,-(y+0.5f)*TileSize};
+                std::uint32_t seed=static_cast<std::uint32_t>(GetTickCount64());
+                auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};
+                for(int i=0;i<(fell?30:16);++i)
+                {
+                    const float a=random()*XM_2PI,up=random()*2.0f-0.5f,v=(fell?10.0f:18.0f)+random()*16.0f;
+                    Spark s{at,{std::cos(a)*v,up*v,std::sin(a)*v},(fell?1.6f:0.9f)+random()*0.8f,{}, 0,0.3+random()*(fell?0.5:0.25)};
+                    const bool purple=fell&&i%2==0;
+                    s.color[0]=purple?0.8f:1.0f;s.color[1]=purple?0.6f:0.95f;s.color[2]=purple?1.0f:0.7f;
+                    state.burst.push_back(s);
+                }
+            }
             const float t=static_cast<float>(state.strikeTime),hit=static_cast<float>(MascotModel::StrikeHit);
             auto place=[&](FXMVECTOR p,float size,float r,float g,float b,float a,float angle=0){
                 MascotRenderer::Particle q;
@@ -1357,6 +1533,57 @@ namespace MikuMikuDesktopPerch
                 }
             }
         }
+        // The dragon's fire: flames running out along its line from the dragon, flickering up,
+        // then dying down.
+        if(!game.Flame().empty()&&state.flameTurn!=game.Turns())
+        {
+            state.flameTurn=game.Turns();
+            state.flame=game.Flame();
+            state.flameTime=0;
+        }
+        if(!state.flame.empty())
+        {
+            state.flameTime+=dt;
+            const float t=static_cast<float>(state.flameTime);
+            if(t>1.0f)state.flame.clear();
+            for(size_t k=0;k<state.flame.size();++k)
+            {
+                const float age=t-0.06f*static_cast<float>(k);
+                if(age<0)continue;
+                const float fade=std::clamp(1.0f-(age-0.35f)/0.4f,0.0f,1.0f)*std::clamp(age/0.08f,0.0f,1.0f);
+                const auto [x,y]=state.flame[k];
+                for(int j=0;j<10;++j)
+                {
+                    // Each flame rises and sways on its own (j spreads them over the tile).
+                    const float u=static_cast<float>(j)/10.0f,rise=std::fmod(age*14.0f+u*7.0f,7.0f);
+                    MascotRenderer::Particle q;
+                    q.position={(x+0.25f+0.5f*std::fmod(u*3.7f+0.3f*k,1.0f))*TileSize+std::sin(age*11.0f+j)*0.8f,
+                                2.0f+rise*1.6f,
+                                -(y+0.25f+0.5f*std::fmod(u*2.3f+0.6f,1.0f))*TileSize};
+                    q.size=6.0f-0.5f*rise;
+                    q.color={1.0f,0.3f+0.35f*(1.0f-rise/7.0f),0.08f,fade*(1.0f-rise/9.0f)};
+                    q.angle=age*3.0f+j;
+                    sparks.push_back(q);
+                }
+            }
+        }
+        for(auto& s:state.burst)
+        {
+            s.age+=dt;
+            s.at.x+=s.speed.x*static_cast<float>(dt);s.at.y+=s.speed.y*static_cast<float>(dt);s.at.z+=s.speed.z*static_cast<float>(dt);
+            s.speed.y-=30.0f*static_cast<float>(dt);
+            const float k=static_cast<float>(std::exp(-dt/0.25));
+            s.speed.x*=k;s.speed.z*=k;
+            const float fade=1.0f-static_cast<float>(s.age/s.life);
+            if(fade<=0)continue;
+            MascotRenderer::Particle q;
+            q.position={s.at.x,std::max(0.5f,s.at.y),s.at.z};
+            q.size=s.size*(0.6f+0.4f*fade);
+            q.color={s.color[0],s.color[1],s.color[2],fade};
+            q.angle=static_cast<float>(s.age*6.0);
+            sparks.push_back(q);
+        }
+        state.burst.erase(std::remove_if(state.burst.begin(),state.burst.end(),[](const auto& s){return s.age>=s.life;}),state.burst.end());
         r.SetParticles(sparks);
         r.SetTorch(state.drawnX,state.drawnZ,TileSize*(state.behind?9.0f:7.0f));
 

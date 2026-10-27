@@ -40,6 +40,12 @@ namespace MikuMikuDesktopPerch::Dungeon
         int x=0,y=0,hp=1,maxHp=1,atk=1,def=0,xp=1;
         std::uint32_t color=0xFF888888;   // ARGB
         bool boss=false,awake=false,house=false;
+        // Their ways (by id): a slime splits once, a skeleton stands up again once, an orc
+        // gathers a heavy blow, a goblin runs off with gold, the dragon breathes fire.
+        bool split=false,risen=false,charging=false;
+        int stolen=0;       // gold a goblin carries off (hers again when it falls)
+        int breath=0;       // turns before the dragon can breathe fire again
+        int fleeing=0;      // turns a goblin has run with the gold
     };
 
     struct Chest {int x=0,y=0;Item item;};
@@ -98,7 +104,7 @@ namespace MikuMikuDesktopPerch::Dungeon
 
     // Something she has words for. The window shows line (or asks the LLM, giving it facts);
     // weight: how much it matters (a heavier one wins when several come at once).
-    enum class Event {Arrive,Room,House,Boss,BossDown,LevelUp,Chest,LowHp,Trap,Camp,Shop,Bought,Key,Vault,Treasure,Hungry,Starving,Dead,Kill,Crystal,Title,Saved,Dodged,Sold,
+    enum class Event {Arrive,Room,House,Boss,BossDown,LevelUp,Chest,LowHp,Trap,Camp,Shop,Bought,Key,Vault,Treasure,Hungry,Starving,Dead,Kill,Crystal,Title,Saved,Dodged,Sold,Stolen,
                      Refused};   // Refused: what she cannot do now and why (said at once, in her own fixed words)
     struct Talk {Event event=Event::Room;std::wstring line,facts;int weight=1;};
 
@@ -151,6 +157,8 @@ namespace MikuMikuDesktopPerch::Dungeon
         std::vector<Talk> TakeTalks(){return std::exchange(talks,{});}
         // The last magic bolt's path (for a moment's flash), cleared by the next action.
         const std::vector<std::pair<int,int>>& Bolt() const {return bolt;}
+        // The dragon's fire this turn (the tiles it swept), cleared by the next action.
+        const std::vector<std::pair<int,int>>& Flame() const {return flame;}
         bool BossAlive() const;
         // Titles earned in this adventure (ids), newest last.
         const std::vector<std::string>& NewTitles() const {return newTitles;}
@@ -161,6 +169,9 @@ namespace MikuMikuDesktopPerch::Dungeon
         void Reveal();
         void EndTurn();
         void MonstersAct();
+        bool Passable(int x,int y) const;
+        void Flee(Monster& m);
+        void Wander(Monster& m);
         void Hit(Monster& m,int damage,const wchar_t* how,bool magic);
         void Hurt(int damage,const std::wstring& by);
         void GainXp(int xp);
@@ -172,6 +183,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         bool StepOn(int x,int y);
         void RestAtFire(Fire& fire);
         Item RandomItem(int tierBonus=0);
+        Item Meat(bool big);
         Item Treasure(bool boss=false);
         Monster RandomMonster(bool boss);
         bool Free(int x,int y) const;    // nothing standing there (monsters may walk it)
@@ -190,7 +202,8 @@ namespace MikuMikuDesktopPerch::Dungeon
         std::vector<Gold> golds;
         std::vector<Fire> fires;
         std::vector<std::pair<int,int>> keysOnFloor;
-        std::vector<std::pair<int,int>> bolt;
+        std::vector<std::pair<int,int>> bolt,flame;
+        std::vector<Monster> born;   // split off this turn: joins the others as the monsters act
         std::deque<std::wstring> log;
         std::vector<Talk> talks;
         std::vector<std::string> newTitles;

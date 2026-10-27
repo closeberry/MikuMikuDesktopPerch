@@ -206,8 +206,9 @@ namespace
         double roomCheckAt=0;         // next look at whether she stands on top of another character
         // Talking with another character: the request now running is a line of that conversation.
         bool banterLine=false;
-        // In the dungeon: the request now running is a word of hers there (for its bubble).
-        bool dungeonLine=false;
+        // In the dungeon: the request now running is a word of hers there (for its bubble), or
+        // (dungeonChat too) her answer by a campfire, taken whole.
+        bool dungeonLine=false,dungeonChat=false;
         // A timer, reminder or to-do request the words alone did not make clear, being read by
         // the LLM (planSaid: what the user said).
         std::unique_ptr<LocalChat> planChat;
@@ -2173,6 +2174,14 @@ namespace
                 m.feelingUntil=-1;
                 Trace(L"%.1f talk: feeling %s",app.clock,feeling->english);
             }
+        if(m.dungeonLine&&m.dungeonChat)
+        {
+            // By the campfire: her whole answer, as it grows.
+            const std::wstring text=CleanReply(m.reply);
+            Reveal(m,text);
+            DungeonHeard(text,false);
+            return;
+        }
         if(m.dungeonLine)
         {
             // One line, to the dungeon's bubble (and her voice); the rest, if any, is not waited for.
@@ -2211,6 +2220,15 @@ namespace
         std::unique_ptr<std::wstring> owned(error);
         if(id!=m.chatRequest)return;
         Trace(L"%.1f talk: request %d done %s",app.clock,id,owned->c_str());
+        if(m.dungeonLine&&m.dungeonChat)
+        {
+            m.dungeonLine=m.dungeonChat=false;
+            const std::wstring text=owned->empty()?CleanReply(m.reply+L"\n"):std::wstring();
+            if(!text.empty())Reveal(m,text);
+            m.speech.Finish();
+            DungeonHeard(text,true);
+            return;
+        }
         if(m.dungeonLine)
         {
             m.dungeonLine=false;
@@ -3627,6 +3645,41 @@ namespace
                 L"セリフのいちばん最初に、そのときの気持ちを"+FeelingTags()+L"のどれか1つで書いてください（例：［驚き］わっ、見て！）。"});
         messages.push_back({L"user",English()?L"("+situation+L")":L"（"+situation+L"）"});
         m.dungeonLine=true;
+        m.dungeonChat=false;
+        BeginReply(m,std::move(messages));
+        return true;
+    }
+
+    // docs/Dungeon.md: a talk with her by a campfire in the dungeon. said: what the user wrote;
+    // facts: the adventure so far; before: the talk there until now (true: the user's).
+    bool DungeonChat(Mascot& m,const std::wstring& said,const std::wstring& facts,const std::vector<std::pair<bool,std::wstring>>& before)
+    {
+        if(ExternalChat()||!ChatReady(m,false))return false;
+        if(m.chat->Busy()&&!m.dungeonLine)return false;
+        if(m.chat->Busy())m.chat->Cancel();
+        const std::wstring& user=app.settings.userName;
+        const std::wstring bond=app.settings.bond?BondPrompt(m):std::wstring();
+        std::vector<ChatMessage> messages;
+        if(English())
+            messages.push_back({L"system",
+                L"You are \""+m.character.name+L"\".\n"+m.character.persona+L"\n"+bond+L"\n"
+                L"You are exploring a dungeon in a little roguelike game together with "+(user.empty()?std::wstring(L"the person you talk with"):L"\""+user+L"\"")+
+                L", who guides you through it. Now the two of you are resting by a campfire, and talk. What has happened so far: "+facts+L"\n"
+                L"Answer what they say in your own voice, warmly, in one to three short sentences of casual English (your words appear in a speech bubble). "
+                L"No names, stage directions, anything in ( ), Markdown, lists, emoji or emoticons.\n"
+                L"Begin with how you feel, as exactly one of "+FeelingTags()+L"."});
+        else
+            messages.push_back({L"system",
+                L"あなたは「"+m.character.name+L"」です。\n"+m.character.persona+L"\n"+bond+L"\n"
+                L"いま、"+(user.empty()?std::wstring(L"話し相手"):L"話し相手の「"+user+L"」")+L"と一緒に、ローグライクのミニゲームでダンジョンを冒険しています（話し相手があなたを操作しています）。"
+                L"いまは二人で焚き火にあたって休みながら、話をしています。ここまでの冒険："+facts+L"\n"
+                L"話し相手の言葉に、あなたらしく、あたたかく、1〜3文の短い話し言葉で答えてください（セリフは吹き出しに表示されます）。"
+                L"名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
+                L"いちばん最初に、そのときの気持ちを"+FeelingTags()+L"のどれか1つで書いてください。"});
+        for(const auto& [fromUser,text]:before)messages.push_back({fromUser?L"user":L"assistant",text});
+        messages.push_back({L"user",said});
+        m.dungeonLine=true;
+        m.dungeonChat=true;
         BeginReply(m,std::move(messages));
         return true;
     }
@@ -3653,6 +3706,11 @@ namespace
                 if(owned->modelPath==model&&owned->inDungeon)return DungeonTalk(*owned,situation);
             return false;
         };
+        hero.chat=[model](const std::wstring& said,const std::wstring& facts,const std::vector<std::pair<bool,std::wstring>>& before){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inDungeon)return DungeonChat(*owned,said,facts,before);
+            return false;
+        };
         // She goes into the dungeon: off the desktop, standing, looking where her model faces.
         if(m.chat)m.chat->Cancel();
         if(m.voice)m.voice->CancelAll();
@@ -3672,7 +3730,7 @@ namespace
                     // Her last word there, if still coming, is not carried onto the desktop.
                     if(m.dungeonLine)
                     {
-                        m.dungeonLine=false;
+                        m.dungeonLine=m.dungeonChat=false;
                         if(m.chat)m.chat->Cancel();
                         m.chatRequest=0;
                         if(m.voice)m.voice->CancelAll();

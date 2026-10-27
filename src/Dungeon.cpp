@@ -28,7 +28,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                                       {L"星のブローチ",L"Star brooch",0,0,0,0,5}};
         struct Plain {const wchar_t* ja;const wchar_t* en;ItemKind kind;int hp,mp,food;};
         constexpr Plain Supplies[]={{L"回復薬",L"Potion",ItemKind::Potion,20,0,0},{L"魔法の水",L"Magic water",ItemKind::Ether,0,8,0},
-                                    {L"おにぎり",L"Rice ball",ItemKind::Food,0,0,50},{L"大きなおにぎり",L"Big rice ball",ItemKind::Food,0,0,100}};
+                                    {L"骨付き肉",L"Meat on the bone",ItemKind::Food,0,0,50},{L"大きな骨付き肉",L"Big meat on the bone",ItemKind::Food,0,0,100}};
         // Found only from minFloor down: in vaults (and now and then a chest deep down), or
         // from a boss. The English name is the id (the records keep it). about: a few words
         // for her to talk about it.
@@ -293,8 +293,22 @@ namespace MikuMikuDesktopPerch::Dungeon
         if(record->items.size()>=20)Earn("collector");
     }
 
+    Item Game::Meat(bool big)
+    {
+        const Plain& p=Supplies[big?3:2];
+        Item item;
+        item.kind=p.kind;
+        item.name=English()?p.en:p.ja;
+        item.id=p.en;
+        item.food=p.food;
+        return item;
+    }
+
     Item Game::RandomItem(int tierBonus)
     {
+        // Hungry with nothing to eat: food is likelier.
+        if(player.food<=40&&std::none_of(player.bag.begin(),player.bag.end(),[](const Item& i){return i.kind==ItemKind::Food;})&&Random(1,100)<=50)
+            return Meat(Random(1,4)==1);
         const int tier=std::clamp((floor-1)/3+Random(-1,1)+tierBonus,0,3);
         const int roll=Random(1,100);
         auto gear=[&](ItemKind kind,const Gear& g,bool staff){
@@ -392,7 +406,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         tiles.assign(static_cast<size_t>(Width)*Height,Tile::Wall);
         seen.assign(tiles.size(),0);
         visible.assign(tiles.size(),0);
-        rooms.clear();monsters.clear();chests.clear();bolt.clear();
+        rooms.clear();monsters.clear();chests.clear();bolt.clear();flame.clear();born.clear();
         traps.clear();wares.clear();golds.clear();fires.clear();keysOnFloor.clear();
         state=State::Playing;
         hurtOnFloor=false;houseWoke=false;
@@ -576,6 +590,10 @@ namespace MikuMikuDesktopPerch::Dungeon
         for(int n=Random(3,5);n>0;--n)
             if(const int r=otherRoom({RoomKind::Shop,RoomKind::Vault});r>=0)
                 if(const auto [x,y]=place(r);x>=0)chests.push_back({x,y,floor>=8&&Random(1,100)<=4?Treasure():RandomItem()});   // deep down, now and then a treasure
+        // From floor 2, most floors have a chest with something to eat.
+        if(floor>=2&&Random(1,100)<=70)
+            if(const int r=otherRoom({RoomKind::Shop,RoomKind::Vault});r>=0)
+                if(const auto [x,y]=place(r);x>=0)chests.push_back({x,y,Meat(Random(1,4)==1)});
         for(int n=Random(1,3);n>0;--n)
             if(const int r=otherRoom({RoomKind::Shop,RoomKind::Vault});r>=0)
                 if(const auto [x,y]=place(r);x>=0)golds.push_back({x,y,Random(5,10)+floor*3});
@@ -738,8 +756,42 @@ namespace MikuMikuDesktopPerch::Dungeon
         m.hp-=damage;
         m.awake=true;
         Note(Fmt(T(L"{0}、{1}に{2}のダメージ。",L"{0} {1} for {2}."),{how,m.name,std::to_wstring(damage)}));
-        if(m.hp>0)return;
+        if(m.hp>0)
+        {
+            // A slime struck and still standing may split in two (once; the new one joins as
+            // the monsters act, beside it).
+            if(m.id==L"Slime"&&!m.split&&m.hp>=2&&Random(1,100)<=40)
+                for(const auto& [ox,oy]:{std::pair{1,0},{-1,0},{0,1},{0,-1}})
+                    if(Free(m.x+ox,m.y+oy)&&std::none_of(born.begin(),born.end(),[&](const Monster& b){return b.x==m.x+ox&&b.y==m.y+oy;}))
+                    {
+                        Monster half=m;
+                        half.x=m.x+ox;half.y=m.y+oy;
+                        half.hp=half.maxHp=m.hp/2;
+                        m.hp-=half.hp;
+                        m.split=half.split=true;
+                        half.xp=std::max(1,m.xp/2);
+                        born.push_back(half);
+                        Note(Fmt(T(L"{0}が分裂した！",L"The {0} split in two!"),{m.name}));
+                        break;
+                    }
+            return;
+        }
+        // A skeleton falls apart, and may pull itself together again (once).
+        if(m.id==L"Skeleton"&&!m.risen&&Random(1,100)<=50)
+        {
+            m.risen=true;
+            m.hp=std::max(1,m.maxHp/2);
+            Note(Fmt(T(L"{0}は崩れ落ちた…が、また組み上がった！",L"The {0} fell apart... and pulled itself together again!"),{m.name}));
+            return;
+        }
         ++kills;
+        if(m.stolen>0)
+        {
+            player.gold+=m.stolen;
+            Note(Fmt(T(L"盗まれた{0}ゴールドを取り返した！",L"Got back the {0} gold it stole!"),{std::to_wstring(m.stolen)}));
+            if(Random(1,100)<=60)Say(Event::Kill,LINE({L"返してもらったよ！",L"Got it back!"},{L"ふふん、取り返した！",L"Hah, it's mine again!"}),
+                                     Fmt(T(L"ゴールドを盗んだ{0}を倒して、取り返しました",L"You defeated the {0} that stole your gold and got it back"),{m.name}),2);
+        }
         Note(Fmt(T(L"{0}を倒した！",L"Defeated the {0}!"),{m.name}));
         if(record)
         {
@@ -748,6 +800,13 @@ namespace MikuMikuDesktopPerch::Dungeon
             if(std::all_of(book.begin(),book.end(),[&](const auto& b){return record->kills.count(b.first)>0;}))Earn("hunter");
         }
         if(magic&&++magicKills>=20)Earn("mage");
+        // Now and then it leaves something to eat, picked up when there is room.
+        if(Random(1,100)<=8&&static_cast<int>(player.bag.size())<BagSize)
+        {
+            const Item food=Meat(false);
+            player.bag.push_back(food);
+            Note(Fmt(T(L"{0}は{1}を落とした。拾った。",L"The {0} dropped a {1}. Picked it up."),{m.name,food.name}));
+        }
         if(Random(1,100)<=45)
         {
             const int gold=Random(2,4)+floor*2;
@@ -957,7 +1016,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     bool Game::Move(int dx,int dy)
     {
         if(state!=State::Playing)return false;
-        bolt.clear();
+        bolt.clear();flame.clear();
         player.dirX=dx;player.dirY=dy;
         const int x=player.x+dx,y=player.y+dy;
         const auto target=std::find_if(monsters.begin(),monsters.end(),[&](const Monster& m){return m.x==x&&m.y==y;});
@@ -1004,7 +1063,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     bool Game::Cast()
     {
         if(state!=State::Playing)return false;
-        bolt.clear();
+        bolt.clear();flame.clear();
         if(player.mp<MagicCost){Note(T(L"MPが足りない。",L"Not enough MP."));return false;}
         player.mp-=MagicCost;
         ++casts;
@@ -1032,7 +1091,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     bool Game::Rest()
     {
         if(state!=State::Playing)return false;
-        bolt.clear();
+        bolt.clear();flame.clear();
         // Looking around: traps next to her come to light.
         for(auto& t:traps)
             if(!t.found&&std::abs(t.x-player.x)<=1&&std::abs(t.y-player.y)<=1)
@@ -1047,7 +1106,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     bool Game::Use(int index)
     {
         if(state!=State::Playing||index<0||index>=static_cast<int>(player.bag.size()))return false;
-        bolt.clear();
+        bolt.clear();flame.clear();
         Item& item=player.bag[index];
         if(item.kind==ItemKind::Potion||item.kind==ItemKind::Ether||item.kind==ItemKind::Food)
         {
@@ -1111,7 +1170,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     bool Game::Drop(int index)
     {
         if(state!=State::Playing||index<0||index>=static_cast<int>(player.bag.size()))return false;
-        bolt.clear();
+        bolt.clear();flame.clear();
         const Item item=player.bag[index];
         player.bag.erase(player.bag.begin()+index);
         for(int* slot:{&player.weapon,&player.armor,&player.accessory})
@@ -1170,7 +1229,7 @@ namespace MikuMikuDesktopPerch::Dungeon
             {
                 hungryTold=true;
                 Say(Event::Hungry,food!=player.bag.end()?Fmt(T(L"おなかすいてきちゃった…。{0}、食べてもいい？（{1}キー）",L"I'm getting hungry... can I eat the {0}? (key {1})"),{food->name,key})
-                                                        :T(L"おなかすいてきちゃった…。宝箱かお店で、おにぎりを探そう。",L"I'm getting hungry... let's look for a rice ball in a chest or a shop."),
+                                                        :T(L"おなかすいてきちゃった…。宝箱かお店で、骨付き肉を探そう。",L"I'm getting hungry... let's look for some meat in a chest or a shop."),
                     food!=player.bag.end()?Fmt(T(L"ダンジョンの中で、おなかがすいてきました（満腹度20%）。持ち物の{0}を食べたいと伝えて",L"You are getting hungry in the dungeon (20% full). Say you would like to eat the {0} you carry"),{food->name})
                                           :T(L"ダンジョンの中で、おなかがすいてきました（満腹度20%）。食べ物を持っていないので、宝箱やお店で探したいと伝えて",
                                              L"You are getting hungry in the dungeon (20% full). You carry no food: say you would like to find some in a chest or a shop"),4);
@@ -1193,33 +1252,145 @@ namespace MikuMikuDesktopPerch::Dungeon
 
     void Game::MonstersAct()
     {
-        for(size_t i=0;i<monsters.size()&&state!=State::Dead;++i)
+        // Those split off last turn join in (they act from the next).
+        const size_t acting=monsters.size();
+        for(auto& b:born)if(Free(b.x,b.y))monsters.push_back(b);
+        born.clear();
+        for(size_t i=0;i<acting&&state!=State::Dead;++i)
         {
+            if(monsters[i].hp<=0)continue;
             Monster& m=monsters[i];
             if(!m.awake)continue;
-            const int dx=player.x-m.x,dy=player.y-m.y;
-            if(std::abs(dx)+std::abs(dy)==1)
+            const int dx=player.x-m.x,dy=player.y-m.y,gap=std::abs(dx)+std::abs(dy);
+            const bool inWall=At(m.x,m.y)==Tile::Wall;   // a ghost passing through: it cannot strike from there
+            // A goblin with her gold runs: two steps a turn, away from her, and after a few
+            // turns it is gone for good (with the gold).
+            if(m.stolen>0)
             {
+                if(++m.fleeing>8)
+                {
+                    Note(Fmt(T(L"{0}は{1}ゴールドを持って逃げていった…。",L"The {0} got away with {1} gold..."),{m.name,std::to_wstring(m.stolen)}));
+                    m.hp=0;
+                    continue;
+                }
+                for(int step=0;step<2;++step)Flee(m);
+                continue;
+            }
+            // A bat flutters about now and then instead of what it meant to do.
+            if(m.id==L"Bat"&&Random(1,100)<=40)
+            {
+                Wander(m);
+                continue;
+            }
+            // The dragon breathes fire along a straight, open line (2-5 tiles), now and then.
+            if(m.boss&&--m.breath<=0&&(dx==0||dy==0)&&gap>=2&&gap<=5&&Random(1,100)<=50)
+            {
+                const int sx=dx>0?1:dx<0?-1:0,sy=dy>0?1:dy<0?-1:0;
+                std::vector<std::pair<int,int>> line;
+                bool open=true;
+                for(int k=1;k<=gap;++k)
+                {
+                    const int x=m.x+sx*k,y=m.y+sy*k;
+                    if(At(x,y)==Tile::Wall||At(x,y)==Tile::Door){open=false;break;}
+                    line.push_back({x,y});
+                }
+                if(open)
+                {
+                    flame=line;
+                    m.breath=4;
+                    const int damage=std::max(2,m.atk+Random(0,m.atk/2)-player.Def()/3);
+                    Note(Fmt(T(L"{0}が炎を吐いた！{1}のダメージ。",L"The {0} breathes fire for {1}!"),{m.name,std::to_wstring(damage)}));
+                    if(Random(1,100)<=50)Say(Event::Trap,LINE({L"あつっ！炎だ！",L"Hot! Fire!"},{L"まっすぐ並ばないようにしよう！",L"Let's not stand in line with it!"}),
+                                             Fmt(T(L"ボスのドラゴンが炎を吐いて、{0}のダメージを受けました",L"The boss dragon breathed fire at you for {0} damage"),{std::to_wstring(damage)}),2);
+                    Hurt(damage,m.name);
+                    continue;
+                }
+            }
+            if(gap==1&&!inWall)
+            {
+                // An orc gathers itself for a heavy blow first (a step away and it is lost).
+                if(m.id==L"Orc"&&!m.charging&&Random(1,100)<=35)
+                {
+                    m.charging=true;
+                    Note(Fmt(T(L"{0}が力をためている…！",L"The {0} is gathering its strength...!"),{m.name}));
+                    if(Random(1,100)<=40)Say(Event::Trap,LINE({L"何か来る…！離れたほうがいいかも。",L"Something's coming... maybe step back."}),
+                                             Fmt(T(L"{0}が力をためています",L"The {0} is gathering strength for a heavy blow"),{m.name}),1);
+                    continue;
+                }
+                // A goblin snatches gold when it can, then runs.
+                if(m.id==L"Goblin"&&player.gold>0&&Random(1,100)<=20)
+                {
+                    const int amount=std::min(player.gold,std::max(1,player.gold*Random(20,40)/100));
+                    player.gold-=amount;
+                    m.stolen=amount;
+                    Note(Fmt(T(L"{0}に{1}ゴールド盗まれた！",L"The {0} stole {1} gold!"),{m.name,std::to_wstring(amount)}));
+                    Say(Event::Stolen,LINE({L"あっ、ゴールド返して！",L"Hey, give that back!"},{L"泥棒ー！待てー！",L"Thief! Come back here!"}),
+                        Fmt(T(L"{0}に{1}ゴールドを盗まれました。倒せば取り返せます",L"A {0} stole {1} gold; defeating it gets it back"),{m.name,std::to_wstring(amount)}),4);
+                    continue;
+                }
                 // Close to the user, she slips past a blow now and then.
                 if(bond>=2&&Random(1,100)<=bond*2)
                 {
+                    m.charging=false;
                     Note(Fmt(T(L"{0}の攻撃を、ひらりとかわした！",L"Dodged the {0}'s attack!"),{m.name}));
                     if(Random(1,100)<=30)Say(Event::Dodged,LINE({L"見えてたよ！",L"Saw that coming!"},{L"当たらないよっ。",L"Missed me!"}),
                                              Fmt(T(L"{0}の攻撃をかわしました",L"You dodged the {0}'s attack"),{m.name}),0);
                     continue;
                 }
-                const int damage=std::max(1,m.atk+Random(0,m.atk/3)-player.Def()/2);
-                Note(Fmt(T(L"{0}の攻撃。{1}のダメージ。",L"The {0} attacks for {1}."),{m.name,std::to_wstring(damage)}));
+                int damage=std::max(1,m.atk+Random(0,m.atk/3)-player.Def()/2);
+                if(m.charging)
+                {
+                    m.charging=false;
+                    damage=damage*9/5;
+                    Note(Fmt(T(L"{0}の渾身の一撃！{1}のダメージ。",L"The {0} lands a crushing blow for {1}!"),{m.name,std::to_wstring(damage)}));
+                }
+                else Note(Fmt(T(L"{0}の攻撃。{1}のダメージ。",L"The {0} attacks for {1}."),{m.name,std::to_wstring(damage)}));
                 Hurt(damage,m.name);
                 continue;
             }
-            // A step toward her: along the longer way first, else the other.
+            m.charging=false;
+            // Slow kinds take a step only every other turn.
+            if((m.id==L"Slime"||m.id==L"Golem")&&(turns&1))continue;
+            // A step toward her: along the longer way first, else the other. A ghost goes
+            // through walls (never off the map, nor onto anyone).
             const int sx=dx>0?1:dx<0?-1:0,sy=dy>0?1:dy<0?-1:0;
             const std::pair<int,int> first=std::abs(dx)>=std::abs(dy)?std::pair{sx,0}:std::pair{0,sy};
             const std::pair<int,int> second=std::abs(dx)>=std::abs(dy)?std::pair{0,sy}:std::pair{sx,0};
             for(const auto& [mx,my]:{first,second})
-                if((mx||my)&&Free(m.x+mx,m.y+my)){m.x+=mx;m.y+=my;break;}
+                if((mx||my)&&(m.id==L"Ghost"?Passable(m.x+mx,m.y+my):Free(m.x+mx,m.y+my))){m.x+=mx;m.y+=my;break;}
         }
+        // Gone (a goblin that got away).
+        monsters.erase(std::remove_if(monsters.begin(),monsters.end(),[](const Monster& m){return m.hp<=0;}),monsters.end());
+    }
+
+    // A ghost's way: through walls, but inside the map's edge and onto nobody.
+    bool Game::Passable(int x,int y) const
+    {
+        if(x<1||y<1||x>=Width-1||y>=Height-1||(x==player.x&&y==player.y))return false;
+        if(At(x,y)!=Tile::Wall)return Free(x,y);
+        return std::none_of(monsters.begin(),monsters.end(),[&](const Monster& o){return o.x==x&&o.y==y;});
+    }
+
+    // A step away from her (the one that leaves it furthest), if there is one.
+    void Game::Flee(Monster& m)
+    {
+        int best=std::abs(player.x-m.x)+std::abs(player.y-m.y),bx=0,by=0;
+        for(const auto& [ox,oy]:{std::pair{1,0},{-1,0},{0,1},{0,-1}})
+        {
+            const int d=std::abs(player.x-m.x-ox)+std::abs(player.y-m.y-oy);
+            if(d>best&&Free(m.x+ox,m.y+oy)){best=d;bx=ox;by=oy;}
+        }
+        m.x+=bx;m.y+=by;
+    }
+
+    // A step any way that is open.
+    void Game::Wander(Monster& m)
+    {
+        std::vector<std::pair<int,int>> open;
+        for(const auto& [ox,oy]:{std::pair{1,0},{-1,0},{0,1},{0,-1}})if(Free(m.x+ox,m.y+oy))open.push_back({ox,oy});
+        if(open.empty())return;
+        const auto [ox,oy]=open[Random(0,static_cast<int>(open.size())-1)];
+        m.x+=ox;m.y+=oy;
     }
     #undef LINE
 }
