@@ -47,6 +47,9 @@ namespace MikuMikuDesktopPerch
     // Diagnostics (--mahjong-reach): once seated, she touches a tile of hers as at a discard, and
     // her newest river tile fades in again.
     void ReachMahjongForTest();
+    // Diagnostics (--mahjong-gesture name): once seated, she plays that gesture (think, clap,
+    // cheeks, oops, ...).
+    void GestureMahjongForTest(const std::wstring& name);
 
     // Diagnostics (--mahjong-shot): a game played by a simple player for moves steps (or to the
     // hand's end), drawn as the window would be, to a PNG.

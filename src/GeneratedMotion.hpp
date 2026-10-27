@@ -44,6 +44,9 @@ namespace MikuMikuDesktopPerch
                             LookUp,Glance,NeckStretch,Nod,Drowse,Sway,Twist,Peek,Bounce,TapFoot,
                             // Click reactions only (never picked at random).
                             PatHead,Surprised,Curious,ShyNod,
+                            // Asked for alone (EmoteSeated): "oops", a hand to the forehead; pondering
+                            // with the eyes down on something in front (the mahjong tiles).
+                            Oops,Ponder,
                             // Asked for alone (Present): showing something on an open palm.
                             Present,
                             // Asked for alone (Strike, the dungeon): a sword's cut, a spell cast.
@@ -103,6 +106,11 @@ namespace MikuMikuDesktopPerch
         // Play a gesture (by its ForceGesture name) once as a reaction, as when talking. False
         // when it cannot now (not standing, or already reacting).
         bool Emote(const std::wstring& name);
+        // The same for the gestures that move only the arms, head and face (think, clap,
+        // cheeks, surprised, sigh, shynod, curious, oops, ponder), sitting too, for seconds,
+        // easing in and out slowly (SlowBlendIn, SlowBlendOut). False when
+        // it cannot now (another gesture or reach playing, or not standing or sitting).
+        bool EmoteSeated(const std::wstring& name,double seconds);
         // Hold a forearm out in front, palm up, as if showing something on it, for seconds
         // (side 0: the left hand), as a reaction (over an idle VMD too). False when it cannot now.
         bool Present(int side,double seconds);
@@ -206,7 +214,7 @@ namespace MikuMikuDesktopPerch
             std::array<DirectX::XMFLOAT3,2> shoulderPos{};   // 腕 rest position
             float forearm=3;                                 // elbow to wrist
             // Face morphs for gestures (-1 when the model lacks them).
-            int smileEyes=-1,smileMouth=-1,wink=-1,eyesClosed=-1,mouthOpen=-1;
+            int smileEyes=-1,smileMouth=-1,wink=-1,eyesClosed=-1,mouthOpen=-1,serious=-1;
         };
 
 
@@ -277,6 +285,7 @@ namespace MikuMikuDesktopPerch
         double gestureTime=0,gestureLength=0,nextGestureAt=2;
         double frozenAt=-1;                  // diagnostics: hold the gesture at this time
         static constexpr double GestureBlend=0.7,ReactionBlendOut=0.5;   // seconds of fade
+        static constexpr double SlowBlendIn=0.7,SlowBlendOut=0.9;        // EmoteSeated's, eased slowly
         static constexpr double CutBlend=1.2;   // EndGestures' fade: slower, arms may be overhead
         // EndGestures: seconds left of the fade that cuts the gesture or reaction short (-1: none).
         // Its own timeline runs on meanwhile (shortening it would jump to how it ends).
@@ -304,6 +313,7 @@ namespace MikuMikuDesktopPerch
         int reactionSide=0;
         DirectX::XMFLOAT3 reachOffset{};            // Reach's point, from the head
         bool reachTap=false;                        // Reach: only a fingertip's touch toward it
+        bool reactionSlow=false;                    // the reaction eases in and out slowly (EmoteSeated)
         float reactionWeight=0;
         std::vector<std::pair<int,float>> reactionMorphs;
         std::uint32_t random=FreshSeed();

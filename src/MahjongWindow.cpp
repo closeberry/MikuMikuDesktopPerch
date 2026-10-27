@@ -40,6 +40,8 @@ namespace MikuMikuDesktopPerch
         constexpr ULONGLONG ReachLead=600;         // her hand starts out this long before her discard (it is out 0.6 s in)
         constexpr ULONGLONG HerDiscardWait3D=650;  // at the 3D table: time for her hand to go out after her draw
         constexpr double FadeSeconds=0.6;          // her discard fading into her river
+        constexpr ULONGLONG ThinkExtra=2200;       // her discard later by this when she stops to think (time to settle into it and out)
+        constexpr ULONGLONG EndWait3D=3000;        // at the 3D table: a won hand's score waits for her reaction
         // Sizes in logical pixels (at 96 dpi, at the size the window opens).
         constexpr float BaseWidth=1180,BaseHeight=840;
         constexpr float HandW=46,HandH=62,RiverW=30,RiverH=40,SmallW=26,SmallH=35,BackW=26,BackH=36;
@@ -103,7 +105,14 @@ namespace MikuMikuDesktopPerch
             std::vector<Spark> sparks;
             std::mt19937 sparkRandom{12345};
             bool testReach=false;            // diagnostics: reach once seated
+            // Her gestures at the table: thinking before a discard (for seconds, 0: none), and
+            // at a hand's end (her joy or "oops"), asked for until playing or given up.
+            double thinkFor=0;
+            std::wstring endGesture;
+            double endGestureUntil=0;
+            bool seenOver=false;
             double testVanishAt=0;           // and then (on the clock) the tile goes
+            std::wstring testGesture;        // diagnostics: a gesture of hers once seated
         } state;
 
         // Where the parts of the window go, in logical pixels: her side on top, her river, the
@@ -546,6 +555,9 @@ namespace MikuMikuDesktopPerch
             state.reachedRiver=static_cast<size_t>(-1);
             state.sparks.clear();
             state.fading=false;
+            state.thinkFor=0;
+            state.endGesture.clear();
+            state.seenOver=false;
             return true;
         }
 
@@ -1015,7 +1027,7 @@ namespace MikuMikuDesktopPerch
             state.riichiMode=false;
             state.selected=-1;
             state.nextAt=GetTickCount64()+wait;
-            if(state.table.Now()==Phase::RoundOver)state.nextAt=GetTickCount64()+EndWait/2;
+            if(state.table.Now()==Phase::RoundOver)state.nextAt=GetTickCount64()+(state.renderer&&!state.table.Ended().draw?EndWait3D:EndWait/2);
             InvalidateRect(state.window,nullptr,FALSE);
         }
 
@@ -1095,9 +1107,20 @@ namespace MikuMikuDesktopPerch
                 {
                     t.Step();
                     state.nextAt=now+(t.Now()==Phase::HerTurn?(state.renderer?HerDiscardWait3D:HerDiscardWait):0);
+                    // At the 3D table, now and then she stops to think (more often against your
+                    // riichi) before her discard.
+                    if(state.renderer&&state.entrance==5&&t.Now()==Phase::HerTurn)
+                    {
+                        std::uniform_real_distribution<double> any(0,1);
+                        if(any(state.sparkRandom)<(t.Of(Mahjong::You).riichi?0.45:0.15))
+                        {
+                            state.nextAt+=ThinkExtra;
+                            state.thinkFor=(HerDiscardWait3D+ThinkExtra-ReachLead)/1000.0-0.1;
+                        }
+                    }
                     // Her draw changes only her side; her discard the middle and your side too.
                     parts|=t.Now()==Phase::HerTurn?Top:t.Now()==Phase::RoundOver?0:Everything;
-                    if(t.Now()==Phase::RoundOver)state.nextAt=now+EndWait;
+                    if(t.Now()==Phase::RoundOver)state.nextAt=now+(state.renderer&&!t.Ended().draw?EndWait3D:EndWait);
                 }
                 else if(t.Now()==Phase::YourTurn&&you.riichi&&you.hasDrawn&&!t.CanTsumo()&&t.KanKinds().empty())
                 {
@@ -1543,6 +1566,7 @@ namespace MikuMikuDesktopPerch
     }
 
     void ReachMahjongForTest(){state.testReach=true;}
+    void GestureMahjongForTest(const std::wstring& name){state.testGesture=name;}
 
     void SetMahjongCamera(float pitch,float distance,float y,float z,float yaw)
     {
@@ -1588,16 +1612,17 @@ namespace MikuMikuDesktopPerch
         }
 
         // Her light pat from above toward a spot on the table (world units), the nearer hand, in
-        // front of her chest: the tile warps (it is a touch of magic, not a reach).
-        void ReachFor(MascotModel& model,const std::array<float,3>& spot)
+        // front of her chest: the tile warps (it is a touch of magic, not a reach). False when
+        // she cannot now (another gesture playing).
+        bool ReachFor(MascotModel& model,const std::array<float,3>& spot)
         {
             std::array<float,3> head{};
-            if(!model.HeadPosition(head))return;
+            if(!model.HeadPosition(head))return false;
             // Seated, she is drawn moved by (herX, 0, herZ), her walking's sideways shift taken out.
             const float hx=head[0]-model.RootOffset()+state.herX,hz=head[2]+state.herZ;
             // The wrist a hand's height over the tile, so the fingers stop above the table.
             const std::array<float,3> from{spot[0]-hx,spot[1]+0.07f*state.hips-head[1],spot[2]-hz};
-            model.Reach(spot[0]>0.25f*state.upper?0:1,from,1.65,true);
+            return model.Reach(spot[0]>0.25f*state.upper?0:1,from,1.65,true);
         }
     }
 
@@ -1693,6 +1718,25 @@ namespace MikuMikuDesktopPerch
         state.seenRiver=static_cast<int>(her.river.size());
         state.seenMelds=static_cast<int>(her.melds.size());
         state.seenDrawn=her.hasDrawn;
+        // Her thinking before a discard; at a hand's end, joy at her win, "oops" at yours.
+        if(state.thinkFor>0&&state.entrance==5){model.EmoteSeated(L"ponder",state.thinkFor);state.thinkFor=0;}
+        {
+            const bool over=state.table.Now()==Phase::RoundOver||state.table.Now()==Phase::GameOver;
+            if(over&&!state.seenOver)
+            {
+                const auto& e=state.table.Ended();
+                if(!e.draw)
+                {
+                    std::uniform_real_distribution<double> any(0,1);
+                    state.endGesture=e.winner==Mahjong::Her?(any(state.sparkRandom)<0.5?L"cheeks":L"clap"):L"oops";
+                    state.endGestureUntil=state.clock+1.5;
+                }
+            }
+            state.seenOver=over;
+            if(!state.testGesture.empty()){state.endGesture=state.testGesture;state.endGestureUntil=1e9;state.testGesture.clear();}
+            if(!state.endGesture.empty()&&state.entrance==5&&(model.EmoteSeated(state.endGesture,3.2)||state.clock>state.endGestureUntil))
+                state.endGesture.clear();
+        }
         // Diagnostics: as at her discard, she touches a tile of hers; 0.6 s on it vanishes and
         // her newest river tile fades in again.
         if(state.testReach&&state.entrance==5&&!state.herHandSpots.empty())
@@ -1714,13 +1758,14 @@ namespace MikuMikuDesktopPerch
         if(state.table.Now()==Phase::HerTurn&&state.table.HerTurnDrawn()&&state.reachedRiver!=her.river.size()&&
            GetTickCount64()+ReachLead>=state.nextAt)
         {
-            state.reachedRiver=her.river.size();
             const int k=state.table.HerNextDiscard();
             if(k>=0&&k<static_cast<int>(state.herHandSpots.size()))
             {
                 state.touched=state.herHandSpots[static_cast<size_t>(k)];
-                if(state.entrance==5)ReachFor(model,state.touched);
+                // Tried again next frame while a gesture of hers ends.
+                if(state.entrance!=5||ReachFor(model,state.touched))state.reachedRiver=her.river.size();
             }
+            else state.reachedRiver=her.river.size();
         }
         // What moves: her chair, and her newest river tile fading in (gold sparkles rising from
         // it as it comes; once whole, it joins the table).

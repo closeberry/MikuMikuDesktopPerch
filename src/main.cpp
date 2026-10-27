@@ -4995,6 +4995,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     int snapshotMahjongMoves=0;   // after this many moves of a simple player
     std::wstring snapshotMahjongCamera;   // --mahjong-camera pitch,distance,y,z[,yaw]
     bool snapshotMahjongReach=false;      // --mahjong-reach: she reaches for her river once seated
+    std::wstring snapshotMahjongGesture;  // --mahjong-gesture name: she plays it once seated
     int snapshotFrames=60;
     std::optional<POINT> snapshotLook;
     std::wstring snapshotModel;   // --model <pmx>: model for this run only
@@ -5034,6 +5035,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             }
             else if(arg==L"--mahjong-camera"&&i+1<argc)snapshotMahjongCamera=argv[++i];
             else if(arg==L"--mahjong-reach")snapshotMahjongReach=true;
+            else if(arg==L"--mahjong-gesture"&&i+1<argc)snapshotMahjongGesture=argv[++i];
             else if(arg==L"--mahjong")
             {
                 snapshotMahjong=true;
@@ -5858,6 +5860,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 OpenMahjong(*app.mascots.front());
                 PlayMahjongMoves(snapshotMahjongMoves);
                 if(snapshotMahjongReach)ReachMahjongForTest();
+                if(!snapshotMahjongGesture.empty())GestureMahjongForTest(snapshotMahjongGesture);
                 float c[5]={};
                 if(swscanf_s(snapshotMahjongCamera.c_str(),L"%f,%f,%f,%f,%f",&c[0],&c[1],&c[2],&c[3],&c[4])>=4)SetMahjongCamera(c[0],c[1],c[2],c[3],c[4]);
             }

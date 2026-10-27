@@ -138,6 +138,9 @@ namespace MikuMikuDesktopPerch
         void SetDozing(bool dozing);
         // Play a standing gesture once by name (as ForceGesture names them); false if not now.
         bool Emote(const std::wstring& name);
+        // A gesture of the arms, head and face only, sitting too, for seconds; see
+        // GeneratedMotion::EmoteSeated.
+        bool EmoteSeated(const std::wstring& name,double seconds);
         bool Dozing() const;
         // The model's name as written in the PMX file.
         std::wstring ModelName() const;

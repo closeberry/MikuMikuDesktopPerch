@@ -55,6 +55,8 @@ namespace MikuMikuDesktopPerch
             return -1;
         }
         float Smooth(float t){t=std::clamp(t,0.0f,1.0f);return t*t*(3-2*t);}
+        // Flatter at both ends than Smooth: a slow start and a slow settle, as an eased curve.
+        float Smoother(float t){t=std::clamp(t,0.0f,1.0f);return t*t*t*(t*(6*t-15)+10);}
         float Frac(double v){return static_cast<float>(v-std::floor(v));}
         float Approach(float value,float target,float step){return value<target?std::min(value+step,target):std::max(value-step,target);}
         XMVECTOR Rotation(const XMFLOAT3& axis,float angle){return XMQuaternionRotationNormal(XMLoadFloat3(&axis),angle);}
@@ -344,6 +346,7 @@ namespace MikuMikuDesktopPerch
             pick(rig.wink,{L"ウィンク",L"ウインク",L"ウィンク２",L"ウィンク右"});
             pick(rig.eyesClosed,{L"まばたき",L"瞬き",L"blink",L"Blink"});
             pick(rig.mouthOpen,{L"あ",L"あ２",L"a"});
+            pick(rig.serious,{L"真面目",L"まじめ",L"真剣"});
         }
         if(const int head=Find(pmx,{L"頭"});head>=0)rig.headY=XMVectorGetY(restPos(head));
         else rig.headY=rig.shoulderY+0.25f*rig.legLength;
@@ -410,7 +413,7 @@ namespace MikuMikuDesktopPerch
             L"elbowBendAxis L="+v(rig.elbowBendAxis[0])+L" R="+v(rig.elbowBendAxis[1])+L"\n"+
             L"elbowTwistAxis L="+v(rig.elbowTwistAxis[0])+L" R="+v(rig.elbowTwistAxis[1])+L"\n"+
             L"armTwistAxis L="+v(rig.armTwistAxis[0])+L" R="+v(rig.armTwistAxis[1])+L"\n"+
-            L"morphs smileEyes="+std::to_wstring(rig.smileEyes)+L" smileMouth="+std::to_wstring(rig.smileMouth)+L" wink="+std::to_wstring(rig.wink)+L"\n"+
+            L"morphs smileEyes="+std::to_wstring(rig.smileEyes)+L" smileMouth="+std::to_wstring(rig.smileMouth)+L" wink="+std::to_wstring(rig.wink)+L" serious="+std::to_wstring(rig.serious)+L"\n"+
             L"hang L="+std::to_wstring(static_cast<int>(rig.hangDegrees[0]))+L" R="+std::to_wstring(static_cast<int>(rig.hangDegrees[1]))+L"\n";
     }
 
@@ -629,7 +632,7 @@ namespace MikuMikuDesktopPerch
         switch(gesture)
         {
         case Gesture::Wave:case Gesture::Peace:case Gesture::LookAtPalm:case Gesture::LookAround:case Gesture::HeadTilt:
-        case Gesture::Stretch:case Gesture::TuckHair:case Gesture::Yawn:case Gesture::Think:case Gesture::Hum:
+        case Gesture::Stretch:case Gesture::TuckHair:case Gesture::Yawn:case Gesture::Think:case Gesture::Ponder:case Gesture::Hum:
         case Gesture::LookFar:case Gesture::Cheeks:case Gesture::SwingArm:case Gesture::WristRoll:case Gesture::Shrug:
         case Gesture::Sigh:case Gesture::LookBack:case Gesture::LookDown:case Gesture::LookUp:case Gesture::Glance:
         case Gesture::NeckStretch:case Gesture::Nod:case Gesture::Drowse:case Gesture::Peek:case Gesture::Bounce:
@@ -654,6 +657,7 @@ namespace MikuMikuDesktopPerch
             {L"neck",Gesture::NeckStretch},{L"nod",Gesture::Nod},{L"drowse",Gesture::Drowse},{L"sway",Gesture::Sway},
             {L"twist",Gesture::Twist},{L"peek",Gesture::Peek},{L"bounce",Gesture::Bounce},{L"tap",Gesture::TapFoot},
             {L"pat",Gesture::PatHead},{L"surprised",Gesture::Surprised},{L"curious",Gesture::Curious},{L"shynod",Gesture::ShyNod},
+            {L"oops",Gesture::Oops},{L"ponder",Gesture::Ponder},
             {L"present",Gesture::Present},{L"slash",Gesture::Slash},{L"cast",Gesture::Cast}};
     }
 
@@ -694,6 +698,25 @@ namespace MikuMikuDesktopPerch
         return false;
     }
 
+    bool GeneratedMotion::EmoteSeated(const std::wstring& name,double seconds)
+    {
+        if(reaction!=Gesture::None||overrides.empty()||(activity!=Activity::Idle&&activity!=Activity::Sit))return false;
+        static constexpr Gesture upper[]={Gesture::Think,Gesture::Clap,Gesture::Cheeks,Gesture::Surprised,Gesture::Sigh,
+                                          Gesture::ShyNod,Gesture::Curious,Gesture::Oops,Gesture::Ponder};
+        for(const auto& [n,g]:GestureNames)
+            if(name==n&&std::find(std::begin(upper),std::end(upper),g)!=std::end(upper))
+            {
+                reaction=g;reactionCut=-1;
+                reactionSide=Random01()<0.5f?0:1;
+                reactionTime=0;
+                reactionLength=std::max(seconds,SlowBlendIn+SlowBlendOut);
+                reactionWeight=0;
+                reactionSlow=true;
+                return true;
+            }
+        return false;
+    }
+
     bool GeneratedMotion::Present(int side,double seconds)
     {
         if(overrides.empty()||activity!=Activity::Idle)return false;
@@ -709,7 +732,7 @@ namespace MikuMikuDesktopPerch
     {
         if(overrides.empty()||(activity!=Activity::Idle&&activity!=Activity::Sit))return false;
         if(reaction!=Gesture::None&&reaction!=Gesture::Reach)return false;
-        reaction=Gesture::Reach;reactionCut=-1;
+        reaction=Gesture::Reach;reactionCut=-1;reactionSlow=false;
         reactionSide=side==0?0:1;
         reachOffset=fromHead;
         reachTap=tap;
@@ -1085,6 +1108,19 @@ namespace MikuMikuDesktopPerch
             CurlFingers(g,1-s,{0.3f,0.3f,0.35f,0.35f});
             neck(5.0f*Deg,out*8.0f*Deg,-out*9.0f*Deg+out*3.0f*Deg*std::sin(XM_2PI*a/3.0f));
             break;
+        case Gesture::Ponder:
+        {
+            // Pondering what is in front (her tiles): a hand at the chin as in Think, the head
+            // bowed toward them and tilted a little, a serious face.
+            const float pitch=-22.0f*Deg,yawAngle=out*4.0f*Deg;
+            ReachArm(g,s,withHead(XMVectorSet(out*0.03f*L,rig.headY-0.10f*L,faceZ-0.12f*L,0),pitch,yawAngle),XMVectorSet(out*0.3f,-1,0,0),0.5f);
+            CurlFingers(g,s,{0.5f,0.6f,0.8f,0.8f});
+            ReachArm(g,1-s,XMVectorSet(-out*0.03f*L,S.y-0.34f*L,S.z-0.22f*L,0),XMVectorSet(-out,-0.35f,0.25f,0),1.0f,true);
+            CurlFingers(g,1-s,{0.3f,0.3f,0.35f,0.35f});
+            neck(pitch,yawAngle,-out*5.0f*Deg+out*2.0f*Deg*std::sin(XM_2PI*a/3.0f));
+            face(rig.serious,0.5f);
+            break;
+        }
         case Gesture::Hum:
         {
             // Humming along: the body sways gently side to side with a soft smile.
@@ -1157,6 +1193,20 @@ namespace MikuMikuDesktopPerch
             face(rig.mouthOpen,0.6f*(1-relief));
             face(rig.smileEyes,0.9f*relief);
             face(rig.smileMouth,0.6f*relief);
+            break;
+        }
+        case Gesture::Oops:
+            // "Oops" (あちゃー): a hand to the forehead, palm on it, the head dropping and
+            // tilting into the hand, the eyes shut with a wry smile, the shoulders down a little.
+        {
+            const float pitch=-12.0f*Deg,yawAngle=out*6.0f*Deg;
+            ReachArm(g,s,withHead(XMVectorSet(out*0.07f*L,rig.headY+0.05f*L,faceZ-0.07f*L,0),pitch,yawAngle),XMVectorSet(out,-0.5f,0.2f,0),0.5f);
+            AimHand(g,s,XMVectorSet(-out*0.7f,0.45f,-0.2f,0),XMVectorSet(0,0.1f,1,0));
+            CurlFingers(g,s,{0.12f,0.15f,0.2f,0.25f});
+            shoulders(-3.0f*Deg,0);
+            neck(pitch,yawAngle,-out*7.0f*Deg);
+            face(rig.eyesClosed,0.8f);
+            face(rig.smileMouth,0.25f);
             break;
         }
         case Gesture::Curious:
@@ -1472,9 +1522,12 @@ namespace MikuMikuDesktopPerch
         if(activity!=Activity::Idle&&activity!=Activity::Sit&&activity!=Activity::Hang)
             reactionLength=std::min(reactionLength,reactionTime+0.5);
         if(reactionCut>=0)reactionCut-=dt;
-        if(reactionTime>=reactionLength||(reactionCut<=0&&reactionCut>-1)){reaction=Gesture::None;reactionWeight=0;reactionCut=-1;return;}
-        const double blendIn=reaction==Gesture::Slash||reaction==Gesture::Cast?0.15:reaction==Gesture::Surprised?0.12:0.3;
-        reactionWeight=Smooth(static_cast<float>(std::min({reactionTime/blendIn,(reactionLength-reactionTime)/ReactionBlendOut,1.0})));
+        if(reactionTime>=reactionLength||(reactionCut<=0&&reactionCut>-1)){reaction=Gesture::None;reactionWeight=0;reactionCut=-1;reactionSlow=false;return;}
+        // EmoteSeated's gestures ease in and out slowly; the others come quickly.
+        const double blendIn=reactionSlow?SlowBlendIn:reaction==Gesture::Slash||reaction==Gesture::Cast?0.15:reaction==Gesture::Surprised?0.12:0.3;
+        const double blendOut=reactionSlow?SlowBlendOut:ReactionBlendOut;
+        const float ramp=static_cast<float>(std::min({reactionTime/blendIn,(reactionLength-reactionTime)/blendOut,1.0}));
+        reactionWeight=reactionSlow?Smoother(ramp):Smooth(ramp);
         if(reactionCut>0)reactionWeight*=Smooth(static_cast<float>(reactionCut/CutBlend));
         std::vector<Key> g=keys;
         PoseGesture(reaction,reactionTime,reactionLength,reactionSide,reactionWeight,g,reactionMorphs);

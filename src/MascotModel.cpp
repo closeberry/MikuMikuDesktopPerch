@@ -2031,6 +2031,7 @@ namespace MikuMikuDesktopPerch
 
     void MascotModel::SetDozing(bool dozing){impl->proc.dozing=dozing;}
     bool MascotModel::Emote(const std::wstring& name){return !impl->shotActive&&impl->motion.Emote(name);}
+    bool MascotModel::EmoteSeated(const std::wstring& name,double seconds){return !impl->shotActive&&impl->motion.EmoteSeated(name,seconds);}
     bool MascotModel::Dozing() const {return impl->proc.doze>0;}
 
     void MascotModel::SetMouth(const std::array<float,6>& weights,bool active)
