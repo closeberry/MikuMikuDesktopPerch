@@ -9,6 +9,7 @@
 #include "Album.hpp"
 #include "DungeonWindow.hpp"
 #include "Dungeon.hpp"
+#include "Mahjong.hpp"
 #include "TreasureArt.hpp"
 #include <commctrl.h>
 #include "Voice.hpp"
@@ -5191,6 +5192,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             }
             LocalFree(argv);
             return 0;
+        }
+        // --mahjong-test <in.txt> <out.txt>: the mahjong hands written in a file (UTF-8; the
+        // format is with Mahjong::CheckHands), checked for their yaku, fu, points and waits.
+        if(argc>=4&&std::wstring(argv[1])==L"--mahjong-test")
+        {
+            std::ifstream in(std::filesystem::path(argv[2]),std::ios::binary);
+            std::stringstream buffer;
+            buffer<<in.rdbuf();
+            const std::string bytes=buffer.str();
+            std::wstring cases(static_cast<size_t>(MultiByteToWideChar(CP_UTF8,0,bytes.data(),static_cast<int>(bytes.size()),nullptr,0)),L'\0');
+            MultiByteToWideChar(CP_UTF8,0,bytes.data(),static_cast<int>(bytes.size()),cases.data(),static_cast<int>(cases.size()));
+            const std::wstring report=Mahjong::CheckHands(cases);
+            if(FILE* out=nullptr;_wfopen_s(&out,argv[3],L"w, ccs=UTF-8")==0&&out)
+            {
+                fputws(report.c_str(),out);
+                fclose(out);
+            }
+            LocalFree(argv);
+            return report.find(L" 0 failed")!=std::wstring::npos?0:1;
         }
         const bool reading=argc>=4&&std::wstring(argv[1])==L"--reading";
         const std::wstring text=reading?argv[2]:L"",outPath=reading?argv[3]:L"";

@@ -1,0 +1,58 @@
+# 麻雀の点数計算のテスト（--mahjong-test tests\MahjongHands.txt out.txt）。書き方は src/Mahjong.hpp の CheckHands。
+# 2人打ちなので、子は西家（seat=W）、親は東家（seat=E、省略時）。場風は東。
+
+# 平和
+123m456m789p234s55s win=4s seat=W => 1han 30fu 1000
+123m456m789p234s55s win=4s tsumo seat=W => 2han 20fu 1500
+123m456m789p234s55s win=4s seat=W honba=2 => 1600
+# 平和・断么九・一盃口・赤ドラ
+234m234m406p678s55p win=6s seat=W => 4han 30fu 7700
+# 親のリーチ・平和・一盃口・ドラ2（表示牌1m）
+234m234m456p789s55p win=4m riichi dora=1m => 5han 30fu 12000
+
+# 鳴いた手
+234m567p345s88s pon=6m seat=W => 1han 30fu 1000
+123m456p789s99s pon=7z win=9s seat=W => 1han 30fu 1000
+456789m234p55z chi=123m seat=W => 1han 30fu 1000
+234m567p345s88s pon=2z seat=W => nowin
+234m567p345s88s pon=2z last tsumo seat=W => 1han 30fu 1100
+
+# 符
+123m456p789s345s99s win=4s riichi seat=W => 1han 40fu 1300
+123m456p789s345s99s win=4s riichi tsumo => 2han 30fu 3000
+123m456p789s55s ankan=1z seat=W => 1han 70fu 2300
+1122m3344p5566s77z seat=W => 2han 25fu 1600
+
+# 対々和・三暗刻（ツモなら三暗刻、ロンで取った刻子は明刻）
+111m999p555s22z pon=6z win=5s tsumo seat=W => 5han 50fu 8000
+111m999p555s22z pon=6z win=5s seat=W => 3han 50fu 6400
+111m333p555s777s22z win=5s seat=W => 4han 50fu 8000
+
+# 二盃口は七対子より高く読む
+112233m445566p77s seat=W => 3han 40fu 5200
+# 三色・混全帯么九
+123m123p123s789m11z win=3s seat=W => 4han 40fu 8000
+
+# 清一色・一気通貫・平和（三倍満、ドラで数え役満）
+123456789s23488s win=4s riichi tsumo seat=W => 11han 24000
+123456789s23488s win=4s riichi tsumo seat=W dora=7s => 14han 32000
+
+# 役満
+119m19p19s1234567z win=1m seat=W => 32000
+111m333p555s777s22z tsumo seat=W => 32000
+123m44p555666777z win=7z seat=W => 32000
+11123455678999m win=5m seat=W => 32000
+123m456p789s345s99s win=4s tsumo first => 48000
+
+# 和了の形でない
+123m456p789s345s9s1z seat=W => nowin
+
+# 待ち
+waits 1112345678999m => 123456789m
+waits 1234m => 14m
+waits 1113m => 23m
+waits 2223m => 134m
+waits 19m19p19s1234567z => 19m19p19s1234567z
+waits 1133557799m11p2p => 2p
+waits 147m258p369s1234z => none
+discards 12345m55p9s => 9s
