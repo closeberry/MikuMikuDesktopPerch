@@ -1,5 +1,6 @@
 #include "Mahjong.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <sstream>
 
@@ -270,7 +271,7 @@ namespace MikuMikuDesktopPerch::Mahjong
                 han=y.han;
             }
             score.yaku=y.yaku;
-            score.han=han;
+            score.han=y.yakuman?13:han;   // yakuman together still count as one
 
             if(y.yakuman||han>=13)
             {
@@ -456,6 +457,404 @@ namespace MikuMikuDesktopPerch::Mahjong
             consider(r);
         }
         return best;
+    }
+
+    Unseen Unseen::All()
+    {
+        Unseen u;
+        u.tiles.fill(4);
+        u.red={1,1,1};
+        return u;
+    }
+
+    int Unseen::Size() const {return Total(tiles);}
+
+    void Unseen::Take(int tile,bool redFive)
+    {
+        if(tile<0||tile>=Kinds||tiles[tile]==0)return;
+        if(tile<East&&tile%9==4)
+        {
+            int& r=red[Suit(tile)];
+            // A plain five can be taken only while one is left; the last five is the red one.
+            if(r>0&&(redFive||tiles[tile]==1))--r;
+        }
+        --tiles[tile];
+    }
+
+    int Unseen::Draw(std::mt19937& rng,bool* redFive)
+    {
+        const int size=Size();
+        if(size==0)return -1;
+        int n=std::uniform_int_distribution<int>(0,size-1)(rng),t=0;
+        while(n>=tiles[t])n-=tiles[t++];
+        // Of the kind's tiles, the red five is the first ones counted.
+        const bool r=t<East&&t%9==4&&n<red[Suit(t)];
+        Take(t,r);
+        if(redFive)*redFive=r;
+        return t;
+    }
+
+    Band BandOf(int basic)
+    {
+        if(basic>=8000)return Band::Yakuman;
+        if(basic>=3000)return Band::Haneman;
+        if(basic>=2000)return Band::Mangan;
+        if(basic>=1280)return Band::Middle;
+        return Band::Cheap;
+    }
+
+    namespace
+    {
+        // A way to make a hand: the kinds it may use, how often a set is a run, and the sets it
+        // must have.
+        struct Plan
+        {
+            std::array<bool,Kinds> allowed{};
+            double runs=0.7;
+            std::vector<Group> sets;
+            bool sevenPairs=false,orphans=false;
+        };
+
+        enum class Recipe {Plain,Simples,Dragon,Wind,HalfFlush,FullFlush,Triplets,SevenPairs,Straight,MixedTriple,
+                     BigDragons,FourConcealed,Orphans,AllHonors,LittleWinds,AllGreen,Count};
+        constexpr int Recipes=static_cast<int>(Recipe::Count);
+        // How often each recipe is tried, by band.
+        constexpr int Weights[5][Recipes]={
+            {5,4,3,2,0,0,0,1,0,0, 0,0,0,0,0,0},
+            {2,2,2,1,2,0,1,2,2,2, 0,0,0,0,0,0},
+            {0,1,2,1,3,0,2,1,2,2, 0,0,0,0,0,0},
+            {0,0,0,0,2,4,1,0,0,0, 0,0,0,0,0,0},
+            {0,0,0,0,0,0,0,0,0,0, 3,3,2,1,1,1}};
+
+        Plan MakePlan(Recipe recipe,const Situation& s,std::mt19937& rng)
+        {
+            auto any=[&](int n){return std::uniform_int_distribution<int>(0,n-1)(rng);};
+            Plan p;
+            p.allowed.fill(true);
+            auto only=[&](auto keep){for(int t=0;t<Kinds;++t)p.allowed[t]=keep(t);};
+            switch(recipe)
+            {
+            case Recipe::Plain:break;
+            case Recipe::Simples:only([](int t){return Simple(t);});break;
+            case Recipe::Dragon:p.sets.push_back({false,false,White+any(3)});break;
+            case Recipe::Wind:p.sets.push_back({false,false,any(2)?s.seatWind:s.roundWind});break;
+            case Recipe::HalfFlush:{const int suit=any(3);only([&](int t){return Honor(t)||Suit(t)==suit;});p.runs=0.5;break;}
+            case Recipe::FullFlush:{const int suit=any(3);only([&](int t){return Suit(t)==suit;});p.runs=0.75;break;}
+            case Recipe::Triplets:p.runs=0;break;
+            case Recipe::SevenPairs:p.sevenPairs=true;break;
+            case Recipe::Straight:{const int suit=any(3);for(int i=0;i<3;++i)p.sets.push_back({true,false,suit*9+i*3});break;}
+            case Recipe::MixedTriple:{const int n=any(7);for(int i=0;i<3;++i)p.sets.push_back({true,false,i*9+n});break;}
+            case Recipe::BigDragons:for(int t=White;t<=Red;++t)p.sets.push_back({false,false,t});break;
+            case Recipe::FourConcealed:p.runs=0;break;
+            case Recipe::Orphans:p.orphans=true;break;
+            case Recipe::AllHonors:only([](int t){return Honor(t);});p.runs=0;break;
+            case Recipe::LittleWinds:
+            {
+                const int skip=any(4);
+                for(int t=East;t<=North;++t)if(t-East!=skip)p.sets.push_back({false,false,t});
+                only([&](int t){return Honor(t)||Suit(t)==0;});
+                p.allowed[East+skip]=true;
+                break;
+            }
+            case Recipe::AllGreen:only([](int t){return t==19||t==20||t==21||t==23||t==25||t==Green;});p.runs=0.5;break;
+            default:break;
+            }
+            return p;
+        }
+
+        // Hand: tiles taken from pool by the plan, sets sets of three and a pair (seven pairs and
+        // the orphans as they are), with must among them when it is a kind.
+        bool Fill(const Plan& p,Counts pool,int sets,int must,std::mt19937& rng,Counts& hand)
+        {
+            hand={};
+            auto take=[&](int t,int n){pool[t]-=n;hand[t]+=n;};
+            auto pick=[&](const std::vector<int>& options){return options[std::uniform_int_distribution<size_t>(0,options.size()-1)(rng)];};
+            auto runFits=[&](int t){return t>=0&&!Honor(t)&&t%9<=6&&p.allowed[t]&&p.allowed[t+1]&&p.allowed[t+2]&&pool[t]>0&&pool[t+1]>0&&pool[t+2]>0;};
+            auto takeRun=[&](int t){for(int i=0;i<3;++i)take(t+i,1);};
+            if(p.orphans)
+            {
+                std::vector<int> pairs;
+                for(int t=0;t<Kinds;++t)
+                {
+                    if(Simple(t))continue;
+                    if(pool[t]<1)return false;
+                    take(t,1);
+                    if(pool[t]>0)pairs.push_back(t);
+                }
+                if(pairs.empty())return false;
+                take(pick(pairs),1);
+                return must<0||hand[must]>0;
+            }
+            if(p.sevenPairs)
+            {
+                if(must>=0)
+                {
+                    if(!p.allowed[must]||pool[must]<2)return false;
+                    take(must,2);
+                }
+                for(int n=must>=0?1:0;n<7;++n)
+                {
+                    std::vector<int> options;
+                    for(int t=0;t<Kinds;++t)if(p.allowed[t]&&hand[t]==0&&pool[t]>=2)options.push_back(t);
+                    if(options.empty())return false;
+                    take(pick(options),2);
+                }
+                return true;
+            }
+            int made=0;
+            bool pair=false;
+            for(const Group& g:p.sets)
+            {
+                if(made==sets)return false;
+                if(g.run){if(pool[g.tile]<1||pool[g.tile+1]<1||pool[g.tile+2]<1)return false;takeRun(g.tile);}
+                else {if(pool[g.tile]<3)return false;take(g.tile,3);}
+                ++made;
+            }
+            if(must>=0&&hand[must]==0)
+            {
+                if(!p.allowed[must])return false;
+                // Where the tile goes: 0 the pair, 1 a triplet, 2+k a run starting k below it.
+                std::vector<int> places;
+                if(pool[must]>=2)places.push_back(0);
+                if(made<sets)
+                {
+                    if(pool[must]>=3)places.push_back(1);
+                    if(p.runs>0)for(int k=0;k<3;++k)if(runFits(must-k)&&Suit(must-k)==Suit(must))places.push_back(2+k);
+                }
+                if(places.empty())return false;
+                const int place=pick(places);
+                if(place==0){take(must,2);pair=true;}
+                else if(place==1){take(must,3);++made;}
+                else {takeRun(must-(place-2));++made;}
+            }
+            std::uniform_real_distribution<double> chance(0,1);
+            while(made<sets)
+            {
+                std::vector<int> runs,triplets;
+                for(int t=0;t<Kinds;++t)
+                {
+                    if(runFits(t))runs.push_back(t);
+                    if(p.allowed[t]&&pool[t]>=3)triplets.push_back(t);
+                }
+                const bool run=p.runs>0&&!runs.empty()&&(triplets.empty()||chance(rng)<p.runs);
+                if(run)takeRun(pick(runs));
+                else if(!triplets.empty())take(pick(triplets),3);
+                else return false;
+                ++made;
+            }
+            if(!pair)
+            {
+                std::vector<int> options;
+                for(int t=0;t<Kinds;++t)if(p.allowed[t]&&pool[t]>=2)options.push_back(t);
+                if(options.empty())return false;
+                take(pick(options),2);
+            }
+            return true;
+        }
+
+        Recipe PickRecipe(Band band,std::mt19937& rng)
+        {
+            const int* w=Weights[static_cast<int>(band)];
+            int sum=0;
+            for(int r=0;r<Recipes;++r)sum+=w[r];
+            int n=std::uniform_int_distribution<int>(0,sum-1)(rng);
+            int r=0;
+            while(n>=w[r])n-=w[r++];
+            return static_cast<Recipe>(r);
+        }
+
+        // Which of the hand's fives (not the ron tile) are red: as likely as the unseen fives are.
+        std::array<bool,3> RedFives(const Unseen& unseen,const Counts& hand,int ron,std::mt19937& rng)
+        {
+            std::array<bool,3> red{};
+            for(int suit=0;suit<3;++suit)
+            {
+                const int five=suit*9+4,held=hand[five]-(ron==five?1:0),left=unseen.tiles[five];
+                if(unseen.red[suit]>0&&held>0&&left>0)red[suit]=std::uniform_int_distribution<int>(0,left-1)(rng)<held;
+            }
+            return red;
+        }
+
+        int Sets(const std::vector<Meld>& melds){return 4-static_cast<int>(melds.size());}
+    }
+
+    Built BuildWin(const Unseen& unseen,const std::vector<Meld>& melds,int ron,const Counts& discards,Situation s,Band band,std::mt19937& rng)
+    {
+        constexpr int Tries=300;
+        s.tsumo=ron<0;
+        if(ron>=0&&discards[ron]>0)return {};   // any hand on it would wait on her own discard
+        const int baseRed=s.red;
+        Counts pool=unseen.tiles;
+        if(ron>=0)++pool[ron];   // her hand takes the discarded tile too
+        for(int b=static_cast<int>(band);b>=0;--b)
+        {
+            const Band want=static_cast<Band>(b);
+            for(int attempt=0;attempt<Tries;++attempt)
+            {
+                const Plan plan=MakePlan(PickRecipe(want,rng),s,rng);
+                Counts hand;
+                if(!Fill(plan,pool,Sets(melds),ron,rng,hand))continue;
+                Built built;
+                built.concealed=hand;
+                built.red=RedFives(unseen,hand,ron,rng);
+                s.red=baseRed+built.red[0]+built.red[1]+built.red[2];
+                std::vector<int> wins;
+                if(ron>=0)
+                {
+                    Counts rest=hand;
+                    --rest[ron];
+                    const std::vector<int> waits=Waits(rest);
+                    if(std::any_of(waits.begin(),waits.end(),[&](int w){return discards[w]>0;}))continue;   // furiten
+                    wins.push_back(ron);
+                }
+                else
+                {
+                    for(int t=0;t<Kinds;++t)if(hand[t]>0)wins.push_back(t);
+                    std::shuffle(wins.begin(),wins.end(),rng);
+                }
+                for(int win:wins)
+                {
+                    const Score score=Evaluate(hand,melds,win,s);
+                    if(!score.win||BandOf(score.basic)!=want)continue;
+                    built.found=true;
+                    built.win=win;
+                    built.score=score;
+                    built.band=want;
+                    return built;
+                }
+            }
+        }
+        return {};
+    }
+
+    Built BuildTenpai(const Unseen& unseen,const std::vector<Meld>& melds,const Counts* discards,std::mt19937& rng)
+    {
+        const Plan plan=MakePlan(Recipe::Plain,{},rng);
+        for(int attempt=0;attempt<100;++attempt)
+        {
+            Counts hand;
+            if(!Fill(plan,unseen.tiles,Sets(melds),-1,rng,hand))continue;
+            std::vector<int> outs;
+            for(int t=0;t<Kinds;++t)if(hand[t]>0)outs.push_back(t);
+            std::shuffle(outs.begin(),outs.end(),rng);
+            for(int out:outs)
+            {
+                Counts rest=hand;
+                --rest[out];
+                const std::vector<int> waits=Waits(rest);
+                if(waits.empty())continue;
+                if(discards&&std::any_of(waits.begin(),waits.end(),[&](int w){return (*discards)[w]>0;}))continue;
+                Built built;
+                built.found=true;
+                built.concealed=rest;
+                built.red=RedFives(unseen,rest,-1,rng);
+                return built;
+            }
+        }
+        return {};
+    }
+
+    std::wstring CheckBuilding(int count,std::uint32_t seed)
+    {
+        std::mt19937 rng(seed);
+        auto any=[&](int n){return std::uniform_int_distribution<int>(0,n-1)(rng);};
+        constexpr const wchar_t* BandNames[]={L"cheap",L"middle",L"mangan",L"haneman",L"yakuman"};
+        struct Tally {int asked=0,exact=0,lower=0,none=0,wrong=0;};
+        std::array<std::array<Tally,2>,5> tally{};   // by band, ron or tsumo
+        int tenpaiAsked=0,tenpaiFound=0,tenpaiWrong=0;
+        std::wstring samples,problems;
+        const auto started=std::chrono::steady_clock::now();
+        for(int game=0;game<count;++game)
+        {
+            // A game somewhere along: the player's hand, both rivers, a dora indicator, and
+            // now and then a dragon she has called.
+            Unseen unseen=Unseen::All();
+            Counts river{};
+            for(int i=0;i<13;++i)unseen.Draw(rng);
+            const int turns=4+any(14);
+            for(int i=0;i<turns;++i){unseen.Draw(rng);++river[unseen.Draw(rng)];}
+            Situation s;
+            s.seatWind=any(2)?East:West;
+            s.dora.push_back(unseen.Draw(rng));
+            s.riichi=any(5)==0;
+            std::vector<Meld> melds;
+            if(!s.riichi&&any(4)==0)
+            {
+                const int dragon=White+any(3);
+                if(unseen.tiles[dragon]>=3)
+                {
+                    for(int i=0;i<3;++i)unseen.Take(dragon);
+                    melds.push_back({MeldKind::Pon,dragon});
+                }
+            }
+            const bool tsumo=any(2)==0;
+            int ron=-1;
+            bool ronRed=false;
+            if(!tsumo)ron=unseen.Draw(rng,&ronRed);
+            s.red=ronRed?1:0;
+            const Band band=static_cast<Band>(any(5));
+            Tally& t=tally[static_cast<int>(band)][tsumo?1:0];
+            ++t.asked;
+            const Built built=BuildWin(unseen,melds,ron,river,s,band,rng);
+            if(!built.found){++t.none;continue;}
+            if(built.band==band)++t.exact;else ++t.lower;
+
+            // Checked: made of unseen tiles (and the ron tile), as many as it should be, the
+            // score as counted again, no furiten on a ron.
+            std::wstring wrong;
+            Counts pool=unseen.tiles;
+            if(ron>=0)++pool[ron];
+            int tiles=0;
+            for(int k=0;k<Kinds;++k){tiles+=built.concealed[k];if(built.concealed[k]>pool[k])wrong+=L" more "+TileText(k)+L" than unseen;";}
+            if(tiles!=14-3*static_cast<int>(melds.size()))wrong+=L" "+std::to_wstring(tiles)+L" tiles;";
+            if(ron>=0&&built.win!=ron)wrong+=L" not on the ron tile;";
+            for(int suit=0;suit<3;++suit)if(built.red[suit]&&unseen.red[suit]==0)wrong+=L" a red five not unseen;";
+            Situation again=s;
+            again.tsumo=tsumo;
+            again.red=s.red+built.red[0]+built.red[1]+built.red[2];
+            const Score score=Evaluate(built.concealed,melds,built.win,again);
+            if(!score.win||score.points!=built.score.points)wrong+=L" counted differently;";
+            if(BandOf(score.basic)!=built.band)wrong+=L" another band;";
+            if(ron>=0)
+            {
+                Counts rest=built.concealed;
+                --rest[ron];
+                for(int w:Waits(rest))if(river[w])wrong+=L" furiten on "+TileText(w)+L";";
+            }
+            std::wstring line=std::wstring(BandNames[static_cast<int>(band)])+(tsumo?L" tsumo ":L" ron ")+TilesText(built.concealed);
+            for(const Meld& m:melds)line+=L" pon="+TileText(m.tile);
+            line+=L" win="+TileText(built.win)+L" -> "+std::to_wstring(built.score.han)+L"han "+std::to_wstring(built.score.fu)+L"fu "+std::to_wstring(built.score.points)+L" :";
+            for(const YakuHan& y:built.score.yaku)line+=std::wstring(L" ")+y.ja;
+            if(!wrong.empty()){++t.wrong;problems+=line+L"  WRONG:"+wrong+L"\n";}
+            else if(game<60)samples+=line+L"\n";
+
+            // A hand that waits, never on her own discards.
+            ++tenpaiAsked;
+            const Built waiting=BuildTenpai(unseen,melds,&river,rng);
+            if(waiting.found)
+            {
+                ++tenpaiFound;
+                const std::vector<int> waits=Waits(waiting.concealed);
+                bool bad=waits.empty();
+                for(int w:waits)bad|=river[w]>0;
+                for(int k=0;k<Kinds;++k)bad|=waiting.concealed[k]>unseen.tiles[k];
+                if(bad){++tenpaiWrong;problems+=L"tenpai "+TilesText(waiting.concealed)+L" WRONG\n";}
+            }
+        }
+        const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+        std::wstring report;
+        int wrong=tenpaiWrong;
+        for(int b=0;b<5;++b)
+            for(int k=0;k<2;++k)
+            {
+                const Tally& t=tally[b][k];
+                wrong+=t.wrong;
+                report+=std::wstring(BandNames[b])+(k?L" tsumo":L" ron")+L": "+std::to_wstring(t.asked)+L" asked, "+std::to_wstring(t.exact)+L" as asked, "+
+                        std::to_wstring(t.lower)+L" lower, "+std::to_wstring(t.none)+L" none, "+std::to_wstring(t.wrong)+L" wrong\n";
+            }
+        report+=L"tenpai: "+std::to_wstring(tenpaiAsked)+L" asked, "+std::to_wstring(tenpaiFound)+L" found, "+std::to_wstring(tenpaiWrong)+L" wrong\n";
+        report+=std::to_wstring(count)+L" games in "+std::to_wstring(static_cast<int>(ms))+L" ms\n";
+        return std::to_wstring(wrong)+L" wrong\n"+report+L"\n"+problems+L"\n"+samples;
     }
 
     std::wstring CheckHands(const std::wstring& cases)

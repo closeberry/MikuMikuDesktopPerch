@@ -5212,6 +5212,19 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return report.find(L" 0 failed")!=std::wstring::npos?0:1;
         }
+        // --mahjong-build-test <out.txt> [count] [seed]: her winning and waiting hands built in
+        // random games (count of them, 2000 by default), checked against the tiles seen.
+        if(argc>=3&&std::wstring(argv[1])==L"--mahjong-build-test")
+        {
+            const std::wstring report=Mahjong::CheckBuilding(argc>=4?_wtoi(argv[3]):2000,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
+            if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
+            {
+                fputws(report.c_str(),out);
+                fclose(out);
+            }
+            LocalFree(argv);
+            return report.starts_with(L"0 wrong")?0:1;
+        }
         const bool reading=argc>=4&&std::wstring(argv[1])==L"--reading";
         const std::wstring text=reading?argv[2]:L"",outPath=reading?argv[3]:L"";
         LocalFree(argv);
