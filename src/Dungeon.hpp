@@ -153,6 +153,8 @@ namespace MikuMikuDesktopPerch::Dungeon
         int Turns() const {return turns;}
         int Kills() const {return kills;}
         bool Daily() const {return daily;}
+        // The floor stands in shallow water (only a look: it changes nothing in the game).
+        bool Flooded() const {return flooded;}
         Tile At(int x,int y) const;
         bool Seen(int x,int y) const;
         bool Visible(int x,int y) const;
@@ -234,6 +236,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         int magicKills=0,casts=0;
         bool daily=false,hurtOnFloor=false,saved=false,houseWoke=false,hungryTold=false,lowTold=false;
         bool airborne=false;   // she is in the air this turn (a jump)
+        bool flooded=false;
         int leapt=0;           // the jump being made (Arrive): 1 forward, -1 back
         std::uint32_t seed=1,random=1;
     };

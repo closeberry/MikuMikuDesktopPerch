@@ -42,7 +42,7 @@ namespace MikuMikuDesktopPerch
         enum class Strike {None,Sword,Magic};   // her attacks, shown in 3D
         // A monster as drawn: where it is on its way to its tile, which way it faces, its stride,
         // and how far through an attack or a flinch it is (-1: none).
-        struct MonsterLook {float x=0,z=0,yaw=0,walk=0,moving=0,strike=-1,flinch=-1,breath=-1;};
+        struct MonsterLook {float x=0,z=0,yaw=0,walk=0,moving=0,strike=-1,flinch=-1,breath=-1,wade=0;};
         // The dragon breathing fire: how long it takes (rearing, then the fire from about a
         // third of the way, its head sweeping), and when the fire leaves its mouth and stops.
         constexpr double BreathTime=1.8;
@@ -120,6 +120,12 @@ namespace MikuMikuDesktopPerch
             std::pair<int,int> strikeTile{-1,-1};
             double strikeLands=0;
             std::vector<Spark> burst;   // flying from a hit
+            // A flooded floor: the rings on the water, its clock, how far she has waded since
+            // her last ring, and when the next drop falls from the ceiling.
+            std::vector<MascotRenderer::Ripple> ripples;
+            double waterTime=0,nextDrip=0;
+            float waded=0,lastX=0,lastZ=0;
+            std::uint32_t dripSeed=12345;
             // The dragon's fire: where its mouth was last drawn and how far through breathing
             // it is (-1: not), and the flames flying from it.
             MonsterMouth mouth;
@@ -824,15 +830,16 @@ namespace MikuMikuDesktopPerch
             }
             if(hero.bag.empty()){Text(g,T(L"（なし）",L"(empty)"),px,y,static_cast<float>(Px(13)),grey);y+=line;}
             const bool fresh=game.Floor()==1&&game.Turns()==0&&!game.Daily();
-            const float help=ch-pad-line*(fresh?7.2f:6.2f);
+            const float help=ch-pad-line*(fresh?8.2f:7.2f);
             // How to fight is said in plain words (newcomers did not guess that walking into a
             // monster attacks it).
             std::wstring keys=state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\n敵に向かって進むと、剣で攻撃\nShift＋↑：跳ぶ　↓：後ろへ跳ぶ　←→：横へ\n",
                                                            L"Up: go  Left/Right: turn  Down: turn round\nWalk into a monster to strike it with the sword\nShift+Up: jump  Down: step back  Left/Right: sidestep\n")
                                                      :T(L"矢印・WASD：移動\n敵に向かって進むと、剣で攻撃\nShift＋方向：前へジャンプ・後ろへ跳ぶ・横へ\n",
                                                         L"Arrows/WASD: move\nWalk into a monster to strike it with the sword\nShift+way: jump ahead, step back, sidestep\n");
-            keys+=T(L"F：魔法（MP3）　スペース：待つ・罠を探す\nEnter：買う　P：写真　Z：図鑑\nV：カメラ　M：2D/3D　Esc：帰る",
-                    L"F: magic (3 MP)  Space: wait, find traps\nEnter: buy  P: picture  Z: records\nV: camera  M: 2D/3D  Esc: go home");
+            // Shops too (newcomers did not find how to sell).
+            keys+=T(L"F：魔法（MP3）　スペース：待つ・罠を探す\nお店　Enter：買う　Shift＋数字：売る\nP：写真　Z：図鑑\nV：カメラ　M：2D/3D　Esc：帰る",
+                    L"F: magic (3 MP)  Space: wait, find traps\nShop  Enter: buy  Shift+number: sell\nP: picture  Z: records\nV: camera  M: 2D/3D  Esc: go home");
             if(fresh)keys+=T(L"\nT：今日のダンジョンで遊ぶ",L"\nT: play today's dungeon instead");
             const bool fire=ByFire()&&!state.camp.edit;
             if(fire)keys+=T(L"\nC：焚き火で話す",L"\nC: talk by the fire");
@@ -904,6 +911,27 @@ namespace MikuMikuDesktopPerch
             const auto& h=state.game.Hero();
             const float dx=(h.x+0.5f)*TileSize-state.drawnX,dz=-(h.y+0.5f)*TileSize-state.drawnZ;
             return dx*dx+dz*dz>TileSize*TileSize*0.11f;
+        }
+
+        // A ring on the water at (x, z) (the oldest goes when there are too many).
+        void AddRipple(float x,float z,float strength)
+        {
+            auto& r=state.ripples;
+            if(r.size()>=MascotRenderer::MaxRipples)r.erase(r.begin());
+            r.push_back({x,z,0,strength});
+        }
+
+        // Drops of water thrown up at (x, z).
+        void Splash(float x,float z,int count,float power)
+        {
+            auto& seed=state.dripSeed;
+            auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};
+            for(int i=0;i<count;++i)
+            {
+                const float a=random()*DirectX::XM_2PI,v=(4.0f+6.0f*random())*power;
+                Spark s{{x+std::cos(a)*1.2f,0.6f,z+std::sin(a)*1.2f},{std::cos(a)*v,(10.0f+12.0f*random())*power,std::sin(a)*v},0.25f+0.3f*random(),{0.75f,0.88f,1.0f},0,0.35+0.25*random()};
+                state.burst.push_back(s);
+            }
         }
 
         // With Shift: a jump the way she faces (two tiles) or back (one), or a step to the side
@@ -1445,6 +1473,8 @@ namespace MikuMikuDesktopPerch
             // Falling with her, the hair and the tail float (no more than weightless: the arc
             // is steeper than the physics' own gravity, which would throw them up).
             model.SetCarryMotion(0,rise,0,u>0&&u<1?-0.8f*std::min(8*height/(air*air),98.0f):0.0f);
+            // Coming down into the water.
+            if(game.Flooded()&&u>=1&&j.time-dt<crouch+air){AddRipple(state.drawnX,state.drawnZ,j.kind==2?1.3f:1.8f);Splash(state.drawnX,state.drawnZ,j.kind==2?8:14,1.0f);}
             if(u>=1&&j.time>=crouch+air+settle)
             {
                 model.SetCarryMotion(0,0,0,0);
@@ -1934,6 +1964,12 @@ namespace MikuMikuDesktopPerch
                     const float step=std::min(distance,speed*static_cast<float>(dt));
                     l.x+=dx/distance*step;l.z+=dz/distance*step;
                     l.moving=std::min(1.0f,l.moving+static_cast<float>(dt/0.12));
+                    // Wading through water (not what flies or floats).
+                    if(game.Flooded()&&m.id!=L"Bat"&&m.id!=L"Ghost"&&(l.wade+=step)>TileSize*0.5f)
+                    {
+                        l.wade=0;
+                        AddRipple(l.x,l.z,m.size>0?1.6f:0.9f);
+                    }
                 }
                 else{l.x=tx;l.z=tz;l.moving=std::max(0.0f,l.moving-static_cast<float>(dt/0.2));}
                 if(l.moving>0)l.walk+=static_cast<float>(dt)*XM_2PI*3.0f;
@@ -1998,6 +2034,38 @@ namespace MikuMikuDesktopPerch
                     AddFlames(moving,(f.x+0.5f)*TileSize,-(f.y+0.5f)*TileSize,static_cast<float>(state.monsterClock)+f.x*1.3f+f.y*0.7f,game.Visible(f.x,f.y)?1.0f:0.5f);
             r.SetMovingGeometry(std::move(moving));
         }
+        // A flooded floor: rings where she wades (each half tile or so, a little splash), where
+        // she lands, where monsters wade, and where drops fall from the ceiling now and then
+        // near her; each spreads and fades in about two seconds.
+        if(game.Flooded())
+        {
+            state.waterTime+=dt;
+            if(!state.leap.kind)
+            {
+                const float mx=state.drawnX-state.lastX,mz=state.drawnZ-state.lastZ,moved=std::sqrt(mx*mx+mz*mz);
+                if(moved<TileSize)state.waded+=moved;
+                if(state.waded>TileSize*0.45f)
+                {
+                    state.waded=0;
+                    AddRipple(state.drawnX,state.drawnZ,1.0f);
+                    Splash(state.drawnX,state.drawnZ,4,0.6f);
+                }
+            }
+            if(state.waterTime>=state.nextDrip)
+            {
+                auto& seed=state.dripSeed;
+                auto random=[&]{seed=seed*1664525u+1013904223u;return (seed>>8)/16777216.0f;};
+                state.nextDrip=state.waterTime+0.5+1.0*random();
+                const int x=hero.x+static_cast<int>(random()*9)-4,y=hero.y+static_cast<int>(random()*7)-3;
+                if(game.At(x,y)!=Dungeon::Tile::Wall&&game.Visible(x,y))
+                    AddRipple((x+0.2f+0.6f*random())*TileSize,-(y+0.2f+0.6f*random())*TileSize,0.45f);
+            }
+            for(auto& ripple:state.ripples)ripple.age+=static_cast<float>(dt);
+            state.ripples.erase(std::remove_if(state.ripples.begin(),state.ripples.end(),[](const auto& ripple){return ripple.age>2.2f;}),state.ripples.end());
+        }
+        else state.ripples.clear();
+        state.lastX=state.drawnX;state.lastZ=state.drawnZ;
+        r.SetWater(game.Flooded(),static_cast<float>(state.waterTime),state.ripples);
         r.SetTorch(state.drawnX,state.drawnZ,TileSize*(state.behind?9.0f:7.0f));
 
         // The camera: from above and behind the map's bottom edge (as in Shiren), or behind her

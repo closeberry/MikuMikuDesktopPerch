@@ -51,6 +51,9 @@ namespace MikuMikuDesktopPerch
             // Point lights: world position and radius, colour, and the position and radius in
             // the model's own space (its vertices are skinned there).
             XMFLOAT4 lightPlaces[MascotRenderer::MaxLights],lightColors[MascotRenderer::MaxLights],modelLightPlaces[MascotRenderer::MaxLights];
+            // Water over the floors: x on, y its clock; and the rings on it (xz, age, strength).
+            XMFLOAT4 water;
+            XMFLOAT4 ripples[MascotRenderer::MaxRipples];
         };
         // Motion blur: the share of a frame's motion smeared (a film camera's half-open
         // shutter), and the longest smear as a share of the drawn height at 30 fps (longer at
@@ -895,6 +898,13 @@ namespace MikuMikuDesktopPerch
         particles.assign(list.begin(),list.begin()+static_cast<std::ptrdiff_t>(std::min(list.size(),MaxParticles)));
     }
 
+    void MascotRenderer::SetWater(bool on,float time,const std::vector<Ripple>& list)
+    {
+        water=on;
+        waterTime=time;
+        ripples.assign(list.begin(),list.begin()+static_cast<std::ptrdiff_t>(std::min(list.size(),MaxRipples)));
+    }
+
     void MascotRenderer::SetLights(const std::vector<PointLight>& list)
     {
         lights.assign(list.begin(),list.begin()+static_cast<std::ptrdiff_t>(std::min(list.size(),MaxLights)));
@@ -966,6 +976,12 @@ namespace MikuMikuDesktopPerch
                 scene.lightColors[i]={l.color[0],l.color[1],l.color[2],0};
                 scene.modelLightPlaces[i]={XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at),l.radius*shrink};
             }
+        }
+        scene.water={water?1.0f:0.0f,waterTime,0,0};
+        for(size_t i=0;i<MaxRipples;++i)
+        {
+            const Ripple r=i<ripples.size()?ripples[i]:Ripple{};
+            scene.ripples[i]={r.x,r.z,r.age,r.strength};
         }
         {
             // The light looks at the camera's target from far enough to see all the camera

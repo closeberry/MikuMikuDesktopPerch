@@ -26,6 +26,10 @@ cbuffer Scene : register(b0)
     float4 LightPlaces[8];
     float4 LightColors[8];
     float4 ModelLightPlaces[8];
+    // Shallow water over the floors (MascotRenderer::SetWater): x 1 when there is, y its
+    // clock in seconds; and the rings spreading on it (xz, seconds since, strength; 0: none).
+    float4 Water;
+    float4 Ripples[16];
 };
 
 // The point lights' light at p (world, or the model's own space) on a surface facing n:

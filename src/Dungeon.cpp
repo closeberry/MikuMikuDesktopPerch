@@ -411,6 +411,9 @@ namespace MikuMikuDesktopPerch::Dungeon
         traps.clear();wares.clear();golds.clear();fires.clear();keysOnFloor.clear();
         state=State::Playing;
         hurtOnFloor=false;houseWoke=false;
+        // From the third floor, now and then (never a boss's floor), the floor is under shallow
+        // water: from the seed and the floor apart from the rest, so the floors stay as they were.
+        flooded=floor>=3&&floor%5!=0&&((seed*2654435761u)^(static_cast<std::uint32_t>(floor)*40503u))%100<30;
         player.keys=0;
         auto carve=[&](int x,int y){if(x>0&&y>0&&x<Width-1&&y<Height-1)tiles[static_cast<size_t>(y)*Width+x]=Tile::Floor;};
 
@@ -659,6 +662,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                                        {L"よし、{0}階！",L"All right, floor {0}!"}),{n}),
                 Fmt(T(L"ダンジョンの{0}階に着きました",L"You reached floor {0} of the dungeon"),{n}),3);
         if(floor%5==0)Note(T(L"この階のどこかに、ボスがいる。",L"A boss is somewhere on this floor."));
+        if(flooded)Note(T(L"この階は水浸しだ。",L"This floor is flooded."));
     }
 
     void Game::Reveal()

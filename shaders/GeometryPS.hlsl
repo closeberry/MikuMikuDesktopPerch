@@ -7,6 +7,8 @@
 // 1 mossy stone ruins, 2 an ice cave, 3 a lava cave, 4 an amethyst abyss. Lit half by the
 // scene's light, half ambient, and by a torch around the hero (TorchXZ, TorchRadius) that fades
 // into darkness, and by fire and magic nearby (PointLights); a lava cave's cracks glow by themselves.
+// On a flooded floor (Water) the floors are under shallow water with rings spreading on it
+// (Flooded), and the walls are wet and dark at their feet.
 #include "Scene.hlsli"
 
 struct VSOutput
@@ -217,6 +219,70 @@ float3 Wall(int theme, float3 rgb, float along, float y, inout float3 glow)
     return rgb;
 }
 
+// Shallow water over a floor at world: the floor seen through it (darker, tinted), small waves
+// always moving, rings spreading from each ripple, and the light glinting off it (her torch
+// and the fire and magic nearby) where the waves turn it toward the camera.
+float3 Flooded(float3 floorColour, float3 light, float3 glow, float3 world)
+{
+    const float t = Water.y;
+    const float2 p = world.xz;
+    float2 slope = 0.045 * float2(cos(p.x * 0.9 + t * 1.3) + 0.6 * cos((p.x + p.y) * 0.7 - t * 1.1),
+                                  cos(p.y * 0.8 - t * 1.2) + 0.6 * cos((p.x - p.y) * 0.6 + t * 0.9));
+    float ring = 0;
+    [unroll] for (int k = 0; k < 16; ++k)
+    {
+        const float4 r = Ripples[k];
+        if (r.w <= 0)
+            continue;
+        // A train of a few rings, its front spreading 9 units a second, weaker as it grows and
+        // as it ages. Not perfectly round: the ring is pushed out and in around it and warped by
+        // the water where it runs (more as it grows), and stronger on some sides than others
+        // (each ripple its own way, from where it began).
+        const float2 d = p - r.xy;
+        const float dist = length(d) + 1e-3;
+        // Around the ring (by its angle a): a few soft waves of its own, from where it began.
+        const float a = atan2(d.y, d.x);
+        const float s1 = Hash(r.xy) * 6.283, s2 = Hash(r.yx + 3.1) * 6.283, s3 = Hash(r.xy + 7.7) * 6.283;
+        const float front = r.z * 9.0;
+        const float near = saturate(dist / 4.0);   // none of it at the very middle
+        const float warp = near * (0.08 + 0.025 * front) * (sin(2 * a + s1) + 0.6 * sin(3 * a + s2))
+                         + (Noise(p * 0.35 + r.xy * 0.13 + t * 0.2) - 0.5) * 0.7;
+        const float x = dist + warp - front;
+        const float sides = 1 - 0.45 * near * (0.5 + 0.5 * (0.7 * sin(a + s3) + 0.3 * sin(2 * a + s1)));
+        const float envelope = r.w * sides * exp(-x * x / 5.0) * saturate(1 - r.z / 2.2) / (1 + 0.12 * front);
+        // The rings not evenly spaced: each train its own spacing, and the gaps within it
+        // stretching and closing a little.
+        const float phase = x * (2.2 + 0.9 * Hash(r.yx + 1.9)) + 0.9 * sin(x * 0.8 + s2);
+        slope += d / dist * cos(phase) * envelope;
+        ring += sin(phase) * envelope;
+    }
+    const float3 n = normalize(float3(-slope.x, 1, -slope.y));
+    const float3 view = normalize(cross(CameraRight.xyz, CameraUp.xyz));
+    const float facing = saturate(dot(n, -view));
+    const float fresnel = 0.12 + 0.55 * pow(1 - facing, 3);
+    const float3 under = floorColour * light * float3(0.6, 0.7, 0.76);
+    const float3 above = float3(0.08, 0.1, 0.14) * light;
+    // The rings' crests catch a little light and their troughs darken, wherever they are.
+    float3 c = lerp(under, above, fresnel) * (1 - 0.25 * saturate(-ring)) + saturate(ring) * 0.32 * light * float3(0.85, 0.92, 1.0);
+    // Her torch, held about her height, mirrored in the water.
+    if (TorchRadius > 0)
+    {
+        const float3 l = normalize(float3(TorchXZ.x, 12, TorchXZ.y) - world);
+        const float fade = saturate(1 - distance(p, TorchXZ) / TorchRadius);
+        c += float3(1.0, 0.95, 0.85) * pow(saturate(dot(n, normalize(l - view))), 70) * 0.9 * fade;
+    }
+    [unroll] for (int j = 0; j < 8; ++j)
+    {
+        const float4 q = LightPlaces[j];
+        if (q.w <= 0)
+            continue;
+        const float3 l = normalize(q.xyz - world);
+        const float fade = saturate(1 - distance(q.xyz, world) / (q.w * 1.5));
+        c += LightColors[j].rgb * pow(saturate(dot(n, normalize(l - view))), 50) * 1.2 * fade;
+    }
+    return c + glow;
+}
+
 float4 main(VSOutput i) : SV_Target
 {
     const int pattern = (int)round(i.color.a * 4);
@@ -265,7 +331,12 @@ float4 main(VSOutput i) : SV_Target
     else if (pattern == 3)
         rgb = Floor(theme, rgb, i.world.xz, glow);
     else if (pattern == 2)
+    {
         rgb = Wall(theme, rgb, abs(i.normal.x) > 0.5 ? i.world.z : i.world.x, i.world.y, glow);
+        // Wet and dark at their feet, above the water.
+        if (Water.x > 0)
+            rgb *= lerp(0.55, 1.0, smoothstep(0.2, 1.8, i.world.y));
+    }
     const float lit = saturate(dot(normalize(i.normal), -normalize(LightDir)));
     float3 light = 0.55 + 0.6 * lit;
     if (TorchRadius > 0)
@@ -282,5 +353,7 @@ float4 main(VSOutput i) : SV_Target
     }
     // Fire and magic nearby.
     light += PointLights(i.world, normalize(i.normal), false);
+    if (pattern == 3 && Water.x > 0 && i.normal.y > 0.5)
+        return float4(Flooded(rgb, light, glow, i.world), 1);
     return float4(rgb * light + glow, 1);
 }

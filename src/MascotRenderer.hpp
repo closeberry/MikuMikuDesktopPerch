@@ -40,6 +40,9 @@ namespace MikuMikuDesktopPerch
             float color[3]{};
         };
         static constexpr size_t MaxLights=8;
+        // A ring spreading over water from (x, z): seconds since it began, how strong.
+        struct Ripple {float x=0,z=0,age=0,strength=0;};
+        static constexpr size_t MaxRipples=16;
         // Plain lit geometry in world space (SetGeometry): the dungeon's floor, walls and things.
         struct GeometryVertex
         {
@@ -85,6 +88,9 @@ namespace MikuMikuDesktopPerch
         void SetTorch(float x,float z,float radius){torch={x,z,radius};}
         // The point lights this frame (MaxLights at most; the rest are left out).
         void SetLights(const std::vector<PointLight>& list);
+        // Shallow water over the geometry's floors (a flooded dungeon floor): its clock in
+        // seconds (for the small waves) and the rings on it (MaxRipples at most).
+        void SetWater(bool on,float time,const std::vector<Ripple>& list);
         // Geometry that changes every frame (the dungeon's monsters as they walk and strike),
         // drawn as SetGeometry's is, copied to the GPU each frame.
         void SetMovingGeometry(std::vector<GeometryVertex> vertices){moving=std::move(vertices);}
@@ -248,6 +254,9 @@ namespace MikuMikuDesktopPerch
         std::array<float,4> background{0,0,0,0};
         DirectX::XMFLOAT3 torch{0,0,0};
         std::vector<PointLight> lights;
+        bool water=false;
+        float waterTime=0;
+        std::vector<Ripple> ripples;
         std::vector<Texture> textures;
         std::array<Texture,10> sharedToons;
         Texture white;
