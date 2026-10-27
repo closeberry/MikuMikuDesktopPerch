@@ -47,7 +47,9 @@ namespace MikuMikuDesktopPerch
                             // Asked for alone (Present): showing something on an open palm.
                             Present,
                             // Asked for alone (Strike, the dungeon): a sword's cut, a spell cast.
-                            Slash,Cast};
+                            Slash,Cast,
+                            // Asked for alone (Reach, at the mahjong table): an arm out to a tile.
+                            Reach};
         static constexpr int GestureCount=37;
 
         // T-stance correction of one side: keys are generated in the corrected (A-stance) frame.
@@ -109,6 +111,13 @@ namespace MikuMikuDesktopPerch
         // lands, or the spell leaves the hand, StrikeHit seconds in. False when it cannot now
         // (not standing).
         bool Strike(bool magic);
+        // An arm out (side 0: the left) to a point fromHead away from her head (model axes: the
+        // left +X, up +Y, the front -Z), palm down as if picking a tile up, for seconds, as a
+        // reaction, standing or sitting; out of reach, she leans in and the hand stops short.
+        // The hand is out from 0.6 s in until 0.85 s before the end (it comes up close to the
+        // chest first, the elbow back, and goes back that way).
+        // A reach under way is replaced. False when it cannot now.
+        bool Reach(int side,const DirectX::XMFLOAT3& fromHead,double seconds);
         static constexpr double StrikeHit=MascotModel::StrikeHit;
         // Fade out the gesture and the click reaction playing (from the weight each has now), and
         // hold off the next gesture for a few seconds.
@@ -291,6 +300,7 @@ namespace MikuMikuDesktopPerch
         Gesture reaction=Gesture::None;             // the click reaction playing
         double reactionTime=0,reactionLength=0;
         int reactionSide=0;
+        DirectX::XMFLOAT3 reachOffset{};            // Reach's point, from the head
         float reactionWeight=0;
         std::vector<std::pair<int,float>> reactionMorphs;
         std::uint32_t random=FreshSeed();

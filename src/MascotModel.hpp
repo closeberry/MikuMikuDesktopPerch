@@ -164,6 +164,9 @@ namespace MikuMikuDesktopPerch
         // A sword's cut or a spell cast (the right hand), the dungeon's attacks; see
         // GeneratedMotion::Strike. False when it cannot now.
         bool Strike(bool magic);
+        // An arm out to a point fromHead away from the head bone (model axes), as if to take a
+        // tile; see GeneratedMotion::Reach. False when it cannot now.
+        bool Reach(int side,const std::array<float,3>& fromHead,double seconds);
         static constexpr double StrikeHit=0.32;   // seconds in: the cut lands, the spell leaves the hand
         // A fist's grip from the latest solve (model space): its middle, and the way a sword held
         // in it points (along the forearm, tipped toward the thumb). False on a model without

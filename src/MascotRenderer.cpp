@@ -21,6 +21,7 @@
 #include "UpscalePS.h"
 #include "GeometryVS.h"
 #include "GeometryPS.h"
+#include "OverlayPS.h"
 
 namespace MikuMikuDesktopPerch
 {
@@ -571,6 +572,7 @@ namespace MikuMikuDesktopPerch
                 {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT,0,12,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
                 {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,24,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
                 {"TEXCOORD",1,DXGI_FORMAT_R32G32B32A32_FLOAT,0,40,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+                {"TEXCOORD",2,DXGI_FORMAT_R32G32B32A32_FLOAT,0,56,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
             };
             D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
             pso.pRootSignature=rootSignature.Get();
@@ -609,6 +611,81 @@ namespace MikuMikuDesktopPerch
         FinishUploads();
         if(ok)geometryCount=static_cast<UINT>(vertices.size());
         return ok;
+    }
+
+    bool MascotRenderer::SetGeometryTexture(const ImageRgba8& image)
+    {
+        if(!device||!srvHeap)return false;
+        WaitIdle();
+        geometryTexture={};
+        BeginUploads();
+        const bool ok=UploadTexture(image,geometryTexture);
+        FinishUploads();
+        if(!ok)geometryTexture={};
+        return WriteGeometryDescriptors()&&ok;
+    }
+
+    bool MascotRenderer::SetOverlay(const ImageRgba8& image)
+    {
+        if(!device||!srvHeap||!rootSignature)return false;
+        if(!overlayPso&&!image.levels.empty())
+        {
+            // One triangle over the drawn area, the picture laid on it (premultiplied), with no
+            // depth: over everything.
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature=rootSignature.Get();
+            pso.VS={g_PostVS,sizeof(g_PostVS)};
+            pso.PS={g_OverlayPS,sizeof(g_OverlayPS)};
+            pso.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            pso.NumRenderTargets=motionBlur?2:1;
+            pso.RTVFormats[0]=ColorFormat;
+            if(motionBlur)pso.RTVFormats[1]=MotionFormat;
+            pso.BlendState.IndependentBlendEnable=TRUE;
+            auto& blend=pso.BlendState.RenderTarget[0];
+            blend.BlendEnable=TRUE;
+            blend.SrcBlend=D3D12_BLEND_ONE;blend.DestBlend=D3D12_BLEND_INV_SRC_ALPHA;blend.BlendOp=D3D12_BLEND_OP_ADD;
+            blend.SrcBlendAlpha=D3D12_BLEND_ONE;blend.DestBlendAlpha=D3D12_BLEND_INV_SRC_ALPHA;blend.BlendOpAlpha=D3D12_BLEND_OP_ADD;
+            blend.RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+            pso.DSVFormat=DepthFormat;
+            pso.SampleDesc.Count=sampleCount;
+            pso.SampleMask=UINT_MAX;
+            pso.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;
+            pso.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
+            pso.RasterizerState.DepthClipEnable=TRUE;
+            pso.RasterizerState.MultisampleEnable=sampleCount>1;
+            pso.DepthStencilState.DepthEnable=FALSE;
+            if(const HRESULT hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&overlayPso));FAILED(hr))
+            {
+                Log(L"  overlay pipeline: 0x%08X",static_cast<unsigned>(hr));
+                return false;
+            }
+        }
+        WaitIdle();
+        overlay={};
+        bool ok=true;
+        if(!image.levels.empty())
+        {
+            BeginUploads();
+            ok=UploadTexture(image,overlay);
+            FinishUploads();
+            if(!ok)overlay={};
+        }
+        return WriteGeometryDescriptors()&&ok;
+    }
+
+    // The geometry's and the overlay's pictures, after the last passes' inputs (white where
+    // there is none).
+    bool MascotRenderer::WriteGeometryDescriptors()
+    {
+        if(!srvHeap||!white.resource)return false;
+        const auto cpu=srvHeap->GetCPUDescriptorHandleForHeapStart();
+        const size_t base=materialCount*3+10;
+        ID3D12Resource* const slots[3]={
+            geometryTexture.valid?geometryTexture.resource.Get():white.resource.Get(),
+            overlay.valid?overlay.resource.Get():white.resource.Get(),white.resource.Get()};
+        for(size_t i=0;i<3;++i)
+            device->CreateShaderResourceView(slots[i],nullptr,D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr+(base+i)*srvStride});
+        return true;
     }
 
     // The last passes' inputs, after the materials' textures and the shadow map, three to a
@@ -789,7 +866,7 @@ namespace MikuMikuDesktopPerch
 
         D3D12_DESCRIPTOR_HEAP_DESC heap{};
         heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        heap.NumDescriptors=static_cast<UINT>(materialCount*3+10);   // the materials' textures, the shadow map, the last passes' inputs
+        heap.NumDescriptors=static_cast<UINT>(materialCount*3+13);   // the materials' textures, the shadow map, the last passes' inputs, the geometry's and overlay's
         heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         srvHeap.Reset();
         if(FAILED(device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&srvHeap)))){error=T(L"SRV ヒープの作成に失敗しました。",L"Could not create the SRV heap.");return false;}
@@ -818,6 +895,7 @@ namespace MikuMikuDesktopPerch
             device->CreateShaderResourceView(shadowMap.Get(),&view,D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr+materialCount*3*srvStride});
         }
         WritePassDescriptors();
+        WriteGeometryDescriptors();
         history=false;
 
         // Per-frame upload ring: scene CB, material CBs, bone matrices (this frame's, then last
@@ -974,7 +1052,7 @@ namespace MikuMikuDesktopPerch
                 const XMVECTOR at=XMVector3TransformCoord(XMVectorSet(l.position[0],l.position[1],l.position[2],0),toModel);
                 scene.lightPlaces[i]={l.position[0],l.position[1],l.position[2],l.radius};
                 scene.lightColors[i]={l.color[0],l.color[1],l.color[2],0};
-                scene.modelLightPlaces[i]={XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at),l.radius*shrink};
+                scene.modelLightPlaces[i]={XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at),l.onModel?l.radius*shrink:0.0f};
             }
         }
         scene.water={water?1.0f:0.0f,waterTime,0,0};
@@ -1167,6 +1245,7 @@ namespace MikuMikuDesktopPerch
         if(geometryCount||movingCount)
         {
             commandList->SetPipelineState(geometryPso.Get());
+            commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+(materialCount*3+10)*srvStride});
             if(geometryCount)
             {
                 const D3D12_VERTEX_BUFFER_VIEW geometry{geometryBuffer->GetGPUVirtualAddress(),geometryCount*static_cast<UINT>(sizeof(GeometryVertex)),sizeof(GeometryVertex)};
@@ -1209,6 +1288,12 @@ namespace MikuMikuDesktopPerch
             commandList->SetPipelineState(particlePso.Get());
             commandList->SetGraphicsRootShaderResourceView(2,uploadVa+particleOffset);
             commandList->DrawInstanced(6,static_cast<UINT>(particles.size()),0,0);
+        }
+        if(overlay.valid&&overlayPso)
+        {
+            commandList->SetPipelineState(overlayPso.Get());
+            commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+(materialCount*3+10)*srvStride});
+            commandList->DrawInstanced(3,1,0,0);
         }
 
         // MSAA resolve between targets of the same size: of the drawn area, or of the whole

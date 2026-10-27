@@ -1,6 +1,7 @@
 #include "Mahjong.hpp"
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <cmath>
 
 namespace MikuMikuDesktopPerch::Mahjong
@@ -677,6 +678,8 @@ namespace MikuMikuDesktopPerch::Mahjong
         for(int simple=0;simple<2;++simple)
         {
             int hands=0,yourWins=0,herWins=0,draws=0,herRiichi=0,herPon=0,gamesYouWon=0,stuck=0,yourDealIn=0,herDealIn=0;
+            int herYakuman=0,yourYakuman=0;
+            std::map<std::wstring,int> yakumanKinds;
             const auto started=std::chrono::steady_clock::now();
             for(int game=0;game<count;++game)
             {
@@ -728,6 +731,11 @@ namespace MikuMikuDesktopPerch::Mahjong
                         else if(e.winner==You){++yourWins;if(!e.tsumo)++herDealIn;}
                         else {++herWins;if(!e.tsumo)++yourDealIn;}
                         if(!e.draw&&!e.score.win)problems+=L"a win without a yaku\n";
+                        if(!e.draw&&e.score.yakuman)
+                        {
+                            ++(e.winner==You?yourYakuman:herYakuman);
+                            for(const auto& y:e.score.yaku)++yakumanKinds[std::wstring(e.winner==You?L"you: ":L"her: ")+y.en];
+                        }
                         t.NextRound();
                         riichiCounted=false;
                         break;
@@ -748,6 +756,9 @@ namespace MikuMikuDesktopPerch::Mahjong
             report+=L"  games you won "+std::to_wstring(gamesYouWon)+L"; hands won: you "+percent(yourWins)+L", her "+percent(herWins)+L", drawn "+percent(draws)+L"\n";
             report+=L"  dealt in: you "+percent(yourDealIn)+L", her "+percent(herDealIn)+L"; her riichi "+percent(herRiichi)+L", her pons "+std::to_wstring(herPon)+
                     L"; stuck "+std::to_wstring(stuck)+L"\n";
+            report+=L"  yakuman: you "+std::to_wstring(yourYakuman)+L", her "+std::to_wstring(herYakuman)+L" (of "+std::to_wstring(hands)+L" hands)";
+            for(const auto& [name,n]:yakumanKinds)report+=L"; "+name+L" "+std::to_wstring(n);
+            report+=L"\n";
         }
         return std::to_wstring(wrong)+L" wrong\n"+report+problems;
     }

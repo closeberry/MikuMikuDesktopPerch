@@ -68,3 +68,7 @@ LISTEN IDLECLIP "idle\\listen.vmd"
 // The mahjong tiles' faces (see docs/Mahjong.md): 150x200 each, ten across, the 34 kinds in
 // order and then the red fives.
 TILES MAHJONGTILES "mahjong\\tiles.png"
+
+// The result screen's brush hand: Yuji Syuku (SIL Open Font License, licenses/YujiSyuku-OFL.txt),
+// cut down to the characters the mahjong game writes (tools: fontTools' subset).
+BRUSH MAHJONGFONT "mahjong\\brush.ttf"

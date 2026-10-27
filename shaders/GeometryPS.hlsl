@@ -1,4 +1,5 @@
-// The dungeon's surfaces, patterned here from the world position (no texture memory): the
+// The dungeon's surfaces (and the mahjong table's), patterned here from the world position (no texture memory
+// but the mahjong tiles' faces, Picture, where the vertices ask for it): the
 // colour's alpha picks the pattern. 1: plain, 0.75: floor stones (one a tile of 10 units),
 // 0.5: wall bricks, 0.25: glowing (unlit), 0: a thing's own surface (patterned from where on
 // the thing, so it moves with it): by the steps of 0.02 above it, a monster's skin with grime,
@@ -18,7 +19,11 @@ struct VSOutput
     float3 normal : NORMAL;
     float4 color : COLOR0;
     float3 local : TEXCOORD1;
+    float3 uv : TEXCOORD2;     // where on Picture, 1 in z when it is drawn there
 };
+
+Texture2D<float4> Picture : register(t1);   // the geometry's texture (the mahjong tiles' faces)
+SamplerState ClampSampler : register(s1);
 
 float Hash(float2 p)
 {
@@ -288,6 +293,8 @@ float4 main(VSOutput i) : SV_Target
     const int pattern = (int)round(i.color.a * 4);
     const int theme = (int)round((i.color.a * 4 - pattern) / 0.08);
     float3 rgb = i.color.rgb, glow = 0;
+    if (i.uv.z > 0)
+        rgb *= Picture.Sample(ClampSampler, i.uv.xy).rgb;
     if (pattern == 1)
         return float4(rgb, 1);
     float shine = 0;

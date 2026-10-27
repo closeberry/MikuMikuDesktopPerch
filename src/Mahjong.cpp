@@ -170,7 +170,7 @@ namespace MikuMikuDesktopPerch::Mahjong
 
                 // By the shape.
                 if(pinfu)y.Add(L"平和",L"Pinfu",1);
-                if(allSimple)y.Add(L"断么九",L"All simples",1);
+                if(allSimple)y.Add(L"断幺九",L"All simples",1);
                 for(const Group& g:r.groups)
                 {
                     if(g.run)continue;
@@ -221,8 +221,8 @@ namespace MikuMikuDesktopPerch::Mahjong
                         outside&=g.run?(g.tile%9==0||g.tile%9==6):Orphan(g.tile);
                     if(outside)
                     {
-                        if(honors)y.Add(L"混全帯么九",L"Half outside hand",closed?2:1);
-                        else y.Add(L"純全帯么九",L"Fully outside hand",closed?3:2);
+                        if(honors)y.Add(L"混全帯幺九",L"Half outside hand",closed?2:1);
+                        else y.Add(L"純全帯幺九",L"Fully outside hand",closed?3:2);
                     }
                 }
                 if(allOrphan)y.Add(L"混老頭",L"All terminals and honors",2);

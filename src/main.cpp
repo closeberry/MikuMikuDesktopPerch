@@ -138,6 +138,8 @@ namespace
         double albumSince=0;
         // Away in the dungeon (docs/Dungeon.md): hidden here, her model drawn in its window.
         bool inDungeon=false;
+        // At the mahjong table (docs/Mahjong.md): the same, her model drawn in its window.
+        bool inMahjong=false;
         std::unique_ptr<VoiceEngine> voice;   // while speaking aloud is on
         std::unique_ptr<LocalChat> memoryChat;
         std::vector<ChatMessage> unmemorized;   // exchanges not yet looked through for notes
@@ -1547,7 +1549,7 @@ namespace
             {
                 std::wstring label=t.name+L"　"+(t.found.date.empty()?std::wstring(T(L"（日付不明）",L"(date unknown)")):DateText(t.found.date));
                 if(t.found.count>1)label+=Fmt(T(L"　×{0}",L"  x{0}"),{std::to_wstring(t.found.count)});
-                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
+                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon&&!m.inMahjong?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
             }
             if(owned.empty())AppendMenuW(treasures,MF_STRING|MF_GRAYED,0,T(L"（まだありません。ダンジョンの宝物庫やボスから持ち帰れます）",L"(None yet: bring some home from the dungeon's vaults and bosses)"));
             AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(treasures),T(L"お宝を眺める",L"Look at a treasure"));
@@ -2062,7 +2064,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             const Mascot& each=*owned;
-            if(each.inDungeon)continue;   // she talks there; the others may still speak first
+            if(each.inDungeon||each.inMahjong)continue;   // she is away; the others may still speak first
             if((each.chat&&each.chat->Busy())||each.bubble.Visible()||each.chatInput.IsOpen()||each.speech.Speaking())return;
             if(each.place==Place::Ground&&each.model.CurrentActivity()!=Activity::Grabbed&&each.travel==Travel::None)free.push_back(owned.get());
         }
@@ -2349,7 +2351,7 @@ namespace
     {
         // One in the dungeon talks there, not over the ones on the desktop.
         return std::any_of(app.mascots.begin(),app.mascots.end(),[](const auto& m){
-            return !m->inDungeon&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
+            return !m->inDungeon&&!m->inMahjong&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
     }
 
     void EndBanter(const wchar_t* why)
@@ -2403,7 +2405,7 @@ namespace
     // Free to talk: standing on a surface with nothing else to do.
     bool FreeToTalk(Mascot& c)
     {
-        return !c.inDungeon&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
+        return !c.inDungeon&&!c.inMahjong&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
                !MotionBusy(c)&&!c.dozing&&!c.chatInput.IsOpen();
     }
 
@@ -3163,7 +3165,7 @@ namespace
         {
             Mascot& c=*owned;
             if(!model.empty()&&c.modelPath!=model)continue;
-            if(c.inDungeon)continue;
+            if(c.inDungeon||c.inMahjong)continue;
             if((&c==app.asker||&c==app.alarmTeller)&&waited<30)continue;
             const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
             if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
@@ -3387,7 +3389,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if((only&&only!=&m)||m.inDungeon)continue;
+            if((only&&only!=&m)||m.inDungeon||m.inMahjong)continue;
             AlbumLayer character;
             UINT width=0,height=0;
             if(!m.renderer.ReadLastFrame(character.pixels,width,height))continue;
@@ -3526,7 +3528,7 @@ namespace
     {
         const auto owned=TreasuresOf(m.modelPath);
         const auto t=std::find_if(owned.begin(),owned.end(),[&](const OwnedTreasure& o){return o.index==index;});
-        if(t==owned.end()||m.inDungeon||m.place!=Place::Ground)return;
+        if(t==owned.end()||m.inDungeon||m.inMahjong||m.place!=Place::Ground)return;
         if(!app.showing.model.empty()){app.picture.Hide();app.showing={};}
         StopGroundActivity(m);
         const RECT work=WorkAreaOfWindow(m);
@@ -3579,7 +3581,7 @@ namespace
         const bool talking=m.speech.Active()||m.speech.Speaking()||m.bubble.Talking()||(m.chat&&m.chat->Busy());
         if(talking)s.quietSince=-1;
         else if(s.quietSince<0)s.quietSince=app.clock;
-        const bool away=m.inDungeon||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
+        const bool away=m.inDungeon||m.inMahjong||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
         if(s.endAt<0&&(away||age>30||(age>7&&s.quietSince>=0&&app.clock-s.quietSince>3)))
         {
             s.endAt=app.clock;
@@ -3605,7 +3607,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.place!=Place::Ground||other.inDungeon)continue;
+            if(&other==&m||other.place!=Place::Ground||other.inDungeon||other.inMahjong)continue;
             other.nextDecision=std::max(other.nextDecision,app.clock+5);
             if(!s.peeked&&age>=1.3&&FreeToTalk(other)&&!InBanter(other))other.model.Emote(L"peek");
         }
@@ -3687,22 +3689,52 @@ namespace
         return true;
     }
 
-    // docs/Mahjong.md: a game against her in its own window (she stays on the desktop).
+    // docs/Mahjong.md: a game against her in its own window, where she sits at the table (off
+    // the desktop meanwhile, as in the dungeon).
     void OpenMahjong(Mascot& m)
     {
-        if(MahjongWindowOpen()||app.diagnostic){ShowMahjongWindow(m.hwnd,{},{});return;}
-        Trace(L"%.1f mahjong: start (%s)",app.clock,m.modelPath.c_str());
+        if(MahjongWindowOpen()||DungeonWindowOpen()||m.inDungeon){if(MahjongWindowOpen())ShowMahjongWindow(m.hwnd,{},{});return;}
+        const std::wstring model=m.modelPath;
+        Trace(L"%.1f mahjong: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
         MahjongOpponent her;
         her.name=face.name;
         her.face=face.face;
         her.faceSize=face.faceSize;
         her.bond=app.settings.bond?m.bond.Stage():0;
-        ShowMahjongWindow(m.hwnd,her,{});
+        her.model=&m.model;
+        her.toonDir=app.settings.toonDir;
+        her.edgeScale=app.settings.edgeScale;
+        her.msaa=std::min(app.settings.msaa,4);
+        her.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
+        her.light=app.settings.dungeonLight;
+        if(m.chat)m.chat->Cancel();
+        if(m.voice)m.voice->CancelAll();
+        m.speech.Reset();
+        m.bubble.Hide();
+        m.chatInput.Close();
+        if(m.place==Place::Ground)StopGroundActivity(m);
+        m.model.SetLookTarget(0,0,false);
+        m.inMahjong=true;
+        ShowWindow(m.hwnd,SW_HIDE);
+        ShowMahjongWindow(m.hwnd,her,[model]{
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inMahjong)
+                {
+                    Mascot& m=*owned;
+                    m.inMahjong=false;
+                    // Up from the table, standing where she was on the desktop.
+                    m.model.SetActivity(Activity::Idle);
+                    m.model.TakeRootDelta();
+                    if(!app.paused)ShowWindow(m.hwnd,SW_SHOWNOACTIVATE);
+                }
+            Trace(L"%.1f mahjong: end",app.clock);
+        });
     }
 
     void OpenDungeon(Mascot& m)
     {
+        if(m.inMahjong||MahjongWindowOpen())return;
         if(DungeonWindowOpen()||app.diagnostic){ShowDungeonWindow(m.hwnd,{},{});return;}
         const std::wstring model=m.modelPath;
         Trace(L"%.1f dungeon: start (%s)",app.clock,model.c_str());
@@ -4112,7 +4144,7 @@ namespace
             break;
         }
         case IdOpenModel:
-            if(m.inDungeon)break;   // her model is in use in the dungeon
+            if(m.inDungeon||m.inMahjong)break;   // her model is in use in the dungeon or at the mahjong table
         {
             auto path=OpenFileDialog(m.hwnd,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),Own(m).modelPath);
             if(path.empty()||!ModelUsable(path))break;
@@ -4135,7 +4167,7 @@ namespace
             break;
         }
         case IdRemoveCharacter:
-            if(m.inDungeon)break;   // her model is in use in the dungeon
+            if(m.inDungeon||m.inMahjong)break;   // her model is in use in the dungeon or at the mahjong table
             if(app.mascots.size()>1)app.changes.push_back({Change::Remove,m.slot});
             break;
         case IdOpenMotion:
@@ -4959,6 +4991,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     // Diagnostics: MikuMikuDesktopPerch.exe --snapshot <out.png> [frames] renders, saves one frame and exits.
     // --look <x> <y> pins the look-at cursor to that client-area point (for snapshot checks).
     std::wstring snapshotPath;
+    bool snapshotMahjong=false;   // --mahjong [moves]: the snapshot is the mahjong table's 3D view
+    int snapshotMahjongMoves=0;   // after this many moves of a simple player
+    std::wstring snapshotMahjongCamera;   // --mahjong-camera pitch,distance,y,z[,yaw]
+    bool snapshotMahjongReach=false;      // --mahjong-reach: she reaches for her river once seated
     int snapshotFrames=60;
     std::optional<POINT> snapshotLook;
     std::wstring snapshotModel;   // --model <pmx>: model for this run only
@@ -4995,6 +5031,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 snapshotPath=argv[++i];
                 if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotFrames=std::max(1,_wtoi(argv[++i]));
+            }
+            else if(arg==L"--mahjong-camera"&&i+1<argc)snapshotMahjongCamera=argv[++i];
+            else if(arg==L"--mahjong-reach")snapshotMahjongReach=true;
+            else if(arg==L"--mahjong")
+            {
+                snapshotMahjong=true;
+                if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotMahjongMoves=_wtoi(argv[++i]);
             }
             else if(arg==L"--model"&&i+1<argc)
             {
@@ -5545,7 +5588,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(fullscreen!=app.paused)
             {
                 app.paused=fullscreen;
-                for(const auto& m:app.mascots)if(!m->inDungeon)ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
+                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong)ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
             }
         }
         const double dt=Seconds(last,now,frequency);
@@ -5563,13 +5606,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if(m.inDungeon)
+            if(m.inDungeon||m.inMahjong)
             {
                 m.model.Update(dt);
                 m.model.TakeRootDelta();
                 // Her bubble, hidden as she went in, still fades out (and stays out of sight).
                 m.bubble.Tick(dt,{},0,WorkAreaOfWindow(m),true);
-                TickDungeonWindow(m.model,dt);
+                if(m.inDungeon)TickDungeonWindow(m.model,dt);
+                else TickMahjongWindow(m.model,dt);
                 continue;
             }
             const float ppu=m.pixelsPerUnit;
@@ -5804,10 +5848,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             ++frame;
             if(frame>=40)app.mascots.front()->model.ForceGesture(snapshotGesture.substr(0,snapshotGesture.find(L'@'))+L"@"+std::to_wstring((frame-40)*0.1));
         }
+        if(app.diagnostic&&snapshotMahjong)
+        {
+            // The first character sits down at the table on the first frame.
+            static bool opened=false;
+            if(!opened)
+            {
+                opened=true;
+                OpenMahjong(*app.mascots.front());
+                PlayMahjongMoves(snapshotMahjongMoves);
+                if(snapshotMahjongReach)ReachMahjongForTest();
+                float c[5]={};
+                if(swscanf_s(snapshotMahjongCamera.c_str(),L"%f,%f,%f,%f,%f",&c[0],&c[1],&c[2],&c[3],&c[4])>=4)SetMahjongCamera(c[0],c[1],c[2],c[3],c[4]);
+            }
+        }
         if(app.diagnostic&&--snapshotFrames<=0)
         {
             Mascot& m=*app.mascots.front();
-            m.renderer.SaveLastFrame(snapshotPath);
+            if(snapshotMahjong)SaveMahjongView(snapshotPath);
+            else m.renderer.SaveLastFrame(snapshotPath);
             if(FILE* info=nullptr;_wfopen_s(&info,(snapshotPath+L".txt").c_str(),L"w, ccs=UTF-8")==0&&info)
             {
                 const auto rest=m.model.ArmRestAngles(),fix=m.model.ArmCorrections();

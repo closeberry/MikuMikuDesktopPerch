@@ -38,6 +38,7 @@ namespace MikuMikuDesktopPerch
             float position[3]{};
             float radius=0;
             float color[3]{};
+            bool onModel=true;   // false: the geometry only (a room's lamp would wash out her face)
         };
         static constexpr size_t MaxLights=8;
         // A ring spreading over water from (x, z): seconds since it began, how strong.
@@ -53,6 +54,9 @@ namespace MikuMikuDesktopPerch
             // (x, z), how far it can sink (0: it stays), and 1 when floor lies straight beyond it.
             // On a monster (its sinking 0): where on the monster it is (x, y, -, z), for its grime.
             float wall[4];
+            // Where on the geometry's texture (SetGeometryTexture) it is (u, v), and 1 in the
+            // third when that texture is drawn on it (multiplied by the colour); 0: none.
+            float uv[4];
         };
 
         ~MascotRenderer();
@@ -83,6 +87,13 @@ namespace MikuMikuDesktopPerch
         // Its pipeline is made on the first call, so renderers that never use it pay nothing.
         // Waits for the GPU; an empty list draws none.
         bool SetGeometry(const std::vector<GeometryVertex>& vertices);
+        // The picture drawn on the geometry where its vertices ask for it (the mahjong tiles'
+        // faces), with its mipmaps made here. Waits for the GPU.
+        bool SetGeometryTexture(const ImageRgba8& image);
+        // A picture laid over the whole frame (premultiplied RGBA, the drawn size; empty: none),
+        // over the model and everything else: the mahjong table's hand, buttons and words.
+        // Waits for the GPU.
+        bool SetOverlay(const ImageRgba8& image);
         // A light around (x, z) on the ground that fades to darkness at radius, on the geometry
         // only (the dungeon's torch); radius 0: none.
         void SetTorch(float x,float z,float radius){torch={x,z,radius};}
@@ -250,6 +261,8 @@ namespace MikuMikuDesktopPerch
         // SetGeometry's.
         Microsoft::WRL::ComPtr<ID3D12PipelineState> geometryPso;
         Microsoft::WRL::ComPtr<ID3D12Resource> geometryBuffer;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> overlayPso;
+        bool WriteGeometryDescriptors();
         UINT geometryCount=0;
         std::array<float,4> background{0,0,0,0};
         DirectX::XMFLOAT3 torch{0,0,0};
@@ -260,6 +273,7 @@ namespace MikuMikuDesktopPerch
         std::vector<Texture> textures;
         std::array<Texture,10> sharedToons;
         Texture white;
+        Texture geometryTexture,overlay;   // SetGeometryTexture's, SetOverlay's
         size_t boneCount=0,vertexCount=0,materialCount=0;
         size_t sceneOffset=0,materialOffset=0,boneOffset=0,dynamicOffset=0,particleOffset=0,uploadSize=0;
 

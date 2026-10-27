@@ -705,6 +705,19 @@ namespace MikuMikuDesktopPerch
         return true;
     }
 
+    bool GeneratedMotion::Reach(int side,const XMFLOAT3& fromHead,double seconds)
+    {
+        if(overrides.empty()||(activity!=Activity::Idle&&activity!=Activity::Sit))return false;
+        if(reaction!=Gesture::None&&reaction!=Gesture::Reach)return false;
+        reaction=Gesture::Reach;reactionCut=-1;
+        reactionSide=side==0?0:1;
+        reachOffset=fromHead;
+        reactionTime=0;
+        reactionLength=seconds;
+        reactionWeight=0;
+        return true;
+    }
+
     bool GeneratedMotion::Strike(bool magic)
     {
         if(overrides.empty()||activity!=Activity::Idle)return false;
@@ -841,6 +854,32 @@ namespace MikuMikuDesktopPerch
             SetRotation(g,rig.upperBody,XMQuaternionRotationRollPitchYaw(3.0f*Deg,0,0));
             neck(2.0f*Deg,0,0);
             break;
+        case Gesture::Reach:
+        {
+            // The arm out to the point, palm down, fingers bent as if picking a tile up, eyes
+            // on it. Out of reach: leaning forward from the waist, the hand stopping short.
+            // From a seat the hand first comes up in front of the chest, the elbow back (clear of
+            // a table's edge), then goes out; and back the same way before it lets go.
+            const XMVECTOR shoulder=XMLoadFloat3(&S);
+            const XMVECTOR pivot=XMVectorSet(0,hipY,hipZ,0);
+            const float extend=Smooth(std::clamp(std::min((a-0.3f)/0.3f,(len-static_cast<float>(ReactionBlendOut)-0.05f-a)/0.3f),0.0f,1.0f));
+            const XMVECTOR close=XMVectorSet(S.x+out*0.02f*L,S.y-0.20f*L,S.z-0.14f*L,0);
+            XMVECTOR target=XMVectorLerp(close,XMVectorAdd(XMVectorSet(0,rig.headY,S.z,0),XMLoadFloat3(&reachOffset)),extend);
+            const float reach=rig.upperArm+0.75f*rig.foreArm;   // to the wrist (foreArm reaches the fingertips)
+            const float d=XMVectorGetX(XMVector3Length(XMVectorSubtract(target,shoulder)));
+            const float lean=std::clamp((d-0.85f*reach)/(0.8f*reach),0.0f,1.0f)*22.0f*Deg;
+            turn(rig.upperBody,-lean,0,0);
+            // Where the point is as the leaning body sees it.
+            target=XMVectorAdd(pivot,XMVector3Transform(XMVectorSubtract(target,pivot),XMMatrixRotationX(lean)));
+            const XMVECTOR to=XMVectorSubtract(target,shoulder);
+            const float far=0.95f*reach,dist=XMVectorGetX(XMVector3Length(to));
+            if(dist>far)target=XMVectorAdd(shoulder,XMVectorScale(to,far/dist));
+            ReachArm(g,s,target,XMVectorLerp(XMVectorSet(out*0.6f,-1,0.9f,0),XMVectorSet(out,-1,0.3f,0),extend),0.6f,true);
+            AimHand(g,s,XMVectorSet(-out*0.1f,-0.22f,-1,0),XMVectorSet(0,-1,0,0));   // fingers only a little down, clear of the table
+            CurlFingers(g,s,{0.35f,0.4f,0.45f,0.5f});
+            neck(-16.0f*Deg+lean*0.3f,0,0);
+            break;
+        }
         case Gesture::Present:
             // The forearm held out level in front at the waist, the palm up and open (a thing
             // shown on it), eyes on it and a little smile.
