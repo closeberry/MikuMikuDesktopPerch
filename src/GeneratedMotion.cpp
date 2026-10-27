@@ -420,7 +420,7 @@ namespace MikuMikuDesktopPerch
         if(edgePose&&!CanSit())next=Activity::Idle;   // lowering the body needs グルーブ
         const bool gait=next==Activity::Walk||next==Activity::Run;
         if(gait&&!CanWalk())next=Activity::Idle;
-        const bool directional=gait||next==Activity::Jump||next==Activity::Sit;
+        const bool directional=gait||next==Activity::Jump||next==Activity::Sit||next==Activity::SideHop;
         if(next==activity&&(!directional||dir==direction))return;
         snapshot=lastOutput;
         fadeTime=0;
@@ -431,6 +431,8 @@ namespace MikuMikuDesktopPerch
         case Activity::Walk:fadeDuration=0.35;break;
         case Activity::Run:fadeDuration=0.25;break;
         case Activity::Jump:fadeDuration=0.1;break;
+        case Activity::Bound:fadeDuration=0.08;break;
+        case Activity::SideHop:fadeDuration=0.08;break;
         case Activity::Sit:fadeDuration=0.9;break;
         case Activity::Lie:fadeDuration=1.1;break;
         case Activity::Hang:fadeDuration=0.6;break;
@@ -1623,6 +1625,104 @@ namespace MikuMikuDesktopPerch
             // lower for balance on the way down.
             const float swing=(-35.0f*crouch+65.0f*air-25.0f*air*falling)*Deg;
             limbs(swing,swing,(20.0f+15.0f*air)*Deg);
+            break;
+        }
+        case Activity::Bound:
+        {
+            // A hop off one foot, like a triple jump's first step, in three parts timed by
+            // BoundTakeoffSeconds, BoundAirSeconds and BoundLandSeconds:
+            // - the take-off: a dip over the back foot, which then pushes off from the toes,
+            //   while the front knee drives forward and up and the arms swing against the legs;
+            // - the flight: the back leg trails long behind, toes pointed, the front knee high,
+            //   the body leaning into it; coming down, the front foot reaches for the ground;
+            // - the landing: down onto the front foot, the knee giving under the weight, the
+            //   back leg swinging through to stand beside it, the arms coming down.
+            const float T0=static_cast<float>(BoundTakeoffSeconds),A=static_cast<float>(BoundAirSeconds),D=static_cast<float>(BoundLandSeconds);
+            const float tau=static_cast<float>(activityTime);
+            const float up=Smooth(tau/T0);                                  // into the flight pose
+            const float v=std::clamp((tau-T0)/A,0.0f,1.0f);                 // through the flight
+            const float reach=Smooth((v-0.45f)/0.55f);                      // the front foot reaching down
+            const float w=std::clamp((tau-T0-A)/D,0.0f,1.0f);               // through the landing
+            const float down=Smooth(w);
+            // The front foot: up and forward through the take-off, high in flight, down to the
+            // ground a little ahead at touch-down, then under her as she rises.
+            float frontU=(0.32f*up+0.0f*reach)*L,frontH=0.42f*up*(1-reach)*L,frontPitch=12.0f*Deg*up*(1-reach);
+            if(w>0){frontU=0.14f*(1-down)*L;frontH=0;frontPitch=0;}
+            else frontU=(0.32f-0.18f*reach)*L*up;
+            // The back foot: planted, heel rising as it pushes off, then trailing behind, then
+            // swinging through to stand.
+            const float push=Smooth((tau/T0-0.4f)/0.6f);
+            float backU=-0.5f*Smooth(v/0.35f)*L,backH=(0.3f-0.06f*reach)*Smooth(v/0.35f)*L,backPitch=-(40.0f*push*(1-Smooth(v/0.3f))+50.0f*Smooth(v/0.35f))*Deg;
+            if(w>0)
+            {
+                const float swing=Smooth(w/0.8f);
+                backU=-0.5f*(1-swing)*L;
+                backH=(0.24f*(1-swing)+0.1f*std::sin(XM_PI*swing))*L;
+                backPitch=-50.0f*Deg*(1-swing);
+            }
+            footKey(0,standingFoot(0,frontU,frontH),frontPitch,yaw);
+            footKey(1,standingFoot(1,backU,backH),backPitch,yaw);
+            // The hips: a dip at the take-off, a deeper one taking the landing.
+            const float dip=0.09f*std::sin(XM_PI*std::min(1.0f,tau/T0))*(tau<T0?1.0f:0.0f)+0.16f*std::sin(XM_PI*w);
+            KeyOf(keys,rig.groove).position={0,-dip*L,0};
+            SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw,0));
+            const float lean=(14.0f*up+6.0f*std::sin(XM_PI*std::min(1.0f,tau/T0)))*(1-down)+10.0f*std::sin(XM_PI*w);
+            SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(-lean*Deg,0,0),
+                                                XMQuaternionRotationRollPitchYaw(0,yaw*(WalkChestYaw/WalkYaw),0)));
+            SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(0.5f*lean*Deg,-yaw*(WalkNeckYaw/WalkYaw),0));
+            const float arm=up*(1-down);
+            arms(-45.0f*Deg*arm,65.0f*Deg*arm,rig.armLower[0],rig.armLower[1],(10.0f+40.0f*arm)*Deg,(10.0f+75.0f*arm)*Deg);
+            for(int side=0;side<2;++side)CurlFingers(keys,side,{0.65f,0.7f,0.75f,0.8f});
+            break;
+        }
+        case Activity::SideHop:
+        {
+            // A hop to the side (toward +x of the model when direction is 1, -x when -1), timed
+            // by SideTakeoffSeconds, SideAirSeconds and SideLandSeconds: a dip, and the foot on
+            // the far side pushes off from its toes while the near foot already reaches out;
+            // in the air the near leg stretches out the way she goes and the far one is left
+            // behind toward where she came from, the body leaning that way, the arms lifting a
+            // little for balance;
+            // she lands on the near foot, the knee giving, and the far foot comes in beside it.
+            const float T0=static_cast<float>(SideTakeoffSeconds),A=static_cast<float>(SideAirSeconds),D=static_cast<float>(SideLandSeconds);
+            const float tau=static_cast<float>(activityTime),way=direction<0?-1.0f:1.0f;
+            const float takeoff=std::min(1.0f,tau/T0),up=Smooth(takeoff);
+            const float v=std::clamp((tau-T0)/A,0.0f,1.0f),reach=Smooth((v-0.4f)/0.6f);
+            const float w=std::clamp((tau-T0-A)/D,0.0f,1.0f),down=Smooth(w);
+            const XMVECTOR sideways=XMVector3TransformNormal(XMVectorSet(way,0,0,0),XMMatrixRotationY(yaw));
+            for(int side=0;side<2;++side)
+            {
+                const bool near=rig.ankleRest[side].x*way>0;
+                float out=0,h=0,pitch=0;
+                if(near)
+                {
+                    // Out the way she goes, off the ground in the air, down for the landing,
+                    // then back under her.
+                    if(w>0){out=0.1f*(1-down);h=0;}
+                    else{out=0.1f*up+0.18f*Smooth(v/0.4f)*(1-0.85f*reach);h=(0.1f*up+0.12f*Smooth(v/0.4f))*(1-reach);}
+                }
+                else
+                {
+                    // Planted while it pushes off (the heel rising), then left behind toward
+                    // where she came from, the leg long and the toes pointed, and brought in
+                    // beside the other as she lands.
+                    const float push=Smooth((takeoff-0.35f)/0.65f)*(1-Smooth(v/0.3f));
+                    const float trail=Smooth(v/0.35f)*(1-Smooth(w/0.85f));
+                    out=-0.2f*trail;
+                    h=0.1f*trail+0.05f*std::sin(XM_PI*Smooth(w/0.85f))*(w>0?1.0f:0.0f);
+                    pitch=-(35.0f*push+40.0f*trail)*Deg;
+                }
+                footKey(side,XMVectorAdd(standingFoot(side,0,h*L),XMVectorScale(sideways,out*L)),pitch,yaw);
+            }
+            const float dip=0.09f*std::sin(XM_PI*takeoff)*(tau<T0?1.0f:0.0f)+0.13f*std::sin(XM_PI*w);
+            KeyOf(keys,rig.groove).position={0,-dip*L,0};
+            // Leaning the way she goes (a roll about Z: positive tips the top toward -x).
+            const float lean=(11.0f*up*(1-down)+5.0f*std::sin(XM_PI*w))*Deg;
+            SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw,-way*0.4f*lean));
+            SetRotation(keys,rig.upperBody,XMQuaternionRotationRollPitchYaw(-4.0f*Deg*up*(1-down),0,-way*lean));
+            SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(0,0,way*0.6f*lean));
+            const float lift=0.45f*up*(1-down);
+            arms(8.0f*Deg*lift,8.0f*Deg*lift,rig.armLower[0]*(1-lift),rig.armLower[1]*(1-lift),(10.0f+25.0f*lift)*Deg,(10.0f+25.0f*lift)*Deg);
             break;
         }
         case Activity::Lie:

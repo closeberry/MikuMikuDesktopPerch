@@ -50,6 +50,9 @@ namespace MikuMikuDesktopPerch
 
         // A spark flying from a hit (world units, per second), fading over its life.
         struct Spark {DirectX::XMFLOAT3 at,speed;float size;float color[3];double age,life;};
+        // Her jump (Shift with a way): 1 forward, -1 back, 2 a step to the side (0: none), from
+        // where she was drawn to her new tile, and how long into it.
+        struct Leap {int kind=0;float fromX=0,fromZ=0,toX=0,toZ=0;double time=0;};
         // Something she picked up (a chest opened, gold, a key, goods bought): drawn where it
         // lay until she gets there (age below 0), then it glows and fades away.
         enum class Picked {Chest,Gold,Key,Goods};
@@ -85,6 +88,7 @@ namespace MikuMikuDesktopPerch
             bool show3D=true;
             long long sceneKey=-1;
             float drawnX=0,drawnZ=0,drawnAngle=0;   // where she is drawn, walking toward her tile
+            Leap leap;
             bool placed=false;
             Activity gait=Activity::Idle;           // walking or running there, or standing
             int floor=0;                            // the floor she was placed on (a new one: placed again)
@@ -809,9 +813,11 @@ namespace MikuMikuDesktopPerch
             }
             if(hero.bag.empty()){Text(g,T(L"（なし）",L"(empty)"),px,y,static_cast<float>(Px(13)),grey);y+=line;}
             const bool fresh=game.Floor()==1&&game.Turns()==0&&!game.Daily();
-            const float help=ch-pad-line*(fresh?5.2f:4.2f);
-            std::wstring keys=state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\n",L"Up: go  Left/Right: turn  Down: turn round\n")
-                                                     :T(L"矢印・WASD：移動（敵へ：剣）\n",L"Arrows/WASD: move (into a foe: sword)\n");
+            const float help=ch-pad-line*(fresh?6.2f:5.2f);
+            std::wstring keys=state.behind&&Showing3D()?T(L"↑：進む　←→：向きを変える　↓：振り向く\nShift＋↑：跳ぶ　↓：後ろへ跳ぶ　←→：横へ\n",
+                                                           L"Up: go  Left/Right: turn  Down: turn round\nShift+Up: jump  Down: step back  Left/Right: sidestep\n")
+                                                     :T(L"矢印・WASD：移動（敵へ：剣）\nShift＋方向：前へジャンプ・後ろへ跳ぶ・横へ\n",
+                                                        L"Arrows/WASD: move (into a foe: sword)\nShift+way: jump ahead, step back, sidestep\n");
             keys+=T(L"F：魔法（MP3）　スペース：待つ・罠を探す\nEnter：買う　P：写真　Z：図鑑\nV：カメラ　M：2D/3D　Esc：帰る",
                     L"F: magic (3 MP)  Space: wait, find traps\nEnter: buy  P: picture  Z: records\nV: camera  M: 2D/3D  Esc: go home");
             if(fresh)keys+=T(L"\nT：今日のダンジョンで遊ぶ",L"\nT: play today's dungeon instead");
@@ -881,9 +887,36 @@ namespace MikuMikuDesktopPerch
             if(!Showing3D()||!state.placed)return false;
             // An attack still swinging counts too: the next waits for it.
             if(state.strikeAsked!=Strike::None||(state.strike!=Strike::None&&state.strikeTime<0.6))return true;
+            if(state.leap.kind)return true;
             const auto& h=state.game.Hero();
             const float dx=(h.x+0.5f)*TileSize-state.drawnX,dz=-(h.y+0.5f)*TileSize-state.drawnZ;
             return dx*dx+dz*dz>TileSize*TileSize*0.11f;
+        }
+
+        // With Shift: a jump the way she faces (two tiles) or back (one), or a step to the side
+        // keeping the way she faces. Behind her, up and down are her front and back, left and
+        // right her sides; from above, the way pressed on the map.
+        void Leap(int dx,int dy)
+        {
+            auto& game=state.game;
+            const auto& h=game.Hero();
+            int kx=dx,ky=dy;
+            if(Showing3D()&&state.behind)
+            {
+                if(dy<0){kx=h.dirX;ky=h.dirY;}
+                else if(dy>0){kx=-h.dirX;ky=-h.dirY;}
+                else if(dx<0){kx=h.dirY;ky=-h.dirX;}
+                else{kx=-h.dirY;ky=h.dirX;}
+            }
+            const int floor=game.Floor();
+            game.StepOffStairs();
+            const int kind=kx==h.dirX&&ky==h.dirY?1:kx==-h.dirX&&ky==-h.dirY?-1:2;
+            const bool moved=kind==2?game.Sidestep(kx,ky):game.Jump(kind<0);
+            if(!moved||!Showing3D()||!state.placed||game.Floor()!=floor)return;
+            state.leap.kind=kind;
+            state.leap.fromX=state.drawnX;state.leap.fromZ=state.drawnZ;
+            state.leap.toX=(h.x+0.5f)*TileSize;state.leap.toZ=-(h.y+0.5f)*TileSize;
+            state.leap.time=0;
         }
 
         // A step, or a cut at the monster there (in 3D, her sword swings).
@@ -1107,6 +1140,12 @@ namespace MikuMikuDesktopPerch
                 else if(key==VK_RIGHT||key=='D')dx=1;
                 else if(key==VK_UP||key=='W')dy=-1;
                 else if(key==VK_DOWN||key=='S')dy=1;
+                // With Shift, a jump or a step to the side: one a press, once she stands.
+                if((dx||dy)&&(GetKeyState(VK_SHIFT)&0x8000))
+                {
+                    if(!repeat&&!Underway()&&game.GetState()!=State::Dead)Leap(dx,dy);
+                    return;
+                }
                 // A step at a time as she walks it. In 3D a key held down is followed by the view
                 // (TickDungeonWindow: she keeps going, and runs after RunAfter), not by the
                 // keyboard's repeat, and a key pressed while she is still on her way waits.
@@ -1341,6 +1380,7 @@ namespace MikuMikuDesktopPerch
         if(!state.placed||state.floor!=game.Floor())
         {
             state.drawnX=tx;state.drawnZ=tz;
+            state.leap.kind=0;
             state.drawnAngle=std::atan2(-static_cast<float>(hero.dirX),static_cast<float>(hero.dirY));
             state.cameraAngle=std::atan2(static_cast<float>(hero.dirX),-static_cast<float>(hero.dirY));
             state.floor=game.Floor();
@@ -1351,7 +1391,49 @@ namespace MikuMikuDesktopPerch
         // when she has fallen more than a tile behind (keys pressed faster than she walks), and
         // a new floor (or a warp) puts her there at once.
         const float dx=tx-state.drawnX,dz=tz-state.drawnZ,distance=std::sqrt(dx*dx+dz*dz);
-        if(distance>TileSize*4){state.drawnX=tx;state.drawnZ=tz;}
+        // A jump: pushing off, then flying in an arc to her tile, landing with a dip. She keeps
+        // facing the way she faced.
+        float lift=0;
+        if(state.leap.kind)
+        {
+            auto& j=state.leap;
+            const bool side=j.kind==2;
+            // Ahead: a long hop off one foot (a triple jump's first step), at once; back: a
+            // crouch, then a small jump; aside: a quick low hop.
+            const float crouch=static_cast<float>(j.kind==1?BoundTakeoffSeconds:side?SideTakeoffSeconds:JumpCrouchSeconds);
+            const float air=static_cast<float>(j.kind==1?BoundAirSeconds:side?SideAirSeconds:0.38),height=j.kind==1?4.5f:j.kind<0?3.5f:3.0f;
+            // The hops land in their own poses (a knee giving, the other leg coming in).
+            const float settle=static_cast<float>(j.kind==1?BoundLandSeconds:side?SideLandSeconds:0.0);
+            if(j.time==0)
+            {
+                // To the side: which way in her own frame (+x or -x of the model), from where
+                // she goes on the map (world x, and z is -y) and the way she faces.
+                const float a=std::atan2(-static_cast<float>(hero.dirX),static_cast<float>(hero.dirY));
+                const float wx=j.toX-j.fromX,wz=j.toZ-j.fromZ,localX=wx*std::cos(a)-wz*std::sin(a);
+                const Activity act=j.kind==1?Activity::Bound:side?Activity::SideHop:Activity::Jump;
+                model.SetActivity(act,side?(localX>0?1:-1):0);
+                state.gait=act;
+            }
+            j.time+=dt;
+            const float u=std::clamp((static_cast<float>(j.time)-crouch)/air,0.0f,1.0f);
+            state.drawnX=j.fromX+(j.toX-j.fromX)*u;
+            state.drawnZ=j.fromZ+(j.toZ-j.fromZ)*u;
+            lift=4*height*u*(1-u);
+            const float rise=u>0&&u<1?4*height*(1-2*u)/air:0.0f;
+            // Falling with her, the hair and the tail float (no more than weightless: the arc
+            // is steeper than the physics' own gravity, which would throw them up).
+            model.SetCarryMotion(0,rise,0,u>0&&u<1?-0.8f*std::min(8*height/(air*air),98.0f):0.0f);
+            if(u>=1&&j.time>=crouch+air+settle)
+            {
+                model.SetCarryMotion(0,0,0,0);
+                if(j.kind<0)model.Land(4*height/air);
+                if(state.gait!=Activity::Idle){model.SetActivity(Activity::Idle);state.gait=Activity::Idle;}
+                j.kind=0;
+            }
+            const float angle=std::atan2(-static_cast<float>(hero.dirX),static_cast<float>(hero.dirY));
+            state.drawnAngle+=std::remainder(angle-state.drawnAngle,XM_2PI)*static_cast<float>(1-std::exp(-dt/0.06));
+        }
+        else if(distance>TileSize*4){state.drawnX=tx;state.drawnZ=tz;}
         else if(distance>0.05f)
         {
             const Activity want=state.hurry||distance>TileSize*1.6f?Activity::Run:Activity::Walk;
@@ -1376,7 +1458,7 @@ namespace MikuMikuDesktopPerch
         // Her walks on the desktop leave センター shifted sideways in the model (the window
         // follows it there): taken back out, or she would stand off her tile, and the shift would
         // swing round with her as she turns.
-        const XMMATRIX world=XMMatrixTranslation(-model.RootOffset(),0,0)*XMMatrixRotationY(state.drawnAngle)*XMMatrixTranslation(state.drawnX,0,state.drawnZ);
+        const XMMATRIX world=XMMatrixTranslation(-model.RootOffset(),0,0)*XMMatrixRotationY(state.drawnAngle)*XMMatrixTranslation(state.drawnX,lift,state.drawnZ);
         r.SetModelTransform(world);
 
         // Her attack: started once she stands (asked for while she still walked or turned, it

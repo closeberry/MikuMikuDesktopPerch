@@ -10,12 +10,18 @@ namespace MikuMikuDesktopPerch
 {
     // What the generated motion layer is doing. Idle plays the VMD (plus procedural layers).
     // Sit, Lie and Hang rest on an edge at world y=0 (a window's top edge).
-    enum class Activity { Idle, Walk, Run, Jump, Sit, Lie, Hang, Grabbed, Fall };
+    // Bound: a hop off one foot like a triple jump's first step (the dungeon's jump ahead);
+    // SideHop: a hop to the side off the far foot (direction: toward +x or -x of the model).
+    enum class Activity { Idle, Walk, Run, Jump, Sit, Lie, Hang, Grabbed, Fall, Bound, SideHop };
     // The feeling on the face while talking (made of the model's standard face morphs).
     enum class Expression { Neutral, Smile, Surprise, Troubled, Angry, Sad, Shy };
 
     // A Jump starts with this long a crouch before the body leaves the ground.
     constexpr double JumpCrouchSeconds=0.22;
+    // A Bound: its take-off, flight and landing.
+    constexpr double BoundTakeoffSeconds=0.16,BoundAirSeconds=0.5,BoundLandSeconds=0.3;
+    // A SideHop's take-off, flight and landing.
+    constexpr double SideTakeoffSeconds=0.13,SideAirSeconds=0.34,SideLandSeconds=0.24;
 
     // Immutable per-vertex skinning data (vertex buffer slot 1).
     struct StaticVertex

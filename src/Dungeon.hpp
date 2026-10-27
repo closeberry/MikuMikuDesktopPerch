@@ -68,6 +68,7 @@ namespace MikuMikuDesktopPerch::Dungeon
         int hp=30,mp=10,level=1,xp=0;
         int baseHp=30,baseMp=10,baseAtk=5,baseDef=2,baseMag=4;
         int gold=0,food=100,keys=0;
+        int jumpWait=0;   // turns before she can jump again
         std::vector<Item> bag;
         int weapon=-1,armor=-1,accessory=-1;   // index in bag, or -1
         int MaxHp() const;
@@ -119,6 +120,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     {
     public:
         static constexpr int Width=68,Height=39,BagSize=10,MagicCost=3,MagicRange=7;
+        static constexpr int JumpWait=3;   // turns after a jump before the next
         enum class State {Playing,AtStairs,Dead};
 
         // A new adventure on floor 1. hero: the character's name (in her lines); bond: how
@@ -129,6 +131,12 @@ namespace MikuMikuDesktopPerch::Dungeon
 
         // Actions: false when nothing happened (a wall, too little MP): no turn passes.
         bool Move(int dx,int dy);
+        // A step (dx, dy) keeping the way she faces (to the side): onto open floor only.
+        bool Sidestep(int dx,int dy);
+        // A jump the way she faces, two tiles (over a monster or a trap), or back one: in the
+        // air for the monsters' turn, so their blows, fire and hands miss her. Then JumpWait
+        // turns before the next.
+        bool Jump(bool back);
         bool Cast();
         bool Rest();             // waits a turn, looking for traps around her
         bool Use(int index);
@@ -189,6 +197,8 @@ namespace MikuMikuDesktopPerch::Dungeon
         void Found(const Item& item,const char* where="chest");
         void Earn(const char* title);
         bool StepOn(int x,int y);
+        bool Arrive(int x,int y);
+        bool Open(int x,int y) const;    // floor she can land on: no wall, door, monster or campfire
         void RestAtFire(Fire& fire);
         Item RandomItem(int tierBonus=0);
         Item Meat(bool big);
@@ -223,6 +233,8 @@ namespace MikuMikuDesktopPerch::Dungeon
         int floor=1,turns=0,kills=0,bond=0,rested=0;
         int magicKills=0,casts=0;
         bool daily=false,hurtOnFloor=false,saved=false,houseWoke=false,hungryTold=false,lowTold=false;
+        bool airborne=false;   // she is in the air this turn (a jump)
+        int leapt=0;           // the jump being made (Arrive): 1 forward, -1 back
         std::uint32_t seed=1,random=1;
     };
 }

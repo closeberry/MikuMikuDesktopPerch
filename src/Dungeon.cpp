@@ -1064,6 +1064,15 @@ namespace MikuMikuDesktopPerch::Dungeon
             return true;
         }
         if(At(x,y)==Tile::Wall)return false;
+        return Arrive(x,y);
+    }
+
+    // She comes to (x, y): what lies there (gold, a chest, a trap, the stairs), then the turn
+    // ends (in the air after a jump).
+    bool Game::Arrive(int x,int y)
+    {
+        const bool leap=leapt!=0;
+        leapt=0;
         player.x=x;player.y=y;
         if(StepOn(x,y))return true;   // down a pit: a new floor
         if(state==State::Dead)return true;
@@ -1072,8 +1081,51 @@ namespace MikuMikuDesktopPerch::Dungeon
             if(BossAlive())Note(T(L"階段だ。でも、ボスがいて進めない。",L"The stairs, but the boss is in the way."));
             else state=State::AtStairs;
         }
+        airborne=leap;
         EndTurn();
+        airborne=false;
         return true;
+    }
+
+    bool Game::Open(int x,int y) const
+    {
+        const Tile t=At(x,y);
+        if(t==Tile::Wall||t==Tile::Door)return false;
+        if(std::any_of(monsters.begin(),monsters.end(),[&](const Monster& m){return Occupies(m,x,y);}))return false;
+        return std::none_of(fires.begin(),fires.end(),[&](const Fire& f){return f.x==x&&f.y==y;});
+    }
+
+    bool Game::Sidestep(int dx,int dy)
+    {
+        if(state!=State::Playing||!Open(player.x+dx,player.y+dy))return false;
+        bolt.clear();flame.clear();
+        return Arrive(player.x+dx,player.y+dy);
+    }
+
+    bool Game::Jump(bool back)
+    {
+        if(state!=State::Playing)return false;
+        if(player.jumpWait>0)
+        {
+            Note(Fmt(T(L"まだ跳べない（あと{0}ターン）。",L"Can't jump yet ({0} more turns)."),{std::to_wstring(player.jumpWait)}));
+            return false;
+        }
+        const int dx=back?-player.dirX:player.dirX,dy=back?-player.dirY:player.dirY;
+        // As far as it can go: over what stands or lies in between, not through walls or
+        // doors; landing only on open floor.
+        int reach=0;
+        for(int k=1;k<=(back?1:2);++k)
+        {
+            const int x=player.x+dx*k,y=player.y+dy*k;
+            if(At(x,y)==Tile::Wall||At(x,y)==Tile::Door)break;
+            if(Open(x,y))reach=k;
+        }
+        if(reach==0){Note(T(L"そっちには跳べない。",L"Can't jump that way."));return false;}
+        bolt.clear();flame.clear();
+        leapt=back?-1:1;
+        // Counted from the end of this turn.
+        player.jumpWait=JumpWait+1;
+        return Arrive(player.x+dx*reach,player.y+dy*reach);
     }
 
     bool Game::Cast()
@@ -1233,6 +1285,7 @@ namespace MikuMikuDesktopPerch::Dungeon
     void Game::EndTurn()
     {
         ++turns;
+        if(player.jumpWait>0)--player.jumpWait;
         // Hungrier by the turn (gently): empty, she no longer heals and slowly weakens, never below 1 HP.
         if(turns%12==0&&player.food>0)
         {
@@ -1319,6 +1372,11 @@ namespace MikuMikuDesktopPerch::Dungeon
                     m.struck=true;
                     flame=line;
                     m.breath=4;
+                    if(airborne)
+                    {
+                        Note(Fmt(T(L"{0}が炎を吐いた！…跳んでかわした！",L"The {0} breathes fire! ...she leapt clear!"),{m.name}));
+                        continue;
+                    }
                     const int damage=std::max(2,m.atk+Random(0,m.atk/2)-player.Def()/3);
                     Note(Fmt(T(L"{0}が炎を吐いた！{1}のダメージ。",L"The {0} breathes fire for {1}!"),{m.name,std::to_wstring(damage)}));
                     if(Random(1,100)<=50)Say(Event::Trap,LINE({L"あつっ！炎だ！",L"Hot! Fire!"},{L"まっすぐ並ばないようにしよう！",L"Let's not stand in line with it!"}),
@@ -1339,7 +1397,7 @@ namespace MikuMikuDesktopPerch::Dungeon
                     continue;
                 }
                 // A goblin snatches gold when it can, then runs.
-                if(m.id==L"Goblin"&&player.gold>0&&Random(1,100)<=20)
+                if(m.id==L"Goblin"&&player.gold>0&&!airborne&&Random(1,100)<=20)
                 {
                     const int amount=std::min(player.gold,std::max(1,player.gold*Random(20,40)/100));
                     player.gold-=amount;
@@ -1348,6 +1406,14 @@ namespace MikuMikuDesktopPerch::Dungeon
                     Note(Fmt(T(L"{0}に{1}ゴールド盗まれた！",L"The {0} stole {1} gold!"),{m.name,std::to_wstring(amount)}));
                     Say(Event::Stolen,LINE({L"あっ、ゴールド返して！",L"Hey, give that back!"},{L"泥棒ー！待てー！",L"Thief! Come back here!"}),
                         Fmt(T(L"{0}に{1}ゴールドを盗まれました。倒せば取り返せます",L"A {0} stole {1} gold; defeating it gets it back"),{m.name,std::to_wstring(amount)}),4);
+                    continue;
+                }
+                // In the air (a jump), every blow misses her (a heavy one is spent).
+                if(airborne)
+                {
+                    m.struck=true;
+                    m.charging=false;
+                    Note(Fmt(T(L"{0}の攻撃は空を切った！",L"The {0}'s attack hits only air!"),{m.name}));
                     continue;
                 }
                 // Close to the user, she slips past a blow now and then.
