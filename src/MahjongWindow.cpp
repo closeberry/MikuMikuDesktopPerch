@@ -1712,6 +1712,11 @@ namespace MikuMikuDesktopPerch
     }
 
     bool MahjongWindowOpen(){return state.window!=nullptr;}
+    HWND MahjongWindowHandle(){return state.window;}
+    bool MahjongWindowRect(RECT& r)
+    {
+        return state.window&&IsWindowVisible(state.window)&&!IsIconic(state.window)&&GetWindowRect(state.window,&r);
+    }
 
     namespace
     {

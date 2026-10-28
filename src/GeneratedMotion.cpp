@@ -1443,6 +1443,7 @@ namespace MikuMikuDesktopPerch
             gestureWeight=0;
             if(clock<nextGestureAt)return;
             if(reaction!=Gesture::None){nextGestureAt=clock+1.5;return;}
+            if(!autoGestures){nextGestureAt=clock+1.0;return;}
             // A built-in clip counts as one gesture more; it is played by the caller (over this
             // layer, as the opened motion is), so no gesture here meanwhile. Only the ones the
             // user left on (all of them unless chosen otherwise); none: she just stands.

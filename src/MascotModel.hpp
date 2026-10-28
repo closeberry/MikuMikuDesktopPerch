@@ -176,6 +176,8 @@ namespace MikuMikuDesktopPerch
         // those bones.
         bool Grip(int side,std::array<float,3>& middle,std::array<float,3>& along) const;
         void EndGestures();   // the gesture and reaction playing fade out
+        // Off: no gestures or built-in clips now and then while standing (Emote still plays one).
+        void SetAutoGestures(bool on);
         // Between the eyes (左目 and 右目, or the one there is) from the latest solve; the head
         // bone when there is neither.
         bool EyePosition(std::array<float,3>& position) const;

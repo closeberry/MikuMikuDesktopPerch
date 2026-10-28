@@ -80,6 +80,8 @@ namespace MikuMikuDesktopPerch
         // off while an opened motion plays. HeadBusy: the current gesture leads the head, so
         // looking at the mouse should pause. ForceGesture (diagnostics) starts one by name.
         void SetGesturesAllowed(bool allowed){gesturesAllowed=allowed;}
+        // Off: none picked by themselves (nor clips); one asked for by name still plays.
+        void SetAutoGestures(bool on){autoGestures=on;}
         // Built-in idle clips (VMDs in the exe) are picked among the gestures: count of them,
         // and the one picked since last asked (-1: none), which the caller then plays.
         void SetClipCount(int count){clipCount=std::max(count,0);}
@@ -275,7 +277,7 @@ namespace MikuMikuDesktopPerch
         // Under the user's own motion (a click reaction over an idle VMD), the shoulders are the
         // motion's: they do not follow the arm (ShoulderTurn is not used).
         bool motionShoulders=false;
-        bool gesturesAllowed=true;
+        bool gesturesAllowed=true,autoGestures=true;
         Gesture gesture=Gesture::None;
         // The last two picks: a gesture's number, or GestureCount+1+n for built-in clip n.
         std::array<int,2> recentGestures{0,0};

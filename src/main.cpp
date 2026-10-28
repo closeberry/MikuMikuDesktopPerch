@@ -141,6 +141,10 @@ namespace
         bool inDungeon=false;
         // At the mahjong table (docs/Mahjong.md): the same, her model drawn in its window.
         bool inMahjong=false;
+        // Watching the game while another one plays (see UpdateWatching): when she next thinks
+        // or nods, and next checks she is clear of its window.
+        bool watchingMahjong=false;
+        double nextWatchGesture=0,watchCheckAt=0;
         std::unique_ptr<VoiceEngine> voice;   // while speaking aloud is on
         std::unique_ptr<LocalChat> memoryChat;
         std::vector<ChatMessage> unmemorized;   // exchanges not yet looked through for notes
@@ -207,6 +211,7 @@ namespace
 
         // Ground behaviour.
         double walkTargetX=0;         // screen x for the window centre
+        int walkDirection=0;          // the way she set off toward it (1: screen right)
         double nextDecision=8;
         double roomCheckAt=0;         // next look at whether she stands on top of another character
         // Talking with another character: the request now running is a line of that conversation.
@@ -670,7 +675,8 @@ namespace
         SurfaceRange(m,left,right);
         m.walkTargetX=std::clamp(targetX,left,right);
         if(std::abs(m.walkTargetX-CenterX(m))<8)return;
-        m.model.SetActivity(gait,m.walkTargetX>CenterX(m)?1:-1);
+        m.walkDirection=m.walkTargetX>CenterX(m)?1:-1;
+        m.model.SetActivity(gait,m.walkDirection);
     }
 
     void StopGroundActivity(Mascot& m)
@@ -724,7 +730,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m)continue;
+            if(&other==&m||other.inDungeon||other.inMahjong)continue;   // away (room is made again when she is back)
             const bool going=other.place==Place::Warping||other.place==Place::Jumping||other.travel!=Travel::None;
             if(std::abs((going?other.destinationLine:FeetLine(other))-line)>4)continue;
             const Activity a=other.model.CurrentActivity();
@@ -851,7 +857,7 @@ namespace
     // later does; one in the middle of something moves once it is done.
     void MakeRoom(Mascot& m)
     {
-        if(app.clock<m.roomCheckAt)return;
+        if(m.watchingMahjong||app.clock<m.roomCheckAt)return;   // watchers may stand together
         m.roomCheckAt=app.clock+0.5;
         auto still=[](Mascot& c){
             const Activity a=c.model.CurrentActivity();
@@ -866,7 +872,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
+            if(&other==&m||other.inDungeon||other.inMahjong||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
             if(std::abs(CenterX(other)-CenterX(m))>=(ModelHalfWidthPixels(m)+ModelHalfWidthPixels(other))*0.6)continue;
             if(movable(other)&&other.slot>m.slot)continue;   // that one steps aside instead
             double left,right;
@@ -877,6 +883,73 @@ namespace
             StartWalk(m,target,std::abs(target-CenterX(m))>ModelHeightPixels(m)?Activity::Run:Activity::Walk);
             if(m.surfaceWindow)m.restPoseAt=-2;   // rest again where the walk ends
             return;
+        }
+    }
+
+    // While another one plays mahjong (its window up and not minimized), one standing on the
+    // ground or a window's edge steps aside so she is not in front of the window, and watches:
+    // turned toward it, looking at it (see UpdateFacing, UpdateLook), without the gestures and
+    // clips of standing about; now and then she thinks over a move or nods.
+    void UpdateWatching(Mascot& m)
+    {
+        RECT r{};
+        const bool watch=!m.inMahjong&&!m.inDungeon&&m.place==Place::Ground&&m.travel==Travel::None&&!m.dozing&&MahjongWindowRect(r);
+        if(watch!=m.watchingMahjong)
+        {
+            m.watchingMahjong=watch;
+            m.model.SetAutoGestures(!watch);
+            if(watch)
+            {
+                m.model.EndGestures();
+                m.nextWatchGesture=app.clock+5+app.Random01()*6;
+                m.watchCheckAt=0;
+            }
+            else m.nextDecision=std::max(m.nextDecision,app.clock+5+app.Random01()*10);
+            Trace(L"%.1f character %zu %s watching mahjong",app.clock,m.slot,watch?L"starts":L"stops");
+        }
+        if(!watch)return;
+        m.nextDecision=std::max(m.nextDecision,app.clock+5);   // no wandering off meanwhile
+        if(m.model.CurrentActivity()!=Activity::Idle||m.model.Reacting()||m.model.MotionPlaying())return;
+        if(app.clock>=m.watchCheckAt)
+        {
+            m.watchCheckAt=app.clock+0.5;
+            const double half=ModelHalfWidthPixels(m),x=CenterX(m),feet=FeetLine(m),top=feet-ModelHeightPixels(m);
+            if(x+half>r.left&&x-half<r.right&&feet>r.top&&top<r.bottom)
+            {
+                double left,right;
+                SurfaceRange(m,left,right);
+                const double gap=0.2*half,toLeft=r.left-half-gap,toRight=r.right+half+gap;
+                // The nearer side with room for her; with room on neither, the roomier one.
+                const bool leftFits=toLeft>=left,rightFits=toRight<=right;
+                bool goLeft=x-toLeft<toRight-x;
+                if(leftFits!=rightFits)goLeft=leftFits;
+                else if(!leftFits)goLeft=toLeft-left>right-toRight;
+                // Each watcher before her (in order, so they never trade places) on that side:
+                // she stands a little further out, as there is room (they may overlap; no hunting
+                // for a free spot).
+                int before=0;
+                for(const auto& owned:app.mascots)
+                {
+                    Mascot& o=*owned;
+                    if(&o==&m||!o.watchingMahjong||o.slot>m.slot)continue;
+                    const Activity oa=o.model.CurrentActivity();
+                    const double ox=oa==Activity::Walk||oa==Activity::Run?o.walkTargetX:CenterX(o);
+                    if(goLeft?ox<r.left:ox>r.right)++before;
+                }
+                const double out=before*0.5*half*(goLeft?-1:1);
+                const double target=std::clamp((goLeft?std::max(toLeft,left):std::min(toRight,right))+out,left,right);
+                Trace(L"%.1f character %zu steps aside from the mahjong window: to %.0f",app.clock,m.slot,target);
+                StartWalk(m,target,std::abs(target-x)>ModelHeightPixels(m)?Activity::Run:Activity::Walk);
+                return;
+            }
+        }
+        if(app.clock>=m.nextWatchGesture&&!m.model.HeadBusy()&&!InBanter(m))
+        {
+            static const wchar_t* const gestures[]={L"think",L"nod",L"ponder",L"nod"};
+            const size_t pick=std::min<size_t>(3,static_cast<size_t>(app.Random01()*4));
+            const bool played=m.model.Emote(gestures[pick]);
+            if(played)Trace(L"%.1f character %zu watching: %s",app.clock,m.slot,gestures[pick]);
+            m.nextWatchGesture=app.clock+(played?8+app.Random01()*12:2);
         }
     }
 
@@ -1187,6 +1260,8 @@ namespace
     void UpdateWindowMode(Mascot& m,double dt)
     {
         if(!app.settings.windowMode)return;
+        // Watching mahjong (or its window come to the front): she stays where she watches from.
+        if(m.watchingMahjong||(MahjongWindowOpen()&&GetForegroundWindow()==MahjongWindowHandle()))return;
         const HWND foreground=GetForegroundWindow();
         if(foreground!=m.foreground)
         {
@@ -1265,8 +1340,12 @@ namespace
         // Another one showing a treasure: standing by, she looks at it on that one's palm.
         Mascot* shower=ShowingTreasure();
         const bool atTreasure=shower&&shower!=&m&&m.place==Place::Ground&&!partner&&!atViewer;
-        // The opened motion leads the head itself while it plays.
-        if((!app.settings.lookAtMouse&&!atViewer&&!partner&&!atTreasure)||m.model.Dozing()||a==Activity::Walk||a==Activity::Fall||m.model.MotionPlaying()||m.model.HeadBusy()||!m.model.HeadPosition(head))
+        // Watching the mahjong game: she looks at its table.
+        RECT table{};
+        const bool atTable=m.watchingMahjong&&!partner&&!atViewer&&!atTreasure&&MahjongWindowRect(table);
+        // The opened motion leads the head itself while it plays, and so does a gesture, except
+        // while watching the game: thinking or nodding, she keeps her eyes on the table.
+        if((!app.settings.lookAtMouse&&!atViewer&&!partner&&!atTreasure&&!atTable)||m.model.Dozing()||a==Activity::Walk||a==Activity::Fall||m.model.MotionPlaying()||(m.model.HeadBusy()&&!atTable)||!m.model.HeadPosition(head))
         {
             m.model.SetLookTarget(0,0,false);
             return;
@@ -1290,6 +1369,14 @@ namespace
             const float dx=static_cast<float>(app.showing.at.x-(window.left+a.x)),dy=static_cast<float>(app.showing.at.y-(window.top+a.y));
             const float pitch=std::clamp(std::atan2(-dy,std::max(std::abs(dx),1.0f)),DirectX::XMConvertToRadians(-30.0f),DirectX::XMConvertToRadians(20.0f));
             m.model.SetLookTarget(DirectX::XMConvertToRadians(dx>0?25.0f:-25.0f),pitch,true);
+            return;
+        }
+        if(std::array<float,3> mine{};atTable&&m.model.EyePosition(mine))
+        {
+            const POINT a=m.renderer.Project(mine);
+            const float dx=static_cast<float>((table.left+table.right)/2-(window.left+a.x)),dy=static_cast<float>(table.top+(table.bottom-table.top)*0.55f-(window.top+a.y));
+            const float pitch=std::clamp(std::atan2(-dy,std::max(std::abs(dx),1.0f)),DirectX::XMConvertToRadians(-20.0f),DirectX::XMConvertToRadians(25.0f));
+            m.model.SetLookTarget(DirectX::XMConvertToRadians(dx>0?20.0f:-20.0f),pitch,true);
             return;
         }
         MONITORINFO monitor{sizeof(monitor)};
@@ -1319,6 +1406,9 @@ namespace
         if(app.showing.model==m.modelPath&&app.showing.endAt<0)target=app.showing.turn;
         else if(Mascot* shower=ShowingTreasure();shower&&shower!=&m&&m.place==Place::Ground&&!BanterPartner(m))
             target=DirectX::XMConvertToRadians(app.showing.at.x>CenterX(m)?-25.0f:25.0f);
+        // Watching the mahjong game: turned toward its window.
+        else if(RECT r{};m.watchingMahjong&&!BanterPartner(m)&&MahjongWindowRect(r))
+            target=DirectX::XMConvertToRadians((r.left+r.right)/2.0>CenterX(m)?-35.0f:35.0f);
         m.model.SetTurn(target);
     }
 
@@ -5000,6 +5090,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     int snapshotFrames=60;
     std::optional<POINT> snapshotLook;
     std::wstring snapshotModel;   // --model <pmx>: model for this run only
+    std::vector<std::wstring> snapshotWatchers;   // --watcher <pmx> (again for more): characters more, in the middle of the screen (they watch with --mahjong)
     int snapshotScale=0;          // --scale <percent>: resize through the menu path after start-up
     std::wstring snapshotActivity;   // --activity walk|sit|grab|fall: hold that generated activity
     std::wstring snapshotGesture;    // --gesture hip|wave|peace|...: hold that standing gesture
@@ -5046,6 +5137,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 snapshotModel=argv[++i];
             }
+            else if(arg==L"--watcher"&&i+1<argc)snapshotWatchers.push_back(argv[++i]);
             else if(arg==L"--scale"&&i+1<argc)
             {
                 snapshotScale=_wtoi(argv[++i]);
@@ -5417,7 +5509,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     }
     if(app.diagnostic)
     {
-        // Diagnostic runs must not overwrite the user's settings, and show the first character only.
+        // Diagnostic runs must not overwrite the user's settings, and show the first character only
+        // (and the watchers, --watcher).
         wchar_t temp[MAX_PATH]{};
         GetTempPathW(MAX_PATH,temp);
         app.settingsPath=std::wstring(temp)+L"MikuMikuDesktopPerch_snapshot.ini";
@@ -5436,6 +5529,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(snapshotIterations)app.settings.physicsIterations=*snapshotIterations;
         if(snapshotFilter)app.settings.physicsFilter=*snapshotFilter;
         app.settings.characters[0].x=-1;
+        for(const auto& watcher:snapshotWatchers)
+        {
+            auto c=app.settings.characters[0];
+            c.modelPath=watcher;
+            c.x=GetSystemMetrics(SM_CXSCREEN)/2-200;
+            app.settings.characters.push_back(c);
+        }
         app.settings.autoBehavior=false;app.settings.windowMode=false;app.settings.chatInitiative=false;
     }
 
@@ -5702,8 +5802,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     SurfaceRange(m,left,right);
                     const double centerX=CenterX(m),margin=a==Activity::Run?16:6;
                     // Past an end of the surface (it moved or shrank): stop there, unless coming back
-                    // onto it from beyond (see ReturnOnScreen).
-                    const bool reached=std::abs(centerX-m.walkTargetX)<margin||(centerX<left-1&&m.walkTargetX<centerX)||(centerX>right+1&&m.walkTargetX>centerX);
+                    // onto it from beyond (see ReturnOnScreen). Past the target (a long frame, as when
+                    // a window opens, can carry her by it): stop too, or she would walk on for good.
+                    const bool reached=std::abs(centerX-m.walkTargetX)<margin||(m.walkDirection&&(m.walkTargetX-centerX)*m.walkDirection<=0)||
+                                       (centerX<left-1&&m.walkTargetX<centerX)||(centerX>right+1&&m.walkTargetX>centerX);
                     if(reached&&m.windowMoving)
                     {
                         // Moved along the window: straight back into the pose she rested in.
@@ -5714,6 +5816,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     }
                     else if(reached){Trace(L"%.1f walk ends at x=%.0f",app.clock,centerX);StopGroundActivity(m);}
                 }
+                UpdateWatching(m);
                 UpdateAutoBehavior(m);
                 UpdateWindowMove(m);
                 MakeRoom(m);
@@ -5895,6 +5998,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                          m.renderer.OldDriver().empty()?L"":L" old driver ",m.renderer.OldDriver().c_str());
                 fwprintf(info,L"%s",m.model.DescribeRig().c_str());
                 fwprintf(info,L"idle clips=%d played=%d\n",m.model.IdleClipCount(),m.model.IdleClipPlays());
+                for(const auto& c:app.mascots)
+                    fwprintf(info,L"character %zu x=%.0f watching=%d\n",c->slot,CenterX(*c),c->watchingMahjong?1:0);
                 fwprintf(info,L"%s",m.model.DescribeWindowMotions().c_str());
                 for(const auto& [key,label]:MascotModel::IdleGestureChoices())
                     if(key.rfind(L"clip:",0)==0)fwprintf(info,L"%s = %s\n",key.c_str(),label.c_str());

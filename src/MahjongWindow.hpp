@@ -32,6 +32,9 @@ namespace MikuMikuDesktopPerch
     // Opens it (or brings it forward when open). onEnd: once, when the window closes.
     void ShowMahjongWindow(HWND owner,const MahjongOpponent& her,std::function<void()> onEnd);
     bool MahjongWindowOpen();
+    // The mahjong window, and where it is on the screen while it shows (not minimized).
+    HWND MahjongWindowHandle();
+    bool MahjongWindowRect(RECT& r);
 
     // Every frame while open: her model, as it is posed now, drawn at the table (she sits).
     void TickMahjongWindow(MascotModel& model,double dt);

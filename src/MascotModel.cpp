@@ -2174,6 +2174,11 @@ namespace MikuMikuDesktopPerch
         return true;
     }
     void MascotModel::EndGestures(){impl->motion.EndGestures();}
+    void MascotModel::SetAutoGestures(bool on)
+    {
+        impl->motion.SetAutoGestures(on);
+        if(!on&&impl->shotActive&&impl->shotIsGesture)impl->shotEnding=true;   // a built-in clip playing blends out
+    }
 
     bool MascotModel::HeadPosition(std::array<float,3>& position) const
     {
