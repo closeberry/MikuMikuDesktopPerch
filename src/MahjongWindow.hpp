@@ -50,9 +50,13 @@ namespace MikuMikuDesktopPerch
     // where it looks, raised and moved back from the default, in her upper body's lengths, and
     // how far round her in radians).
     void SetMahjongCamera(float pitch,float distance,float y,float z,float yaw);
-    // Diagnostics (--mahjong-reach): once seated, she touches a tile of hers as at a discard, and
-    // her newest river tile fades in again.
-    void ReachMahjongForTest();
+    // Diagnostics (--mahjong-reach [far]): once seated, she touches a tile of hers as at a discard,
+    // and her newest river tile fades in again. whole (far): her hand goes the whole way out to the tile
+    // (leaning in), not the light pat in front of her.
+    void ReachMahjongForTest(bool whole=false);
+    // Diagnostics (--mahjong-solid-lift x): the table's solids (MascotModel::SetSolids) raised by
+    // x of her upper body's lengths above the table drawn, to see her stop short of them.
+    void LiftMahjongSolidsForTest(float lift);
     // Diagnostics (--mahjong-gesture name): once seated, she plays that gesture (think, clap,
     // cheeks, oops, ...).
     void GestureMahjongForTest(const std::wstring& name);

@@ -130,6 +130,17 @@ namespace MikuMikuDesktopPerch
         // as when a tile is warped by a touch. A reach under way is replaced. False when it
         // cannot now.
         bool Reach(int side,const DirectX::XMFLOAT3& fromHead,double seconds,bool tap=false);
+        // Stops in front of solid things (MascotModel::SetSolids), from the check after each
+        // solve. StopArm: the hand or arm on side is depth in (counting a margin; 0 or less:
+        // clear), its way out push (a unit vector in the frame ReachArm works in, the arm's
+        // parent's rest frame). From then on ReachArm keeps that wrist from going further that
+        // way, easing back toward the solid while clear. StopLean: the body or head is in; Reach
+        // leans no further. ClearStops: the solids changed.
+        void StopArm(int side,const DirectX::XMFLOAT3& push,float depth);
+        void StopLean(bool into);
+        void ClearStops();
+        // Diagnostics: frames the arms (left, right) were held back, and the lean was.
+        std::array<std::uint32_t,3> StopCounts() const {return {armStopCount[0],armStopCount[1],leanStopCount};}
         static constexpr double StrikeHit=MascotModel::StrikeHit;
         // Fade out the gesture and the click reaction playing (from the weight each has now), and
         // hold off the next gesture for a few seconds.
@@ -316,6 +327,23 @@ namespace MikuMikuDesktopPerch
         DirectX::XMFLOAT3 reachOffset{};            // Reach's point, from the head
         bool reachTap=false;                        // Reach: only a fingertip's touch toward it
         bool reactionSlow=false;                    // the reaction eases in and out slowly (EmoteSeated)
+        // StopArm's stops: per side, a few half-spaces the wrist is kept in (dot(wrist, normal)
+        // >= offset), each made where the arm went into a solid that way.
+        struct ArmStop
+        {
+            DirectX::XMFLOAT3 normal{};
+            float offset=0;
+            bool used=false;
+        };
+        std::array<std::array<ArmStop,3>,2> armStops{};
+        std::array<DirectX::XMFLOAT3,2> stopWrist{};   // where ReachArm last sent each wrist (stops applied)
+        std::array<bool,2> wristDriven{},wristHeld{};  // this frame: ReachArm moved it; a stop held it back
+        float leanLimit=1.6f,lastLean=0;               // Reach's lean (radians): most allowed, last asked
+        bool leanDriven=false;
+        double stopDt=0;
+        std::array<std::uint32_t,2> armStopCount{};
+        std::uint32_t leanStopCount=0;
+        DirectX::XMVECTOR Stopped(int side,DirectX::FXMVECTOR wrist);
         float reactionWeight=0;
         std::vector<std::pair<int,float>> reactionMorphs;
         std::uint32_t random=FreshSeed();

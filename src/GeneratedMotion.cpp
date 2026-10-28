@@ -489,6 +489,74 @@ namespace MikuMikuDesktopPerch
         SetRotation(keys,rig.elbow[side],Rotation(rig.elbowBendAxis[side],bendAngle));
     }
 
+    XMVECTOR GeneratedMotion::Stopped(int side,FXMVECTOR target)
+    {
+        XMVECTOR wrist=target;
+        for(int pass=0;pass<2;++pass)   // twice: a stop's push can take it past another's
+            for(const ArmStop& s:armStops[side])
+            {
+                if(!s.used)continue;
+                const XMVECTOR n=XMLoadFloat3(&s.normal);
+                const float gap=s.offset-XMVectorGetX(XMVector3Dot(wrist,n));
+                if(gap>0){wrist=XMVectorAdd(wrist,XMVectorScale(n,gap));wristHeld[side]=true;}
+            }
+        XMStoreFloat3(&stopWrist[side],wrist);
+        wristDriven[side]=true;
+        return wrist;
+    }
+
+    void GeneratedMotion::StopArm(int side,const XMFLOAT3& push,float depth)
+    {
+        if(side<0||side>1)return;
+        const bool driven=wristDriven[side],held=wristHeld[side];
+        if(!driven)return;   // not ReachArm's arm this frame (the idle motion's, a clip's)
+        auto& stops=armStops[side];
+        const XMVECTOR n=XMVector3Normalize(XMLoadFloat3(&push)),wrist=XMLoadFloat3(&stopWrist[side]);
+        if(depth>0)
+        {
+            // Held from going that way: the stop of the same way moved out by how far it went
+            // in (moving the wrist moves the forearm by less, so it goes on until clear).
+            ArmStop* stop=nullptr;
+            for(ArmStop& s:stops)if(s.used&&XMVectorGetX(XMVector3Dot(XMLoadFloat3(&s.normal),n))>0.9f){stop=&s;break;}
+            if(!stop)
+            {
+                for(ArmStop& s:stops)if(!s.used){stop=&s;break;}
+                if(!stop)stop=&*std::min_element(stops.begin(),stops.end(),[](const ArmStop& a,const ArmStop& b){return a.offset<b.offset;});
+                XMStoreFloat3(&stop->normal,n);
+                stop->offset=-1e9f;
+                stop->used=true;
+            }
+            stop->offset=std::max(stop->offset,XMVectorGetX(XMVector3Dot(wrist,XMLoadFloat3(&stop->normal))))+depth;
+            ++armStopCount[side];
+        }
+        else if(held)
+        {
+            // Clear while held back: let it come a little nearer again, so a stop made in one
+            // pose does not keep the hand off in another (the margin keeps it clear meanwhile).
+            const float ease=static_cast<float>(0.25*rig.legLength*stopDt);
+            for(ArmStop& s:stops)if(s.used)s.offset-=ease;
+        }
+    }
+
+    void GeneratedMotion::StopLean(bool into)
+    {
+        if(into&&leanDriven&&lastLean>0)
+        {
+            leanLimit=std::max(0.0f,std::min(leanLimit,lastLean)-2.0f*Deg);
+            ++leanStopCount;
+        }
+        else if(!into)leanLimit=std::min(1.6f,leanLimit+static_cast<float>(10.0*stopDt)*Deg);
+    }
+
+    void GeneratedMotion::ClearStops()
+    {
+        for(auto& side:armStops)for(ArmStop& s:side)s=ArmStop{};
+        wristDriven={};
+        wristHeld={};
+        leanLimit=1.6f;
+        leanDriven=false;
+    }
+
     float GeneratedMotion::IntoBody(FXMVECTOR point,float margin) const
     {
         const float L=rig.legLength,x=XMVectorGetX(point),y=XMVectorGetY(point),z=XMVectorGetZ(point);
@@ -506,7 +574,8 @@ namespace MikuMikuDesktopPerch
         // Kept clear of the body: the forearm (and the hand beyond the wrist) is checked against
         // the body's front, and the wrist moved forward by the most any of it is in; twice, as
         // moving the wrist moves the elbow too.
-        XMVECTOR wrist=wristTarget;
+        // Short of a solid it went into before (StopArm).
+        XMVECTOR wrist=Stopped(side,wristTarget);
         if(clear&&!rig.body.empty())
             for(int pass=0;pass<2;++pass)
             {
@@ -526,7 +595,7 @@ namespace MikuMikuDesktopPerch
                 for(float f=0.3f;f<=1.45f;f+=0.15f)
                     push=std::max(push,IntoBody(XMVectorAdd(elbow,XMVectorScale(along,f)),0.045f*rig.legLength));
                 if(push<=0.002f*rig.legLength)break;
-                wrist=XMVectorSubtract(wrist,XMVectorSet(0,0,push,0));
+                wrist=Stopped(side,XMVectorSubtract(wrist,XMVectorSet(0,0,push,0)));
             }
         const float a=rig.upperArm,b=rig.forearm;
         // Two-bone IK from the arm's root: the elbow, and where the wrist gets to.
@@ -901,7 +970,9 @@ namespace MikuMikuDesktopPerch
             XMVECTOR target=XMVectorLerp(close,goal,extend);
             const float reach=rig.upperArm+0.75f*rig.foreArm;   // to the wrist (foreArm reaches the fingertips)
             const float d=XMVectorGetX(XMVector3Length(XMVectorSubtract(target,shoulder)));
-            const float lean=reachTap?0.0f:std::clamp((d-0.85f*reach)/(0.8f*reach),0.0f,1.0f)*22.0f*Deg;
+            lastLean=reachTap?0.0f:std::clamp((d-0.85f*reach)/(0.8f*reach),0.0f,1.0f)*22.0f*Deg;
+            leanDriven=true;
+            const float lean=std::min(lastLean,leanLimit);   // no further into a solid (StopLean)
             turn(rig.upperBody,-lean,0,0);
             // Where the point is as the leaning body sees it.
             target=XMVectorAdd(pivot,XMVector3Transform(XMVectorSubtract(target,pivot),XMMatrixRotationX(lean)));
@@ -2021,6 +2092,11 @@ namespace MikuMikuDesktopPerch
         clock+=dt;
         landTime+=dt;
         fadeTime+=dt;
+        // What this frame's motion does, for the stops after it is solved.
+        wristDriven={};
+        wristHeld={};
+        leanDriven=false;
+        stopDt=dt;
 
         std::vector<Key> target(overrides.size());
         motionShoulders=activity==Activity::Idle&&!generatedIdle;

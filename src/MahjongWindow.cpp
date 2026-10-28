@@ -122,6 +122,8 @@ namespace MikuMikuDesktopPerch
             std::vector<MascotRenderer::Particle> roomGlows;
             std::mt19937 sparkRandom{12345};
             bool testReach=false;            // diagnostics: reach once seated
+            bool testReachFar=false;         // the whole way out to the tile (not the warping pat)
+            float testSolidLift=0;           // diagnostics: the table's solids raised by this (upper body lengths)
             // Her gestures at the table: thinking before a discard (for seconds, 0: none), and
             // at a hand's end (her joy or "oops"), asked for until playing or given up.
             double thinkFor=0;
@@ -847,6 +849,16 @@ namespace MikuMikuDesktopPerch
             m.Quad(a,b,c,d,{0,1,0},face,uv);
         }
 
+        // The 3D table's size (world units, as BuildTable and BuildRoom draw it): the felt from x0
+        // to x1 and zFar to zNear (her side) with its top at top, a frame rw wide round it from
+        // frameBottom to frameTop, and legs leg square at its corners down to the floor.
+        struct TableShape {float x0,x1,zNear,zFar,top,rw,frameTop,frameBottom,leg;};
+        TableShape Table3D()
+        {
+            const float D=state.upper,top=0.12f*state.hips+0.30f*D;
+            return {-1.3f*D,1.3f*D,-0.30f*D,-2.15f*D,top,0.11f*D,top+0.04f*D,top-0.11f*D,0.15f*D};
+        }
+
         // Her chair, where she sits at z: a cushioned seat from under her knees to behind her,
         // a back with two rails, four legs. Drawn on its own, as it moves in with her when she
         // sits down.
@@ -889,7 +901,8 @@ namespace MikuMikuDesktopPerch
             // The table: a frame standing proud of the felt, and legs at the corners up under it
             // (no skirt boards: her thighs go under the table).
             grainScale=0.35f;
-            const float rw=0.11f*D,frameTop=top+0.04f*D,frameBottom=top-0.11f*D;
+            const TableShape t=Table3D();
+            const float rw=t.rw,frameTop=t.frameTop,frameBottom=t.frameBottom,leg=t.leg;
             grain=0;
             box(x0-rw,frameBottom,zFar-rw,x1+rw,frameTop,zFar,frame);
             box(x0-rw,frameBottom,zNear,x1+rw,frameTop,zNear+rw,frame);
@@ -897,7 +910,6 @@ namespace MikuMikuDesktopPerch
             box(x0-rw,frameBottom,zFar,x0,frameTop,zNear,frame);
             box(x1,frameBottom,zFar,x1+rw,frameTop,zNear,frame);
             grain=2;
-            const float leg=0.15f*D;
             for(float lx:{x0-rw+0.02f*D,x1+rw-0.02f*D-leg})
                 for(float lz:{zFar-rw+0.02f*D,zNear+rw-0.02f*D-leg})
                     box(lx,floor,lz,lx+leg,frameBottom,lz+leg,skirt);
@@ -1129,9 +1141,10 @@ namespace MikuMikuDesktopPerch
             float& grainScale=mesh.grainScale;
             auto quad=[&](const V& a,const V& b,const V& c,const V& d,const V& n,const float (&col)[4],const float* uv=nullptr){mesh.Quad(a,b,c,d,n,col,uv);};
             auto box=[&](float x0,float y0,float z0,float x1,float y1,float z1,const float (&c)[4],bool topFace=true){mesh.Box(x0,y0,z0,x1,y1,z1,c,topFace);};
-            const float D=state.upper,top=0.12f*state.hips+0.30f*D;
+            const float D=state.upper;
             const float felt[4]={0.09f,0.33f,0.22f,1};
-            const float x0=-1.3f*D,x1=1.3f*D,zNear=-0.30f*D,zFar=-2.15f*D;
+            const TableShape t=Table3D();
+            const float x0=t.x0,x1=t.x1,zNear=t.zNear,zFar=t.zFar,top=t.top;
             const float zc=(zNear-1.9f*D)/2;   // between the hands' rows (yours is nearer the edge)
             BuildRoom(box,quad,grain,grainScale,x0,x1,zNear,zFar,zc);
             box(x0,top-0.05f*D,zFar,x1,top,zNear,felt);
@@ -1218,6 +1231,7 @@ namespace MikuMikuDesktopPerch
         {
             if(!state.window)return;
             KillTimer(state.window,TimerId);
+            if(state.her.model)state.her.model->SetSolids({});
             auto onEnd=std::move(state.onEnd);
             DestroyWindow(state.window);
             if(onEnd)onEnd();
@@ -1888,7 +1902,8 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    void ReachMahjongForTest(){state.testReach=true;}
+    void ReachMahjongForTest(bool whole){state.testReach=true;state.testReachFar=whole;}
+    void LiftMahjongSolidsForTest(float lift){state.testSolidLift=lift;}
     void GestureMahjongForTest(const std::wstring& name){state.testGesture=name;}
 
     void SetMahjongCamera(float pitch,float distance,float y,float z,float yaw)
@@ -1937,7 +1952,7 @@ namespace MikuMikuDesktopPerch
         // Her light pat from above toward a spot on the table (world units), the nearer hand, in
         // front of her chest: the tile warps (it is a touch of magic, not a reach). False when
         // she cannot now (another gesture playing).
-        bool ReachFor(MascotModel& model,const std::array<float,3>& spot)
+        bool ReachFor(MascotModel& model,const std::array<float,3>& spot,bool tap=true)
         {
             std::array<float,3> head{};
             if(!model.HeadPosition(head))return false;
@@ -1945,7 +1960,39 @@ namespace MikuMikuDesktopPerch
             const float hx=head[0]-model.RootOffset()+state.herX,hz=head[2]+state.herZ;
             // The wrist a hand's height over the tile, so the fingers stop above the table.
             const std::array<float,3> from{spot[0]-hx,spot[1]+0.07f*state.hips-head[1],spot[2]-hz};
-            return model.Reach(spot[0]>0.25f*state.upper?0:1,from,1.65,true);
+            return model.Reach(spot[0]>0.25f*state.upper?0:1,from,tap?1.65:3.0,tap);
+        }
+
+        // The table as solids in her way (MascotModel::SetSolids): the felt, its frame and the
+        // legs, taken into her model's space from the world by world (her model's transform).
+        void SetTableSolids(MascotModel& model,DirectX::FXMMATRIX world)
+        {
+            using namespace DirectX;
+            const auto t=Table3D();
+            const float lift=state.testSolidLift*state.upper,floor=FloorY();
+            std::vector<std::array<float,6>> boxes{
+                {t.x0,t.top-0.05f*state.upper,t.zFar,t.x1,t.top+lift,t.zNear},
+                {t.x0-t.rw,t.frameBottom,t.zFar-t.rw,t.x1+t.rw,t.frameTop+lift,t.zFar},
+                {t.x0-t.rw,t.frameBottom,t.zNear,t.x1+t.rw,t.frameTop+lift,t.zNear+t.rw},
+                {t.x0-t.rw,t.frameBottom,t.zFar,t.x0,t.frameTop+lift,t.zNear},
+                {t.x1,t.frameBottom,t.zFar,t.x1+t.rw,t.frameTop+lift,t.zNear}};
+            for(float lx:{t.x0-t.rw+0.02f*state.upper,t.x1+t.rw-0.02f*state.upper-t.leg})
+                for(float lz:{t.zFar-t.rw+0.02f*state.upper,t.zNear+t.rw-0.02f*state.upper-t.leg})
+                    boxes.push_back({lx,floor,lz,lx+t.leg,t.frameBottom,lz+t.leg});
+            XMVECTOR scale,turn,move;
+            const XMMATRIX toModel=XMMatrixInverse(nullptr,world);
+            XMMatrixDecompose(&scale,&turn,&move,toModel);
+            std::vector<MascotModel::Solid> solids;
+            for(const auto& b:boxes)
+            {
+                MascotModel::Solid s;
+                const XMVECTOR middle=XMVector3Transform(XMVectorSet((b[0]+b[3])/2,(b[1]+b[4])/2,(b[2]+b[5])/2,0),toModel);
+                XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(s.middle.data()),middle);
+                s.half={(b[3]-b[0])/2,(b[4]-b[1])/2,(b[5]-b[2])/2};
+                XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(s.turn.data()),turn);
+                solids.push_back(s);
+            }
+            model.SetSolids(solids);
         }
     }
 
@@ -2077,7 +2124,7 @@ namespace MikuMikuDesktopPerch
         {
             state.testReach=false;
             state.touched=state.herHandSpots[state.herHandSpots.size()/3];
-            ReachFor(model,state.touched);
+            ReachFor(model,state.touched,!state.testReachFar);
             state.testVanishAt=state.clock+ReachLead/1000.0;
         }
         if(state.testVanishAt>0&&state.clock>=state.testVanishAt&&!her.river.empty())
@@ -2151,7 +2198,10 @@ namespace MikuMikuDesktopPerch
         }
         // Her walks on the desktop leave センター shifted sideways in the model: taken back out.
         const float hip=0.12f*state.hips;   // her hips above the seat
-        r.SetModelTransform(XMMatrixTranslation(-model.RootOffset(),-hip,0)*XMMatrixRotationX(-lean)*XMMatrixTranslation(0,hip,0)*XMMatrixRotationY(state.herAngle)*XMMatrixTranslation(state.herX,lift,state.entrance==0?seatZ:state.herZ));
+        const XMMATRIX world=XMMatrixTranslation(-model.RootOffset(),-hip,0)*XMMatrixRotationX(-lean)*XMMatrixTranslation(0,hip,0)*XMMatrixRotationY(state.herAngle)*XMMatrixTranslation(state.herX,lift,state.entrance==0?seatZ:state.herZ);
+        r.SetModelTransform(world);
+        // The table in her way: hair and skirt fall on it, and her hands stop short of it.
+        SetTableSolids(model,world);
         // From your side of the table, above her, looking down at her and the table between you
         // (until the camera is turned).
         const auto& c=state.camera;

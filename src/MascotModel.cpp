@@ -4,6 +4,7 @@
 #include "Log.hpp"
 #include "GeneratedMotion.hpp"
 #include <btBulletDynamicsCommon.h>
+#include <unordered_set>
 #include <windows.h>
 #include <DirectXMath.h>
 #include <algorithm>
@@ -266,6 +267,11 @@ namespace MikuMikuDesktopPerch
         }
     }
 
+    namespace
+    {
+        bool& SolidStops(){static bool on=true;return on;}
+    }
+
     struct MascotModel::Impl
     {
         // Destruction order matters: solver detaches from physics, both reference pmx.
@@ -485,6 +491,235 @@ namespace MikuMikuDesktopPerch
         std::array<ArmCorrection,2> arms;
 
         GeneratedMotion motion;
+
+        // SetSolids' boxes: each a static body in the physics world while there is one, and a box
+        // for the check (toLocal takes model space to the box's own: its middle at 0, its sides
+        // along the axes).
+        struct SolidBody
+        {
+            MascotModel::Solid box;
+            DirectX::XMFLOAT4X4 toLocal{};
+            std::unique_ptr<btBoxShape> shape;
+            std::unique_ptr<btRigidBody> body;
+        };
+        std::vector<SolidBody> solids;
+        btDiscreteDynamicsWorld* solidWorld=nullptr;   // the world their bodies are in
+        bool solidsTouch=false;     // the bodies push simulated ones (off until none is inside)
+        double solidsWait=0;        // seconds they have waited for that
+        bool solidsOnReset=false;   // the pending reset is for them: turn them on after
+        // The vertices checked against them: those no simulated bone (or one carried by one)
+        // weighs on, one per small cell and part, with their weights.
+        struct Probe
+        {
+            std::array<int,4> bone{-1,-1,-1,-1};
+            std::array<float,4> weight{};
+            DirectX::XMFLOAT3 position{};
+            std::uint8_t part=0;
+        };
+        std::vector<Probe> probes;
+        bool probesBuilt=false;
+        float solidMargin=0.1f;            // how near counts as in (the 1-frame lag stays clear)
+        std::array<int,2> armFrame{-1,-1};   // the bone above each arm (ReachArm's frame)
+        std::array<MascotModel::Penetration,MascotModel::PartCount> penetration{},deepest{};
+        std::array<float,2> armDepth{-1e9f,-1e9f};   // each arm's depth at the last check
+
+        static btTransform SolidTransform(const MascotModel::Solid& s)
+        {
+            return btTransform(btQuaternion(s.turn[0],s.turn[1],s.turn[2],s.turn[3]),btVector3(s.middle[0],s.middle[1],s.middle[2]));
+        }
+        void DropSolidBodies()
+        {
+            if(solidWorld)for(auto& s:solids)if(s.body)solidWorld->removeRigidBody(s.body.get());
+            for(auto& s:solids){s.body.reset();s.shape.reset();}
+            solidWorld=nullptr;
+            solidsTouch=false;
+            solidsWait=0;
+        }
+        void SolidResponse(bool on)
+        {
+            for(auto& s:solids)
+                if(s.body)s.body->setCollisionFlags(on?s.body->getCollisionFlags()&~btCollisionObject::CF_NO_CONTACT_RESPONSE:
+                                                       s.body->getCollisionFlags()|btCollisionObject::CF_NO_CONTACT_RESPONSE);
+            solidsTouch=on;
+        }
+        // The bodies in the world, in every collision group (as the floor is), pushing nothing yet.
+        void MakeSolidBodies()
+        {
+            auto* world=physics?physics->World():nullptr;
+            if(world==solidWorld&&(solids.empty()||solids.front().body))return;
+            DropSolidBodies();
+            if(!world)return;
+            for(auto& s:solids)
+            {
+                s.shape=std::make_unique<btBoxShape>(btVector3(s.box.half[0],s.box.half[1],s.box.half[2]));
+                btRigidBody::btRigidBodyConstructionInfo info(0,nullptr,s.shape.get());
+                info.m_startWorldTransform=SolidTransform(s.box);
+                s.body=std::make_unique<btRigidBody>(info);
+                s.body->setCollisionFlags(s.body->getCollisionFlags()|btCollisionObject::CF_NO_CONTACT_RESPONSE);
+                world->addRigidBody(s.body.get(),-1,-1);
+            }
+            solidWorld=world;
+        }
+        // A simulated body inside one of them.
+        bool SolidsTouched() const
+        {
+            struct Touch:btCollisionWorld::ContactResultCallback
+            {
+                bool touched=false;
+                btScalar addSingleResult(btManifoldPoint& point,const btCollisionObjectWrapper* a,int,int,const btCollisionObjectWrapper* b,int,int) override
+                {
+                    for(const auto* o:{a->getCollisionObject(),b->getCollisionObject()})
+                        if(!o->isStaticOrKinematicObject()&&point.getDistance()<0)touched=true;
+                    return 0;
+                }
+            };
+            if(!solidWorld)return false;
+            Touch touch;
+            for(const auto& s:solids)if(s.body)solidWorld->contactTest(s.body.get(),touch);
+            return touch.touched;
+        }
+        void BuildProbes()
+        {
+            probesBuilt=true;
+            probes.clear();
+            if(!pmx)return;
+            const auto& bones=pmx->bones;
+            const int count=static_cast<int>(bones.size());
+            auto under=[&](int bone,int ancestor){
+                for(int b=bone,guard=0;ancestor>=0&&b>=0&&b<count&&guard<512;b=bones[b].parent,++guard)if(b==ancestor)return true;
+                return false;
+            };
+            // Carried by physics: simulated, or below a simulated bone.
+            std::vector<char> carried(bones.size(),0);
+            for(int i=0;i<count;++i)
+                for(int b=i,guard=0;b>=0&&b<count&&guard<512;b=bones[b].parent,++guard)if(bones[b].IsPhysics){carried[i]=1;break;}
+            const int wrist[2]={FindBone({L"左手首"}),FindBone({L"右手首"})};
+            const int elbow[2]={FindBone({L"左ひじ"}),FindBone({L"右ひじ"})};
+            const int arm[2]={FindBone({L"左腕"}),FindBone({L"右腕"})};
+            const int shoulder[2]={FindBone({L"左肩"}),FindBone({L"右肩"})};
+            const int head=FindBone({L"頭"}),lower=FindBone({L"下半身"});
+            const int legs[2]={FindBone({L"左足"}),FindBone({L"右足"})};
+            for(int side=0;side<2;++side)
+            {
+                const int from=shoulder[side]>=0?shoulder[side]:arm[side];
+                armFrame[side]=from>=0?bones[from].parent:-1;
+            }
+            auto partOf=[&](int bone)->MascotModel::Part{
+                using P=MascotModel::Part;
+                for(int side=0;side<2;++side)
+                {
+                    if(under(bone,wrist[side]))return side?P::RightHand:P::LeftHand;
+                    if(under(bone,elbow[side]))return side?P::RightForearm:P::LeftForearm;
+                    if(under(bone,arm[side]))return side?P::RightUpperArm:P::LeftUpperArm;
+                }
+                if(under(bone,head))return P::Head;
+                if(under(bone,lower)||under(bone,legs[0])||under(bone,legs[1]))return P::Legs;
+                return P::Body;
+            };
+            const float height=std::max(1e-3f,boundsMax[1]-boundsMin[1]);
+            const float cell=0.012f*height;
+            solidMargin=0.012f*height;
+            std::unordered_set<std::uint64_t> taken;
+            for(const auto& v:pmx->vertices)
+            {
+                Probe p;
+                int main=-1;
+                float heaviest=-1,total=0;
+                bool simulated=false;
+                for(int k=0;k<4;++k)
+                {
+                    const int b=v.bone[k];
+                    if(b<0||b>=count||v.weight[k]<=0)continue;
+                    if(carried[b]){simulated=true;break;}
+                    p.bone[k]=b;
+                    p.weight[k]=v.weight[k];
+                    total+=v.weight[k];
+                    if(v.weight[k]>heaviest){heaviest=v.weight[k];main=b;}
+                }
+                if(simulated||main<0)continue;
+                for(float& w:p.weight)w/=total;
+                p.part=static_cast<std::uint8_t>(partOf(main));
+                auto at=[&](float x){return static_cast<std::uint64_t>(static_cast<std::int64_t>(std::floor(x/cell))&0xFFFF);};
+                const std::uint64_t key=at(v.position.x)<<48|at(v.position.y)<<32|at(v.position.z)<<16|p.part;
+                if(!taken.insert(key).second)continue;
+                p.position=v.position;
+                probes.push_back(p);
+            }
+        }
+        // Each part's deepest vertex against the solids, as posed by the latest solve.
+        void CheckSolids()
+        {
+            using namespace DirectX;
+            if(!probesBuilt)BuildProbes();
+            for(auto& p:penetration)p=MascotModel::Penetration{};
+            if(!solver||solver->boneMatrices.size()<pmx->bones.size())return;
+            const auto& matrices=solver->boneMatrices;
+            std::vector<XMMATRIX> toLocal;
+            for(const auto& s:solids)toLocal.push_back(XMLoadFloat4x4(&s.toLocal));
+            for(const Probe& probe:probes)
+            {
+                const XMVECTOR rest=XMLoadFloat3(&probe.position);
+                XMVECTOR posed=XMVectorZero();
+                for(int k=0;k<4;++k)
+                    if(probe.bone[k]>=0)posed=XMVectorAdd(posed,XMVectorScale(XMVector3Transform(rest,XMMatrixTranspose(matrices[probe.bone[k]])),probe.weight[k]));
+                auto& best=penetration[probe.part];
+                for(size_t i=0;i<solids.size();++i)
+                {
+                    const auto& box=solids[i].box;
+                    const XMVECTOR local=XMVector3Transform(posed,toLocal[i]);
+                    const XMVECTOR half=XMVectorSet(box.half[0],box.half[1],box.half[2],0);
+                    const XMVECTOR over=XMVectorSubtract(XMVectorAbs(local),half);   // > 0: outside along that axis
+                    const XMVECTOR outside=XMVectorMax(over,XMVectorZero());
+                    float depth;
+                    XMVECTOR out;
+                    if(XMVectorGetX(XMVector3LengthSq(outside))>0)
+                    {
+                        depth=-XMVectorGetX(XMVector3Length(outside));
+                        out=XMVectorMultiply(outside,XMVectorSelect(XMVectorSplatOne(),XMVectorNegate(XMVectorSplatOne()),XMVectorLess(local,XMVectorZero())));
+                    }
+                    else
+                    {
+                        // Inside: out through the nearest face.
+                        XMFLOAT3 o;
+                        XMStoreFloat3(&o,over);
+                        const int axis=o.x>=o.y&&o.x>=o.z?0:o.y>=o.z?1:2;
+                        depth=-(axis==0?o.x:axis==1?o.y:o.z);
+                        const float sign=XMVectorGetByIndex(local,axis)<0?-1.0f:1.0f;
+                        out=XMVectorSet(axis==0?sign:0.0f,axis==1?sign:0.0f,axis==2?sign:0.0f,0);
+                    }
+                    if(depth<=best.depth)continue;
+                    best.depth=depth;
+                    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(best.point.data()),posed);
+                    const XMVECTOR turn=XMVectorSet(box.turn[0],box.turn[1],box.turn[2],box.turn[3]);
+                    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(best.push.data()),XMVector3Normalize(XMVector3Rotate(out,turn)));
+                }
+            }
+            for(size_t i=0;i<penetration.size();++i)if(penetration[i].depth>deepest[i].depth)deepest[i]=penetration[i];
+        }
+        // The motion stops short where the check found it going in.
+        void StopAtSolids()
+        {
+            using namespace DirectX;
+            using P=MascotModel::Part;
+            for(int side=0;side<2;++side)
+            {
+                const MascotModel::Penetration* worst=nullptr;
+                for(P part:{side?P::RightHand:P::LeftHand,side?P::RightForearm:P::LeftForearm,side?P::RightUpperArm:P::LeftUpperArm})
+                    if(!worst||penetration[static_cast<size_t>(part)].depth>worst->depth)worst=&penetration[static_cast<size_t>(part)];
+                // The way out, in the rest frame of the bone above the arm (as ReachArm sees it).
+                XMVECTOR push=XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(worst->push.data()));
+                if(const int frame=armFrame[side];frame>=0&&static_cast<size_t>(frame)<solver->boneMatrices.size())
+                    push=XMVector3TransformNormal(push,XMMatrixInverse(nullptr,XMMatrixTranspose(solver->boneMatrices[frame])));
+                XMFLOAT3 way;
+                XMStoreFloat3(&way,XMVector3Normalize(push));
+                // A frame ahead, at the speed it is coming in: stopped before it gets there.
+                const float last=armDepth[side];
+                armDepth[side]=worst->depth;
+                const float ahead=worst->depth+(last>-1e8f?std::max(0.0f,worst->depth-last):0.0f);
+                motion.StopArm(side,way,ahead+solidMargin);
+            }
+            motion.StopLean(std::max(penetration[static_cast<size_t>(P::Body)].depth,penetration[static_cast<size_t>(P::Head)].depth)>-solidMargin);
+        }
 
         // One-shot motion, sampled by a solver of its own (no physics) and blended over the
         // idle pose by shotWeight: the opened motion (shotVmd), or a click motion. shotSource
@@ -1243,12 +1478,14 @@ namespace MikuMikuDesktopPerch
 
         ~Impl()
         {
+            DropSolidBodies();
             solver.reset();
             physics.reset();
         }
 
         void CreateSolver(bool withPhysics)
         {
+            DropSolidBodies();
             solver.reset();
             physics.reset();
             if(withPhysics)
@@ -2246,6 +2483,22 @@ namespace MikuMikuDesktopPerch
                     m.floorWait=0;
                 }
             }
+            // The solids push hair and skirt once none of them is inside one (as the floor);
+            // if one stays in, a smooth reset takes it out.
+            if(!m.solids.empty())
+            {
+                m.MakeSolidBodies();
+                if(!m.solidsTouch&&m.resetBlend<0&&!m.solidsOnReset)
+                {
+                    if(!m.SolidsTouched()){m.SolidResponse(true);m.solidsWait=0;}
+                    else if((m.solidsWait+=dt)>=1.5&&!m.floorOnReset)
+                    {
+                        m.resetPhysicsPending=true;
+                        m.solidsOnReset=true;
+                        m.solidsWait=0;
+                    }
+                }
+            }
             if(m.resetBlend>=m.resetLength)
             {
                 // The bones are back in their animated place: put the bodies there with no
@@ -2255,6 +2508,8 @@ namespace MikuMikuDesktopPerch
                 // The bodies now sit on the animated pose, out of the way of the floor.
                 if(m.floorOnReset&&floor)m.physics->GroundEnable(true);
                 m.floorOnReset=false;
+                if(m.solidsOnReset)m.SolidResponse(true);
+                m.solidsOnReset=false;
                 m.resetFrom.clear();
                 ++m.physicsResets;
             }
@@ -2278,8 +2533,74 @@ namespace MikuMikuDesktopPerch
                 m.WatchPhysics(dt);
             }
         }
+        if(!m.solids.empty())
+        {
+            m.CheckSolids();
+            if(SolidStops())m.StopAtSolids();
+        }
         m.ApplyMorphs();
         m.UpdateMaterials();
+    }
+
+    void MascotModel::SetSolids(const std::vector<Solid>& solids)
+    {
+        using namespace DirectX;
+        auto& m=*impl;
+        if(solids.size()!=m.solids.size())
+        {
+            // Others than before: new bodies (made at the next update), the stops start over.
+            m.DropSolidBodies();
+            m.solids.clear();
+            m.solids.resize(solids.size());
+            m.motion.ClearStops();
+            m.armDepth={-1e9f,-1e9f};
+            for(auto& d:m.deepest)d=Penetration{};
+            for(auto& p:m.penetration)p=Penetration{};
+            m.solidsOnReset=false;
+        }
+        for(size_t i=0;i<solids.size();++i)
+        {
+            auto& s=m.solids[i];
+            const bool moved=s.box.middle!=solids[i].middle||s.box.turn!=solids[i].turn;
+            const bool resized=s.box.half!=solids[i].half;
+            s.box=solids[i];
+            const XMMATRIX place=XMMatrixRotationQuaternion(XMVectorSet(s.box.turn[0],s.box.turn[1],s.box.turn[2],s.box.turn[3]))*
+                                 XMMatrixTranslation(s.box.middle[0],s.box.middle[1],s.box.middle[2]);
+            XMStoreFloat4x4(&s.toLocal,XMMatrixInverse(nullptr,place));
+            if(!s.body)continue;
+            if(resized)s.shape->setImplicitShapeDimensions(btVector3(s.box.half[0],s.box.half[1],s.box.half[2])-btVector3(1,1,1)*s.shape->getMargin());
+            if(moved||resized)
+            {
+                s.body->setWorldTransform(Impl::SolidTransform(s.box));
+                m.solidWorld->updateSingleAabb(s.body.get());
+            }
+        }
+    }
+    const std::array<MascotModel::Penetration,MascotModel::PartCount>& MascotModel::Penetrations() const {return impl->penetration;}
+    void MascotModel::SetSolidStops(bool on){SolidStops()=on;}
+    std::wstring MascotModel::DescribePenetration() const
+    {
+        const auto& m=*impl;
+        if(m.solids.empty())return L"";
+        static const wchar_t* names[PartCount]={L"left hand",L"right hand",L"left forearm",L"right forearm",L"left upper arm",L"right upper arm",L"body",L"head",L"legs"};
+        std::wstring text=L"penetration: "+std::to_wstring(m.solids.size())+L" solids, "+std::to_wstring(m.probes.size())+L" vertices, margin ";
+        wchar_t number[64];
+        swprintf_s(number,L"%.3f",m.solidMargin);
+        text+=number;
+        text+=m.solidsTouch?L", bodies on":L", bodies off";
+        text+=L"; deepest (now)";
+        for(size_t i=0;i<PartCount;++i)
+        {
+            if(m.deepest[i].depth<=-1e8f)continue;
+            swprintf_s(number,L" %.3f (%.3f)",m.deepest[i].depth,m.penetration[i].depth);
+            text+=L", ";
+            text+=names[i];
+            text+=number;
+        }
+        const auto stops=m.motion.StopCounts();
+        swprintf_s(number,L"; stopped left %u right %u lean %u%s\n",stops[0],stops[1],stops[2],SolidStops()?L"":L" (stops off)");
+        text+=number;
+        return text;
     }
 
     const std::vector<StaticVertex>& MascotModel::StaticVertices() const {return impl->staticVertices;}

@@ -5090,7 +5090,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     bool snapshotMahjong=false;   // --mahjong [moves]: the snapshot is the mahjong table's 3D view
     int snapshotMahjongMoves=0;   // after this many moves of a simple player
     std::wstring snapshotMahjongCamera;   // --mahjong-camera pitch,distance,y,z[,yaw]
-    bool snapshotMahjongReach=false;      // --mahjong-reach: she reaches for her river once seated
+    bool snapshotMahjongReach=false;      // --mahjong-reach [far]: she reaches for her river once seated
+    bool snapshotMahjongReachFar=false;
+    float snapshotSolidLift=0;            // --mahjong-solid-lift x: the table's solids raised by x (her upper body's lengths)
     std::wstring snapshotMahjongGesture;  // --mahjong-gesture name: she plays it once seated
     int snapshotFrames=60;
     std::optional<POINT> snapshotLook;
@@ -5131,7 +5133,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotFrames=std::max(1,_wtoi(argv[++i]));
             }
             else if(arg==L"--mahjong-camera"&&i+1<argc)snapshotMahjongCamera=argv[++i];
-            else if(arg==L"--mahjong-reach")snapshotMahjongReach=true;
+            else if(arg==L"--mahjong-reach")
+            {
+                snapshotMahjongReach=true;
+                if(i+1<argc&&std::wstring(argv[i+1])==L"far"){snapshotMahjongReachFar=true;++i;}
+            }
+            else if(arg==L"--mahjong-solid-lift"&&i+1<argc)snapshotSolidLift=static_cast<float>(_wtof(argv[++i]));
+            else if(arg==L"--no-solid-stops")MascotModel::SetSolidStops(false);
             else if(arg==L"--mahjong-gesture"&&i+1<argc)snapshotMahjongGesture=argv[++i];
             else if(arg==L"--mahjong")
             {
@@ -5983,7 +5991,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 opened=true;
                 OpenMahjong(*app.mascots.front());
                 PlayMahjongMoves(snapshotMahjongMoves);
-                if(snapshotMahjongReach)ReachMahjongForTest();
+                if(snapshotMahjongReach)ReachMahjongForTest(snapshotMahjongReachFar);
+                if(snapshotSolidLift!=0)LiftMahjongSolidsForTest(snapshotSolidLift);
                 if(!snapshotMahjongGesture.empty())GestureMahjongForTest(snapshotMahjongGesture);
                 float c[5]={};
                 if(swscanf_s(snapshotMahjongCamera.c_str(),L"%f,%f,%f,%f,%f",&c[0],&c[1],&c[2],&c[3],&c[4])>=4)SetMahjongCamera(c[0],c[1],c[2],c[3],c[4]);
@@ -6006,6 +6015,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 for(const auto& c:app.mascots)
                     fwprintf(info,L"character %zu x=%.0f watching=%d\n",c->slot,CenterX(*c),c->watchingMahjong?1:0);
                 if(snapshotMahjong)fwprintf(info,L"%s",DescribeMahjongFeet().c_str());
+                fwprintf(info,L"%s",m.model.DescribePenetration().c_str());
                 fwprintf(info,L"%s",m.model.DescribeWindowMotions().c_str());
                 for(const auto& [key,label]:MascotModel::IdleGestureChoices())
                     if(key.rfind(L"clip:",0)==0)fwprintf(info,L"%s = %s\n",key.c_str(),label.c_str());

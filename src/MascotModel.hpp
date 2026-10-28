@@ -226,6 +226,36 @@ namespace MikuMikuDesktopPerch
         // Diagnostics: the closest the forearm and hand (left, right) come to the rest of the
         // body as posed now (its vertices, hair and arms aside), in model units.
         std::array<float,2> ArmClearance(std::array<std::wstring,2>* nearestBone=nullptr) const;   // and the bones carrying the nearest vertices
+
+        // Solid things in her way, such as a mini game's table (docs/AirHockey.md, めり込み判定):
+        // boxes in model space (middle, half sizes, turn as a quaternion). Simulated parts (hair,
+        // skirt) hit them as static rigid bodies, whatever their collision groups; they start to
+        // count once none of those is inside one. The rest of her (the vertices no simulated bone
+        // weighs on) is checked after every update, and an arm the generated motion moves
+        // (GeneratedMotion::ReachArm) or its lean stops before going further in. Set again
+        // whenever they move against her; empty: none.
+        struct Solid
+        {
+            std::array<float,3> middle{},half{};
+            std::array<float,4> turn{0,0,0,1};
+        };
+        void SetSolids(const std::vector<Solid>& solids);
+        enum class Part {LeftHand,RightHand,LeftForearm,RightForearm,LeftUpperArm,RightUpperArm,Body,Head,Legs,Count};
+        static constexpr size_t PartCount=static_cast<size_t>(Part::Count);
+        // From the latest update, per part: how far its deepest vertex is inside a solid (below 0:
+        // how far the nearest is clear of them; -1e9 with no solids or vertices), where, and the
+        // way out (the nearest face's outward normal), in model space.
+        struct Penetration
+        {
+            float depth=-1e9f;
+            std::array<float,3> point{},push{};
+        };
+        const std::array<Penetration,PartCount>& Penetrations() const;
+        // Diagnostics: the deepest per part since the solids were set, and how often the arms and
+        // the lean were stopped; one "penetration:" line (empty with no solids).
+        std::wstring DescribePenetration() const;
+        // Diagnostics (--no-solid-stops): the check runs, but nothing is stopped.
+        static void SetSolidStops(bool on);
         // World units センター has walked since the last call (positive = screen right).
         float TakeRootDelta();
         float RootOffset() const;
