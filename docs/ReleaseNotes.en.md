@@ -2,6 +2,26 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.4.0
+
+### New
+
+- **Mahjong**: "Play mahjong" in the right-click menu opens a window where you play two-player mahjong against that character (an East and a South round, four hands, no chi, 24 draws each). She plays her own hand from what she can see (riichi, pon on value tiles, and folding against your riichi), and yaku, fu and points are counted properly
+  - She comes from the desktop and sits at a 3D table in a Japanese-style room, where both hands, both rivers and the melds are set out. Each hand begins with the tiles dropping into the hands one by one as they are dealt. Her discards vanish from her hand and appear softly in her river. She ponders, smiles at her wins and goes "oops" at yours
+  - Keys: click a tile (or ←→ and Enter) to discard; tsumo, riichi, kan, ron and pon are the buttons above your hand on the right (or their number keys). Space, or a click anywhere off the buttons, lets a tile go, except one you could ron on. After riichi, your draws are discarded for you
+  - While you choose the tile for riichi, the waits it leaves, what each would pay and how many are left are shown for the tile you point at; before riichi the tsumo button says what the tsumo pays
+  - Tiles set down, drawn and called, the riichi stick and the deal have their sounds
+  - Drag over the table to turn the camera as in MMD (middle button or Shift-drag to move it, the wheel to come nearer, double-click or F1 to put it back)
+  - The room has a hanging scroll, washi wallpaper, shoji on either side and a lamp. The floor is set to her legs, so her feet never go through it
+  - See `docs/Mahjong.md` (in Japanese)
+- **Watching**: the other characters on the desktop step aside from the mahjong window and watch it, now and then thinking or nodding
+- **Closeness**: +3 for a mahjong game played to its end (at most 9 a day)
+
+### Fixed
+
+- While a full-screen app hid the characters, a speech bubble stayed on top of it. The bubble is hidden too
+- A character walking when drawing stalled for a moment could pass where she was going and walk on off the screen. She now stops once past it
+
 ## 1.3.0
 
 ### New
