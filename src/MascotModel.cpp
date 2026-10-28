@@ -2542,6 +2542,8 @@ namespace MikuMikuDesktopPerch
         m.UpdateMaterials();
     }
 
+    void MascotModel::Hold(int side,const std::array<float,3>& wrist,bool on){impl->motion.Hold(side,{wrist[0],wrist[1],wrist[2]},on);}
+
     void MascotModel::SetSolids(const std::vector<Solid>& solids)
     {
         using namespace DirectX;

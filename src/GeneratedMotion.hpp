@@ -130,6 +130,11 @@ namespace MikuMikuDesktopPerch
         // as when a tile is warped by a touch. A reach under way is replaced. False when it
         // cannot now.
         bool Reach(int side,const DirectX::XMFLOAT3& fromHead,double seconds,bool tap=false);
+        // Hold something on a table (the air hockey mallet, docs/AirHockey.md): the wrist on side
+        // kept at wrist (model space) every frame, palm down and the fingers round a grip, the
+        // body bent forward (18 degrees, up to 35 toward a point far off), over whatever else the arm does. It
+        // eases in (on) and out (off) in 0.4 s. Standing or sitting.
+        void Hold(int side,const DirectX::XMFLOAT3& wrist,bool on);
         // Stops in front of solid things (MascotModel::SetSolids), from the check after each
         // solve. StopArm: the hand or arm on side is depth in (counting a margin; 0 or less:
         // clear), its way out push (a unit vector in the frame ReachArm works in, the arm's
@@ -337,6 +342,7 @@ namespace MikuMikuDesktopPerch
         };
         std::array<std::array<ArmStop,3>,2> armStops{};
         std::array<DirectX::XMFLOAT3,2> stopWrist{};   // where ReachArm last sent each wrist (stops applied)
+        std::array<DirectX::XMFLOAT3,2> askedWrist{};  // where the motion first asked it to go this frame
         std::array<bool,2> wristDriven{},wristHeld{};  // this frame: ReachArm moved it; a stop held it back
         float leanLimit=1.6f,lastLean=0;               // Reach's lean (radians): most allowed, last asked
         bool leanDriven=false;
@@ -344,6 +350,15 @@ namespace MikuMikuDesktopPerch
         std::array<std::uint32_t,2> armStopCount{};
         std::uint32_t leanStopCount=0;
         DirectX::XMVECTOR Stopped(int side,DirectX::FXMVECTOR wrist);
+        struct HoldArm
+        {
+            bool on=false;
+            DirectX::XMFLOAT3 wrist{};
+            float weight=0;
+            std::vector<Key> smooth;   // the held pose as last given, eased toward each new one (no trembling)
+        };
+        std::array<HoldArm,2> holds{};
+        void ApplyHold(std::vector<Key>& keys,double dt);
         float reactionWeight=0;
         std::vector<std::pair<int,float>> reactionMorphs;
         std::uint32_t random=FreshSeed();

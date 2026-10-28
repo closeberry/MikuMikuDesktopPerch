@@ -67,6 +67,31 @@ namespace MikuMikuDesktopPerch
             int callsSeen=0;
             std::wstring said;
             ULONGLONG saidAt=0;
+            // Her words in the bubble under her name (MahjongOpponent::talk, or a line of her
+            // own): shown until, a weightier one not cut by a lighter while fresh; waiting for
+            // the LLM meanwhile ("…"), its own line kept for when none comes.
+            struct Words
+            {
+                std::wstring text,fallback;
+                ULONGLONG since=0,until=0,asked=0;
+                bool waiting=false;
+                int weight=0;
+                std::vector<std::wstring> recent;   // what she said lately (not to be said again)
+                std::wstring told;                  // diagnostics: what happened and what she said, for the snapshot's report
+            } words;
+            // Her little lines asked for ahead (MahjongOpponent::prefetch): for a call of hers, for
+            // when she stops to think. Taken one by one; asked for again when few are left.
+            std::vector<std::wstring> callLines,thinkLines;
+            bool prefetching=false;
+            // The last game played to its end, for a word on it back on the desktop (MahjongAfterword).
+            std::wstring afterword,afterwordLine;
+            // What the words last saw of the game (for what is new).
+            struct Seen
+            {
+                bool started=false,over=false;
+                std::array<bool,2> riichi{};
+                int round=0,honba=0;
+            } seen;
             std::vector<RectF> handBoxes;   // by hand index (the drawn tile last)
             std::vector<Button> buttons;
             ULONGLONG autoAt=0;              // after riichi: when the drawn tile goes by itself
@@ -83,7 +108,7 @@ namespace MikuMikuDesktopPerch
             struct Camera {float yaw=0,pitch=0.40f,distance=3.0f,x=0,y=0,z=0;} camera;
             POINT dragFrom{};
             int dragging=0;                  // 0, or the button held: 1 turns, 2 moves
-            int dragMoved=0;                 // how far the pointer went since (hardly: a click)
+            bool leftDown=false;             // the left button went down on the table (a click there, not the camera's)
             float upper=10,hips=10;          // her standing model: the hips' height, and from there to the head
             float floorY=-5;                 // the floor below the seat (FloorY), where her feet hang to sitting
             std::vector<int> scene;         // what the table's geometry was built from
@@ -408,10 +433,11 @@ namespace MikuMikuDesktopPerch
 
         LRESULT CALLBACK ViewProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
         {
-            // The camera as in MMD: drag with the left or right button to turn it around her,
-            // with the middle one (or Shift) to move it, the wheel to come nearer; a double-click
-            // puts it back. A click on what is drawn over the table (your hand, the buttons) is
-            // the window's; any click gives the window the keys.
+            // The camera: drag with the right button to turn it around her, with the middle one
+            // (or Shift and the right) to move it, the wheel to come nearer; a right double-click
+            // or F1 puts it back. The left button never moves it: a click on what is drawn over
+            // the table (your hand, the buttons) is the window's, one on the table lets a chance
+            // go. Any click gives the window the keys.
             auto& c=state.camera;
             if((message==WM_LBUTTONDOWN||message==WM_LBUTTONDBLCLK)&&
                (OverHud(lParam)||HandAt(static_cast<float>(GET_X_LPARAM(lParam)),static_cast<float>(GET_Y_LPARAM(lParam)))>=0))
@@ -422,12 +448,15 @@ namespace MikuMikuDesktopPerch
             switch(message)
             {
             case WM_LBUTTONDOWN:
+            case WM_LBUTTONDBLCLK:
+                SetFocus(state.window);
+                state.leftDown=true;
+                return 0;
             case WM_RBUTTONDOWN:
             case WM_MBUTTONDOWN:
                 SetFocus(state.window);
                 state.dragging=message==WM_MBUTTONDOWN||(wParam&MK_SHIFT)?2:1;
                 state.dragFrom={GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
-                state.dragMoved=0;
                 SetCapture(hwnd);
                 return 0;
             case WM_MOUSEMOVE:
@@ -436,7 +465,6 @@ namespace MikuMikuDesktopPerch
                 {
                     const float dx=static_cast<float>(GET_X_LPARAM(lParam)-state.dragFrom.x),dy=static_cast<float>(GET_Y_LPARAM(lParam)-state.dragFrom.y);
                     state.dragFrom={GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
-                    state.dragMoved+=static_cast<int>(std::abs(dx)+std::abs(dy));
                     const float k=1/Scale();
                     if(state.dragging==1)
                     {
@@ -453,23 +481,21 @@ namespace MikuMikuDesktopPerch
                 }
                 return 0;
             case WM_LBUTTONUP:
+                // A left click on the table lets a chance go, as on the window.
+                if(state.leftDown&&!state.dragging){state.leftDown=false;PassByClick();}
+                state.leftDown=false;
+                return 0;
             case WM_RBUTTONUP:
             case WM_MBUTTONUP:
-            {
-                // A left click on the table (not a drag) lets a chance go, as on the window.
-                const bool click=message==WM_LBUTTONUP&&state.dragging&&state.dragMoved<=4;
                 state.dragging=0;
                 ReleaseCapture();
-                if(click)PassByClick();
                 return 0;
-            }
             case WM_CAPTURECHANGED:
                 state.dragging=0;
                 return 0;
             case WM_MOUSEWHEEL:
                 c.distance=std::clamp(c.distance*std::pow(0.9f,GET_WHEEL_DELTA_WPARAM(wParam)/120.0f),0.5f,4.5f);   // inside the room
                 return 0;
-            case WM_LBUTTONDBLCLK:
             case WM_RBUTTONDBLCLK:
                 c={};
                 return 0;
@@ -1237,6 +1263,8 @@ namespace MikuMikuDesktopPerch
             if(onEnd)onEnd();
         }
 
+        void Prefetch();
+
         void NewGame()
         {
             state.gameOverTold=false;
@@ -1247,6 +1275,8 @@ namespace MikuMikuDesktopPerch
             state.riichiMode=state.confirmQuit=false;
             state.said.clear();
             state.nextAt=GetTickCount64()+HerDrawWait;
+            state.seen={};
+            Prefetch();
         }
 
         // After a move of yours: her turn waits a moment.
@@ -1362,6 +1392,203 @@ namespace MikuMikuDesktopPerch
             h={true,you.hasDrawn,her.hasDrawn,over,you.river.size(),her.river.size(),you.melds.size(),her.melds.size(),kans};
         }
 
+        // ---- Her words and the watchers' (docs/Mahjong.md, しゃべる麻雀) ----
+
+        constexpr ULONGLONG WordsHold=3500;   // a lighter word does not cut in on a weightier one this soon
+        constexpr ULONGLONG AskEvery=12000;   // her own words through the LLM for small things, at most this often
+        constexpr ULONGLONG AnswerWait=9000;  // the LLM's line waited for this long, then hers instead
+
+        // Her line in the bubble, for as long as it takes to read.
+        void SayWords(const std::wstring& line,int weight)
+        {
+            auto& w=state.words;
+            const ULONGLONG now=GetTickCount64();
+            w.text=line;
+            w.waiting=false;
+            w.weight=weight;
+            w.since=now;
+            w.told+=L"  she says: "+line+L"\n";
+            w.until=now+2600+90*static_cast<ULONGLONG>(line.size());
+            if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
+            Redraw(Top);
+        }
+
+        const std::wstring& Pick(const std::vector<std::wstring>& lines)
+        {
+            std::uniform_int_distribution<size_t> any(0,lines.size()-1);
+            return lines[any(state.sparkRandom)];
+        }
+
+        // Something happened: she speaks of it (in her own words when the LLM is there and it is
+        // worth it), and those watching hear of it. facts: for her (she is "you", the user her
+        // opponent); seen: the same for one watching; lines: hers without the LLM (none: she
+        // says nothing); theirs: the watchers'.
+        void Happened(int weight,const std::wstring& facts,const std::vector<std::wstring>& lines,
+                      const std::wstring& seen,const std::vector<std::wstring>& theirs)
+        {
+            auto& t=state.table;
+            const auto& you=t.Of(Mahjong::You);
+            const auto& her=t.Of(Mahjong::Her);
+            const std::wstring round=std::wstring(t.RoundWind()==Mahjong::East?T(L"東",L"East "):T(L"南",L"South "))+
+                                     std::to_wstring(t.RoundNumber()<=2?t.RoundNumber():t.RoundNumber()-2)+T(L"局",L"");
+            state.words.told+=Fmt(L"  {0} s, weight {1}: {2}\n",{std::to_wstring(static_cast<int>(state.clock)),std::to_wstring(weight),seen});
+            if(state.her.onEvent&&!theirs.empty())
+                state.her.onEvent(seen+Fmt(T(L"（{0}、点数は{1}が{2}点、持ち主が{3}点）",L" ({0}; {1} has {2} points, the owner {3})"),
+                                           {round,HerName(),std::to_wstring(her.points),std::to_wstring(you.points)}),weight,Pick(theirs));
+            if(lines.empty())return;
+            auto& w=state.words;
+            const ULONGLONG now=GetTickCount64();
+            // A lighter word does not cut in on one that matters more while it is fresh (or coming).
+            if((w.waiting||now-w.since<WordsHold)&&weight<w.weight)return;
+            const std::wstring line=Pick(lines);
+            if(state.her.talk&&(weight>=6||now-w.asked>AskEvery))
+            {
+                std::wstring situation=facts+Fmt(T(L"（いまは{0}、あなたは{1}点、相手は{2}点）",L" (Now {0}; you have {1} points, they have {2})"),
+                                                 {round,std::to_wstring(her.points),std::to_wstring(you.points)});
+                if(!w.recent.empty())
+                {
+                    situation+=T(L"さっきあなたが言ったこと：",L" What you said just before: ");
+                    for(const auto& r:w.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
+                    situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
+                }
+                situation+=T(L"そのことを、対局相手に一言（1〜2文）",L"Say a word about it to them (one or two sentences)");
+                if(state.her.talk(situation))
+                {
+                    w.waiting=true;
+                    w.fallback=line;
+                    w.text=L"…";
+                    w.weight=weight;
+                    w.since=w.asked=now;
+                    w.until=now+AnswerWait+4000;
+                    Redraw(Top);
+                    return;
+                }
+            }
+            SayWords(line,weight);
+        }
+
+        // Her little lines, asked for ahead when few are left (and the LLM is there).
+        void Prefetch()
+        {
+            if(state.prefetching||!state.her.prefetch||(state.callLines.size()>=2&&state.thinkLines.size()>=2))return;
+            const std::wstring ask=T(
+                L"これから話し相手と麻雀を打ちます。対局中に言う短いひと言を用意してください。"
+                L"次の形で、1行に1つずつ、それぞれ6つずつ書いてください（どれも違う言い方で、1文の短い話し言葉）。\n"
+                L"ポン：（相手の捨てた牌をポンやカンでもらうときのひと言）\n"
+                L"考える：（次に切る牌を迷って考えているときのひと言）\n"
+                L"この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わず、自分の手牌や待ちは言わないでください。",
+                L"You are about to play mahjong with them. Get ready some little lines to say during the game. "
+                L"Write six of each, one to a line, in this form (each different, one short spoken sentence):\n"
+                L"Pon: (a word as you take their discard with a pon or kan)\n"
+                L"Think: (a word as you stop to think which tile to let go)\n"
+                L"Write nothing but these lines. No feeling tags, names, anything in ( ) or emoji, and never tell your tiles or waits.");
+            state.prefetching=state.her.prefetch(ask);
+        }
+
+        // A line from those asked for ahead (or one of these when none is left), not said again.
+        std::wstring TakeLine(std::vector<std::wstring>& ready,const std::vector<std::wstring>& own)
+        {
+            std::wstring line;
+            if(!ready.empty())
+            {
+                std::uniform_int_distribution<size_t> any(0,ready.size()-1);
+                const size_t i=any(state.sparkRandom);
+                line=ready[i];
+                ready.erase(ready.begin()+static_cast<std::ptrdiff_t>(i));
+            }
+            else line=Pick(own);
+            Prefetch();
+            return line;
+        }
+
+        // What is new in the game since the last tick, for words: its start, a riichi, a hand's
+        // end, the last hand, the game's end.
+        void NoticeWords()
+        {
+            auto& t=state.table;
+            auto& seen=state.seen;
+            const auto& you=t.Of(Mahjong::You);
+            const auto& her=t.Of(Mahjong::Her);
+            auto& w=state.words;
+            const ULONGLONG now=GetTickCount64();
+            if(w.waiting&&now-w.since>AnswerWait)SayWords(w.fallback,w.weight);   // no answer: her own line
+            if(!w.text.empty()&&!w.waiting&&now>w.until){w.text.clear();Redraw(Top);}
+            if(Dealing())return;   // the tiles are still coming
+            const std::wstring name=HerName();
+            if(!seen.started)
+            {
+                seen.started=true;
+                seen.round=t.RoundNumber();
+                seen.honba=t.Honba();
+                Happened(6,T(L"これから対局が始まる。",L"The game is about to begin."),
+                         {T(L"よろしくね！負けないよ。",L"Let's play! I won't lose."),T(L"よーし、がんばるぞ！",L"Okay, here I go!"),T(L"お手やわらかにね。",L"Go easy on me.")},
+                         Fmt(T(L"{0}と、このパソコンの持ち主の麻雀の対局が始まる。",L"A mahjong game between {0} and the owner of this computer is about to begin."),{name}),
+                         {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
+            }
+            const bool over=t.Now()==Phase::RoundOver||t.Now()==Phase::GameOver;
+            if(!over&&(t.RoundNumber()!=seen.round||t.Honba()!=seen.honba))
+            {
+                seen.round=t.RoundNumber();
+                seen.honba=t.Honba();
+                if(t.RoundNumber()==Mahjong::Hands&&t.Honba()==0)
+                    Happened(5,T(L"最後の局（オーラス）が始まった。",L"The last hand of the game has begun."),
+                             {T(L"オーラスだね。最後まで気を抜かないよ！",L"The last hand! I'm not letting up."),T(L"いよいよオーラス…どきどきする！",L"The last hand... I'm nervous!")},
+                             Fmt(T(L"{0}と持ち主の麻雀は、最後の局（オーラス）に入った。",L"The mahjong game between {0} and the owner is in its last hand."),{name}),
+                             {T(L"いよいよオーラスだね。",L"Here comes the last hand."),T(L"最後の局だ、どうなるかな。",L"Last hand. How will it go?")});
+            }
+            if(you.riichi&&!seen.riichi[Mahjong::You])
+                Happened(5,T(L"相手がリーチをかけてきた。",L"They have just declared riichi against you."),
+                         {T(L"えっ、リーチ!? 気をつけなきゃ…",L"Riichi?! I'd better be careful..."),T(L"うう、リーチかあ。",L"Ugh, riichi..."),T(L"リーチ…どこ待ちなんだろう。",L"Riichi... what are they waiting on?")},
+                         Fmt(T(L"麻雀で、持ち主が{0}にリーチをかけた。",L"In the mahjong game, the owner has declared riichi against {0}."),{name}),
+                         {T(L"おっ、リーチだ！",L"Ooh, riichi!"),T(L"リーチきた！",L"Riichi!")});
+            if(her.riichi&&!seen.riichi[Mahjong::Her])
+                Happened(4,L"",{},
+                         Fmt(T(L"麻雀で、{0}がリーチをかけた。",L"In the mahjong game, {0} has declared riichi."),{name}),
+                         {Fmt(T(L"{0}のリーチだ！",L"{0} declared riichi!"),{name}),T(L"リーチ返しはあるかな？",L"Will there be a riichi back?")});
+            seen.riichi={you.riichi,her.riichi};
+            if(over&&!seen.over)
+            {
+                const auto& e=t.Ended();
+                std::wstring yaku;
+                for(size_t i=0;i<e.score.yaku.size()&&i<4;++i)yaku+=(i?T(L"・",L", "):L"")+std::wstring(English()?e.score.yaku[i].en:e.score.yaku[i].ja);
+                const std::wstring points=std::to_wstring(e.score.points);
+                const std::wstring how=e.tsumo?T(L"ツモ",L"tsumo"):T(L"ロン",L"ron");
+                if(e.draw)
+                    Happened(3,T(L"山がなくなって流局した。",L"The wall ran out: the hand is a draw."),
+                             {T(L"流局かあ。",L"A draw, huh."),T(L"引き分けだね。",L"Nobody won that one.")},
+                             Fmt(T(L"{0}と持ち主の麻雀は、流局した。",L"In the mahjong game between {0} and the owner, the hand was a draw."),{name}),
+                             {T(L"流局だね。",L"A draw."),T(L"惜しかったね、どっちも。",L"Close, both of you.")});
+                else if(e.winner==Mahjong::Her)
+                    Happened(8,Fmt(T(L"あなたが{0}で和了った（{1}、{2}点）。",L"You won the hand by {0} ({1}; {2} points)."),{how,yaku,points}),
+                             {T(L"やった、和了り！",L"Yes, I won!"),T(L"えへへ、もらったよ！",L"Hehe, that one's mine!"),T(L"よし、決まった！",L"Got it!")},
+                             Fmt(T(L"麻雀で、{0}が{1}で和了った（{2}、{3}点）。",L"In the mahjong game, {0} won the hand by {1} ({2}; {3} points)."),{name,how,yaku,points}),
+                             {Fmt(T(L"{0}、すごい！",L"Nice one, {0}!"),{name}),Fmt(T(L"{0}点の和了りだ！",L"A {0}-point win!"),{points})});
+                else
+                    Happened(8,Fmt(T(L"相手が{0}で和了った（{1}、{2}点）。",L"They won the hand by {0} ({1}; {2} points)."),{how,yaku,points}),
+                             {T(L"あちゃ～、やられた！",L"Argh, you got me!"),T(L"うう、強いなあ…",L"Ugh, you're good..."),T(L"それ待ちだったの!?",L"That was your wait?!")},
+                             Fmt(T(L"麻雀で、持ち主が{0}で和了った（{1}、{2}点）。",L"In the mahjong game, the owner won the hand by {0} ({1}; {2} points)."),{how,yaku,points}),
+                             {T(L"おお、和了った！",L"Oh, a win!"),Fmt(T(L"{0}点かあ、大きいね。",L"{0} points, that's big."),{points})});
+                if(t.Now()==Phase::GameOver)
+                {
+                    const bool won=her.points>you.points;
+                    state.afterword=Fmt(T(L"いま、話し相手と麻雀を最後まで打って、デスクトップに戻ってきたところ。結果は{0}（あなた{1}点、相手{2}点）。その対局の感想を、話し相手にひと言（1〜2文）",
+                                          L"You have just played mahjong to the end with them and come back to the desktop. {0}: you have {1} points, they have {2}. Tell them what you thought of the game (one or two sentences)"),
+                                        {won?T(L"あなたの勝ち",L"You won"):T(L"あなたの負け",L"You lost"),std::to_wstring(her.points),std::to_wstring(you.points)});
+                    state.afterwordLine=won?T(L"麻雀、楽しかったね！またやろう。",L"That was fun! Let's play again sometime."):T(L"くやしいなあ…次は勝つからね！",L"So close... I'll win next time!");
+                    const std::wstring score=Fmt(T(L"あなたは{0}点、相手は{1}点",L"you have {0} points, they have {1}"),{std::to_wstring(her.points),std::to_wstring(you.points)});
+                    if(won)Happened(9,T(L"対局が終わって、あなたの勝ち。",L"The game is over, and you won. ")+score+T(L"。",L"."),
+                                    {T(L"勝った！楽しかったね、またやろう！",L"I won! That was fun, let's play again!"),T(L"やったー、わたしの勝ち！",L"Yay, I win!")},
+                                    Fmt(T(L"{0}と持ち主の麻雀の対局が終わり、{0}が勝った。",L"The mahjong game between {0} and the owner is over: {0} won."),{name}),
+                                    {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
+                    else Happened(9,T(L"対局が終わって、あなたの負け。",L"The game is over, and you lost. ")+score+T(L"。",L"."),
+                                  {T(L"負けちゃった…次は負けないよ！",L"I lost... I'll get you next time!"),T(L"うう、くやしい！もう一回！",L"Ugh, so close! One more!")},
+                                  Fmt(T(L"{0}と持ち主の麻雀の対局が終わり、持ち主が勝った。",L"The mahjong game between {0} and the owner is over: the owner won."),{name}),
+                                  {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"勝った！おめでとう！",L"You won! Congratulations!")});
+                }
+            }
+            seen.over=over;
+        }
+
         void Tick()
         {
             auto& t=state.table;
@@ -1375,6 +1602,11 @@ namespace MikuMikuDesktopPerch
                 state.saidAt=now;
                 state.nextAt=std::max(state.nextAt,now+CallWait);
                 parts|=Top;
+                // Taking a tile from the table (a pon, a kan of hers): now and then a little word too.
+                const std::wstring call=t.HerCallJa();
+                std::uniform_real_distribution<double> any(0,1);
+                if((call==L"ポン"||call==L"カン")&&any(state.sparkRandom)<0.1)
+                    SayWords(TakeLine(state.callLines,{T(L"それ、もらうね！",L"I'll take that!"),T(L"ありがたくいただきます。",L"Don't mind if I do."),T(L"いいとこ出たね！",L"Just what I needed!")}),2);
             }
             if(!state.said.empty()&&now-state.saidAt>SaidShown){state.said.clear();parts|=Top;}
             if(now>=state.nextAt)
@@ -1393,6 +1625,9 @@ namespace MikuMikuDesktopPerch
                         {
                             state.nextAt+=ThinkExtra;
                             state.thinkFor=(HerDiscardWait3D+ThinkExtra-ReachLead)/1000.0-0.1;
+                            // Each time she stops to think, she says so.
+                            if(!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)
+                                SayWords(TakeLine(state.thinkLines,{T(L"うーん…どれにしようかな。",L"Hmm... which one?"),T(L"ちょっと考えさせて…",L"Let me think..."),T(L"むむ…",L"Hmm...")}),2);
                         }
                     }
                     // Her draw changes only her side; her discard the middle and your side too.
@@ -1415,6 +1650,7 @@ namespace MikuMikuDesktopPerch
             }
             Redraw(parts);
             Listen();
+            NoticeWords();
             if(t.Now()==Phase::GameOver&&!state.gameOverTold)
             {
                 state.gameOverTold=true;
@@ -1574,6 +1810,33 @@ namespace MikuMikuDesktopPerch
             Text(g,HerName(),RectF(nameX,nameY,240*s,28*s),20*s,white,true);
             Text(g,Points(her.points)+(t.Dealer()==Mahjong::Her?T(L"　親",L"  dealer"):L""),RectF(nameX,nameY+30*s,240*s,24*s),17*s,soft);
             if(her.riichi){FillRound(g,RectF(nameX,nameY+60*s,90*s,8*s),3*s,Color(255,245,245,240));SolidBrush dot(Color(255,210,30,40));g.FillEllipse(&dot,nameX+41*s,nameY+60*s,8*s,8*s);}
+            // Her words: a bubble at the right, under the hand's box, as wide as they need (to two
+            // fifths of the window, then wrapped), its tail toward her.
+            if(!state.words.text.empty())
+            {
+                const std::wstring& said=state.words.text;
+                Font font(Family(),16*s,FontStyleRegular,UnitPixel);
+                StringFormat format;
+                const float most=std::max(160*s,W*0.4f),pad=14*s;
+                RectF one,need;
+                g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,PointF(0,0),&format,&one);
+                g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,RectF(0,0,most-2*pad,600*s),&format,&need);
+                const float tw=std::min(one.Width,most-2*pad)+2,th=need.Height;
+                const float bw=tw+2*pad,bh=th+2*pad*0.8f,x=W-14*s-bw,y=hud?88*s:72*s;
+                {
+                    // The tail, out of the bubble's left side toward her.
+                    const float ty=y+std::min(bh*0.5f,30*s);
+                    const PointF tail[3]={PointF(x+2*s,ty-9*s),PointF(x-16*s,ty+4*s),PointF(x+2*s,ty+9*s)};
+                    SolidBrush fill(Color(240,255,252,246));
+                    Pen edge(Color(255,214,170,120),1.5f*s);
+                    g.FillPolygon(&fill,tail,3);
+                    g.DrawLine(&edge,tail[0],tail[1]);
+                    g.DrawLine(&edge,tail[1],tail[2]);
+                }
+                FillRound(g,RectF(x,y,bw,bh),14*s,Color(240,255,252,246),Color(255,214,170,120),1.5f*s);
+                SolidBrush ink(Color(255,60,44,36));
+                g.DrawString(said.c_str(),static_cast<INT>(said.size()),&font,RectF(x+pad,y+pad*0.8f,tw+4,th+4),&format,&ink);
+            }
             if(!state.said.empty())
             {
                 const float tw=TextWidth(g,state.said,30*s,true)+30*s;
@@ -1760,7 +2023,7 @@ namespace MikuMikuDesktopPerch
         void OnKey(WPARAM key)
         {
             auto& t=state.table;
-            if(key==VK_F1){state.camera={};return;}   // the camera back where it was (as a double-click on the table)
+            if(key==VK_F1){state.camera={};return;}   // the camera back where it was (as a right double-click on the table)
             if(state.confirmQuit)
             {
                 if(key=='Y')Finish();
@@ -1899,6 +2162,64 @@ namespace MikuMikuDesktopPerch
             state.said=t.HerCalls()?std::wstring(t.HerCallJa())+L"！":L"";
             state.nextAt=0;
             state.selected=-1;
+        }
+    }
+
+    void MahjongLines(const std::wstring& answer)
+    {
+        state.prefetching=false;
+        if(!state.window)return;
+        size_t at=0;
+        while(at<answer.size())
+        {
+            size_t end=answer.find(L'\n',at);
+            if(end==std::wstring::npos)end=answer.size();
+            std::wstring line=answer.substr(at,end-at);
+            at=end+1;
+            // "ポン：..." / "Pon: ...": the kind, then the line (its quotes and spaces off).
+            const size_t colon=line.find_first_of(L":：");
+            if(colon==std::wstring::npos)continue;
+            const std::wstring kind=line.substr(0,colon);
+            std::wstring said=line.substr(colon+1);
+            for(const wchar_t* cut:{L"「",L"」",L"\"",L"*"})
+                for(size_t p;(p=said.find(cut))!=std::wstring::npos;)said.erase(p,wcslen(cut));
+            const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
+            if(a==std::wstring::npos)continue;
+            said=said.substr(a,b-a+1);
+            if(said.size()>60)continue;
+            if(kind.find(L"ポン")!=std::wstring::npos||kind.find(L"Pon")!=std::wstring::npos||kind.find(L"pon")!=std::wstring::npos)state.callLines.push_back(said);
+            else if(kind.find(L"考")!=std::wstring::npos||kind.find(L"hink")!=std::wstring::npos)state.thinkLines.push_back(said);
+        }
+        state.words.told+=L"  lines ready: "+std::to_wstring(state.callLines.size())+L" for a call, "+std::to_wstring(state.thinkLines.size())+L" for thinking\n";
+    }
+
+    bool MahjongAfterword(std::wstring& situation,std::wstring& fallback)
+    {
+        if(state.afterword.empty())return false;
+        situation=std::move(state.afterword);
+        fallback=std::move(state.afterwordLine);
+        state.afterword.clear();
+        state.afterwordLine.clear();
+        return true;
+    }
+
+    void MahjongHeard(const std::wstring& line,bool done)
+    {
+        auto& w=state.words;
+        if(!w.waiting||!state.window)return;
+        if(done&&line.empty()){SayWords(w.fallback,w.weight);return;}
+        if(!line.empty())
+        {
+            w.text=line;
+            w.until=GetTickCount64()+2600+90*static_cast<ULONGLONG>(line.size());
+            Redraw(Top);
+        }
+        if(done)
+        {
+            w.waiting=false;
+            if(w.recent.size()>=4)w.recent.erase(w.recent.begin());
+            w.recent.push_back(line);
+            w.told+=L"  she says (LLM): "+line+L"\n";
         }
     }
 
@@ -2253,7 +2574,7 @@ namespace MikuMikuDesktopPerch
         if(!state.renderer||!state.her.model||!state.her.model->LegBounds(lo,hi))return L"";
         wchar_t text[160];
         swprintf_s(text,L"mahjong: entrance %d, lowest leg bone %.2f, floor %.2f, hips %.2f, upper %.2f\n",state.entrance,lo[1],FloorY(),state.hips,state.upper);
-        return text;
+        return text+(state.words.told.empty()?std::wstring():L"mahjong words:\n"+state.words.told);
     }
 
     bool SaveMahjongView(const std::wstring& path)

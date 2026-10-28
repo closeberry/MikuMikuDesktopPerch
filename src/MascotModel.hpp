@@ -234,6 +234,9 @@ namespace MikuMikuDesktopPerch
         // weighs on) is checked after every update, and an arm the generated motion moves
         // (GeneratedMotion::ReachArm) or its lean stops before going further in. Set again
         // whenever they move against her; empty: none.
+        // Hold something on a table (the air hockey mallet): the wrist on side (0: the left) kept
+        // at wrist (model space) every update, palm down round a grip; see GeneratedMotion::Hold.
+        void Hold(int side,const std::array<float,3>& wrist,bool on);
         struct Solid
         {
             std::array<float,3> middle{},half{};

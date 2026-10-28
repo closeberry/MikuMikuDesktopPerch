@@ -61,6 +61,16 @@ namespace MikuMikuDesktopPerch::AirHockey
         if(now>rules.puckSpeed)puckVelocity=puckVelocity*(rules.puckSpeed/now);
     }
 
+    void Game::HoldMallet(int side,Vec at)
+    {
+        const float R=rules.mallet[side],W=rules.width/2-R,L=rules.length/2-R,s=End(side);
+        at.x=std::clamp(at.x,-W,W);
+        at.y=std::clamp(at.y*s,R,L)*s;
+        held[side]=true;
+        heldFrom[side]=mallet[side];
+        heldAt[side]=at;
+    }
+
     void Game::Step(double seconds,Vec yourTarget,Vec herTarget)
     {
         const float dt=static_cast<float>(std::clamp(seconds,0.0,0.1));
@@ -68,18 +78,25 @@ namespace MikuMikuDesktopPerch::AirHockey
         if(phase==Phase::Serve&&(serveLeft-=dt)<=0)phase=Phase::Play;
         // Steps short enough that nothing goes through anything: the puck and the mallets move
         // less than half the puck's radius in each.
-        const float travel=Length(puckVelocity)*dt+std::max(rules.malletSpeed[0],rules.malletSpeed[1])*dt;
+        float travel=Length(puckVelocity)*dt+std::max(rules.malletSpeed[0],rules.malletSpeed[1])*dt;
+        for(int side:{You,Her})if(held[side])travel=std::max(travel,Length(puckVelocity)*dt+Length(heldAt[side]-heldFrom[side]));
         const int steps=std::clamp(static_cast<int>(std::ceil(travel/(0.4f*rules.puck))),1,64);
         const float h=dt/steps;
+        for(int side:{You,Her})if(held[side]&&dt>0)malletVelocity[side]=(heldAt[side]-heldFrom[side])*(1/dt);
         for(int i=0;i<steps;++i)
         {
-            MoveMallet(You,yourTarget,h);
-            MoveMallet(Her,herTarget,h);
+            for(int side:{You,Her})
+            {
+                if(!held[side]){MoveMallet(side,side==You?yourTarget:herTarget,h);continue;}
+                // Where the hand takes it, a step at a time.
+                mallet[side]=heldFrom[side]+(heldAt[side]-heldFrom[side])*(static_cast<float>(i+1)/steps);
+            }
             if(phase==Phase::Play)MovePuck(h);
             if(phase==Phase::Over)break;
             Collide(You);
             Collide(Her);
         }
+        held={};
         if(phase!=Phase::Play)return;
         puckVelocity=puckVelocity*std::exp(-rules.drag*dt);
         const float speed=Length(puckVelocity);

@@ -491,6 +491,7 @@ namespace MikuMikuDesktopPerch
 
     XMVECTOR GeneratedMotion::Stopped(int side,FXMVECTOR target)
     {
+        if(!wristDriven[side])XMStoreFloat3(&askedWrist[side],target);
         XMVECTOR wrist=target;
         for(int pass=0;pass<2;++pass)   // twice: a stop's push can take it past another's
             for(const ArmStop& s:armStops[side])
@@ -527,6 +528,9 @@ namespace MikuMikuDesktopPerch
                 stop->used=true;
             }
             stop->offset=std::max(stop->offset,XMVectorGetX(XMVector3Dot(wrist,XMLoadFloat3(&stop->normal))))+depth;
+            // Never far from where the motion wants the wrist: when the forearm or the upper arm
+            // stays in, moving the wrist on would only fold the arm away.
+            stop->offset=std::min(stop->offset,XMVectorGetX(XMVector3Dot(XMLoadFloat3(&askedWrist[side]),XMLoadFloat3(&stop->normal)))+0.4f*rig.legLength);
             ++armStopCount[side];
         }
         else if(held)
@@ -1610,6 +1614,65 @@ namespace MikuMikuDesktopPerch
         }
     }
 
+    void GeneratedMotion::Hold(int side,const XMFLOAT3& wrist,bool on)
+    {
+        if(side<0||side>1)return;
+        holds[side].on=on;
+        if(on)holds[side].wrist=wrist;
+    }
+
+    void GeneratedMotion::ApplyHold(std::vector<Key>& keys,double dt)
+    {
+        for(int s=0;s<2;++s)
+        {
+            HoldArm& h=holds[s];
+            h.weight=std::clamp(h.weight+static_cast<float>(dt/0.4)*(h.on?1.0f:-1.0f),0.0f,1.0f);
+            if(h.weight<=0||rig.arm[s]<0||overrides.empty())continue;
+            const float weight=Smooth(h.weight),out=s==0?1.0f:-1.0f;
+            std::vector<Key> g=keys;
+            const XMVECTOR shoulder=XMLoadFloat3(&rig.shoulderPos[s]);
+            const float hipY=(rig.hipRest[0].y+rig.hipRest[1].y)*0.5f,hipZ=(rig.hipRest[0].z+rig.hipRest[1].z)*0.5f;
+            const XMVECTOR pivot=XMVectorSet(0,hipY,hipZ,0);
+            XMVECTOR target=XMLoadFloat3(&h.wrist);
+            // Bent forward from the waist over the table as one plays, further toward a point
+            // far off (no further into a solid).
+            const float reach=rig.upperArm+0.75f*rig.foreArm;
+            const float d=XMVectorGetX(XMVector3Length(XMVectorSubtract(target,shoulder)));
+            lastLean=(18.0f+std::clamp((d-0.7f*reach)/(0.8f*reach),0.0f,1.0f)*17.0f)*Deg;
+            leanDriven=true;
+            const float lean=std::min(lastLean,leanLimit);
+            // Only that lean: the idle motion's sway of the upper body would carry the hand about.
+            if(rig.upperBody>=0)XMStoreFloat4(&KeyOf(g,rig.upperBody).rotation,XMQuaternionRotationRollPitchYaw(-lean,0,0));
+            // Where the point is as the leaning body sees it, and no further than the arm goes.
+            target=XMVectorAdd(pivot,XMVector3Transform(XMVectorSubtract(target,pivot),XMMatrixRotationX(lean)));
+            const XMVECTOR to=XMVectorSubtract(target,shoulder);
+            const float far=0.95f*reach,dist=XMVectorGetX(XMVector3Length(to));
+            if(dist>far)target=XMVectorAdd(shoulder,XMVectorScale(to,far/dist));
+            // The elbow out and a little down, the hand flat over the grip.
+            ReachArm(g,s,target,XMVectorSet(out*0.8f,-1,0.2f,0),0.6f,true);
+            AimHand(g,s,XMVectorSet(-out*0.1f,-0.1f,-1,0),XMVectorSet(0,-1,0,0));
+            CurlFingers(g,s,{0.3f,0.35f,0.4f,0.45f});
+            // Eased toward the pose just made (0.07 s): the small shakes of the target (the
+            // mallet's moves, the stops in front of the table) are not seen in the hand.
+            if(h.smooth.size()!=g.size()||h.weight<=static_cast<float>(dt/0.4)+1e-4f)h.smooth=g;
+            else
+            {
+                const float follow=static_cast<float>(1.0-std::exp(-dt/0.07));
+                for(size_t i=0;i<g.size();++i)
+                {
+                    XMStoreFloat4(&h.smooth[i].rotation,XMQuaternionSlerp(XMLoadFloat4(&h.smooth[i].rotation),XMLoadFloat4(&g[i].rotation),follow));
+                    XMStoreFloat3(&h.smooth[i].position,XMVectorLerp(XMLoadFloat3(&h.smooth[i].position),XMLoadFloat3(&g[i].position),follow));
+                }
+                g=h.smooth;
+            }
+            for(size_t i=0;i<keys.size();++i)
+            {
+                XMStoreFloat4(&keys[i].rotation,XMQuaternionSlerp(XMLoadFloat4(&keys[i].rotation),XMLoadFloat4(&g[i].rotation),weight));
+                XMStoreFloat3(&keys[i].position,XMVectorLerp(XMLoadFloat3(&keys[i].position),XMLoadFloat3(&g[i].position),weight));
+            }
+        }
+    }
+
     void GeneratedMotion::Generate(std::vector<Key>& keys,double dt)
     {
         const float L=rig.legLength;
@@ -2134,6 +2197,7 @@ namespace MikuMikuDesktopPerch
         }
         lastOutput=out;
         ApplyReaction(out,dt);
+        ApplyHold(out,dt);
 
         // Landing crouch on top of whatever comes next (the knees bend through the foot IK).
         if(rig.groove>=0&&landTime<0.8)

@@ -51,6 +51,9 @@ namespace MikuMikuDesktopPerch::AirHockey
         void NewGame(int serving=You);
         // A new top speed for the puck, from now on (a puck going faster slows to it).
         void SetPuckSpeed(float speed);
+        // The mallet on side held by a hand (hers, drawn in 3D): over the next Step it goes
+        // straight to at (kept on its half), at the speed that takes, instead of toward its target.
+        void HoldMallet(int side,Vec at);
         // dt seconds on: each mallet moves toward its target (kept on its own half), the puck
         // moves and bounces, a goal is counted. The puck stopped on her side for long is put in
         // front of you (on yours it is yours to play, however long it rests).
@@ -84,6 +87,8 @@ namespace MikuMikuDesktopPerch::AirHockey
         Phase phase=Phase::Serve;
         Vec puck{},puckVelocity{};
         std::array<Vec,2> mallet{},malletVelocity{};
+        std::array<bool,2> held{};            // HoldMallet: moved by a hand this Step
+        std::array<Vec,2> heldFrom{},heldAt{};
         std::array<int,2> score{};
         int winner=-1,serving=You,lastScorer=-1;
         double serveLeft=0,clock=0,still=0;

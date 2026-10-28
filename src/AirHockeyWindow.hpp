@@ -6,21 +6,41 @@
 
 namespace MikuMikuDesktopPerch
 {
-    // The air hockey mini game's window (docs/AirHockey.md): the table seen from above, your end
-    // at the bottom. Move the mouse to move your mallet; Space pauses, Esc gives up (Y to leave,
-    // N to go on), Enter plays again once a game is over, 1-4 choose how fast the puck may go.
-    // One at a time.
+    class MascotModel;
+
+    // The air hockey mini game's window (docs/AirHockey.md): the table seen at a slant from
+    // behind your end, her standing at the far end with her mallet in hand (from above in 2D when
+    // there is no 3D). Move the mouse to move your mallet; drag with the right button to turn the
+    // camera (the middle one, or Shift and the right, to move it), the wheel to come nearer, a
+    // right double-click or F1 puts it back. Space pauses, Esc gives up (Y to leave, N to go
+    // on), Enter plays again once a game is over, 1-4 choose how fast the puck may go. One at a
+    // time.
     struct AirHockeyOpponent
     {
         std::wstring name;
         int puckSpeed=2;                          // 1-4 (AirHockey::PuckSpeeds)
         std::function<void(int)> onPuckSpeed;     // another chosen with the keys (to keep in the settings)
-        std::function<void()> onGameOver;   // each game played to its end (not one given up)
+        std::function<void()> onGameOver;         // each game played to its end (not one given up)
+        // Her model, drawn standing at the table (null: 2D only). It must stay loaded while the
+        // window is open; TickAirHockeyWindow is given it every frame.
+        MascotModel* model=nullptr;
+        std::wstring toonDir;
+        float edgeScale=1;
+        int msaa=4;                               // MSAA samples and the textures' largest side
+        unsigned maxTexture=1024;
+        bool light=false;                         // fewer pixels drawn (the settings' light 3D)
     };
 
     // Opens it (or brings it forward when open). onEnd: once, when the window closes.
     void ShowAirHockeyWindow(HWND owner,const AirHockeyOpponent& her,std::function<void()> onEnd);
     bool AirHockeyWindowOpen();
+    // The window, and where it is on the screen while it shows (not minimized): the others
+    // watch the game from beside it, as at mahjong.
+    HWND AirHockeyWindowHandle();
+    bool AirHockeyWindowRect(RECT& r);
+    // Every frame while open: the game goes on, and her model, as it is posed now, is drawn at
+    // the table holding her mallet.
+    void TickAirHockeyWindow(MascotModel& model,double dt);
 
     // Diagnostics (--airhockey-sim): games between two of the opponent's players, checked for
     // what must not happen (the puck off the table, inside a mallet; a game that never ends),
@@ -31,8 +51,10 @@ namespace MikuMikuDesktopPerch
     // the window not paused when away), and the window as last drawn, to a PNG.
     void PlayAirHockeyForTest();
     bool SaveAirHockeyView(const std::wstring& path);
-    std::wstring DescribeAirHockey();   // one "airhockey:" line for the snapshot's report
-    // Diagnostics (--airhockey-shot): two of them playing for seconds, drawn as the window would
-    // be, to a PNG.
+    std::wstring DescribeAirHockey();   // "airhockey:" lines for the snapshot's report
+    // Diagnostics (--airhockey-camera pitch,distance,yaw): the camera turned this way.
+    void SetAirHockeyCamera(float pitch,float distance,float yaw);
+    // Diagnostics (--airhockey-shot): two of them playing for seconds, drawn as the 2D window
+    // would be, to a PNG.
     bool SaveAirHockeyShot(const std::wstring& path,double seconds,std::uint32_t seed);
 }
