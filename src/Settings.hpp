@@ -72,6 +72,7 @@ namespace MikuMikuDesktopPerch
         int albumHotkey=0x0753;
         bool shutterSound=true;
         std::wstring albumFolder;
+        int airHockeyPuck=2;        // the air hockey puck's top speed, 1 (slowest) to 4 (fastest); keys 1-4 in its window
         bool dungeonLight=false;    // draw the dungeon's 3D view light (no MSAA, small textures, fewer pixels)   // where the pictures go (empty: LOCALAPPDATA\MikuMikuDesktopPerch\album)
         bool chatInitiative=true;   // greet, welcome back and now and then say something first
         // With chatInitiative: about how often (minutes, varied by a third either way) one says a

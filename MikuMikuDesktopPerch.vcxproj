@@ -96,6 +96,8 @@
     <ClCompile Include="src\Album.cpp" />
     <ClCompile Include="src\Dungeon.cpp" />
     <ClCompile Include="src\DungeonWindow.cpp" />
+    <ClCompile Include="src\AirHockey.cpp" />
+    <ClCompile Include="src\AirHockeyWindow.cpp" />
     <ClCompile Include="src\Mahjong.cpp" />
     <ClCompile Include="src\MahjongSound.cpp" />
     <ClCompile Include="src\MahjongTable.cpp" />
@@ -142,6 +144,8 @@
     <ClInclude Include="src\Album.hpp" />
     <ClInclude Include="src\Dungeon.hpp" />
     <ClInclude Include="src\DungeonWindow.hpp" />
+    <ClInclude Include="src\AirHockey.hpp" />
+    <ClInclude Include="src\AirHockeyWindow.hpp" />
     <ClInclude Include="src\Mahjong.hpp" />
     <ClInclude Include="src\MahjongSound.hpp" />
     <ClInclude Include="src\MahjongWindow.hpp" />

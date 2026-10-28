@@ -12,6 +12,7 @@
 #include "Mahjong.hpp"
 #include "MahjongSound.hpp"
 #include "MahjongWindow.hpp"
+#include "AirHockeyWindow.hpp"
 #include "TreasureArt.hpp"
 #include <commctrl.h>
 #include "Voice.hpp"
@@ -60,7 +61,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr UINT IdTreasure=600;          // + the treasure's place in Dungeon::TreasureBook: look at it
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
@@ -1632,6 +1633,7 @@ namespace
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         AppendMenuW(menu,MF_STRING,IdDungeon,T(L"ダンジョンへ行く",L"Go to the dungeon"));
         AppendMenuW(menu,MF_STRING,IdMahjong,T(L"麻雀を打つ",L"Play mahjong"));
+        AppendMenuW(menu,MF_STRING,IdAirHockey,T(L"エアホッケーをする",L"Play air hockey"));
         // The treasures she brought home from it, each to look at on her palm.
         {
             HMENU treasures=CreatePopupMenu();
@@ -3780,6 +3782,23 @@ namespace
         return true;
     }
 
+    // docs/AirHockey.md: a game in its own window. For now the table only, against a mallet that
+    // plays as she will; she stays on the desktop meanwhile.
+    void OpenAirHockey(Mascot& m)
+    {
+        if(AirHockeyWindowOpen()){ShowAirHockeyWindow(m.hwnd,{},{});return;}
+        if(MahjongWindowOpen()||DungeonWindowOpen()||m.inDungeon||m.inMahjong)return;
+        Trace(L"%.1f air hockey: start (%s)",app.clock,m.modelPath.c_str());
+        AirHockeyOpponent her;
+        her.name=DungeonHeroOf(m).name;
+        her.puckSpeed=app.settings.airHockeyPuck;
+        her.onPuckSpeed=[](int level){
+            app.settings.airHockeyPuck=level;
+            if(!app.diagnostic)app.settings.Save(app.settingsPath);
+        };
+        ShowAirHockeyWindow(m.hwnd,her,[]{Trace(L"%.1f air hockey: end",app.clock);});
+    }
+
     // docs/Mahjong.md: a game against her in its own window, where she sits at the table (off
     // the desktop meanwhile, as in the dungeon).
     void OpenMahjong(Mascot& m)
@@ -4406,6 +4425,9 @@ namespace
             break;
         case IdMahjong:
             OpenMahjong(m);
+            break;
+        case IdAirHockey:
+            OpenAirHockey(m);
             break;
         case IdDungeon:
             OpenDungeon(m);
@@ -5088,6 +5110,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     // --look <x> <y> pins the look-at cursor to that client-area point (for snapshot checks).
     std::wstring snapshotPath;
     bool snapshotMahjong=false;   // --mahjong [moves]: the snapshot is the mahjong table's 3D view
+    bool snapshotAirHockey=false; // --airhockey: the snapshot is the air hockey window, your side played for you
     int snapshotMahjongMoves=0;   // after this many moves of a simple player
     std::wstring snapshotMahjongCamera;   // --mahjong-camera pitch,distance,y,z[,yaw]
     bool snapshotMahjongReach=false;      // --mahjong-reach [far]: she reaches for her river once seated
@@ -5141,6 +5164,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--mahjong-solid-lift"&&i+1<argc)snapshotSolidLift=static_cast<float>(_wtof(argv[++i]));
             else if(arg==L"--no-solid-stops")MascotModel::SetSolidStops(false);
             else if(arg==L"--mahjong-gesture"&&i+1<argc)snapshotMahjongGesture=argv[++i];
+            else if(arg==L"--airhockey")snapshotAirHockey=true;
             else if(arg==L"--mahjong")
             {
                 snapshotMahjong=true;
@@ -5402,6 +5426,26 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         {
             const bool saved=SaveMahjongShot(argv[2],argc>=4?_wtoi(argv[3]):20,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1,
                                              argc>=6?argv[5]:L"");
+            LocalFree(argv);
+            return saved?0:1;
+        }
+        // --airhockey-sim <out.txt> [games] [seed] [speed 1-4]: games between two of the air hockey
+        // opponent's players, checked throughout (AirHockey::Game's counts).
+        if(argc>=3&&std::wstring(argv[1])==L"--airhockey-sim")
+        {
+            const std::wstring report=RunAirHockeySim(argc>=4?_wtoi(argv[3]):50,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1,argc>=6?_wtoi(argv[5]):0);
+            if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
+            {
+                fputws(report.c_str(),out);
+                fclose(out);
+            }
+            LocalFree(argv);
+            return report.starts_with(L"0 wrong")?0:1;
+        }
+        // --airhockey-shot <out.png> [seconds] [seed]: the air hockey table after some play.
+        if(argc>=3&&std::wstring(argv[1])==L"--airhockey-shot")
+        {
+            const bool saved=SaveAirHockeyShot(argv[2],argc>=4?_wtof(argv[3]):8,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
             LocalFree(argv);
             return saved?0:1;
         }
@@ -5998,10 +6042,16 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(swscanf_s(snapshotMahjongCamera.c_str(),L"%f,%f,%f,%f,%f",&c[0],&c[1],&c[2],&c[3],&c[4])>=4)SetMahjongCamera(c[0],c[1],c[2],c[3],c[4]);
             }
         }
+        if(app.diagnostic&&snapshotAirHockey)
+        {
+            static bool opened=false;
+            if(!opened){opened=true;OpenAirHockey(*app.mascots.front());PlayAirHockeyForTest();}
+        }
         if(app.diagnostic&&--snapshotFrames<=0)
         {
             Mascot& m=*app.mascots.front();
-            if(snapshotMahjong)SaveMahjongView(snapshotPath);
+            if(snapshotAirHockey)SaveAirHockeyView(snapshotPath);
+            else if(snapshotMahjong)SaveMahjongView(snapshotPath);
             else m.renderer.SaveLastFrame(snapshotPath);
             if(FILE* info=nullptr;_wfopen_s(&info,(snapshotPath+L".txt").c_str(),L"w, ccs=UTF-8")==0&&info)
             {
@@ -6016,6 +6066,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     fwprintf(info,L"character %zu x=%.0f watching=%d\n",c->slot,CenterX(*c),c->watchingMahjong?1:0);
                 if(snapshotMahjong)fwprintf(info,L"%s",DescribeMahjongFeet().c_str());
                 fwprintf(info,L"%s",m.model.DescribePenetration().c_str());
+                if(snapshotAirHockey)fwprintf(info,L"%s",DescribeAirHockey().c_str());
                 fwprintf(info,L"%s",m.model.DescribeWindowMotions().c_str());
                 for(const auto& [key,label]:MascotModel::IdleGestureChoices())
                     if(key.rfind(L"clip:",0)==0)fwprintf(info,L"%s = %s\n",key.c_str(),label.c_str());
