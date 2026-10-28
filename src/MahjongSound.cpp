@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <initializer_list>
@@ -18,8 +19,10 @@ namespace MikuMikuDesktopPerch
     {
         constexpr int Rate=44100;
         constexpr double Pi=3.14159265358979;
-        constexpr double Volume=0.45;   // all of them, against the voice and the desktop's sounds
+        constexpr double Volume=0.45;   // all the made ones, against the voice and the desktop's sounds
+        constexpr double FileVolume=0.8;   // and the tiles' (theirs peak at about -5 dB)
         using Pcm=std::vector<std::int16_t>;
+        constexpr int Sounds=static_cast<int>(MahjongSound::Deal)+1;
 
         // seconds long, each sample from f(t).
         template<class F>
@@ -42,15 +45,35 @@ namespace MikuMikuDesktopPerch
             return (s&0xFFFF)/32768.0-1.0;
         }
 
-        // A tile struck down on the table, u seconds after: a crack of noise, the ivory ringing
-        // briefly, and a soft knock of the wood under the felt.
-        double Clack(double u,std::uint32_t& n,double bright=1)
+        // A sound of the tiles (a WAV resource of type MAHJONGSOUND, 44.1 kHz mono 16-bit, see
+        // the .rc), made a little quieter; empty when it is missing or of another kind.
+        Pcm File(const wchar_t* name)
         {
-            if(u<0)return 0;
-            double v=0.5*Noise(n)*std::exp(-u/0.0025);
-            v+=bright*(0.45*std::sin(2*Pi*2350*u)*std::exp(-u/0.012)+0.3*std::sin(2*Pi*3720*u)*std::exp(-u/0.008)+0.18*std::sin(2*Pi*5600*u)*std::exp(-u/0.005));
-            v+=0.55*std::sin(2*Pi*170*u)*std::exp(-u/0.025);
-            return v;
+            Pcm pcm;
+            const HRSRC info=FindResourceW(nullptr,name,L"MAHJONGSOUND");
+            const HGLOBAL data=info?LoadResource(nullptr,info):nullptr;
+            if(!data)return pcm;
+            const auto* bytes=static_cast<const unsigned char*>(LockResource(data));
+            const size_t size=SizeofResource(nullptr,info);
+            auto u16=[&](size_t at){return static_cast<std::uint32_t>(bytes[at]|bytes[at+1]<<8);};
+            auto u32=[&](size_t at){return u16(at)|u16(at+2)<<16;};
+            if(size<12||std::memcmp(bytes,"RIFF",4)!=0||std::memcmp(bytes+8,"WAVE",4)!=0)return pcm;
+            bool right=false;
+            for(size_t at=12;at+8<=size;)
+            {
+                const size_t length=std::min<size_t>(u32(at+4),size-at-8);
+                if(std::memcmp(bytes+at,"fmt ",4)==0&&length>=16)
+                    right=u16(at+8)==1&&u16(at+10)==1&&u32(at+12)==Rate&&u16(at+22)==16;
+                else if(std::memcmp(bytes+at,"data",4)==0&&right)
+                {
+                    pcm.resize(length/2);
+                    for(size_t i=0;i<pcm.size();++i)
+                        pcm[i]=static_cast<std::int16_t>(static_cast<std::int16_t>(u16(at+8+i*2))*FileVolume);
+                    break;
+                }
+                at+=8+length+(length&1);
+            }
+            return pcm;
         }
 
         // A bell at f Hz struck u seconds ago, dying away over decay seconds: a little attack,
@@ -101,19 +124,27 @@ namespace MikuMikuDesktopPerch
         {
             // C6, E6, G6, C7 and their neighbours, from A4.
             const double C6=Note(15),D6=Note(17),E6=Note(19),G6=Note(22),A6=Note(24),C7=Note(27),E7=Note(31),G7=Note(34),A5=Note(12),G5=Note(10),E5=Note(7);
-            static std::array<Pcm,12> made;
+            static std::array<Pcm,Sounds> made;
             Pcm& pcm=made[static_cast<size_t>(which)];
             if(!pcm.empty())return pcm;
             std::uint32_t n=0x2545F491u+static_cast<std::uint32_t>(which)*7919u;
             switch(which)
             {
             case MahjongSound::Place:
-                // Set down, and the little second knock of it settling.
-                pcm=Make(0.16,[&](double t){return 0.9*Clack(t,n)+0.35*Clack(t-0.04,n,0.7);});
-                break;
-            case MahjongSound::Draw:
-                pcm=Make(0.1,[&](double t){return 0.45*Clack(t,n,1.3);});
-                break;
+            {
+                // Three of them by turns, so a run of discards does not sound the same each time.
+                static const std::array<Pcm,3> places={File(L"PLACE1"),File(L"PLACE2"),File(L"PLACE3")};
+                static size_t next=0;
+                next=(next+1)%places.size();
+                return places[next];
+            }
+            case MahjongSound::PlaceHard:pcm=File(L"PLACESTRONG");break;
+            case MahjongSound::Draw:pcm=File(L"DRAW");break;
+            case MahjongSound::Riichi:pcm=File(L"RIICHI");break;
+            case MahjongSound::Pon:pcm=File(L"PON");break;
+            case MahjongSound::Kan:pcm=File(L"KAN");break;
+            case MahjongSound::Shuffle:pcm=File(L"SHUFFLE");break;
+            case MahjongSound::Deal:pcm=File(L"DEAL");break;
             case MahjongSound::Vanish:
             {
                 // Whisked away: a quick swish, high falling to low.
@@ -125,24 +156,16 @@ namespace MikuMikuDesktopPerch
             }
             case MahjongSound::Appear:
             {
-                // Whisked in: a swish rising and stopping short, then the tile settling on the felt.
+                // Whisked in: a swish rising and stopping short, then the tile set down softly on
+                // the felt.
                 Swish swish;
-                pcm=Make(0.62,[&](double t){
+                pcm=Make(0.4,[&](double t){
                     const double u=std::min(t/0.16,1.0),envelope=u*u*std::exp(-std::max(t-0.16,0.0)/0.02);
-                    return 0.65*envelope*swish(Noise(n),1200+6000*u)+0.55*Clack(t-0.4,n,0.8);});
+                    return 0.65*envelope*swish(Noise(n),1200+6000*u);});
+                const Pcm soft=File(L"PLACESOFT");
+                pcm.insert(pcm.end(),soft.begin(),soft.end());
                 break;
             }
-            case MahjongSound::Call:
-                pcm=Make(0.45,[&](double t){return 0.9*Drum(t,n,95,120,0.13);});
-                break;
-            case MahjongSound::Riichi:
-                // The stick laid down: a bright metallic ring over a low knock.
-                pcm=Make(1.0,[&](double t){
-                    double v=0;
-                    const double base=1290,ratio[]={1.0,1.47,2.09,2.56,3.21},decay[]={0.55,0.4,0.3,0.22,0.15};
-                    for(int k=0;k<5;++k)v+=(0.32-0.05*k)*std::sin(2*Pi*base*ratio[k]*t)*std::exp(-t/decay[k]);
-                    return v*std::min(1.0,t/0.002)+0.5*Drum(t,n,80,90,0.1);});
-                break;
             case MahjongSound::Win:
                 // Ron, tsumo: a deep drum and a bright chord over it.
                 pcm=Make(1.3,[&](double t){
@@ -223,8 +246,9 @@ namespace MikuMikuDesktopPerch
 
     bool SaveMahjongSounds(const std::wstring& folder)
     {
-        static const wchar_t* names[]={L"place",L"draw",L"vanish",L"appear",L"call",L"riichi",L"win",L"you-won",L"you-lost",L"drawn",L"game-won",L"game-lost"};
-        for(int i=0;i<12;++i)
+        static const wchar_t* names[Sounds]={L"place",L"place-hard",L"draw",L"vanish",L"appear",L"pon",L"kan",L"riichi",L"win",
+                                             L"you-won",L"you-lost",L"drawn",L"game-won",L"game-lost",L"shuffle",L"deal"};
+        for(int i=0;i<Sounds;++i)
         {
             const Pcm& pcm=Sound(static_cast<MahjongSound>(i));
             std::ofstream out(folder+L"\\"+names[i]+L".wav",std::ios::binary);

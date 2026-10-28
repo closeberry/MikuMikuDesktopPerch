@@ -115,7 +115,7 @@ namespace MikuMikuDesktopPerch
             double testVanishAt=0;           // and then (on the clock) the tile goes
             std::wstring testGesture;        // diagnostics: a gesture of hers once seated
             // What the table was when last heard (sounds for what changed since).
-            struct Heard {bool valid=false,youDrawn=false,herDrawn=false,over=false,endShown=false;size_t youRiver=0,herRiver=0,youMelds=0,herMelds=0;} heard;
+            struct Heard {bool valid=false,youDrawn=false,herDrawn=false,over=false,endShown=false,gameOver=false;size_t youRiver=0,herRiver=0,youMelds=0,herMelds=0,kans=0;} heard;
         } state;
 
         // Where the parts of the window go, in logical pixels: her side on top, her river, the
@@ -1089,9 +1089,10 @@ namespace MikuMikuDesktopPerch
             InvalidateRect(state.window,nullptr,FALSE);
         }
 
-        // The table's sounds, for what changed since the last tick: draws, discards (hers
-        // vanishing and appearing at the 3D table), calls, riichi, a win declared, and the
-        // jingle as a hand's end or the game's is shown.
+        // The table's sounds, for what changed since the last tick: the tiles shuffled as a game
+        // begins and dealt as each later hand does, draws, discards (hers vanishing and appearing
+        // at the 3D table, a riichi set down hard and its stick), pon and kan, a win declared, and
+        // the jingle as a hand's end or the game's is shown.
         void Listen()
         {
             auto& t=state.table;
@@ -1100,22 +1101,28 @@ namespace MikuMikuDesktopPerch
             const auto& her=t.Of(Mahjong::Her);
             const bool over=t.Now()==Phase::RoundOver||t.Now()==Phase::GameOver;
             const bool endShown=(t.Now()==Phase::RoundOver&&!Waiting())||t.Now()==Phase::GameOver;
-            if(h.valid)
+            size_t kans=0;
+            for(const auto* seat:{&you,&her})
+                for(const auto& m:seat->melds)kans+=m.kind==Mahjong::MeldKind::Kan||m.kind==Mahjong::MeldKind::ClosedKan;
+            auto discarded=[](const Mahjong::Seat& seat,bool hers3d){
+                // Hers at the 3D table is set down by Appear.
+                if(!hers3d)PlayMahjongSound(seat.river.back().sideways?MahjongSound::PlaceHard:MahjongSound::Place);
+                if(seat.river.back().sideways)PlayMahjongSound(MahjongSound::Riichi);
+            };
+            if(!h.valid||(h.gameOver&&!over))PlayMahjongSound(MahjongSound::Shuffle);
+            else
             {
+                if(h.over&&!over)PlayMahjongSound(MahjongSound::Deal);
                 if(you.hasDrawn&&!h.youDrawn)PlayMahjongSound(MahjongSound::Draw);
                 if(her.hasDrawn&&!h.herDrawn)PlayMahjongSound(MahjongSound::Draw);
-                if(you.river.size()>h.youRiver)
-                {
-                    PlayMahjongSound(MahjongSound::Place);
-                    if(you.river.back().sideways)PlayMahjongSound(MahjongSound::Riichi);
-                }
+                if(you.river.size()>h.youRiver)discarded(you,false);
                 if(her.river.size()>h.herRiver)
                 {
                     if(state.renderer){PlayMahjongSound(MahjongSound::Vanish);PlayMahjongSound(MahjongSound::Appear);}
-                    else PlayMahjongSound(MahjongSound::Place);
-                    if(her.river.back().sideways)PlayMahjongSound(MahjongSound::Riichi);
+                    discarded(her,state.renderer!=nullptr);
                 }
-                if(you.melds.size()>h.youMelds||her.melds.size()>h.herMelds)PlayMahjongSound(MahjongSound::Call);
+                if(kans>h.kans)PlayMahjongSound(MahjongSound::Kan);
+                else if(you.melds.size()>h.youMelds||her.melds.size()>h.herMelds)PlayMahjongSound(MahjongSound::Pon);
                 if(over&&!h.over&&!t.Ended().draw)PlayMahjongSound(MahjongSound::Win);
                 if(endShown&&!h.endShown)
                 {
@@ -1124,7 +1131,7 @@ namespace MikuMikuDesktopPerch
                     else PlayMahjongSound(t.Ended().winner==Mahjong::You?MahjongSound::YouWon:MahjongSound::YouLost);
                 }
             }
-            h={true,you.hasDrawn,her.hasDrawn,over,endShown,you.river.size(),her.river.size(),you.melds.size(),her.melds.size()};
+            h={true,you.hasDrawn,her.hasDrawn,over,endShown,t.Now()==Phase::GameOver,you.river.size(),her.river.size(),you.melds.size(),her.melds.size(),kans};
         }
 
         void Tick()

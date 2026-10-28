@@ -72,3 +72,18 @@ TILES MAHJONGTILES "mahjong\\tiles.png"
 // The result screen's brush hand: Yuji Syuku (SIL Open Font License, licenses/YujiSyuku-OFL.txt),
 // cut down to the characters the mahjong game writes (tools: fontTools' subset).
 BRUSH MAHJONGFONT "mahjong\\brush.ttf"
+
+// The mahjong table's tile sounds (src/MahjongSound.cpp): 44.1 kHz, mono, 16-bit WAV files.
+// A tile set down (three of them, taken by turns), softly (hers, appearing in her river) and
+// hard (a riichi), drawn, the riichi stick, pon, kan, the tiles shuffled and dealt.
+PLACE1 MAHJONGSOUND "mahjong\\sounds\\place1.wav"
+PLACE2 MAHJONGSOUND "mahjong\\sounds\\place2.wav"
+PLACE3 MAHJONGSOUND "mahjong\\sounds\\place3.wav"
+PLACESOFT MAHJONGSOUND "mahjong\\sounds\\place-soft.wav"
+PLACESTRONG MAHJONGSOUND "mahjong\\sounds\\place-strong.wav"
+DRAW MAHJONGSOUND "mahjong\\sounds\\draw.wav"
+RIICHI MAHJONGSOUND "mahjong\\sounds\\riichi.wav"
+PON MAHJONGSOUND "mahjong\\sounds\\pon.wav"
+KAN MAHJONGSOUND "mahjong\\sounds\\kan.wav"
+SHUFFLE MAHJONGSOUND "mahjong\\sounds\\shuffle.wav"
+DEAL MAHJONGSOUND "mahjong\\sounds\\deal.wav"
