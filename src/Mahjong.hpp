@@ -106,7 +106,10 @@ namespace MikuMikuDesktopPerch::Mahjong
 
     // A tile in play: its kind, and whether it is a red five.
     struct Piece {int kind=0;bool red=false;};
-    struct RiverTile {Piece piece;bool sideways=false,taken=false;};   // sideways: riichi; taken: called by the other
+    struct RiverTile {Piece piece;bool sideways=false,taken=false;};
+    // A wait after a riichi discard: the kind, what winning on it pays (by ron, or by tsumo when
+    // furiten), and how many of it you cannot see (in the wall or her hand).
+    struct RiichiWait {int kind=0,points=0,left=0;bool furiten=false;};   // sideways: riichi; taken: called by the other
 
     struct Seat
     {
@@ -176,7 +179,11 @@ namespace MikuMikuDesktopPerch::Mahjong
         std::vector<int> Waits() const;           // what your 13 tiles wait on
         bool Furiten() const {return FuritenOf(You);}
         bool CanTsumo() const {return phase==Phase::YourTurn&&CanTsumoFor(You);}
+        int TsumoPoints() const;                  // what your tsumo now would pay (0: none; ura dora not counted)
         std::vector<int> RiichiDiscards() const;  // hand indices (hand.size() for the drawn tile) that leave you waiting
+        // Riichi with the tile at index discarded: what you would wait on, and what each pays
+        // (riichi, dora and red fives counted; ura, ippatsu and the like not, as unknown yet).
+        std::vector<RiichiWait> RiichiWaits(int index) const;
         std::vector<int> KanKinds() const;        // closed or added kans you can make now
         bool CanRon() const {return phase==Phase::YourCall&&CanRonFor(You);}
         bool CanPon() const;

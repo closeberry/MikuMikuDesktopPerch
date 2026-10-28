@@ -52,8 +52,10 @@ namespace MikuMikuDesktopPerch
     void GestureMahjongForTest(const std::wstring& name);
 
     // Diagnostics (--mahjong-shot): a game played by a simple player for moves steps (or to the
-    // hand's end), drawn as the window would be, to a PNG.
-    bool SaveMahjongShot(const std::wstring& path,int moves,std::uint32_t seed);
+    // hand's end), drawn as the window would be, to a PNG. stop: L"riichi" stops instead where
+    // you can first riichi, choosing the tile for it (the first that can go, pointed at);
+    // L"tsumo" where you can first tsumo (playing for you without riichi).
+    bool SaveMahjongShot(const std::wstring& path,int moves,std::uint32_t seed,const std::wstring& stop={});
     // Diagnostics (--mahjong-tiles): every tile's face, at the hand's size and the river's, to a PNG.
     bool SaveMahjongTiles(const std::wstring& path);
 }

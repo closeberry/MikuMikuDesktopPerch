@@ -82,6 +82,7 @@ namespace MikuMikuDesktopPerch
             struct Camera {float yaw=0,pitch=0.40f,distance=3.0f,x=0,y=0,z=0;} camera;
             POINT dragFrom{};
             int dragging=0;                  // 0, or the button held: 1 turns, 2 moves
+            int dragMoved=0;                 // how far the pointer went since (hardly: a click)
             float upper=10,hips=10;          // her standing model: the hips' height, and from there to the head
             std::vector<int> scene;         // what the table's geometry was built from
             std::vector<std::array<std::array<float,3>,8>> handCorners;   // your tiles on the table (the drawn one last), to find them on screen
@@ -96,6 +97,16 @@ namespace MikuMikuDesktopPerch
             bool fading=false;
             double fadeSince=0,clock=0;
             struct Lying {float x=0,z=0;Piece piece;int turn=0;bool dim=false;} fadingTile;
+            // The hands being dealt (their tiles dropping into place, drawn each frame) since
+            // dealSince (seconds of the clock) for dealFor seconds (0: not being dealt), or about
+            // to be (dealing: the sound and the drop start together once the table is drawn
+            // smoothly, frames the count of those drawn waiting for it); whether the table was last built
+            // without them; where your melds end, toward the middle.
+            double dealSince=0,dealFor=0;
+            bool dealing=false;
+            int frames=0;
+            bool handsLeftOut=false;
+            float yourMeldsLeft=0;
             // What of hers was seen last frame (sparkles where her tiles come), and the river
             // she reached for last (one reach a discard).
             int seenRiver=-1,seenMelds=-1;
@@ -115,7 +126,7 @@ namespace MikuMikuDesktopPerch
             double testVanishAt=0;           // and then (on the clock) the tile goes
             std::wstring testGesture;        // diagnostics: a gesture of hers once seated
             // What the table was when last heard (sounds for what changed since).
-            struct Heard {bool valid=false,youDrawn=false,herDrawn=false,over=false,endShown=false,gameOver=false;size_t youRiver=0,herRiver=0,youMelds=0,herMelds=0,kans=0;} heard;
+            struct Heard {bool valid=false,youDrawn=false,herDrawn=false,over=false;size_t youRiver=0,herRiver=0,youMelds=0,herMelds=0,kans=0;} heard;
         } state;
 
         // Where the parts of the window go, in logical pixels: her side on top, her river, the
@@ -343,6 +354,8 @@ namespace MikuMikuDesktopPerch
 
         bool Waiting(){return state.nextAt>GetTickCount64();}
 
+        bool Dealing(){return state.dealing||(state.dealFor>0&&state.clock<state.dealSince+state.dealFor);}
+
         void UpdateButtons()
         {
             auto& t=state.table;
@@ -353,7 +366,9 @@ namespace MikuMikuDesktopPerch
                 if(state.riichiMode)b.push_back({Act::CancelRiichi,-1,T(L"やめる",L"Cancel")});
                 else
                 {
-                    if(t.CanTsumo())b.push_back({Act::Tsumo,-1,T(L"ツモ",L"Tsumo")});
+                    // Before riichi, with what it pays (after it, the ura dora are not known yet).
+                    if(t.CanTsumo())b.push_back({Act::Tsumo,-1,you.riichi?T(L"ツモ",L"Tsumo"):
+                                                 Fmt(T(L"ツモ {0}",L"Tsumo {0}"),{Points(t.TsumoPoints())})});
                     if(!t.RiichiDiscards().empty())b.push_back({Act::Riichi,-1,T(L"リーチ",L"Riichi")});
                     for(int k:t.KanKinds())b.push_back({Act::Kan,k,std::wstring(T(L"カン ",L"Kan "))+Mahjong::TileText(k)});
                     if(you.riichi&&t.CanTsumo())b.push_back({Act::LetGo,-1,T(L"ツモ切り",L"Discard it")});
@@ -371,6 +386,7 @@ namespace MikuMikuDesktopPerch
 
         LRESULT CALLBACK Proc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam);
         int HandAt(float x,float y);
+        bool PassByClick();
 
         // Whether something is drawn over the table at (x, y) (your hand, a button, the words).
         bool OverHud(LPARAM lParam)
@@ -403,6 +419,7 @@ namespace MikuMikuDesktopPerch
                 SetFocus(state.window);
                 state.dragging=message==WM_MBUTTONDOWN||(wParam&MK_SHIFT)?2:1;
                 state.dragFrom={GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+                state.dragMoved=0;
                 SetCapture(hwnd);
                 return 0;
             case WM_MOUSEMOVE:
@@ -411,6 +428,7 @@ namespace MikuMikuDesktopPerch
                 {
                     const float dx=static_cast<float>(GET_X_LPARAM(lParam)-state.dragFrom.x),dy=static_cast<float>(GET_Y_LPARAM(lParam)-state.dragFrom.y);
                     state.dragFrom={GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+                    state.dragMoved+=static_cast<int>(std::abs(dx)+std::abs(dy));
                     const float k=1/Scale();
                     if(state.dragging==1)
                     {
@@ -429,9 +447,14 @@ namespace MikuMikuDesktopPerch
             case WM_LBUTTONUP:
             case WM_RBUTTONUP:
             case WM_MBUTTONUP:
+            {
+                // A left click on the table (not a drag) lets a chance go, as on the window.
+                const bool click=message==WM_LBUTTONUP&&state.dragging&&state.dragMoved<=4;
                 state.dragging=0;
                 ReleaseCapture();
+                if(click)PassByClick();
                 return 0;
+            }
             case WM_CAPTURECHANGED:
                 state.dragging=0;
                 return 0;
@@ -549,6 +572,7 @@ namespace MikuMikuDesktopPerch
             Log(L"mahjong: 3D view %ux%u on %s (hips %.1f, upper body %.1f)",w,h,renderer->AdapterName().c_str(),state.hips,state.upper);
             state.renderer=std::move(renderer);
             state.entrance=0;
+            state.frames=0;
             state.scene.clear();
             state.camera={};
             state.dragging=0;
@@ -593,6 +617,7 @@ namespace MikuMikuDesktopPerch
                 out.push_back(-2);
             }
             out.push_back(state.fading?1:0);
+            out.push_back(Dealing()?1:0);
             const auto& you=state.table.Of(Mahjong::You);
             const int n=static_cast<int>(you.hand.size());
             for(int i=0;i<n+(you.hasDrawn?1:0);++i)
@@ -614,6 +639,7 @@ namespace MikuMikuDesktopPerch
             std::vector<MascotRenderer::GeometryVertex> out;
             int grain=0;
             float grainScale=1;
+            float clear=0;   // how see-through what is made now is (0: solid; GeometryPS)
             // uv: the geometry's texture at a, b, c, d (u, v each).
             void Quad(const V& a,const V& b,const V& c,const V& d,const V& n,const float (&col)[4],const float* uv=nullptr)
             {
@@ -628,6 +654,7 @@ namespace MikuMikuDesktopPerch
                         v.wall[0]=along/grainScale;v.wall[1]=up/grainScale;v.wall[3]=across/grainScale;
                     }
                     if(uv){v.uv[0]=uv[k*2];v.uv[1]=uv[k*2+1];v.uv[2]=1;}
+                    v.uv[3]=clear;
                     out.push_back(v);
                 }
             }
@@ -862,6 +889,98 @@ namespace MikuMikuDesktopPerch
         // melds lying face up at her right; your tiles standing at your edge facing you, leaning
         // back a little, your melds at your right; both rivers face up, six to a row from the
         // middle outward (hers turned to her), a riichi stick before each who declared.
+        // How a standing tile of the hands comes while they are dealt: one at a time, by turns
+        // from the dealer, each hand from its left, the dealer's fourteenth last, each dropping in
+        // from a little above as it fades in (the next already on its way as one lands). shown false: not yet; above: how far it still has
+        // to drop (0 to 1); clear: how see-through it still is.
+        struct Falling {bool shown=true;float above=0,clear=0;};
+        Falling Fall(int who,int i,bool drawnTile)
+        {
+            if(!Dealing())return {};
+            if(state.dealing)return {false};   // not yet begun
+            constexpr double Drop=0.45;   // seconds a tile takes
+            const int k=drawnTile?26:2*i+(who==state.table.Dealer()?0:1);
+            const double u=(state.clock-state.dealSince-k*(state.dealFor-Drop)/26)/Drop;
+            if(u<=0)return {false};
+            if(u>=1)return {};
+            return {true,static_cast<float>((1-u)*(1-u)),static_cast<float>(1-std::min(1.0,u*1.6))};
+        }
+
+        float DealDrop(){return 0.12f*state.upper;}   // how high above the table the tiles come from
+
+        // Her tiles standing in a row, the drawn one a little apart: the back toward you.
+        void HerHand(Mesh& m)
+        {
+            const float D=state.upper,top=0.12f*state.hips+0.30f*D,gap=0.004f*D;
+            const float back[4]={0.84f,0.47f,0.20f,1},ivory[4]={0.95f,0.92f,0.84f,1};
+            const auto& her=state.table.Of(Mahjong::Her);
+            const float w=0.09f*D,h=0.12f*D,d=0.065f*D;
+            const int n=static_cast<int>(her.hand.size());
+            const bool drawn=her.hasDrawn;
+            state.herHandSpots.clear();
+            const float rowRight=(14*(w+gap)+0.05f*D)/2;   // a full hand's right end: her tiles stay put (her melds are at your left)
+            const float zb=-0.30f*D-0.05f*D;   // the tiles' side toward her (the table's near edge, less a little)
+            for(int i=0;i<n+(drawn?1:0);++i)
+            {
+                const float x=i==n?rowRight-w:rowRight-w-0.05f*D-(n-i)*(w+gap);
+                if(i==n)state.herDrawnSpot={x+w/2,top+h,zb-d/2};
+                state.herHandSpots.push_back({x+w/2,top+h,zb-d/2});
+                const Falling f=Fall(Mahjong::Her,i,i==n);
+                if(!f.shown)continue;
+                const float y=top+f.above*DealDrop();
+                m.clear=f.clear;
+                m.Box(x,y,zb-d,x+w,y+h,zb-d*0.45f,back);
+                m.Box(x,y,zb-d*0.45f,x+w,y+h,zb,ivory);
+                m.clear=0;
+            }
+        }
+
+        // Your tiles standing, faces to you, leaning back; the drawn one a little apart; the one
+        // pointed at or chosen lifted. Kept clear of your melds (state.yourMeldsLeft).
+        void YourHand(Mesh& m)
+        {
+            using V=std::array<float,3>;
+            const float D=state.upper,top=0.12f*state.hips+0.30f*D,gap=0.004f*D,front=-2.15f*D+0.07f*D;
+            const float back[4]={0.84f,0.47f,0.20f,1},ivory[4]={0.95f,0.92f,0.84f,1};
+            const float white[4]={1,1,1,1},faded[4]={0.62f,0.62f,0.64f,1};
+            const auto& you=state.table.Of(Mahjong::You);
+            const float hw=0.112f*D,hh=0.15f*D,hd=0.075f*D,lean=0.28f,lift=0.035f*D;
+            const float up[3]={0,std::cos(lean),std::sin(lean)},in[3]={0,-std::sin(lean),std::cos(lean)};
+            const int yn=static_cast<int>(you.hand.size());
+            const float yrow=yn*(hw+gap)+(you.hasDrawn?hw+0.04f*D:0);
+            float start=-(14*(hw+gap)+0.04f*D)/2;   // where a full hand starts: the tiles stay put as tiles come and go
+            if(!you.melds.empty())start=std::min(start,state.yourMeldsLeft-0.05f*D-yrow);
+            state.handCorners.assign(static_cast<size_t>(yn)+1,{});
+            for(int i=0;i<yn+(you.hasDrawn?1:0);++i)
+            {
+                const Piece& p=i<yn?you.hand[i]:you.drawn;
+                const Falling f=Fall(Mahjong::You,i,i==yn);
+                const float x=start+i*(hw+gap)+(i==yn?0.04f*D:0),y=top+(Lifted(i)?lift:0)+f.above*DealDrop();
+                // A point on the tile: across (0 to hw), up its face (0 to hh), into it (0 to hd).
+                auto at=[&](float a,float b,float c)->V{return {x+a,y+b*up[1]+c*in[1],front+b*up[2]+c*in[2]};};
+                auto& c=state.handCorners[static_cast<size_t>(i)];
+                int k=0;
+                for(float a:{0.0f,hw})for(float b:{0.0f,hh})for(float cc:{0.0f,hd})c[k++]=at(a,b,cc);
+                if(!f.shown)continue;
+                m.clear=f.clear;
+                const float split=hd*0.55f;
+                auto slab=[&](float c0,float c1,const float (&col)[4]){
+                    const V p000=at(0,0,c0),p100=at(hw,0,c0),p110=at(hw,hh,c0),p010=at(0,hh,c0);
+                    const V p001=at(0,0,c1),p101=at(hw,0,c1),p111=at(hw,hh,c1),p011=at(0,hh,c1);
+                    m.Quad(p001,p101,p111,p011,{0,in[1],in[2]},col);
+                    m.Quad(p010,p110,p111,p011,{0,up[1],up[2]},col);
+                    m.Quad(p000,p001,p011,p010,{-1,0,0},col);
+                    m.Quad(p100,p101,p111,p110,{1,0,0},col);
+                };
+                slab(0,split,ivory);
+                slab(split,hd,back);
+                float uv[8];
+                FaceUv(p,uv,0);
+                m.Quad(at(0,hh,0),at(hw,hh,0),at(hw,0,0),at(0,0,0),{0,-in[1],-in[2]},Dimmed(i)?faded:white,uv);
+                m.clear=0;
+            }
+        }
+
         std::vector<MascotRenderer::GeometryVertex> BuildTable()
         {
             using V=std::array<float,3>;
@@ -871,8 +990,7 @@ namespace MikuMikuDesktopPerch
             auto quad=[&](const V& a,const V& b,const V& c,const V& d,const V& n,const float (&col)[4],const float* uv=nullptr){mesh.Quad(a,b,c,d,n,col,uv);};
             auto box=[&](float x0,float y0,float z0,float x1,float y1,float z1,const float (&c)[4],bool topFace=true){mesh.Box(x0,y0,z0,x1,y1,z1,c,topFace);};
             const float D=state.upper,top=0.12f*state.hips+0.30f*D;
-            const float felt[4]={0.09f,0.33f,0.22f,1},back[4]={0.84f,0.47f,0.20f,1},ivory[4]={0.95f,0.92f,0.84f,1};
-            const float white[4]={1,1,1,1},faded[4]={0.62f,0.62f,0.64f,1};
+            const float felt[4]={0.09f,0.33f,0.22f,1};
             const float x0=-1.3f*D,x1=1.3f*D,zNear=-0.30f*D,zFar=-2.15f*D;
             const float zc=(zNear-1.9f*D)/2;   // between the hands' rows (yours is nearer the edge)
             BuildRoom(box,quad,grain,grainScale,x0,x1,zNear,zFar,zc);
@@ -881,7 +999,6 @@ namespace MikuMikuDesktopPerch
             // A tile lying face up, its middle at (x, z): turn 0 with its top away from you, 2
             // toward you (hers), 1 and 3 on its side (a riichi discard, yours and hers).
             const float tw=0.085f*D,tl=0.115f*D,tt=0.06f*D,gap=0.004f*D;
-            auto atlas=[&](const Piece& p,float (&uv)[8],int turn){FaceUv(p,uv,turn);};
             auto lying=[&](float x,float z,const Piece& p,int turn,bool faceUp,bool dim){LyingTile(mesh,x,z,p,turn,faceUp,dim);};
 
             // The rivers, from the middle outward: yours toward you, hers toward her.
@@ -917,21 +1034,9 @@ namespace MikuMikuDesktopPerch
             }
 
             const auto& her=state.table.Of(Mahjong::Her);
-            // Her tiles standing in a row, the drawn one a little apart: the back toward you.
-            const float w=0.09f*D,h=0.12f*D,d=0.065f*D;
-            const int n=static_cast<int>(her.hand.size());
-            const bool drawn=her.hasDrawn;
-            state.herHandSpots.clear();
-            const float rowRight=(14*(w+gap)+0.05f*D)/2;   // a full hand's right end: her tiles stay put (her melds are at your left)
-            const float zb=zNear-0.05f*D;   // the tiles' side toward her
-            for(int i=0;i<n+(drawn?1:0);++i)
-            {
-                const float x=i==n?rowRight-w:rowRight-w-0.05f*D-(n-i)*(w+gap);
-                box(x,top,zb-d,x+w,top+h,zb-d*0.45f,back);
-                box(x,top,zb-d*0.45f,x+w,top+h,zb,ivory);
-                if(i==n)state.herDrawnSpot={x+w/2,top+h,zb-d/2};
-                state.herHandSpots.push_back({x+w/2,top+h,zb-d/2});
-            }
+            state.handsLeftOut=Dealing();
+            if(!state.handsLeftOut)HerHand(mesh);
+            const float zb=zNear-0.05f*D,d=0.065f*D;   // her tiles' side toward her, their depth
             // Her melds lying face up at her right (your left), before her hand, from the edge in.
             float mx=x0+0.08f*D;
             const float mz=zb-d-0.04f*D-tl/2;
@@ -964,43 +1069,8 @@ namespace MikuMikuDesktopPerch
                 }
                 yx-=0.03f*D;
             }
-            // Your tiles standing, faces to you, leaning back; the drawn one a little apart; the
-            // one pointed at or chosen lifted. Kept clear of your melds.
-            {
-                const float hw=0.112f*D,hh=0.15f*D,hd=0.075f*D,lean=0.28f,lift=0.035f*D;
-                const float up[3]={0,std::cos(lean),std::sin(lean)},in[3]={0,-std::sin(lean),std::cos(lean)};
-                const int yn=static_cast<int>(you.hand.size());
-                const float yrow=yn*(hw+gap)+(you.hasDrawn?hw+0.04f*D:0);
-                float start=-(14*(hw+gap)+0.04f*D)/2;   // where a full hand starts: the tiles stay put as tiles come and go
-                if(!you.melds.empty())start=std::min(start,yx-0.05f*D-yrow);
-                state.handCorners.assign(static_cast<size_t>(yn)+1,{});
-                for(int i=0;i<yn+(you.hasDrawn?1:0);++i)
-                {
-                    const Piece& p=i<yn?you.hand[i]:you.drawn;
-                    const float x=start+i*(hw+gap)+(i==yn?0.04f*D:0),y=top+(Lifted(i)?lift:0);
-                    // A point on the tile: across (0 to hw), up its face (0 to hh), into it (0 to hd).
-                    auto at=[&](float a,float b,float c)->V{return {x+a,y+b*up[1]+c*in[1],front+b*up[2]+c*in[2]};};
-                    const float split=hd*0.55f;
-                    auto slab=[&](float c0,float c1,const float (&col)[4],bool face){
-                        const V p000=at(0,0,c0),p100=at(hw,0,c0),p110=at(hw,hh,c0),p010=at(0,hh,c0);
-                        const V p001=at(0,0,c1),p101=at(hw,0,c1),p111=at(hw,hh,c1),p011=at(0,hh,c1);
-                        const V n{0,-in[1],-in[2]},t{0,up[1],up[2]};
-                        if(face)quad(p010,p110,p100,p000,n,col);
-                        quad(p001,p101,p111,p011,{0,in[1],in[2]},col);
-                        quad(p010,p110,p111,p011,t,col);
-                        quad(p000,p001,p011,p010,{-1,0,0},col);
-                        quad(p100,p101,p111,p110,{1,0,0},col);
-                    };
-                    slab(0,split,ivory,false);
-                    slab(split,hd,back,false);
-                    float uv[8];
-                    atlas(p,uv,0);
-                    quad(at(0,hh,0),at(hw,hh,0),at(hw,0,0),at(0,0,0),{0,-in[1],-in[2]},Dimmed(i)?faded:white,uv);
-                    auto& c=state.handCorners[static_cast<size_t>(i)];
-                    int k=0;
-                    for(float a:{0.0f,hw})for(float b:{0.0f,hh})for(float cc:{0.0f,hd})c[k++]=at(a,b,cc);
-                }
-            }
+            state.yourMeldsLeft=yx;
+            if(!state.handsLeftOut)YourHand(mesh);
             return std::move(mesh.out);
         }
 
@@ -1056,6 +1126,17 @@ namespace MikuMikuDesktopPerch
             Moved();
         }
 
+        // A click anywhere but on the buttons lets a pon or kan of her discard go. Not when you
+        // could win on it: a ron is let go by its button only (as a tsumo is, after riichi).
+        bool PassByClick()
+        {
+            auto& t=state.table;
+            if(Waiting()||state.confirmQuit||t.Now()!=Phase::YourCall||t.CanRon())return false;
+            t.Pass();
+            Moved(0);
+            return true;
+        }
+
         bool CanDiscard(int index)
         {
             auto& t=state.table;
@@ -1089,10 +1170,9 @@ namespace MikuMikuDesktopPerch
             InvalidateRect(state.window,nullptr,FALSE);
         }
 
-        // The table's sounds, for what changed since the last tick: the tiles shuffled as a game
-        // begins and dealt as each later hand does, draws, discards (hers vanishing and appearing
-        // at the 3D table, a riichi set down hard and its stick), pon and kan, a win declared, and
-        // the jingle as a hand's end or the game's is shown.
+        // The table's sounds, for what changed since the last tick: at the 3D table the tiles
+        // dealt as each hand begins (while they drop into the hands, and play waits for them), draws, discards (hers vanishing and appearing at the
+        // 3D table, a riichi set down hard and its stick), pon and kan. A hand's end has none.
         void Listen()
         {
             auto& t=state.table;
@@ -1100,7 +1180,6 @@ namespace MikuMikuDesktopPerch
             const auto& you=t.Of(Mahjong::You);
             const auto& her=t.Of(Mahjong::Her);
             const bool over=t.Now()==Phase::RoundOver||t.Now()==Phase::GameOver;
-            const bool endShown=(t.Now()==Phase::RoundOver&&!Waiting())||t.Now()==Phase::GameOver;
             size_t kans=0;
             for(const auto* seat:{&you,&her})
                 for(const auto& m:seat->melds)kans+=m.kind==Mahjong::MeldKind::Kan||m.kind==Mahjong::MeldKind::ClosedKan;
@@ -1109,10 +1188,11 @@ namespace MikuMikuDesktopPerch
                 if(!hers3d)PlayMahjongSound(seat.river.back().sideways?MahjongSound::PlaceHard:MahjongSound::Place);
                 if(seat.river.back().sideways)PlayMahjongSound(MahjongSound::Riichi);
             };
-            if(!h.valid||(h.gameOver&&!over))PlayMahjongSound(MahjongSound::Shuffle);
+            // In 2D nothing drops, so no sound of it either; at the 3D table TickMahjongWindow
+            // starts it.
+            if(!h.valid||(h.over&&!over))state.dealing=state.renderer!=nullptr;
             else
             {
-                if(h.over&&!over)PlayMahjongSound(MahjongSound::Deal);
                 if(you.hasDrawn&&!h.youDrawn)PlayMahjongSound(MahjongSound::Draw);
                 if(her.hasDrawn&&!h.herDrawn)PlayMahjongSound(MahjongSound::Draw);
                 if(you.river.size()>h.youRiver)discarded(you,false);
@@ -1123,15 +1203,8 @@ namespace MikuMikuDesktopPerch
                 }
                 if(kans>h.kans)PlayMahjongSound(MahjongSound::Kan);
                 else if(you.melds.size()>h.youMelds||her.melds.size()>h.herMelds)PlayMahjongSound(MahjongSound::Pon);
-                if(over&&!h.over&&!t.Ended().draw)PlayMahjongSound(MahjongSound::Win);
-                if(endShown&&!h.endShown)
-                {
-                    if(t.Now()==Phase::GameOver)PlayMahjongSound(you.points>=her.points?MahjongSound::GameWon:MahjongSound::GameLost);
-                    else if(t.Ended().draw)PlayMahjongSound(MahjongSound::Drawn);
-                    else PlayMahjongSound(t.Ended().winner==Mahjong::You?MahjongSound::YouWon:MahjongSound::YouLost);
-                }
             }
-            h={true,you.hasDrawn,her.hasDrawn,over,endShown,t.Now()==Phase::GameOver,you.river.size(),her.river.size(),you.melds.size(),her.melds.size(),kans};
+            h={true,you.hasDrawn,her.hasDrawn,over,you.river.size(),her.river.size(),you.melds.size(),her.melds.size(),kans};
         }
 
         void Tick()
@@ -1139,6 +1212,7 @@ namespace MikuMikuDesktopPerch
             auto& t=state.table;
             const ULONGLONG now=GetTickCount64();
             int parts=0;
+            if(Dealing())state.nextAt=std::max(state.nextAt,now+100);   // play waits for the deal
             if(t.HerCalls()!=state.callsSeen)
             {
                 state.callsSeen=t.HerCalls();
@@ -1156,8 +1230,8 @@ namespace MikuMikuDesktopPerch
                     t.Step();
                     state.nextAt=now+(t.Now()==Phase::HerTurn?(state.renderer?HerDiscardWait3D:HerDiscardWait):0);
                     // At the 3D table, now and then she stops to think (more often against your
-                    // riichi) before her discard.
-                    if(state.renderer&&state.entrance==5&&t.Now()==Phase::HerTurn)
+                    // riichi) before her discard; not after her own riichi (the tile she drew goes).
+                    if(state.renderer&&state.entrance==5&&t.Now()==Phase::HerTurn&&!t.Of(Mahjong::Her).riichi)
                     {
                         std::uniform_real_distribution<double> any(0,1);
                         if(any(state.sparkRandom)<(t.Of(Mahjong::You).riichi?0.45:0.15))
@@ -1426,8 +1500,54 @@ namespace MikuMikuDesktopPerch
                 }
                 else if(state.riichiMode)
                 {
-                    if(hud)FillRound(g,RectF(122*s,y-2*s,TextWidth(g,T(L"リーチ：切る牌を選んでください（Escでやめる）",L"Riichi: choose the tile to discard (Esc to cancel)"),16*s)+20*s,32*s),8*s,Color(185,10,30,24));
-                    Text(g,T(L"リーチ：切る牌を選んでください（Escでやめる）",L"Riichi: choose the tile to discard (Esc to cancel)"),RectF(130*s,y+4*s,600*s,24*s),16*s,gold);
+                    // The tile pointed at (or chosen with the keys), when it can go with riichi:
+                    // what you would wait on, and what each pays; as many as there is room for.
+                    const auto can=t.RiichiDiscards();
+                    auto ok=[&](int i){return std::find(can.begin(),can.end(),i)!=can.end();};
+                    const int pointed=ok(state.hover)?state.hover:ok(state.selected)?state.selected:-1;
+                    const auto riichiWaits=pointed>=0?t.RiichiWaits(pointed):std::vector<Mahjong::RiichiWait>{};
+                    if(!riichiWaits.empty())
+                    {
+                        const float tw=SmallW*0.8f*s,th=SmallH*0.8f*s,size=15*s,left=130*s;
+                        const std::wstring furiten=riichiWaits[0].furiten?T(L"フリテン（ツモのみ）",L"Furiten (tsumo only)"):L"";
+                        const float furitenWidth=furiten.empty()?0:TextWidth(g,furiten,size,true)+10*s;
+                        std::vector<std::wstring> labels;
+                        std::vector<float> widths;
+                        for(const auto& w:riichiWaits)
+                        {
+                            labels.push_back(Fmt(T(L"{0} 残{1}",L"{0}, {1} left"),{w.points>0?Points(w.points):L"-",std::to_wstring(w.left)}));
+                            widths.push_back(tw+4*s+TextWidth(g,labels.back(),size)+14*s);
+                        }
+                        // Those that fit before the right edge (and "…" for the rest).
+                        const float ellipsis=TextWidth(g,L"…",size)+6*s;
+                        float end=left+50*s;
+                        size_t shown=0;
+                        for(;shown<widths.size();++shown)
+                        {
+                            const bool last=shown+1==widths.size();
+                            if(end+widths[shown]+furitenWidth+(last?0:ellipsis)>W-20*s)break;
+                            end+=widths[shown];
+                        }
+                        if(shown<widths.size())end+=ellipsis;
+                        end+=furitenWidth;
+                        if(hud)FillRound(g,RectF(left-8*s,y-6*s,end-left+16*s,th+12*s),8*s,Color(185,10,30,24));
+                        float x=left;
+                        Text(g,T(L"待ち",L"Waits"),RectF(x,y+4*s,60*s,24*s),16*s,soft);
+                        x+=50*s;
+                        for(size_t i=0;i<shown;++i)
+                        {
+                            DrawTile(g,x,y,tw,th,{riichiWaits[i].kind,false});
+                            Text(g,labels[i],RectF(x+tw+4*s,y+5*s,widths[i],24*s),size,white);
+                            x+=widths[i];
+                        }
+                        if(shown<widths.size()){Text(g,L"…",RectF(x,y+5*s,ellipsis,24*s),size,soft);x+=ellipsis;}
+                        if(!furiten.empty())Text(g,furiten,RectF(x,y+5*s,furitenWidth,24*s),size,Color(255,255,120,110),true);
+                    }
+                    else
+                    {
+                        if(hud)FillRound(g,RectF(122*s,y-2*s,TextWidth(g,T(L"リーチ：切る牌を選んでください（Escでやめる）",L"Riichi: choose the tile to discard (Esc to cancel)"),16*s)+20*s,32*s),8*s,Color(185,10,30,24));
+                        Text(g,T(L"リーチ：切る牌を選んでください（Escでやめる）",L"Riichi: choose the tile to discard (Esc to cancel)"),RectF(130*s,y+4*s,600*s,24*s),16*s,gold);
+                    }
                 }
             }
 
@@ -1557,6 +1677,7 @@ namespace MikuMikuDesktopPerch
                 if(state.confirmQuit)return 0;
                 if(t.Now()==Phase::GameOver||(t.Now()==Phase::RoundOver&&!Waiting())){Continue();return 0;}
                 for(const Button& b:state.buttons)if(b.box.Contains(x,y)){Do(b);return 0;}
+                if(PassByClick())return 0;
                 const int at=HandAt(x,y);
                 if(at>=0)DiscardAt(at);
                 return 0;
@@ -1686,6 +1807,17 @@ namespace MikuMikuDesktopPerch
         // behind on her right to the front of her chair, pulled back from the table, turns to
         // you, sits down on it (on its front edge, as on a window's), and moves in with it to a
         // little back from the table.
+        // A long frame (the first ones, as the GPU gets ready) counts as a short one, so nothing
+        // jumps on past what was to be seen.
+        dt=std::min(dt,0.1);
+        // The deal waits for a few frames drawn, then its sound and the tiles' drop start together.
+        if(state.dealing&&++state.frames>3)
+        {
+            state.dealing=false;
+            PlayMahjongSound(MahjongSound::Deal);
+            state.dealSince=state.clock;
+            state.dealFor=MahjongSoundSeconds(MahjongSound::Deal);
+        }
         const float seatZ=SeatZ(),seatHeight=-FloorY(),step=static_cast<float>(dt);
         // She stands clear of the table and just before the pulled chair's seat (her legs clear
         // of its front edge), and sits back onto it, her thighs over the seat.
@@ -1823,6 +1955,8 @@ namespace MikuMikuDesktopPerch
         {
             Mesh moving;
             moving.out=BuildChair(state.chairZ);
+            // The hands as they are dealt (and in place, the frame the table is not yet built again).
+            if(state.handsLeftOut){HerHand(moving);YourHand(moving);}
             if(state.fading)
             {
                 const float u=static_cast<float>((state.clock-state.fadeSince)/FadeSeconds);
@@ -1915,7 +2049,7 @@ namespace MikuMikuDesktopPerch
         return state.renderer&&state.renderer->SaveLastFrame(path);
     }
 
-    bool SaveMahjongShot(const std::wstring& path,int moves,std::uint32_t seed)
+    bool SaveMahjongShot(const std::wstring& path,int moves,std::uint32_t seed,const std::wstring& stop)
     {
         GdiplusStartupInput input;
         if(!state.gdiplus)GdiplusStartup(&state.gdiplus,&input,nullptr);
@@ -1930,7 +2064,31 @@ namespace MikuMikuDesktopPerch
         state.her=MahjongOpponent{L"ミク"};
         auto& t=state.table;
         t.NewGame(seed,Care);
-        PlaySimply(moves);
+        const bool riichi=stop==L"riichi";
+        if(!riichi&&stop!=L"tsumo")PlaySimply(moves);
+        else
+        {
+            // Played for you as she would until you can riichi; or, for a tsumo, until you can
+            // win by it, staying out of riichi (once waiting, keeping to a tile that stays so).
+            for(int i=0;i<moves&&!(riichi?t.Now()==Phase::YourTurn&&!t.RiichiDiscards().empty():t.CanTsumo());++i)
+            {
+                if(t.Now()==Phase::RoundOver||t.Now()==Phase::GameOver)break;
+                if(t.Now()==Phase::HerTurn)t.Step();
+                else if(t.Now()==Phase::YourCall)t.Pass();
+                else if(!riichi&&!t.RiichiDiscards().empty())
+                {
+                    const auto can=t.RiichiDiscards();
+                    t.Discard(can.back());
+                }
+                else t.PlayForYou();
+            }
+            state.nextAt=0;
+            if(riichi&&t.Now()==Phase::YourTurn&&!t.RiichiDiscards().empty())
+            {
+                state.riichiMode=true;
+                state.hover=state.selected=t.RiichiDiscards().front();
+            }
+        }
         RECT client{};
         GetClientRect(state.window,&client);
         Bitmap shot(client.right,client.bottom,PixelFormat32bppARGB);
@@ -2003,6 +2161,9 @@ namespace MikuMikuDesktopPerch
             Bitmap view(her.faceSize,her.faceSize,her.faceSize*4,PixelFormat32bppPARGB,const_cast<BYTE*>(state.her.face.data()));
             state.face.reset(view.Clone(0,0,her.faceSize,her.faceSize,PixelFormat32bppPARGB));
         }
+        state.heard={};   // what the table was when this window last heard it: none yet
+        state.dealing=false;
+        state.dealFor=0;
         NewGame();
 
         MONITORINFO info{sizeof(info)};

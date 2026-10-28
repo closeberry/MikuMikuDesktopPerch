@@ -159,6 +159,16 @@ namespace MikuMikuDesktopPerch::Mahjong
         return Evaluate(CountsOf(who,true),me.melds,me.drawn.kind,s).win;
     }
 
+    int Table::TsumoPoints() const
+    {
+        const Seat& me=seats[You];
+        if(phase!=Phase::YourTurn||!me.hasDrawn)return 0;
+        Situation s=SituationOf(You,true);
+        s.red=RedOf(You,true);
+        const Score score=Evaluate(CountsOf(You,true),me.melds,me.drawn.kind,s);
+        return score.win?score.points:0;
+    }
+
     bool Table::CanRonFor(int who) const
     {
         const Seat& other=seats[Other(who)];
@@ -184,6 +194,37 @@ namespace MikuMikuDesktopPerch::Mahjong
             Counts c=all;
             --c[i<me.hand.size()?me.hand[i].kind:me.drawn.kind];
             if(!Mahjong::Waits(c).empty())out.push_back(static_cast<int>(i));
+        }
+        return out;
+    }
+
+    std::vector<RiichiWait> Table::RiichiWaits(int index) const
+    {
+        std::vector<RiichiWait> out;
+        const Seat& me=seats[You];
+        if(phase!=Phase::YourTurn||!me.hasDrawn||index<0||index>static_cast<int>(me.hand.size()))return out;
+        const Piece gone=index<static_cast<int>(me.hand.size())?me.hand[static_cast<size_t>(index)]:me.drawn;
+        Counts c=CountsOf(You,true);
+        --c[gone.kind];
+        const std::vector<int> waits=Mahjong::Waits(c);
+        // Furiten when one of them is in your river, the tile going there now included: only a
+        // tsumo wins then.
+        Counts river=RiverCounts(You);
+        ++river[gone.kind];
+        bool furiten=false;
+        for(int w:waits)furiten=furiten||river[w]>0;
+        const Counts seen=SeenBy(You);
+        for(int w:waits)
+        {
+            Counts won=c;
+            ++won[w];
+            Situation s=SituationOf(You,furiten);
+            s.doubleRiichi=me.draws==1&&!calledYet;
+            s.riichi=!s.doubleRiichi;
+            s.ippatsu=s.rinshan=s.lastTile=s.firstDraw=false;
+            s.red=RedOf(You,true)-(gone.red?1:0);
+            const Score score=Evaluate(won,me.melds,w,s);
+            out.push_back({w,score.win?score.points:0,std::max(0,4-seen[w]),furiten});
         }
         return out;
     }

@@ -5291,10 +5291,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return saved?0:1;
         }
-        // --mahjong-shot <out.png> [moves] [seed]: the mahjong window after some moves.
+        // --mahjong-shot <out.png> [moves] [seed] [riichi|tsumo]: the mahjong window after some
+        // moves (or where you can first riichi, choosing its tile, or tsumo).
         if(argc>=3&&std::wstring(argv[1])==L"--mahjong-shot")
         {
-            const bool saved=SaveMahjongShot(argv[2],argc>=4?_wtoi(argv[3]):20,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
+            const bool saved=SaveMahjongShot(argv[2],argc>=4?_wtoi(argv[3]):20,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1,
+                                             argc>=6?argv[5]:L"");
             LocalFree(argv);
             return saved?0:1;
         }

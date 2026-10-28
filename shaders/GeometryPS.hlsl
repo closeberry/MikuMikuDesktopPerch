@@ -19,7 +19,7 @@ struct VSOutput
     float3 normal : NORMAL;
     float4 color : COLOR0;
     float3 local : TEXCOORD1;
-    float3 uv : TEXCOORD2;     // where on Picture, 1 in z when it is drawn there
+    float4 uv : TEXCOORD2;     // where on Picture, 1 in z when it is drawn there; how see-through in w (0: solid)
 };
 
 Texture2D<float4> Picture : register(t1);   // the geometry's texture (the mahjong tiles' faces)
@@ -290,6 +290,14 @@ float3 Flooded(float3 floorColour, float3 light, float3 glow, float3 world)
 
 float4 main(VSOutput i) : SV_Target
 {
+    // See-through (a mahjong tile fading in as it falls): pixels left out in a 4x4 ordered
+    // pattern, more of them the clearer it is (there is no blending here).
+    if (i.uv.w > 0)
+    {
+        const uint2 at = (uint2)i.position.xy % 4;
+        const float bayer[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+        clip((bayer[at.y * 4 + at.x] + 0.5) / 16 - i.uv.w);
+    }
     const int pattern = (int)round(i.color.a * 4);
     const int theme = (int)round((i.color.a * 4 - pattern) / 0.08);
     float3 rgb = i.color.rgb, glow = 0;
