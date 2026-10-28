@@ -84,6 +84,7 @@ namespace MikuMikuDesktopPerch
             int dragging=0;                  // 0, or the button held: 1 turns, 2 moves
             int dragMoved=0;                 // how far the pointer went since (hardly: a click)
             float upper=10,hips=10;          // her standing model: the hips' height, and from there to the head
+            float floorY=-5;                 // the floor below the seat (FloorY), where her feet hang to sitting
             std::vector<int> scene;         // what the table's geometry was built from
             std::vector<std::array<std::array<float,3>,8>> handCorners;   // your tiles on the table (the drawn one last), to find them on screen
             // Where her tiles are on the table (world units, on top of each), as last built: each
@@ -659,7 +660,23 @@ namespace MikuMikuDesktopPerch
                 state.hips=std::max(legHi[1]-lo[1],0.1f);
                 state.upper=head[1]-legHi[1];
             }
-            Log(L"mahjong: 3D view %ux%u on %s (hips %.1f, upper body %.1f)",w,h,renderer->AdapterName().c_str(),state.hips,state.upper);
+            // The floor: half her hips' height below the seat, or lower to where her feet hang
+            // as she sits on it (a model with long shins would put them through it). Found by
+            // sitting her down for a moment now, before she comes in (her physics then let go).
+            state.floorY=-0.5f*state.hips;
+            if(state.her.model->CanSit())
+            {
+                MascotModel& model=*state.her.model;
+                model.SetActivity(Activity::Sit,0);
+                for(int i=0;i<90;++i)model.Update(1/30.0);
+                if(std::array<float,3> legLo{},legHi{};model.LegBounds(legLo,legHi))
+                    state.floorY=std::min(state.floorY,legLo[1]-0.03f*state.hips);   // the sole a little below the toe's bone
+                // Stood up again all the way, or she would come in rising out of the floor.
+                model.SetActivity(Activity::Idle);
+                for(int i=0;i<90;++i)model.Update(1/30.0);
+                model.ResetPhysics();
+            }
+            Log(L"mahjong: 3D view %ux%u on %s (hips %.1f, upper body %.1f, floor %.1f)",w,h,renderer->AdapterName().c_str(),state.hips,state.upper,state.floorY);
             // After her size: the scroll's painting is made to the scroll's shape.
             if(!renderer->SetGeometryTexture(FacesImage()))Log(L"mahjong: no tile faces on the 3D table");
             state.renderer=std::move(renderer);
@@ -772,7 +789,7 @@ namespace MikuMikuDesktopPerch
         // A chair's depth further back than up against the table, so she can see her own tiles
         // and her hands clear them.
         float SeatZ(){return 0.15f*state.upper+SeatDepth();}
-        float FloorY(){return -0.5f*state.hips;}
+        float FloorY(){return state.floorY;}
 
 
         // A tile's face on the atlas (u, v at its corners: top left, top right, bottom right,
@@ -868,26 +885,21 @@ namespace MikuMikuDesktopPerch
             const float plaster[4]={0.80f,0.74f,0.62f,Washi},paper[4]={1.0f,0.93f,0.78f,0.25f};
             const float brass[4]={0.80f,0.62f,0.30f,1},middle[4]={0.16f,0.10f,0.06f,1};
 
-            // The table: a frame standing proud of the felt, a skirt under it, legs at the corners.
+            // The table: a frame standing proud of the felt, and legs at the corners up under it
+            // (no skirt boards: her thighs go under the table).
             grainScale=0.35f;
-            const float rw=0.11f*D,frameTop=top+0.04f*D,frameBottom=top-0.11f*D,skirtBottom=top-0.32f*D;
+            const float rw=0.11f*D,frameTop=top+0.04f*D,frameBottom=top-0.11f*D;
             grain=0;
             box(x0-rw,frameBottom,zFar-rw,x1+rw,frameTop,zFar,frame);
             box(x0-rw,frameBottom,zNear,x1+rw,frameTop,zNear+rw,frame);
             grain=1;
             box(x0-rw,frameBottom,zFar,x0,frameTop,zNear,frame);
             box(x1,frameBottom,zFar,x1+rw,frameTop,zNear,frame);
-            grain=0;
-            box(x0-rw+0.02f*D,skirtBottom,zFar-rw+0.02f*D,x1+rw-0.02f*D,frameBottom,zFar-rw+0.05f*D,skirt);
-            box(x0-rw+0.02f*D,top-0.16f*D,zNear+rw-0.05f*D,x1+rw-0.02f*D,frameBottom,zNear+rw-0.02f*D,skirt);   // shallow on her side: her thighs go under it
-            grain=1;
-            box(x0-rw+0.02f*D,skirtBottom,zFar-rw+0.02f*D,x0-rw+0.05f*D,frameBottom,zNear+rw-0.02f*D,skirt);
-            box(x1+rw-0.05f*D,skirtBottom,zFar-rw+0.02f*D,x1+rw-0.02f*D,frameBottom,zNear+rw-0.02f*D,skirt);
             grain=2;
             const float leg=0.15f*D;
             for(float lx:{x0-rw+0.02f*D,x1+rw-0.02f*D-leg})
                 for(float lz:{zFar-rw+0.02f*D,zNear+rw-0.02f*D-leg})
-                    box(lx,floor,lz,lx+leg,skirtBottom,lz+leg,skirt);
+                    box(lx,floor,lz,lx+leg,frameBottom,lz+leg,skirt);
             box(-0.09f*D,top,zc-0.09f*D,0.09f*D,top+0.02f*D,zc+0.09f*D,middle);   // the middle of the table
 
             // The room: floor, walls, ceiling (big enough for the camera to turn round in).
@@ -2176,6 +2188,15 @@ namespace MikuMikuDesktopPerch
                 if(std::wstring(encoders[i].MimeType)==L"image/png")return image.Save(path.c_str(),&encoders[i].Clsid,nullptr)==Ok;
             return false;
         }
+    }
+
+    std::wstring DescribeMahjongFeet()
+    {
+        std::array<float,3> lo{},hi{};
+        if(!state.renderer||!state.her.model||!state.her.model->LegBounds(lo,hi))return L"";
+        wchar_t text[160];
+        swprintf_s(text,L"mahjong: entrance %d, lowest leg bone %.2f, floor %.2f, hips %.2f, upper %.2f\n",state.entrance,lo[1],FloorY(),state.hips,state.upper);
+        return text;
     }
 
     bool SaveMahjongView(const std::wstring& path)

@@ -42,6 +42,8 @@ namespace MikuMikuDesktopPerch
     // Diagnostics (--snapshot with --mahjong): the table's 3D view as last drawn, to a PNG, and
     // a game played on by a simple player of yours for moves steps first.
     bool SaveMahjongView(const std::wstring& path);
+    // Diagnostics: where her feet are against the floor (world units), for the snapshot's report.
+    std::wstring DescribeMahjongFeet();
     void PlayMahjongMoves(int moves);
     // Diagnostics (--mahjong-camera): the camera turned this way (its tilt in radians, how far,
     // where it looks, raised and moved back from the default, in her upper body's lengths, and
