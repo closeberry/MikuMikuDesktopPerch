@@ -115,6 +115,9 @@ namespace MikuMikuDesktopPerch
             // Sparkles where her tiles appear (her hand cannot always reach: the tiles warp).
             struct Spark {std::array<float,3> at,velocity;float age,life,size,angle,spin;std::array<float,4> color;bool glow;};
             std::vector<Spark> sparks;
+            // The room's soft glows (the lamp, the shoji), placed as the room is built: drawn over
+            // what is behind them, lighting nothing.
+            std::vector<MascotRenderer::Particle> roomGlows;
             std::mt19937 sparkRandom{12345};
             bool testReach=false;            // diagnostics: reach once seated
             // Her gestures at the table: thinking before a discard (for seconds, 0: none), and
@@ -244,6 +247,7 @@ namespace MikuMikuDesktopPerch
         // The tiles' faces (res/mahjong/tiles.png): TileSide by
         // TileTop each, ten across, the 34 kinds in order and then the red fives of each suit.
         constexpr int TileSide=150,TileTop=200,AtlasColumns=10;
+        constexpr int ScrollW=320,ScrollH=768;   // the hanging scroll's painting, under the faces in the 3D table's texture
 
         Bitmap* Faces()
         {
@@ -493,15 +497,102 @@ namespace MikuMikuDesktopPerch
 
         // The tiles' faces for the 3D table: the atlas on ivory (its clear corners filled), with
         // its mipmaps.
+        float FloorY();
+
+        // The hanging scroll's paper on the wall (BuildRoom): its bottom and top, and its width.
+        void ScrollSpan(float& h0,float& h1,float& width)
+        {
+            const float D=state.upper,floor=FloorY(),ceiling=floor+1.9f*(state.hips+state.upper),wain=floor+0.55f*state.hips;
+            h0=wain+0.25f*D;h1=ceiling-0.6f*D;width=1.0f*D;
+        }
+
+        // The hanging scroll's painting, in ink on warm paper: a red sun over three ridges of
+        // mountains fading into mist, nearer and darker, a pine bough reaching in from the left,
+        // and a red seal at the bottom right.
+        void PaintScroll(Graphics& g,int w,int h)
+        {
+            constexpr float Pi=3.14159265f;
+            g.SetSmoothingMode(SmoothingModeAntiAlias);
+            const float W=static_cast<float>(w),H=static_cast<float>(h);
+            LinearGradientBrush paper(PointF(0,0),PointF(0,H),Color(255,236,231,218),Color(255,224,218,202));
+            g.FillRectangle(&paper,0.0f,0.0f,W,H);
+            SolidBrush sun(Color(170,168,92,78));
+            g.FillEllipse(&sun,W*0.58f,H*0.10f,W*0.22f,W*0.22f);
+            // The ridges: far ones paler; each fades into the mist below it.
+            struct Ridge {float base,height,ink,alpha,seed;};
+            const Ridge ridges[]={{0.40f,0.11f,150,120,1.3f},{0.52f,0.13f,100,170,2.9f},{0.66f,0.09f,55,215,4.6f}};
+            for(const Ridge& r:ridges)
+            {
+                GraphicsPath path;
+                std::vector<PointF> line;
+                float highest=H;
+                for(int x=0;x<=w;x+=4)
+                {
+                    const float u=static_cast<float>(x)/W;
+                    const float rise=0.55f*std::sin(u*Pi*2.2f+r.seed)+0.3f*std::sin(u*Pi*5.3f+r.seed*1.7f)+0.15f*std::sin(u*Pi*11.0f+r.seed*3.1f);
+                    const float y=H*(r.base-r.height*(0.5f+0.5f*rise));
+                    highest=std::min(highest,y);
+                    line.push_back(PointF(static_cast<float>(x),y));
+                }
+                const float bottom=H*(r.base+0.16f);
+                line.push_back(PointF(W,bottom));
+                line.push_back(PointF(0,bottom));
+                path.AddPolygon(line.data(),static_cast<INT>(line.size()));
+                const BYTE ink=static_cast<BYTE>(r.ink),alpha=static_cast<BYTE>(r.alpha);
+                LinearGradientBrush fill(PointF(0,highest-1),PointF(0,bottom),Color(alpha,ink,ink,static_cast<BYTE>(ink+6)),Color(0,ink,ink,ink));
+                g.FillPath(&fill,&path);
+            }
+            // The pine: a crooked bough, twigs off it, and fans of needles.
+            Pen bough(Color(235,34,30,28),W*0.035f),twig(Color(225,38,34,30),W*0.014f),needle(Color(200,30,40,30),W*0.006f);
+            for(Pen* pen:{&bough,&twig}){pen->SetStartCap(LineCapRound);pen->SetEndCap(LineCapRound);}
+            g.DrawBezier(&bough,PointF(-W*0.05f,H*0.86f),PointF(W*0.25f,H*0.80f),PointF(W*0.30f,H*0.70f),PointF(W*0.62f,H*0.66f));
+            const PointF twigs[][2]={{PointF(W*0.22f,H*0.81f),PointF(W*0.30f,H*0.74f)},{PointF(W*0.38f,H*0.70f),PointF(W*0.45f,H*0.62f)},
+                                     {PointF(W*0.50f,H*0.67f),PointF(W*0.66f,H*0.70f)},{PointF(W*0.10f,H*0.84f),PointF(W*0.16f,H*0.78f)}};
+            for(const auto& t:twigs)g.DrawLine(&twig,t[0],t[1]);
+            const PointF clusters[]={PointF(W*0.30f,H*0.73f),PointF(W*0.45f,H*0.61f),PointF(W*0.66f,H*0.69f),PointF(W*0.62f,H*0.65f),
+                                     PointF(W*0.16f,H*0.77f),PointF(W*0.38f,H*0.68f)};
+            for(const PointF& c:clusters)
+                for(int k=0;k<15;++k)
+                {
+                    const float a=Pi*(1.05f+0.9f*k/14.0f),len=W*(0.055f+0.02f*((k*7)%3));
+                    g.DrawLine(&needle,c,PointF(c.X+std::cos(a)*len,c.Y+std::sin(a)*len*0.8f));
+                }
+            // The seal.
+            SolidBrush seal(Color(200,150,72,62));
+            g.FillRectangle(&seal,W*0.78f,H*0.88f,W*0.09f,W*0.09f);
+            Pen cut(Color(150,240,220,200),W*0.008f);
+            g.DrawRectangle(&cut,W*0.795f,H*0.88f+W*0.015f,W*0.06f,W*0.06f);
+            g.DrawLine(&cut,PointF(W*0.825f,H*0.88f+W*0.02f),PointF(W*0.825f,H*0.88f+W*0.07f));
+        }
+
         ImageRgba8 FacesImage()
         {
             ImageRgba8 image;
             Bitmap* faces=Faces();
             if(!faces)return image;
-            const int w=static_cast<int>(faces->GetWidth()),h=static_cast<int>(faces->GetHeight());
+            const int w=static_cast<int>(faces->GetWidth()),facesH=static_cast<int>(faces->GetHeight()),h=facesH+ScrollH;
+            // The faces with the scroll's painting under them (ivory beside it).
+            Bitmap atlas(w,h,PixelFormat32bppARGB);
+            {
+                Graphics g(&atlas);
+                g.Clear(Color(0,0,0,0));
+                g.DrawImage(faces,0,0,w,facesH);
+                Bitmap painting(ScrollW,ScrollH,PixelFormat32bppARGB);
+                {
+                    // Painted as tall as the scroll is for its width, then fitted to the picture
+                    // (stretched back on the wall), so the sun is round there.
+                    Graphics p(&painting);
+                    float h0,h1,width;
+                    ScrollSpan(h0,h1,width);
+                    const int tall=std::max(ScrollW,static_cast<int>(std::lround(ScrollW*(h1-h0)/std::max(width,0.001f))));
+                    p.ScaleTransform(1.0f,static_cast<float>(ScrollH)/tall);
+                    PaintScroll(p,ScrollW,tall);
+                }
+                g.DrawImage(&painting,0,facesH,ScrollW,ScrollH);
+            }
             BitmapData bits{};
             Rect whole(0,0,w,h);
-            if(faces->LockBits(&whole,ImageLockModeRead,PixelFormat32bppARGB,&bits)!=Ok)return image;
+            if(atlas.LockBits(&whole,ImageLockModeRead,PixelFormat32bppARGB,&bits)!=Ok)return image;
             image.levels.resize(1);
             auto& level=image.levels[0];
             level.width=static_cast<unsigned>(w);level.height=static_cast<unsigned>(h);
@@ -518,7 +609,7 @@ namespace MikuMikuDesktopPerch
                     to[3]=255;
                 }
             }
-            faces->UnlockBits(&bits);
+            atlas.UnlockBits(&bits);
             GenerateMips(image);
             return image;
         }
@@ -561,7 +652,6 @@ namespace MikuMikuDesktopPerch
                 return false;
             }
             renderer->SetLight(20,45);
-            if(!renderer->SetGeometryTexture(FacesImage()))Log(L"mahjong: no tile faces on the 3D table");
             // Her size, standing as she came from the desktop: the table is made to fit her.
             std::array<float,3> lo{},hi{},legLo{},legHi{},head{};
             if(state.her.model->BoneBounds(lo,hi)&&state.her.model->LegBounds(legLo,legHi)&&state.her.model->HeadPosition(head)&&head[1]>legHi[1])
@@ -570,6 +660,8 @@ namespace MikuMikuDesktopPerch
                 state.upper=head[1]-legHi[1];
             }
             Log(L"mahjong: 3D view %ux%u on %s (hips %.1f, upper body %.1f)",w,h,renderer->AdapterName().c_str(),state.hips,state.upper);
+            // After her size: the scroll's painting is made to the scroll's shape.
+            if(!renderer->SetGeometryTexture(FacesImage()))Log(L"mahjong: no tile faces on the 3D table");
             state.renderer=std::move(renderer);
             state.entrance=0;
             state.frames=0;
@@ -628,7 +720,8 @@ namespace MikuMikuDesktopPerch
             return out;
         }
 
-        constexpr float Wood=0.02f;   // the geometry shader's wood (its pattern 0, look 1)
+        constexpr float Wood=0.10f;   // the geometry shader's wood, calmer than the dungeon's (its pattern 0, look 5)
+        constexpr float Washi=0.08f;  // and its wallpaper (look 4): washi with waves (seigaiha) on it
 
         // Plain lit geometry being made: quads and boxes, wood (its colour's alpha Wood) grained
         // along x, z or y (grain 0, 1, 2), the grain and the boards' seams grainScale apart as
@@ -648,7 +741,7 @@ namespace MikuMikuDesktopPerch
                 {
                     const V& q=*p[k];
                     MascotRenderer::GeometryVertex v{{q[0],q[1],q[2]},{n[0],n[1],n[2]},{col[0],col[1],col[2],col[3]}};
-                    if(col[3]==Wood)
+                    if(col[3]==Wood||col[3]==Washi)
                     {
                         const float along=q[grain==0?0:grain==1?2:1],up=q[grain==2?0:1],across=q[grain==1?0:2];
                         v.wall[0]=along/grainScale;v.wall[1]=up/grainScale;v.wall[3]=across/grainScale;
@@ -688,11 +781,21 @@ namespace MikuMikuDesktopPerch
         {
             const int at=p.red&&p.kind<Mahjong::East?Mahjong::Kinds+p.kind/9:p.kind;
             Bitmap* faces=Faces();
-            const float aw=faces?static_cast<float>(faces->GetWidth()):1,ah=faces?static_cast<float>(faces->GetHeight()):1;
+            const float aw=faces?static_cast<float>(faces->GetWidth()):1,ah=faces?static_cast<float>(faces->GetHeight()+ScrollH):1;
             const float u0=(at%AtlasColumns*TileSide+2)/aw,u1=((at%AtlasColumns+1)*TileSide-2)/aw;
             const float v0=(at/AtlasColumns*TileTop+2)/ah,v1=((at/AtlasColumns+1)*TileTop-2)/ah;
             const float corners[8]={u0,v0,u1,v0,u1,v1,u0,v1};
             for(int k=0;k<4;++k){uv[k*2]=corners[((k+turn)%4)*2];uv[k*2+1]=corners[((k+turn)%4)*2+1];}
+        }
+
+        // The scroll's painting on the 3D table's texture (u, v at its corners as FaceUv's).
+        void ScrollUv(float (&uv)[8])
+        {
+            Bitmap* faces=Faces();
+            const float aw=faces?static_cast<float>(faces->GetWidth()):1,facesH=faces?static_cast<float>(faces->GetHeight()):0;
+            const float u0=1/aw,u1=(ScrollW-1)/aw,v0=(facesH+1)/(facesH+ScrollH),v1=(facesH+ScrollH-1)/(facesH+ScrollH);
+            const float corners[8]={u0,v0,u1,v0,u1,v1,u0,v1};
+            std::copy(std::begin(corners),std::end(corners),uv);
         }
 
         // A tile lying face up (or down) on the table, its middle at (x, z): turn 0 with its top
@@ -762,7 +865,7 @@ namespace MikuMikuDesktopPerch
             const float D=state.upper,top=0.12f*state.hips+0.30f*D,floor=FloorY();
             const float frame[4]={0.34f,0.19f,0.10f,Wood},skirt[4]={0.26f,0.14f,0.07f,Wood},planks[4]={0.46f,0.32f,0.20f,Wood};
             const float trim[4]={0.30f,0.18f,0.10f,Wood},beams[4]={0.20f,0.12f,0.07f,Wood};
-            const float plaster[4]={0.74f,0.68f,0.58f,1},paper[4]={1.0f,0.93f,0.78f,0.25f};
+            const float plaster[4]={0.80f,0.74f,0.62f,Washi},paper[4]={1.0f,0.93f,0.78f,0.25f};
             const float brass[4]={0.80f,0.62f,0.30f,1},middle[4]={0.16f,0.10f,0.06f,1};
 
             // The table: a frame standing proud of the felt, a skirt under it, legs at the corners.
@@ -797,8 +900,9 @@ namespace MikuMikuDesktopPerch
                 // From a to b along the floor, facing n: plaster over a wooden wainscot, a rail
                 // and a skirting board.
                 const bool alongX=std::abs(a[0]-b[0])>std::abs(a[2]-b[2]);
-                grain=alongX?0:1;grainScale=0.6f;
+                grain=alongX?0:1;grainScale=0.22f*D;   // the waves' size
                 quad({a[0],wain,a[2]},{b[0],wain,b[2]},{b[0],ceiling,b[2]},{a[0],ceiling,a[2]},n,plaster);
+                grainScale=0.6f;
                 const V in{n[0]*proud,0,n[2]*proud};
                 quad({a[0]+in[0],floor,a[2]+in[2]},{b[0]+in[0],floor,b[2]+in[2]},{b[0]+in[0],wain,b[2]+in[2]},{a[0]+in[0],wain,a[2]+in[2]},n,trim);
                 const float lo[3]={std::min(a[0],b[0]),0,std::min(a[2],b[2])},hi[3]={std::max(a[0],b[0]),0,std::max(a[2],b[2])};
@@ -825,36 +929,49 @@ namespace MikuMikuDesktopPerch
                 box(rx-pw,floor,pz-pw/2,rx,ceiling,pz+pw/2,trim);
             }
 
-            // Behind her, between the pillars: shoji lit from outside, a lattice of thin bars.
+            // Behind her, to either side (not right behind her): shoji lit from outside, a lattice
+            // of thin bars in a frame, a soft glow over each.
+            state.roomGlows.clear();
+            for(float side:{-1.0f,1.0f})
             {
-                const float sx=rx/3-pw/2-0.05f*D,sy0=wain+0.08f*D,sy1=ceiling-0.5f*D,sz=zBack-0.06f*D;
-                quad({-sx,sy0,sz},{sx,sy0,sz},{sx,sy1,sz},{-sx,sy1,sz},{0,0,-1},paper);
+                const float cx=side*2*rx/3,sx=0.62f*(rx/3-pw/2),sy0=wain+0.08f*D,sy1=ceiling-0.5f*D,sz=zBack-0.06f*D;
+                quad({cx-sx,sy0,sz},{cx+sx,sy0,sz},{cx+sx,sy1,sz},{cx-sx,sy1,sz},{0,0,-1},paper);
                 grain=0;grainScale=0.4f;
-                const float bar=0.025f*D;
+                const float bar=0.025f*D,edge=0.07f*D;
                 for(int i=0;i<=4;++i)
                 {
-                    const float y=sy0+(sy1-sy0)*i/4;
-                    box(-sx,y-bar,sz-0.05f*D,sx,y+bar,sz-0.005f*D,trim);
+                    const float y=sy0+(sy1-sy0)*i/4,b=i==0||i==4?edge:bar;
+                    box(cx-sx-edge,y-b,sz-0.06f*D,cx+sx+edge,y+b,sz-0.005f*D,trim);
                 }
                 grain=2;
-                for(int i=0;i<=8;++i)
+                for(int i=0;i<=6;++i)
                 {
-                    const float x=-sx+2*sx*i/8;
-                    box(x-bar,sy0,sz-0.05f*D,x+bar,sy1,sz-0.005f*D,trim);
+                    const float x=cx-sx+2*sx*i/6,b=i==0||i==6?edge:bar;
+                    box(x-b,sy0,sz-0.06f*D,x+b,sy1,sz-0.005f*D,trim);
+                }
+                // Light spilling past the frame onto the wall: two wide halos, one above the other.
+                for(int j=0;j<2;++j)
+                {
+                    MascotRenderer::Particle g;
+                    g.position={cx,sy0+(sy1-sy0)*(0.3f+0.4f*j),sz-0.1f*D};
+                    g.size=1.9f*sx;
+                    g.color={1.0f,0.88f,0.66f,0.38f};
+                    g.glow=true;
+                    state.roomGlows.push_back(g);
                 }
             }
             // On her right (your left): a hanging scroll; on her left: a low sideboard.
             {
-                const float wx=-rx+0.05f*D,sz=-0.6f*D,h0=wain+0.25f*D,h1=ceiling-0.6f*D;
-                const float scroll[4]={0.90f,0.86f,0.76f,1},ink[4]={0.12f,0.10f,0.09f,1},cloth[4]={0.30f,0.36f,0.30f,1};
+                float h0,h1,paperWidth;
+                ScrollSpan(h0,h1,paperWidth);
+                const float wx=-rx+0.05f*D,sz=-0.6f*D;
+                const float scroll[4]={1,1,1,1},cloth[4]={0.30f,0.36f,0.30f,1};
                 quad({wx,h0-0.1f*D,sz-0.62f*D},{wx,h0-0.1f*D,sz+0.62f*D},{wx,h1+0.1f*D,sz+0.62f*D},{wx,h1+0.1f*D,sz-0.62f*D},{1,0,0},cloth);
-                quad({wx+0.005f*D,h0,sz-0.5f*D},{wx+0.005f*D,h0,sz+0.5f*D},{wx+0.005f*D,h1,sz+0.5f*D},{wx+0.005f*D,h1,sz-0.5f*D},{1,0,0},scroll);
-                // A few strokes of ink down its middle.
-                for(int i=0;i<3;++i)
-                {
-                    const float y=h1-0.35f*D-i*(h1-h0-0.7f*D)/3;
-                    quad({wx+0.01f*D,y-0.28f*D,sz-0.06f*D+i*0.03f*D},{wx+0.01f*D,y-0.28f*D,sz+0.06f*D+i*0.03f*D},{wx+0.01f*D,y,sz+0.04f*D},{wx+0.01f*D,y,sz-0.08f*D},{1,0,0},ink);
-                }
+                // Its painting (PaintScroll): the picture's top left at the top toward you.
+                float uv[8];
+                ScrollUv(uv);
+                const float ruv[8]={uv[6],uv[7],uv[4],uv[5],uv[2],uv[3],uv[0],uv[1]};
+                quad({wx+0.005f*D,h0,sz-0.5f*D},{wx+0.005f*D,h0,sz+0.5f*D},{wx+0.005f*D,h1,sz+0.5f*D},{wx+0.005f*D,h1,sz-0.5f*D},{1,0,0},scroll,ruv);
                 grain=1;grainScale=0.35f;
                 box(wx-0.04f*D,h0-0.16f*D,sz-0.7f*D,wx+0.08f*D,h0-0.08f*D,sz+0.7f*D,beams);
                 box(wx-0.04f*D,h1+0.08f*D,sz-0.7f*D,wx+0.08f*D,h1+0.16f*D,sz+0.7f*D,beams);
@@ -881,6 +998,16 @@ namespace MikuMikuDesktopPerch
                 grain=0;
                 box(-half-0.02f*D,ly+0.33f*D,zc-half-0.02f*D,half+0.02f*D,ly+0.38f*D,zc+half+0.02f*D,frame);
                 box(-half-0.02f*D,ly-0.02f*D,zc-half-0.02f*D,half+0.02f*D,ly+0.02f*D,zc+half+0.02f*D,frame);
+                // Its glow: a bright one close round the shade and a wide faint one.
+                for(const auto& [size,alpha]:{std::pair{1.1f,0.95f},std::pair{2.0f,0.30f}})
+                {
+                    MascotRenderer::Particle g;
+                    g.position={0,ly+0.18f*D,zc};
+                    g.size=size*D;
+                    g.color={1.0f,0.85f,0.58f,alpha};
+                    g.glow=true;
+                    state.roomGlows.push_back(g);
+                }
             }
         }
 
@@ -1600,6 +1727,7 @@ namespace MikuMikuDesktopPerch
         void OnKey(WPARAM key)
         {
             auto& t=state.table;
+            if(key==VK_F1){state.camera={};return;}   // the camera back where it was (as a double-click on the table)
             if(state.confirmQuit)
             {
                 if(key=='Y')Finish();
@@ -1999,6 +2127,7 @@ namespace MikuMikuDesktopPerch
                 p.glow=k.glow;
                 shown.push_back(p);
             }
+            shown.insert(shown.end(),state.roomGlows.begin(),state.roomGlows.end());
             r.SetParticles(shown);
         }
         // Her walks on the desktop leave センター shifted sideways in the model: taken back out.

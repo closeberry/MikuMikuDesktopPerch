@@ -288,6 +288,32 @@ float3 Flooded(float3 floorColour, float3 light, float3 glow, float3 world)
     return c + glow;
 }
 
+// Seigaiha (the waves: rows of fans of rings, each row half a fan across from the one above,
+// the lower in front), in fans one unit across: how near p is to a ring's line (1 on it).
+float Seigaiha(float2 p)
+{
+    const float r = 0.5;
+    const float w = (fwidth(p.x) + fwidth(p.y)) * 4 / r + 0.08;   // the line's width, kept from flickering far off
+    const int row0 = (int)floor((p.y - r) / (r * 0.5));
+    float ring = 0;
+    bool found = false;
+    [unroll] for (int k = 0; k <= 4; ++k)
+    {
+        const int row = row0 + k;
+        const float cy = row * r * 0.5;
+        const float shift = (row & 1) ? r : 0;
+        const float cx = floor((p.x - shift) / (2 * r) + 0.5) * 2 * r + shift;
+        const float d = distance(p, float2(cx, cy));
+        if (!found && d < r && p.y >= cy)
+        {
+            const float t = d / r * 4;
+            ring = 1 - smoothstep(0, w, abs(t - round(t)));
+            found = true;
+        }
+    }
+    return ring;
+}
+
 float4 main(VSOutput i) : SV_Target
 {
     // See-through (a mahjong tile fading in as it falls): pixels left out in a 4x4 ordered
@@ -306,14 +332,16 @@ float4 main(VSOutput i) : SV_Target
     if (pattern == 1)
         return float4(rgb, 1);
     float shine = 0;
-    if (pattern == 0 && theme == 1)
+    if (pattern == 0 && (theme == 1 || theme == 5))
     {
-        // Wood: a grain running along the boards, the boards' dark seams, a little grime.
+        // Wood: a grain running along the boards, the boards' dark seams, a little grime (look 5,
+        // the mahjong room's: the same, its unevenness about half as strong).
         const float3 q = i.local;
-        rgb *= 0.78 + 0.34 * Noise(float2(q.x * 0.22 + q.z * 0.05, (q.y + q.z) * 3.2));
+        const float uneven = theme == 5 ? 0.5 : 1.0;
+        rgb *= 0.95 - 0.17 * uneven + 0.34 * uneven * Noise(float2(q.x * 0.22 + q.z * 0.05, (q.y + q.z) * 3.2));
         const float board = frac((q.y + 0.37 * q.z) / 1.15);
         rgb *= lerp(0.55, 1, smoothstep(0.0, 0.07, min(board, 1 - board)));
-        rgb *= 1 - 0.3 * smoothstep(0.55, 0.85, Noise(q.xy * 0.5 + q.z * 0.3 + 2.0));
+        rgb *= 1 - 0.3 * uneven * smoothstep(0.55, 0.85, Noise(q.xy * 0.5 + q.z * 0.3 + 2.0));
     }
     else if (pattern == 0 && theme == 2)
     {
@@ -322,6 +350,13 @@ float4 main(VSOutput i) : SV_Target
         rgb *= 0.85 + 0.25 * Noise(q.xy * 1.8 + q.z * 1.3);
         rgb *= 1 - 0.25 * Crack(float2(q.x + q.z, q.y) * 1.4, 0.015);
         shine = 0.55;
+    }
+    else if (pattern == 0 && theme == 4)
+    {
+        // Wallpaper: washi with its fibres, the waves pressed faintly into it.
+        const float3 q = i.local;
+        rgb *= 0.94 + 0.08 * Noise(q.xy * 9.0) + 0.04 * Noise(float2(q.x * 30.0, q.y * 3.0));
+        rgb *= 1 - 0.10 * Seigaiha(q.xy);
     }
     else if (pattern == 0 && theme == 3)
     {
