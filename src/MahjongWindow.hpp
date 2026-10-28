@@ -27,6 +27,7 @@ namespace MikuMikuDesktopPerch
         int msaa=4;                       // MSAA samples and the textures' largest side
         unsigned maxTexture=1024;
         bool light=false;                 // fewer pixels drawn (the settings' light 3D)
+        std::function<void()> onGameOver; // each game played to its end (not one given up)
     };
 
     // Opens it (or brings it forward when open). onEnd: once, when the window closes.

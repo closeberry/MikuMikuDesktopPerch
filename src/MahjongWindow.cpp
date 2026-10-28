@@ -60,6 +60,7 @@ namespace MikuMikuDesktopPerch
             std::function<void()> onEnd;
             Mahjong::Table table;
             int lost=0;   // games you lost in a row
+            bool gameOverTold=false;   // this game's end told (MahjongOpponent::onGameOver)
             int selected=-1,hover=-1;
             bool riichiMode=false,confirmQuit=false;
             ULONGLONG nextAt=0;
@@ -1224,6 +1225,7 @@ namespace MikuMikuDesktopPerch
 
         void NewGame()
         {
+            state.gameOverTold=false;
             std::random_device device;
             state.table.NewGame(device(),std::max(LeastCare,Care-LessPerBond*state.her.bond-LessPerLoss*state.lost));
             state.callsSeen=state.table.HerCalls();
@@ -1399,6 +1401,11 @@ namespace MikuMikuDesktopPerch
             }
             Redraw(parts);
             Listen();
+            if(t.Now()==Phase::GameOver&&!state.gameOverTold)
+            {
+                state.gameOverTold=true;
+                if(state.her.onGameOver)state.her.onGameOver();
+            }
         }
 
         std::wstring ScoreLine(const Mahjong::Score& s)

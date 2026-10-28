@@ -3799,6 +3799,11 @@ namespace
         her.msaa=std::min(app.settings.msaa,4);
         her.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
         her.light=app.settings.dungeonLight;
+        // A game played to its end together brings them closer.
+        her.onGameOver=[model]{
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inMahjong)AddBond(*owned,BondAction::Mahjong);
+        };
         if(m.chat)m.chat->Cancel();
         if(m.voice)m.voice->CancelAll();
         m.speech.Reset();
