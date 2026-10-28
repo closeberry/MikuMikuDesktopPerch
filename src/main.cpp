@@ -5598,7 +5598,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(fullscreen!=app.paused)
             {
                 app.paused=fullscreen;
-                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong)ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
+                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong)
+                {
+                    ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
+                    // Her bubble goes too (nothing ticks it while paused); the next draw after
+                    // the pause shows it again if it is still up.
+                    if(fullscreen&&m->bubble.Handle())ShowWindow(m->bubble.Handle(),SW_HIDE);
+                }
             }
         }
         const double dt=Seconds(last,now,frequency);
