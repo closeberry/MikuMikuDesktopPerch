@@ -2,6 +2,28 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.0
+
+### New
+
+- **Air hockey**: "Play air hockey" in the right-click menu opens a window where you play air hockey against that character (first to 7)
+  - She comes from the desktop and stands across the table, bent over it with her mallet in her hand, guarding and striking forward. Her upper body turns toward her hand, and her eyes follow the puck
+  - The mouse moves your mallet; the cursor stays over your half while you play
+  - Keys 1-4 choose the puck's speed and 5-8 the size of the puck and mallets (kept for the next time). Space pauses, Esc stops, and Enter plays again once a game is over
+  - Drag with the right button to turn the camera (the middle button or Shift and the right button to move it, the wheel to come nearer, a right double-click or F1 to put it back)
+  - At the start, a goal, match point and the end she speaks in a bubble just right of her head. With an LLM, she says lines of her own asked for all at once as the window opens, with no wait. Her face changes at each goal, and at the end she claps or goes "oops"
+  - The room is a playroom with a plank floor and a rug, a wainscot and wallpaper, windows and framed pictures
+  - See `docs/AirHockey.md` (in Japanese)
+- **She talks at mahjong**: at the game's start, a riichi, a win, a draw and the game's end she says something in a bubble just right of her head, looking at you (in her own words with an LLM, otherwise a line of her own). Her words for a pon and as she stops to think are asked for ahead, all at once
+- **Those watching comment**: the characters watching mahjong or air hockey now and then cheer or comment in their own bubbles
+- **A word afterwards**: back on the desktop from mahjong or air hockey, she says what she thought of the game (stopped midway too)
+- **Nothing through the table**: hair and skirt fall on the table, and her arms and her lean stop short of it
+
+### Changed
+
+- The mahjong camera no longer moves with the left button; drag with the right button to turn it (the middle button or Shift and the right button to move it, a right double-click or F1 to put it back)
+- At mahjong and air hockey, her words come out a character at a time, as on the desktop
+
 ## 1.4.0
 
 ### New
