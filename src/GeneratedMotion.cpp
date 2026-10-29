@@ -36,20 +36,23 @@ namespace MikuMikuDesktopPerch
             float trail;         // share of the stride the foot goes on back after push-off (the leg straight behind)
             float reach;         // how far (leg lengths) the foot reaches past its landing place before it comes down
             float narrow;        // each foot this far (leg lengths) in from where it stands at rest, toward the middle
+            float kneeOut;       // the thighs turn out this far, so the knees bend a little outward (足 starts the IK there)
+            float armLead;       // share of the cycle the arms swing ahead of the legs' rhythm
+            float elbowSwing;    // the elbow bends this many times the arm's swing (walking: only forward of its middle)
         };
         // Measured on human motion at like speeds: the elbows stay
         // bent; running has a long flight with a deep bounce, lands flat-footed, and swings the
         // arms well behind the body.
         // Walking lands well ahead of the hips on a straight knee.
-        constexpr Gait WalkGait{1.07,0.625f,0.5f,0.035f,0.003f,0.031f,1.5f*Deg,15.0f*Deg,30.0f*Deg,5.0f*Deg,5.0f*Deg,
+        constexpr Gait WalkGait{1.07,0.625f,0.5f,0.035f,0.003f,0.031f,1.5f*Deg,15.0f*Deg,25.0f*Deg,5.0f*Deg,5.0f*Deg,
                                 10.0f*Deg,30.0f*Deg,0.8f,30.0f*Deg,0.3f,0.0f,-0.05f,0.5f,0.04f,0.35f,
-                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,3.0f*Deg,0.7f,0.0f,0.0f,0.06f};
+                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,7.0f*Deg,0.7f,0.0f,0.0f,0.06f,8.0f*Deg,0.08f,1.6f};
         // Running lands about 0.2 leg lengths ahead of the hips and pushes off 0.45 behind; the
         // leg stays straight behind a while, folds less than knee-high, reaches out straight and
         // pulls back as it lands. The hips rise above standing height in flight.
-        constexpr Gait RunGait{0.78,0.26f,0.68f,0.2f,-0.03f,0.12f,10.0f*Deg,35.0f*Deg,120.0f*Deg,5.0f*Deg,17.0f*Deg,
+        constexpr Gait RunGait{0.78,0.26f,0.68f,0.16f,-0.03f,0.12f,10.0f*Deg,17.0f*Deg,127.0f*Deg,5.0f*Deg,17.0f*Deg,
                                5.0f*Deg,50.0f*Deg,0.62f,85.0f*Deg,0.25f,0.3f,0.21f,1.1f,0.15f,0.22f,
-                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.1f,0.07f};
+                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.1f,0.07f,8.0f*Deg,0.13f,0.3f};
 
         // Walking and running are in profile so planted feet never slide in depth; the chest
         // and neck turn back toward the viewer a little.
@@ -416,7 +419,7 @@ namespace MikuMikuDesktopPerch
         slot.assign(pmx.bones.size(),-1);
         auto add=[&](int bone){if(bone>=0&&slot[bone]<0){slot[bone]=static_cast<int>(overrides.size());overrides.push_back(bone);}};
         add(rig.lowerBody);add(rig.upperBody);add(rig.neck);add(rig.groove);
-        for(int side=0;side<2;++side){add(rig.legIK[side]);add(rig.arm[side]);add(rig.elbow[side]);add(rig.armTwist[side]);}
+        for(int side=0;side<2;++side){add(rig.legIK[side]);add(rig.leg[side]);add(rig.arm[side]);add(rig.elbow[side]);add(rig.armTwist[side]);}
         for(int side=0;side<2;++side)for(const auto& f:rig.fingers[side])add(f.bone);
         for(int bone:rig.neutral)add(bone);
     }
@@ -1854,19 +1857,23 @@ namespace MikuMikuDesktopPerch
             SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(g.lean*0.5f*a,-yaw*(WalkNeckYaw/WalkYaw)+0.9f*g.chestTwist*a*c,0));
             // Arms swing against the legs, a touch behind them, the elbow bending a little more
             // as the arm comes forward.
-            const float lag=std::cos(XM_2PI*(p-0.03f));
+            const float lag=std::cos(XM_2PI*(p-0.03f+g.armLead));
             const float swing0=-g.armSwing*a*lag,swing1=g.armSwing*a*lag,back=-g.armBack*a;
             if(activity==Activity::Run)
             {
                 // Running: the hands lightly closed, and the elbow closing a little as the arm
                 // comes forward and opening as it goes back, the fists pumping in time with the
                 // steps.
-                arms(back+swing0,back+swing1,rig.armLower[0],rig.armLower[1],g.elbow+0.3f*swing0,g.elbow+0.3f*swing1);
+                arms(back+swing0,back+swing1,rig.armLower[0],rig.armLower[1],g.elbow+g.elbowSwing*swing0,g.elbow+g.elbowSwing*swing1);
                 for(int side=0;side<2;++side)CurlFingers(keys,side,{0.65f,0.7f,0.75f,0.8f});
             }
             else
                 arms(back+swing0,back+swing1,rig.armLower[0],rig.armLower[1],
-                     g.elbow+0.3f*std::max(0.0f,swing0),g.elbow+0.3f*std::max(0.0f,swing1));
+                     g.elbow+g.elbowSwing*std::max(0.0f,swing0),g.elbow+g.elbowSwing*std::max(0.0f,swing1));
+            // The thighs turn out a little: the IK starts from there, so the knees bend outward
+            // as the feet come in toward the middle (+Y turns the left knee in).
+            for(int side=0;side<2;++side)
+                SetRotation(keys,rig.leg[side],XMQuaternionRotationRollPitchYaw(0,(side==0?-1.0f:1.0f)*g.kneeOut*a,0));
         };
 
         switch(activity)
