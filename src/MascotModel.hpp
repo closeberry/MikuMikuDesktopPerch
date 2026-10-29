@@ -233,6 +233,10 @@ namespace MikuMikuDesktopPerch
         // Diagnostics: the closest the forearm and hand (left, right) come to the rest of the
         // body as posed now (its vertices, hair and arms aside), in model units.
         std::array<float,2> ArmClearance(std::array<std::wstring,2>* nearestBone=nullptr) const;   // and the bones carrying the nearest vertices
+        // Diagnostics (--gait-trace): the generated gait's phase and the posed positions of the
+        // main bones (GaitTraceBones' order, x y z each, model units; -1 0 0 for one missing).
+        std::wstring GaitTrace() const;
+        static std::wstring GaitTraceBones();
 
         // Solid things in her way, such as a mini game's table (docs/AirHockey.md, めり込み判定):
         // boxes in model space (middle, half sizes, turn as a quaternion). Simulated parts (hair,

@@ -2172,6 +2172,38 @@ namespace MikuMikuDesktopPerch
     bool MascotModel::CanSit() const {return impl->motion.CanSit();}
     std::wstring MascotModel::DescribeRig() const {return impl->motion.Describe();}
 
+    namespace
+    {
+        const wchar_t* const GaitTraceNames[]{
+            L"下半身",L"上半身",L"首",L"頭",
+            L"左足",L"左ひざ",L"左足首",L"左つま先",L"右足",L"右ひざ",L"右足首",L"右つま先",
+            L"左腕",L"左ひじ",L"左手首",L"右腕",L"右ひじ",L"右手首"};
+    }
+    std::wstring MascotModel::GaitTraceBones()
+    {
+        std::wstring out;
+        for(const auto* name:GaitTraceNames)out+=(out.empty()?L"":L" ")+std::wstring(name);
+        return out;
+    }
+    std::wstring MascotModel::GaitTrace() const
+    {
+        using namespace DirectX;
+        const auto& m=*impl;
+        wchar_t buffer[64]{};
+        swprintf_s(buffer,L"%.4f",m.motion.WalkPhase());
+        std::wstring out=buffer;
+        const bool posed=m.pmx&&m.solver&&m.solver->boneMatrices.size()>=m.pmx->bones.size();
+        for(const auto* name:GaitTraceNames)
+        {
+            const int bone=posed?m.FindBone({name}):-1;
+            XMFLOAT3 p{-1,0,0};
+            if(bone>=0)XMStoreFloat3(&p,XMVector3Transform(XMLoadFloat3(&m.pmx->bones[bone].position),XMMatrixTranspose(m.solver->boneMatrices[bone])));
+            swprintf_s(buffer,L" %.4f %.4f %.4f",p.x,p.y,p.z);
+            out+=buffer;
+        }
+        return out;
+    }
+
     std::array<float,2> MascotModel::ArmClearance(std::array<std::wstring,2>* nearestBone) const
     {
         using namespace DirectX;

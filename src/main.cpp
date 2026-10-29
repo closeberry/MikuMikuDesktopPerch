@@ -5441,6 +5441,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     // --clearance: step the gesture through its timeline (0.1 s a frame after 40 frames) and
     // write how close the forearms and hands come to the body at each step.
     bool snapshotClearance=false;
+    std::wstring snapshotGaitTrace;   // --gait-trace <file>: the first character's GaitTrace each frame
     std::wstring snapshotOnlyGestures;   // --only-gestures a,b,...: leave every other gesture out
     std::vector<std::array<float,3>> clearance;
     std::vector<std::array<std::wstring,2>> clearanceBones;
@@ -5530,6 +5531,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 snapshotClearance=true;
             }
+            else if(arg==L"--gait-trace"&&i+1<argc)snapshotGaitTrace=argv[++i];
             else if(arg==L"--play-motion")
             {
                 snapshotPlayMotion=true;
@@ -6348,6 +6350,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 app.restart=true;
                 DestroyWindow(app.hwnd);
             }
+        }
+        if(app.diagnostic&&!snapshotGaitTrace.empty())
+        {
+            static FILE* trace=[&]{
+                FILE* f=nullptr;
+                if(_wfopen_s(&f,snapshotGaitTrace.c_str(),L"w, ccs=UTF-8")==0&&f)fwprintf(f,L"time phase %s\n",MascotModel::GaitTraceBones().c_str());
+                return f;
+            }();
+            if(trace){fwprintf(trace,L"%.4f %s\n",app.clock,app.mascots.front()->model.GaitTrace().c_str());fflush(trace);}
         }
         if(app.diagnostic&&snapshotClearance&&!snapshotGesture.empty())
         {

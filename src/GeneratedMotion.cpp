@@ -28,11 +28,27 @@ namespace MikuMikuDesktopPerch
             float liftSkew;      // < 1 brings the swing foot's highest point earlier (a kick back)
             float lowAt;         // where in the cycle the body is lowest (a little after contact)
             float easeSeconds;
+            float list,listAt;   // the hips tip, the left side highest at listAt (over the left foot)
+            float shoulderList;  // the shoulders tip the other way
+            float sway,swayAt;   // the hips move over the planted foot, furthest left at swayAt
+            float armBack;       // the arms swing about this far behind hanging straight down
+            float swingSkew;     // < 1 brings the swing foot forward sooner, so it lands with the knee straight
+            float trail;         // share of the stride the foot goes on back after push-off (the leg straight behind)
+            float reach;         // how far (leg lengths) the foot reaches past its landing place before it comes down
         };
-        constexpr Gait WalkGait{1.07,0.625f,0.5f,0.08f,0.003f,0.031f,5.0f*Deg,15.0f*Deg,8.0f*Deg,5.0f*Deg,5.0f*Deg,
-                                20.0f*Deg,30.0f*Deg,0.8f,30.0f*Deg,0.5f,0.0f,0.04f,1.0f,0.125f,0.35f};
-        constexpr Gait RunGait{0.667,0.4f,0.9f,0.45f,0.03f,0.055f,15.0f*Deg,35.0f*Deg,90.0f*Deg,5.0f*Deg,12.0f*Deg,
-                               20.0f*Deg,50.0f*Deg,0.62f,85.0f*Deg,0.25f,0.2f,0.055f,0.55f,0.15f,0.22f};
+        // Measured on human motion at like speeds: the elbows stay
+        // bent; running has a long flight with a deep bounce, lands flat-footed, and swings the
+        // arms well behind the body.
+        // Walking lands well ahead of the hips on a straight knee.
+        constexpr Gait WalkGait{1.07,0.625f,0.5f,0.035f,0.003f,0.031f,1.5f*Deg,15.0f*Deg,30.0f*Deg,5.0f*Deg,5.0f*Deg,
+                                10.0f*Deg,30.0f*Deg,0.8f,30.0f*Deg,0.3f,0.0f,-0.05f,0.5f,0.04f,0.35f,
+                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,3.0f*Deg,0.7f,0.0f,0.0f};
+        // Running lands about 0.2 leg lengths ahead of the hips and pushes off 0.45 behind; the
+        // leg stays straight behind a while, folds less than knee-high, reaches out straight and
+        // pulls back as it lands. The hips rise above standing height in flight.
+        constexpr Gait RunGait{0.78,0.26f,0.68f,0.2f,-0.03f,0.12f,10.0f*Deg,35.0f*Deg,120.0f*Deg,5.0f*Deg,17.0f*Deg,
+                               5.0f*Deg,50.0f*Deg,0.62f,85.0f*Deg,0.25f,0.3f,0.21f,1.1f,0.15f,0.22f,
+                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.1f};
 
         // Walking and running are in profile so planted feet never slide in depth; the chest
         // and neck turn back toward the viewer a little.
@@ -1768,8 +1784,12 @@ namespace MikuMikuDesktopPerch
                 else
                 {
                     const float s=(ph-g.stance)/(1.0f-g.stance);
-                    const float t=std::clamp((s-g.swingDelay)/(1-g.swingDelay),0.0f,1.0f);
-                    u=stride*(0.5f*(t+Smooth(t))-0.5f-g.back);
+                    const float t=std::clamp((s-g.swingDelay)/(1-g.swingDelay),0.0f,1.0f),ts=std::pow(t,g.swingSkew);
+                    u=stride*(0.5f*(ts+Smooth(ts))-0.5f-g.back);
+                    // On back a little after push-off, then out past the landing place and back.
+                    if(g.swingDelay>0)u-=g.trail*stride*std::sin(XM_PI*std::clamp(s/(2*g.swingDelay),0.0f,1.0f));
+                    const float out=std::sin(XM_PI*std::clamp((t-0.7f)/0.3f,0.0f,1.0f));
+                    u+=g.reach*L*a*out*out;
                     // Up and down without a jolt (no speed at either end), highest early on.
                     const float arc=std::sin(XM_PI*std::pow(s,g.liftSkew));
                     h=lift*arc*arc;
@@ -1812,24 +1832,29 @@ namespace MikuMikuDesktopPerch
             auto wave=[&](float q){return 0.5f+0.5f*std::cos(2*XM_2PI*(q-g.lowAt));};
             const float depth=g.bob*L*a;
             KeyOf(keys,rig.groove).position={0,-(g.bobBase*L*a+depth*wave(p)),0};
-            SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw+g.hipTwist*a*c,0));
-            SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(-g.lean*a,0,0),XMQuaternionRotationRollPitchYaw(0,chest-g.chestTwist*a*c,0)));
+            // The hips ride over the planted foot, its side up and the shoulders tipping back
+            // against it (a roll about Z raises the left, +X).
+            const float list=a*std::cos(XM_2PI*(p-g.listAt));
+            XMStoreFloat3(&KeyOf(keys,rig.center).position,XMVectorScale(XMVector3TransformNormal(XMVectorSet(1,0,0,0),XMMatrixRotationY(yaw)),
+                                                                          g.sway*L*a*std::cos(XM_2PI*(p-g.swayAt))));
+            SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw+g.hipTwist*a*c,g.list*list));
+            SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(-g.lean*a,0,-g.shoulderList*list),XMQuaternionRotationRollPitchYaw(0,chest-g.chestTwist*a*c,0)));
             // The neck turns back against the chest's twist so the head stays steady.
             SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(g.lean*0.5f*a,-yaw*(WalkNeckYaw/WalkYaw)+0.9f*g.chestTwist*a*c,0));
             // Arms swing against the legs, a touch behind them, the elbow bending a little more
             // as the arm comes forward.
             const float lag=std::cos(XM_2PI*(p-0.03f));
-            const float swing0=-g.armSwing*a*lag,swing1=g.armSwing*a*lag;
+            const float swing0=-g.armSwing*a*lag,swing1=g.armSwing*a*lag,back=-g.armBack*a;
             if(activity==Activity::Run)
             {
-                // Running: the hands lightly closed, and the elbow closing as the arm comes
-                // forward and opening as it goes back, so each fist pumps up to the chest and
-                // down to the hip in time with the steps.
-                arms(swing0,swing1,rig.armLower[0],rig.armLower[1],g.elbow+0.6f*swing0,g.elbow+0.6f*swing1);
+                // Running: the hands lightly closed, and the elbow closing a little as the arm
+                // comes forward and opening as it goes back, the fists pumping in time with the
+                // steps.
+                arms(back+swing0,back+swing1,rig.armLower[0],rig.armLower[1],g.elbow+0.3f*swing0,g.elbow+0.3f*swing1);
                 for(int side=0;side<2;++side)CurlFingers(keys,side,{0.65f,0.7f,0.75f,0.8f});
             }
             else
-                arms(swing0,swing1,rig.armLower[0],rig.armLower[1],
+                arms(back+swing0,back+swing1,rig.armLower[0],rig.armLower[1],
                      g.elbow+0.3f*std::max(0.0f,swing0),g.elbow+0.3f*std::max(0.0f,swing1));
         };
 

@@ -67,6 +67,7 @@ namespace MikuMikuDesktopPerch
         std::wstring Describe() const;   // rig summary for diagnostics
         bool CanSit() const {return rig.groove>=0;}
         bool CanWalk() const {return rig.legIK[0]>=0&&rig.legIK[1]>=0;}
+        double WalkPhase() const {return walkPhase;}   // cycles walked (the left foot lands at whole ones)
 
         // direction: -1 screen left, +1 screen right (Walk only).
         void SetActivity(Activity activity,int direction=0);
