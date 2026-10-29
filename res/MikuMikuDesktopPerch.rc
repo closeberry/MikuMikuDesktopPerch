@@ -86,3 +86,6 @@ RIICHI MAHJONGSOUND "mahjong\\sounds\\riichi.wav"
 PON MAHJONGSOUND "mahjong\\sounds\\pon.wav"
 KAN MAHJONGSOUND "mahjong\\sounds\\kan.wav"
 DEAL MAHJONGSOUND "mahjong\\sounds\\deal.wav"
+
+// The ruins' map (docs/Metroidvania.md, src/Metroid.cpp): UTF-8 text, rooms of tiles.
+MAP METROIDMAP "metroid\\map.txt"

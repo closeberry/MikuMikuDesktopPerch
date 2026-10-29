@@ -2367,7 +2367,7 @@ namespace MikuMikuDesktopPerch
     const std::wstring& MascotModel::PhysicsResetReason() const {return impl->resetReason;}
 
     void MascotModel::SetTurn(float yaw){impl->proc.turnTarget=yaw;}
-    void MascotModel::SetFacingWalk(bool on,float pace){impl->motion.SetFacingWalk(on,pace);}
+    void MascotModel::SetFacingWalk(bool on,float pace,float runSpeed){impl->motion.SetFacingWalk(on,pace,runSpeed);}
     float MascotModel::GroundSpeed() const {return impl->motion.GroundSpeed();}
 
     bool MascotModel::EyePosition(std::array<float,3>& position) const

@@ -441,6 +441,7 @@ namespace MikuMikuDesktopPerch
         case Activity::Hang:fadeDuration=0.6;break;
         case Activity::Grabbed:fadeDuration=0.2;break;
         case Activity::Fall:fadeDuration=0.25;break;
+        case Activity::Air:fadeDuration=0.08;airFall=0;break;
         }
         if(directional)direction=dir<0?-1:(dir>0?1:0);
         // A new gait starts from standing; switching walk <-> run keeps the stride going.
@@ -1742,7 +1743,10 @@ namespace MikuMikuDesktopPerch
             walkAmount=Approach(walkAmount,turned,static_cast<float>(dt/g.easeSeconds));
             // Facing walk (the dungeon): quicker steps when asked, longer strides not (they would
             // look like a lunge); the stride's length stays, so the ground speed follows.
-            const double cycle=g.cycle/(facing&&activity==Activity::Walk?facingPace:1.0f);
+            // A run timed to a ground speed asked for (the ruins): the stride stays, the steps
+            // quicken, though not past three a second for each foot.
+            const double cycle=facing&&activity==Activity::Run&&facingRunSpeed>0?std::max(0.36,static_cast<double>(g.stride*L/(g.stance*facingRunSpeed))):
+                               g.cycle/(facing&&activity==Activity::Walk?facingPace:1.0f);
             walkPhase+=dt/cycle;
             const float a=walkAmount,p=Frac(walkPhase),c=std::cos(XM_2PI*p);
             const float stride=g.stride*L*a,lift=g.lift*L*a;
@@ -2116,6 +2120,28 @@ namespace MikuMikuDesktopPerch
             SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,0,std::clamp(0.6f*sway.x/L,-0.3f,0.3f)));
             SetRotation(keys,rig.upperBody,XMQuaternionRotationRollPitchYaw(-3.0f*Deg,0,0));
             limbs(20.0f*Deg,20.0f*Deg,35.0f*Deg);
+            break;
+        }
+        case Activity::Air:
+        {
+            // In the air at once (no crouch: the jump has already left the ground): going up,
+            // the front knee drives up and the back leg trails a little, toes pointed, the arms
+            // swinging forward and up; coming down, the legs reach down for the ground a little
+            // apart and the arms open out for balance. Which, from the vertical speed (up
+            // positive), eased so the turn at the top is not a snap.
+            const float want=std::clamp(0.5f-carryVelocity.y/(6.0f*L),0.0f,1.0f);
+            airFall+=(want-airFall)*static_cast<float>(1.0-std::exp(-dt/0.12));
+            const float up=Smooth(1-airFall),down=Smooth(airFall);
+            const float in=Smooth(static_cast<float>(activityTime/0.12));   // from the take-off's pose
+            footKey(0,standingFoot(0,(0.16f*up+0.08f*down)*L*in,(0.30f*up+0.06f*down)*L*in),(10.0f*up-8.0f*down)*Deg*in,yaw);
+            footKey(1,standingFoot(1,(-0.14f*up-0.04f*down)*L*in,(0.16f*up+0.04f*down)*L*in),(-35.0f*up-12.0f*down)*Deg*in,yaw);
+            SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw,0));
+            SetRotation(keys,rig.upperBody,XMQuaternionRotationRollPitchYaw((-7.0f*up+3.0f*down)*Deg*in,0,0));
+            SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw((4.0f*up-4.0f*down)*Deg*in,0,0));
+            const float open=0.45f*down*in;
+            arms((-30.0f*up+20.0f*down)*Deg*in,(50.0f*up+20.0f*down)*Deg*in,rig.armLower[0]*(1-open),rig.armLower[1]*(1-open),
+                 (15.0f+45.0f*up*in)*Deg,(15.0f+60.0f*up*in)*Deg);
+            for(int side=0;side<2;++side)CurlFingers(keys,side,{0.5f,0.55f,0.6f,0.65f});
             break;
         }
         case Activity::Fall:

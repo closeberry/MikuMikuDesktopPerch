@@ -12,7 +12,10 @@ namespace MikuMikuDesktopPerch
     // Sit, Lie and Hang rest on an edge at world y=0 (a window's top edge).
     // Bound: a hop off one foot like a triple jump's first step (the dungeon's jump ahead);
     // SideHop: a hop to the side off the far foot (direction: toward +x or -x of the model).
-    enum class Activity { Idle, Walk, Run, Jump, Sit, Lie, Hang, Grabbed, Fall, Bound, SideHop };
+    // Air: in the air with no crouch first, the pose from the vertical speed (SetCarryMotion):
+    // knees tucked going up, legs reaching down coming down (the ruins' jumps, whoever draws
+    // her moving her).
+    enum class Activity { Idle, Walk, Run, Jump, Sit, Lie, Hang, Grabbed, Fall, Bound, SideHop, Air };
     // The feeling on the face while talking (made of the model's standard face morphs).
     enum class Expression { Neutral, Smile, Surprise, Troubled, Angry, Sad, Shy };
 
@@ -157,7 +160,8 @@ namespace MikuMikuDesktopPerch
         void SetTurn(float yaw);
         // Walk and run the way she faces, in place: whoever draws her moves her at GroundSpeed
         // (units per second; the dungeon). Off: she turns to the side and travels (the desktop).
-        void SetFacingWalk(bool on,float pace=1);
+        // runSpeed: running's steps timed for this ground speed (units per second; 0: her own).
+        void SetFacingWalk(bool on,float pace=1,float runSpeed=0);
         float GroundSpeed() const;
         // World position of the head bone from the latest solve; false if the model has none.
         bool HeadPosition(std::array<float,3>& position) const;

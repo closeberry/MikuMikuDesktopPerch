@@ -13,6 +13,7 @@
 #include "MahjongSound.hpp"
 #include "MahjongWindow.hpp"
 #include "AirHockeyWindow.hpp"
+#include "MetroidWindow.hpp"
 #include "TreasureArt.hpp"
 #include <commctrl.h>
 #include "Voice.hpp"
@@ -61,7 +62,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdMetroid};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr UINT IdTreasure=600;          // + the treasure's place in Dungeon::TreasureBook: look at it
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
@@ -143,6 +144,7 @@ namespace
         // At the mahjong table (docs/Mahjong.md): the same, her model drawn in its window.
         bool inMahjong=false;
         bool inAirHockey=false;   // at the air hockey table (off the desktop meanwhile)
+        bool inMetroid=false;     // in the ruins (docs/Metroidvania.md; off the desktop meanwhile)
         // Watching the game while another one plays (see UpdateWatching): when she next thinks
         // or nods, and next checks she is clear of its window.
         bool watchingMahjong=false;
@@ -740,7 +742,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey)continue;   // away (room is made again when she is back)
+            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inMetroid)continue;   // away (room is made again when she is back)
             const bool going=other.place==Place::Warping||other.place==Place::Jumping||other.travel!=Travel::None;
             if(std::abs((going?other.destinationLine:FeetLine(other))-line)>4)continue;
             const Activity a=other.model.CurrentActivity();
@@ -882,7 +884,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
+            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inMetroid||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
             if(std::abs(CenterX(other)-CenterX(m))>=(ModelHalfWidthPixels(m)+ModelHalfWidthPixels(other))*0.6)continue;
             if(movable(other)&&other.slot>m.slot)continue;   // that one steps aside instead
             double left,right;
@@ -896,13 +898,13 @@ namespace
         }
     }
 
-    // A game the others watch (mahjong or air hockey, its window up and not minimized), and where
+    // A game the others watch (mahjong, air hockey or the ruins, its window up and not minimized), and where
     // its window is.
-    bool GameWindowRect(RECT& r){return MahjongWindowRect(r)||AirHockeyWindowRect(r);}
+    bool GameWindowRect(RECT& r){return MahjongWindowRect(r)||AirHockeyWindowRect(r)||MetroidWindowRect(r);}
     bool GameWindowForeground()
     {
         const HWND front=GetForegroundWindow();
-        return front&&((MahjongWindowOpen()&&front==MahjongWindowHandle())||(AirHockeyWindowOpen()&&front==AirHockeyWindowHandle()));
+        return front&&((MahjongWindowOpen()&&front==MahjongWindowHandle())||(AirHockeyWindowOpen()&&front==AirHockeyWindowHandle())||(MetroidWindowOpen()&&front==MetroidWindowHandle()));
     }
 
     // While another one plays mahjong or air hockey (its window up and not minimized), one standing on the
@@ -912,7 +914,7 @@ namespace
     void UpdateWatching(Mascot& m)
     {
         RECT r{};
-        const bool watch=!m.inMahjong&&!m.inDungeon&&!m.inAirHockey&&m.place==Place::Ground&&m.travel==Travel::None&&!m.dozing&&GameWindowRect(r);
+        const bool watch=!m.inMahjong&&!m.inDungeon&&!m.inAirHockey&&!m.inMetroid&&m.place==Place::Ground&&m.travel==Travel::None&&!m.dozing&&GameWindowRect(r);
         if(watch!=m.watchingMahjong)
         {
             m.watchingMahjong=watch;
@@ -1652,6 +1654,7 @@ namespace
         AppendMenuW(menu,MF_STRING,IdDungeon,T(L"ダンジョンへ行く",L"Go to the dungeon"));
         AppendMenuW(menu,MF_STRING,IdMahjong,T(L"麻雀を打つ",L"Play mahjong"));
         AppendMenuW(menu,MF_STRING,IdAirHockey,T(L"エアホッケーをする",L"Play air hockey"));
+        AppendMenuW(menu,MF_STRING,IdMetroid,T(L"遺跡を探検する",L"Explore the ruins"));
         // The treasures she brought home from it, each to look at on her palm.
         {
             HMENU treasures=CreatePopupMenu();
@@ -1660,7 +1663,7 @@ namespace
             {
                 std::wstring label=t.name+L"　"+(t.found.date.empty()?std::wstring(T(L"（日付不明）",L"(date unknown)")):DateText(t.found.date));
                 if(t.found.count>1)label+=Fmt(T(L"　×{0}",L"  x{0}"),{std::to_wstring(t.found.count)});
-                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon&&!m.inMahjong&&!m.inAirHockey?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
+                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon&&!m.inMahjong&&!m.inAirHockey&&!m.inMetroid?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
             }
             if(owned.empty())AppendMenuW(treasures,MF_STRING|MF_GRAYED,0,T(L"（まだありません。ダンジョンの宝物庫やボスから持ち帰れます）",L"(None yet: bring some home from the dungeon's vaults and bosses)"));
             AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(treasures),T(L"お宝を眺める",L"Look at a treasure"));
@@ -2176,7 +2179,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             const Mascot& each=*owned;
-            if(each.inDungeon||each.inMahjong||each.inAirHockey)continue;   // she is away; the others may still speak first
+            if(each.inDungeon||each.inMahjong||each.inAirHockey||each.inMetroid)continue;   // she is away; the others may still speak first
             if((each.chat&&each.chat->Busy())||each.bubble.Visible()||each.chatInput.IsOpen()||each.speech.Speaking())return;
             if(each.place==Place::Ground&&each.model.CurrentActivity()!=Activity::Grabbed&&each.travel==Travel::None)free.push_back(owned.get());
         }
@@ -2499,7 +2502,7 @@ namespace
     {
         // One in the dungeon talks there, not over the ones on the desktop.
         return std::any_of(app.mascots.begin(),app.mascots.end(),[](const auto& m){
-            return !m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
+            return !m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inMetroid&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
     }
 
     void EndBanter(const wchar_t* why)
@@ -2553,7 +2556,7 @@ namespace
     // Free to talk: standing on a surface with nothing else to do.
     bool FreeToTalk(Mascot& c)
     {
-        return !c.inDungeon&&!c.inMahjong&&!c.inAirHockey&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
+        return !c.inDungeon&&!c.inMahjong&&!c.inAirHockey&&!c.inMetroid&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
                !MotionBusy(c)&&!c.dozing&&!c.chatInput.IsOpen();
     }
 
@@ -3314,7 +3317,7 @@ namespace
         {
             Mascot& c=*owned;
             if(!model.empty()&&c.modelPath!=model)continue;
-            if(c.inDungeon||c.inMahjong||c.inAirHockey)continue;
+            if(c.inDungeon||c.inMahjong||c.inAirHockey||c.inMetroid)continue;
             if((&c==app.asker||&c==app.alarmTeller)&&waited<30)continue;
             const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
             if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
@@ -3538,7 +3541,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if((only&&only!=&m)||m.inDungeon||m.inMahjong||m.inAirHockey)continue;
+            if((only&&only!=&m)||m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid)continue;
             AlbumLayer character;
             UINT width=0,height=0;
             if(!m.renderer.ReadLastFrame(character.pixels,width,height))continue;
@@ -3677,7 +3680,7 @@ namespace
     {
         const auto owned=TreasuresOf(m.modelPath);
         const auto t=std::find_if(owned.begin(),owned.end(),[&](const OwnedTreasure& o){return o.index==index;});
-        if(t==owned.end()||m.inDungeon||m.inMahjong||m.inAirHockey||m.place!=Place::Ground)return;
+        if(t==owned.end()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid||m.place!=Place::Ground)return;
         if(!app.showing.model.empty()){app.picture.Hide();app.showing={};}
         StopGroundActivity(m);
         const RECT work=WorkAreaOfWindow(m);
@@ -3730,7 +3733,7 @@ namespace
         const bool talking=m.speech.Active()||m.speech.Speaking()||m.bubble.Talking()||(m.chat&&m.chat->Busy());
         if(talking)s.quietSince=-1;
         else if(s.quietSince<0)s.quietSince=app.clock;
-        const bool away=m.inDungeon||m.inMahjong||m.inAirHockey||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
+        const bool away=m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
         if(s.endAt<0&&(away||age>30||(age>7&&s.quietSince>=0&&app.clock-s.quietSince>3)))
         {
             s.endAt=app.clock;
@@ -3756,7 +3759,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.place!=Place::Ground||other.inDungeon||other.inMahjong||other.inAirHockey)continue;
+            if(&other==&m||other.place!=Place::Ground||other.inDungeon||other.inMahjong||other.inAirHockey||other.inMetroid)continue;
             other.nextDecision=std::max(other.nextDecision,app.clock+5);
             if(!s.peeked&&age>=1.3&&FreeToTalk(other)&&!InBanter(other))other.model.Emote(L"peek");
         }
@@ -3894,7 +3897,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& c=*owned;
-            if(!c.watchingMahjong||c.inMahjong||c.inAirHockey||c.dozing||c.chatInput.IsOpen()||InBanter(c)||c.bubble.Visible())continue;
+            if(!c.watchingMahjong||c.inMahjong||c.inAirHockey||c.inMetroid||c.dozing||c.chatInput.IsOpen()||InBanter(c)||c.bubble.Visible())continue;
             if(c.chat&&c.chat->Busy())continue;
             free.push_back(&c);
         }
@@ -3972,7 +3975,7 @@ namespace
     void OpenAirHockey(Mascot& m)
     {
         if(AirHockeyWindowOpen()){ShowAirHockeyWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||DungeonWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey)return;
+        if(MahjongWindowOpen()||DungeonWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f air hockey: start (%s)",app.clock,model.c_str());
         AirHockeyOpponent her;
@@ -4028,11 +4031,51 @@ namespace
         });
     }
 
+    // docs/Metroidvania.md: she explores the ruins in their own window, running and jumping
+    // through them (off the desktop meanwhile, as in the dungeon).
+    void OpenMetroid(Mascot& m)
+    {
+        if(MetroidWindowOpen()){ShowMetroidWindow(m.hwnd,{},{});return;}
+        if(MahjongWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid)return;
+        const std::wstring model=m.modelPath;
+        Trace(L"%.1f ruins: start (%s)",app.clock,model.c_str());
+        MetroidHero her;
+        her.name=DungeonHeroOf(m).name;
+        her.model=&m.model;
+        her.toonDir=app.settings.toonDir;
+        her.edgeScale=app.settings.edgeScale;
+        her.msaa=std::min(app.settings.msaa,4);
+        her.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
+        her.light=app.settings.dungeonLight;
+        if(m.chat)m.chat->Cancel();
+        if(m.voice)m.voice->CancelAll();
+        m.speech.Reset();
+        m.bubble.Hide();
+        m.chatInput.Close();
+        if(m.place==Place::Ground)StopGroundActivity(m);
+        m.model.SetLookTarget(0,0,false);
+        m.inMetroid=true;
+        ShowWindow(m.hwnd,SW_HIDE);
+        ShowMetroidWindow(m.hwnd,her,[model]{
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inMetroid)
+                {
+                    Mascot& m=*owned;
+                    m.inMetroid=false;
+                    // Back from the ruins, standing where she was on the desktop.
+                    m.model.SetActivity(Activity::Idle);
+                    m.model.TakeRootDelta();
+                    if(!app.paused)ShowWindow(m.hwnd,SW_SHOWNOACTIVATE);
+                }
+            Trace(L"%.1f ruins: end",app.clock);
+        });
+    }
+
     // docs/Mahjong.md: a game against her in its own window, where she sits at the table (off
     // the desktop meanwhile, as in the dungeon).
     void OpenMahjong(Mascot& m)
     {
-        if(MahjongWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||m.inDungeon){if(MahjongWindowOpen())ShowMahjongWindow(m.hwnd,{},{});return;}
+        if(MahjongWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMetroid){if(MahjongWindowOpen())ShowMahjongWindow(m.hwnd,{},{});return;}
         const std::wstring model=m.modelPath;
         Trace(L"%.1f mahjong: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4094,7 +4137,7 @@ namespace
 
     void OpenDungeon(Mascot& m)
     {
-        if(m.inMahjong||MahjongWindowOpen()||m.inAirHockey||AirHockeyWindowOpen())return;
+        if(m.inMahjong||MahjongWindowOpen()||m.inAirHockey||AirHockeyWindowOpen()||m.inMetroid||MetroidWindowOpen())return;
         if(DungeonWindowOpen()||app.diagnostic){ShowDungeonWindow(m.hwnd,{},{});return;}
         const std::wstring model=m.modelPath;
         Trace(L"%.1f dungeon: start (%s)",app.clock,model.c_str());
@@ -4504,7 +4547,7 @@ namespace
             break;
         }
         case IdOpenModel:
-            if(m.inDungeon||m.inMahjong||m.inAirHockey)break;   // her model is in use in the dungeon or at a table
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid)break;   // her model is in use in the dungeon or at a table
         {
             auto path=OpenFileDialog(m.hwnd,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),Own(m).modelPath);
             if(path.empty()||!ModelUsable(path))break;
@@ -4527,7 +4570,7 @@ namespace
             break;
         }
         case IdRemoveCharacter:
-            if(m.inDungeon||m.inMahjong||m.inAirHockey)break;   // her model is in use in the dungeon or at a table
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid)break;   // her model is in use in the dungeon or at a table
             if(app.mascots.size()>1)app.changes.push_back({Change::Remove,m.slot});
             break;
         case IdOpenMotion:
@@ -4673,6 +4716,9 @@ namespace
             break;
         case IdAirHockey:
             OpenAirHockey(m);
+            break;
+        case IdMetroid:
+            OpenMetroid(m);
             break;
         case IdDungeon:
             OpenDungeon(m);
@@ -5375,6 +5421,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     bool snapshotAirHockey=false; // --airhockey: the snapshot is the air hockey window, your side played for you
     std::wstring snapshotAirHockeyCamera;   // --airhockey-camera pitch,distance,yaw
     int snapshotAirHockeySize=0;            // --airhockey-size 1-4: the pieces' size (the ini's otherwise)
+    bool snapshotMetroid=false;   // --metroid [room]: the snapshot is the ruins' window, she starts in that room
+    int snapshotMetroidRoom=0;
+    std::wstring snapshotMetroidKeys;   // --metroid-play "R1.0 RZ0.3": the keys held in turn (PlayMetroidForTest)
     int snapshotMahjongMoves=0;   // after this many moves of a simple player
     std::wstring snapshotMahjongCamera;   // --mahjong-camera pitch,distance,y,z[,yaw]
     bool snapshotMahjongReach=false;      // --mahjong-reach [far]: she reaches for her river once seated
@@ -5432,6 +5481,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--mahjong-later"&&i+1<argc)snapshotMahjongLater=_wtoi(argv[++i]);
             else if(arg==L"--airhockey-camera"&&i+1<argc)snapshotAirHockeyCamera=argv[++i];
             else if(arg==L"--airhockey-size"&&i+1<argc)snapshotAirHockeySize=_wtoi(argv[++i]);
+            else if(arg==L"--metroid")
+            {
+                snapshotMetroid=true;
+                if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotMetroidRoom=_wtoi(argv[++i]);
+            }
+            else if(arg==L"--metroid-play"&&i+1<argc)snapshotMetroidKeys=argv[++i];
             else if(arg==L"--mahjong")
             {
                 snapshotMahjong=true;
@@ -5701,6 +5756,18 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(argc>=3&&std::wstring(argv[1])==L"--airhockey-sim")
         {
             const std::wstring report=RunAirHockeySim(argc>=4?_wtoi(argv[3]):50,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1,argc>=6?_wtoi(argv[5]):0,argc>=7?_wtoi(argv[6]):0);
+            if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
+            {
+                fputws(report.c_str(),out);
+                fclose(out);
+            }
+            LocalFree(argv);
+            return report.starts_with(L"0 wrong")?0:1;
+        }
+        // --metroid-check <out.txt>: what is wrong with the ruins' map ("0 wrong" first when nothing).
+        if(argc>=3&&std::wstring(argv[1])==L"--metroid-check")
+        {
+            const std::wstring report=CheckMetroidMap();
             if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
             {
                 fputws(report.c_str(),out);
@@ -6024,7 +6091,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(fullscreen!=app.paused)
             {
                 app.paused=fullscreen;
-                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong&&!m->inAirHockey)
+                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inMetroid)
                 {
                     ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
                     // Her bubble goes too (nothing ticks it while paused); the next draw after
@@ -6048,7 +6115,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if(m.inDungeon||m.inMahjong||m.inAirHockey)
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid)
             {
                 m.model.Update(dt);
                 m.model.TakeRootDelta();
@@ -6056,6 +6123,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 m.bubble.Tick(dt,{},0,WorkAreaOfWindow(m),true);
                 if(m.inDungeon)TickDungeonWindow(m.model,dt);
                 else if(m.inAirHockey)TickAirHockeyWindow(m.model,dt);
+                else if(m.inMetroid)TickMetroidWindow(m.model,dt);
                 else TickMahjongWindow(m.model,dt);
                 continue;
             }
@@ -6325,10 +6393,21 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(swscanf_s(snapshotAirHockeyCamera.c_str(),L"%f,%f,%f",&c[0],&c[1],&c[2])==3)SetAirHockeyCamera(c[0],c[1],c[2]);
             }
         }
+        if(app.diagnostic&&snapshotMetroid)
+        {
+            static bool opened=false;
+            if(!opened)
+            {
+                opened=true;
+                OpenMetroid(*app.mascots.front());
+                PlayMetroidForTest(snapshotMetroidKeys,snapshotMetroidRoom);
+            }
+        }
         if(app.diagnostic&&--snapshotFrames<=0)
         {
             Mascot& m=*app.mascots.front();
             if(snapshotAirHockey)SaveAirHockeyView(snapshotPath);
+            else if(snapshotMetroid)SaveMetroidView(snapshotPath);
             else if(snapshotMahjong)SaveMahjongView(snapshotPath);
             else m.renderer.SaveLastFrame(snapshotPath);
             if(FILE* info=nullptr;_wfopen_s(&info,(snapshotPath+L".txt").c_str(),L"w, ccs=UTF-8")==0&&info)
@@ -6346,6 +6425,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(!CommentsSaid().empty())fwprintf(info,L"watchers said:\n%s",CommentsSaid().c_str());
                 fwprintf(info,L"%s",m.model.DescribePenetration().c_str());
                 if(snapshotAirHockey)fwprintf(info,L"%s",DescribeAirHockey().c_str());
+                if(snapshotMetroid)fwprintf(info,L"%s",DescribeMetroid().c_str());
                 fwprintf(info,L"%s",m.model.DescribeWindowMotions().c_str());
                 for(const auto& [key,label]:MascotModel::IdleGestureChoices())
                     if(key.rfind(L"clip:",0)==0)fwprintf(info,L"%s = %s\n",key.c_str(),label.c_str());
