@@ -39,6 +39,8 @@ namespace MikuMikuDesktopPerch
             float kneeOut;       // the knees bend this far out from straight ahead
             float armLead;       // share of the cycle the arms swing ahead of the legs' rhythm
             float elbowSwing;    // the elbow bends this many times the arm's swing (walking: only forward of its middle)
+            float headAhead;     // a model whose head stands less far ahead of its hips than this (most stand with it a
+                                 // little behind) tips its chest forward by the difference; people walk with the head ahead
         };
         // Measured on human motion at like speeds: the elbows stay
         // bent; running has a long flight with a deep bounce, lands flat-footed, and swings the
@@ -46,13 +48,13 @@ namespace MikuMikuDesktopPerch
         // Walking lands well ahead of the hips on a straight knee.
         constexpr Gait WalkGait{1.07,0.625f,0.5f,0.035f,0.003f,0.031f,1.5f*Deg,15.0f*Deg,25.0f*Deg,5.0f*Deg,5.0f*Deg,
                                 10.0f*Deg,30.0f*Deg,0.8f,30.0f*Deg,0.3f,0.0f,-0.05f,0.5f,0.04f,0.35f,
-                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,7.0f*Deg,0.7f,0.0f,0.0f,0.6f,7.0f*Deg,0.08f,1.6f};
+                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,7.0f*Deg,0.7f,0.0f,0.0f,0.6f,7.0f*Deg,0.08f,1.6f,1.5f*Deg};
         // Running lands about 0.2 leg lengths ahead of the hips and pushes off 0.45 behind; the
         // leg stays straight behind a while, folds less than knee-high, reaches out straight and
         // pulls back as it lands. The hips rise above standing height in flight.
-        constexpr Gait RunGait{0.78,0.26f,0.68f,0.16f,-0.03f,0.12f,10.0f*Deg,17.0f*Deg,127.0f*Deg,5.0f*Deg,17.0f*Deg,
-                               5.0f*Deg,50.0f*Deg,0.62f,85.0f*Deg,0.25f,0.3f,0.21f,1.1f,0.15f,0.22f,
-                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.1f,0.52f,7.0f*Deg,0.13f,0.3f};
+        constexpr Gait RunGait{0.78,0.26f,0.68f,0.16f,-0.015f,0.12f,10.0f*Deg,17.0f*Deg,127.0f*Deg,5.0f*Deg,17.0f*Deg,
+                               5.0f*Deg,50.0f*Deg,0.62f,85.0f*Deg,0.25f,0.3f,0.21f,0.7f,0.15f,0.22f,
+                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.05f,0.52f,7.0f*Deg,0.13f,0.3f,-0.7f*Deg};
 
         // Walking and running are in profile so planted feet never slide in depth; the chest
         // and neck turn back toward the viewer a little.
@@ -282,6 +284,12 @@ namespace MikuMikuDesktopPerch
         }
         if(legs>0)rig.legLength=std::max(legLength/legs,0.1f);
         if(rig.lowerBody>=0)XMStoreFloat3(&rig.lowerBodyRest,restPos(rig.lowerBody));
+        // How far ahead of the hip joints the head stands at rest (forward is -Z).
+        if(const int head=Find(pmx,{L"頭"});head>=0&&legs>0)
+        {
+            const XMVECTOR v=XMVectorSubtract(restPos(head),XMVectorScale(XMVectorAdd(XMLoadFloat3(&rig.hipRest[0]),XMLoadFloat3(&rig.hipRest[1])),0.5f));
+            rig.headLean=std::atan2(-XMVectorGetZ(v),XMVectorGetY(v));
+        }
 
         // How far down the arms hang standing: as far as the hand stays clear of what is beside
         // it at that height (hips, thighs, a skirt), measured on the model's own mesh, between
@@ -1850,14 +1858,27 @@ namespace MikuMikuDesktopPerch
                 }
                 pitch*=a;
                 // Heel up: the foot turns about the toe tip, so the ankle rises (and comes a
-                // little forward) instead of the toes sinking into the ground. Toes up: about
-                // the heel, which is close under the ankle.
+                // little forward) instead of the toes sinking into the ground. The ankle moves
+                // as on a foot of standard shape (0.2 leg lengths to the toe tip, 0.13 below), so
+                // the knees bend alike on every model; on the ground the model's own foot then
+                // turns as far as keeps its toes down (a long foot less, a short one in heels as
+                // far as it goes, its toes leaving the ground a moment early rather than the knee
+                // locking straight). Toes up: about the heel, which is close under the ankle.
                 const float d=rig.toeAhead[side],hA=rig.toeBelow[side];
                 if(pitch<0)
                 {
-                    const float th=-pitch;
-                    u+=d-d*std::cos(th)+hA*std::sin(th);
-                    h+=d*std::sin(th)+hA*std::cos(th)-hA;
+                    const float th=-pitch,d0=0.2f*L,h0=0.13f*L;
+                    u+=d0-d0*std::cos(th)+h0*std::sin(th);
+                    const float rise=d0*std::sin(th)+h0*std::cos(th)-h0;
+                    h+=rise;
+                    if(ph<g.stance)
+                    {
+                        auto own=[&](float t){return d*std::sin(t)+hA*std::cos(t)-hA;};
+                        float lo=0,hi=std::atan2(d,hA);   // the own foot's ankle is highest at hi
+                        if(own(hi)>rise)
+                            for(int i=0;i<20;++i){const float mid=0.5f*(lo+hi);(own(mid)<rise?lo:hi)=mid;}
+                        pitch=-hi;
+                    }
                 }
                 else if(pitch>0)
                 {
@@ -1901,7 +1922,10 @@ namespace MikuMikuDesktopPerch
             XMStoreFloat3(&KeyOf(keys,rig.center).position,XMVectorScale(XMVector3TransformNormal(XMVectorSet(1,0,0,0),XMMatrixRotationY(yaw)),
                                                                           g.sway*L*a*std::cos(XM_2PI*(p-g.swayAt))));
             SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw+g.hipTwist*a*c,g.list*list));
-            SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(-g.lean*a,0,-g.shoulderList*list),XMQuaternionRotationRollPitchYaw(0,chest-g.chestTwist*a*c,0)));
+            // The chest tips forward as far as brings the head where headAhead asks (turning
+            // about the waist moves the head about 0.8 as far as turning about the hips).
+            const float lean=g.lean+std::clamp((g.headAhead-rig.headLean)*1.25f,-5.0f*Deg,8.0f*Deg);
+            SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(-lean*a,0,-g.shoulderList*list),XMQuaternionRotationRollPitchYaw(0,chest-g.chestTwist*a*c,0)));
             // The neck turns back against the chest's twist so the head stays steady.
             SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(g.lean*0.5f*a,-yaw*(WalkNeckYaw/WalkYaw)+0.9f*g.chestTwist*a*c,0));
             // Arms swing against the legs, a touch behind them, the elbow bending a little more
