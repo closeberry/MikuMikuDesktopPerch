@@ -2,6 +2,21 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.1
+
+### Changed
+
+- **More natural walking and running**: remade after the way people walk and run. The knee straightens as the foot lands, and the feet land on a narrow track under the hips. The run has a real flight and bounce, and the arms swing as people's do. It is fitted to each model's legs, shins, feet and stance, so it looks alike on every model (the knees point the same way on knock-kneed and bow-legged models too)
+- **Natural standing, sitting and jumping**: the stance and the way the toes turn out, the hanging arms and the head's tilt when standing, the posture and arms when sitting, and the arm swing and knee bend of a jump follow how people stand, sit and jump, alike on every model
+- Entering air hockey, mahjong and the other games stops her gestures, expression and talk, and she starts standing with a plain face
+
+### Fixed
+
+- At air hockey, her hand could reach only one side of the table when the game began after she had walked or during a gesture
+- At mahjong, an eye morph from her expression before the game could stay
+- At mahjong she looks across at you as she talks, not up at the ceiling
+- At air hockey, mahjong and the dungeon, "Stop" and "Continue" after Esc can be clicked with the mouse
+
 ## 1.5.0
 
 ### New
