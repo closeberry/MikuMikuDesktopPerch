@@ -1654,7 +1654,8 @@ namespace
         AppendMenuW(menu,MF_STRING,IdDungeon,T(L"ダンジョンへ行く",L"Go to the dungeon"));
         AppendMenuW(menu,MF_STRING,IdMahjong,T(L"麻雀を打つ",L"Play mahjong"));
         AppendMenuW(menu,MF_STRING,IdAirHockey,T(L"エアホッケーをする",L"Play air hockey"));
-        AppendMenuW(menu,MF_STRING,IdMetroid,T(L"遺跡を探検する",L"Explore the ruins"));
+        // The ruins (IdMetroid, "遺跡を探検する") are left out of the menu while they are on hold
+        // (docs/Metroidvania.md); --snapshot with --metroid still opens them.
         // The treasures she brought home from it, each to look at on her palm.
         {
             HMENU treasures=CreatePopupMenu();
