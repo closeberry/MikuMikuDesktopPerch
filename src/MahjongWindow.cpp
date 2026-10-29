@@ -2585,11 +2585,14 @@ namespace MikuMikuDesktopPerch
             state.headScreen=r.Project({XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at)});
             state.besideHead=r.Project({XMVectorGetX(beside),XMVectorGetY(beside),XMVectorGetZ(beside)});
         }
-        // While she talks, she looks up at you (the camera).
+        // While she talks, she looks straight across at you: toward the camera, at her own head's
+        // height (the camera is above her, and looking at it turned her eyes to the ceiling).
         {
             XMVECTOR det;
             const XMVECTOR you=XMVector3Transform(eye,XMMatrixInverse(&det,world));
-            model.LookToward({XMVectorGetX(you),XMVectorGetY(you),XMVectorGetZ(you)},!state.words.text.empty());
+            std::array<float,3> head{};
+            const bool talking=!state.words.text.empty()&&model.HeadPosition(head);
+            model.LookToward({XMVectorGetX(you),head[1],XMVectorGetZ(you)},talking);
         }
         // Your tiles as they are seen, for pointing and clicking.
         state.handBoxes.assign(state.handCorners.size(),RectF());
