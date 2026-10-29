@@ -35,8 +35,8 @@ namespace MikuMikuDesktopPerch
             float swingSkew;     // < 1 brings the swing foot forward sooner, so it lands with the knee straight
             float trail;         // share of the stride the foot goes on back after push-off (the leg straight behind)
             float reach;         // how far (leg lengths) the foot reaches past its landing place before it comes down
-            float narrow;        // each foot this far (leg lengths) in from where it stands at rest, toward the middle
-            float kneeOut;       // the thighs turn out this far, so the knees bend a little outward (足 starts the IK there)
+            float track;         // the ankles this far apart, as a share of the hip joints' spacing (the model's own)
+            float kneeOut;       // the knees bend this far out from straight ahead
             float armLead;       // share of the cycle the arms swing ahead of the legs' rhythm
             float elbowSwing;    // the elbow bends this many times the arm's swing (walking: only forward of its middle)
         };
@@ -46,13 +46,13 @@ namespace MikuMikuDesktopPerch
         // Walking lands well ahead of the hips on a straight knee.
         constexpr Gait WalkGait{1.07,0.625f,0.5f,0.035f,0.003f,0.031f,1.5f*Deg,15.0f*Deg,25.0f*Deg,5.0f*Deg,5.0f*Deg,
                                 10.0f*Deg,30.0f*Deg,0.8f,30.0f*Deg,0.3f,0.0f,-0.05f,0.5f,0.04f,0.35f,
-                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,7.0f*Deg,0.7f,0.0f,0.0f,0.06f,8.0f*Deg,0.08f,1.6f};
+                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,7.0f*Deg,0.7f,0.0f,0.0f,0.6f,7.0f*Deg,0.08f,1.6f};
         // Running lands about 0.2 leg lengths ahead of the hips and pushes off 0.45 behind; the
         // leg stays straight behind a while, folds less than knee-high, reaches out straight and
         // pulls back as it lands. The hips rise above standing height in flight.
         constexpr Gait RunGait{0.78,0.26f,0.68f,0.16f,-0.03f,0.12f,10.0f*Deg,17.0f*Deg,127.0f*Deg,5.0f*Deg,17.0f*Deg,
                                5.0f*Deg,50.0f*Deg,0.62f,85.0f*Deg,0.25f,0.3f,0.21f,1.1f,0.15f,0.22f,
-                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.1f,0.07f,8.0f*Deg,0.13f,0.3f};
+                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.1f,0.52f,7.0f*Deg,0.13f,0.3f};
 
         // Walking and running are in profile so planted feet never slide in depth; the chest
         // and neck turn back toward the viewer a little.
@@ -167,6 +167,9 @@ namespace MikuMikuDesktopPerch
                 const XMVECTOR ankle=restPos(rig.ankle[side]>=0?rig.ankle[side]:rig.legIK[side]);
                 XMStoreFloat3(&rig.hipRest[side],hip);
                 XMStoreFloat3(&rig.ankleRest[side],restPos(rig.legIK[side]));
+                XMStoreFloat3(&rig.kneeRest[side],knee);
+                const int foot=pmx.bones[rig.legIK[side]].IKTarget;
+                XMStoreFloat3(&rig.footRest[side],foot>=0&&foot<static_cast<int>(pmx.bones.size())?restPos(foot):ankle);
                 rig.thigh=XMVectorGetX(XMVector3Length(XMVectorSubtract(knee,hip)));
                 rig.shin=XMVectorGetX(XMVector3Length(XMVectorSubtract(ankle,knee)));
                 hipHeight+=XMVectorGetY(hip);
@@ -419,7 +422,7 @@ namespace MikuMikuDesktopPerch
         slot.assign(pmx.bones.size(),-1);
         auto add=[&](int bone){if(bone>=0&&slot[bone]<0){slot[bone]=static_cast<int>(overrides.size());overrides.push_back(bone);}};
         add(rig.lowerBody);add(rig.upperBody);add(rig.neck);add(rig.groove);
-        for(int side=0;side<2;++side){add(rig.legIK[side]);add(rig.leg[side]);add(rig.arm[side]);add(rig.elbow[side]);add(rig.armTwist[side]);}
+        for(int side=0;side<2;++side){add(rig.legIK[side]);add(rig.leg[side]);add(rig.knee[side]);add(rig.arm[side]);add(rig.elbow[side]);add(rig.armTwist[side]);}
         for(int side=0;side<2;++side)for(const auto& f:rig.fingers[side])add(f.bone);
         for(int bone:rig.neutral)add(bone);
     }
@@ -486,6 +489,49 @@ namespace MikuMikuDesktopPerch
     void GeneratedMotion::SetRotation(std::vector<Key>& keys,int bone,FXMVECTOR rotation)
     {
         XMStoreFloat4(&KeyOf(keys,bone).rotation,XMQuaternionNormalize(rotation));
+    }
+
+    void GeneratedMotion::SolveLeg(std::vector<Key>& keys,int side,FXMVECTOR target,FXMVECTOR aim)
+    {
+        if(rig.leg[side]<0||rig.knee[side]<0||slot[rig.leg[side]]<0||slot[rig.knee[side]]<0)return;
+        const XMVECTOR hipRest=XMLoadFloat3(&rig.hipRest[side]),kneeRest=XMLoadFloat3(&rig.kneeRest[side]),footRest=XMLoadFloat3(&rig.footRest[side]);
+        const float thigh=XMVectorGetX(XMVector3Length(XMVectorSubtract(kneeRest,hipRest)));
+        const float shin=XMVectorGetX(XMVector3Length(XMVectorSubtract(footRest,kneeRest)));
+        if(thigh<1e-4f||shin<1e-4f)return;
+        // Where the hip joint is: 下半身 turns about its pivot, センター and グルーブ carry it.
+        const XMVECTOR lower=rig.lowerBody>=0?XMLoadFloat4(&KeyOf(keys,rig.lowerBody).rotation):XMQuaternionIdentity();
+        const XMVECTOR pivot=XMLoadFloat3(&rig.lowerBodyRest);
+        XMVECTOR hip=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(hipRest,pivot),lower));
+        if(rig.center>=0)hip=XMVectorAdd(hip,XMLoadFloat3(&KeyOf(keys,rig.center).position));
+        if(rig.groove>=0)hip=XMVectorAdd(hip,XMLoadFloat3(&KeyOf(keys,rig.groove).position));
+        // The knee on the circle of places that reach the ankle, on the side aim points to.
+        const XMVECTOR reach=XMVectorSubtract(target,hip);
+        const float d=std::clamp(XMVectorGetX(XMVector3Length(reach)),std::abs(thigh-shin)+1e-4f,(thigh+shin)*0.9999f);
+        const XMVECTOR along=XMVector3Normalize(reach);
+        XMVECTOR side_=XMVectorSubtract(aim,XMVectorScale(along,XMVectorGetX(XMVector3Dot(aim,along))));
+        if(XMVectorGetX(XMVector3Length(side_))<1e-4f)return;
+        side_=XMVector3Normalize(side_);
+        const float toKnee=(thigh*thigh-shin*shin+d*d)/(2*d);
+        const XMVECTOR knee=XMVectorAdd(hip,XMVectorAdd(XMVectorScale(along,toKnee),XMVectorScale(side_,std::sqrt(std::max(thigh*thigh-toKnee*toKnee,0.0f)))));
+        // 足: the thigh along hip-to-knee, turned about its length so ひざ's hinge (its X, as
+        // at rest, where the knee bends forward) lies across the plane of the leg.
+        auto frame=[](FXMVECTOR u,FXMVECTOR x){
+            const XMVECTOR a=XMVector3Normalize(u);
+            const XMVECTOR b=XMVector3Normalize(XMVectorSubtract(x,XMVectorScale(a,XMVectorGetX(XMVector3Dot(x,a)))));
+            return XMMATRIX{a,b,XMVector3Cross(a,b),XMVectorSet(0,0,0,1)};
+        };
+        const XMVECTOR thighNow=XMVectorSubtract(knee,hip);
+        const XMVECTOR hinge=XMVector3Normalize(XMVector3Cross(thighNow,side_));
+        const XMMATRIX turn=XMMatrixMultiply(XMMatrixTranspose(frame(XMVectorSubtract(kneeRest,hipRest),XMVectorSet(1,0,0,0))),frame(thighNow,hinge));
+        const XMVECTOR thighWorld=XMQuaternionNormalize(XMQuaternionRotationMatrix(turn));
+        SetRotation(keys,rig.leg[side],XMQuaternionMultiply(thighWorld,XMQuaternionInverse(lower)));
+        // ひざ: about its X, from the shin's rest direction (as the thigh carries it) to the ankle.
+        const XMVECTOR from=XMVector3Rotate(XMVectorSubtract(footRest,kneeRest),thighWorld),to=XMVectorSubtract(target,knee);
+        float bend=std::atan2(XMVectorGetX(XMVector3Dot(XMVector3Cross(from,to),hinge)),XMVectorGetX(XMVector3Dot(from,to)));
+        // The sign of a turn about an axis differs between conventions: keep the one that lands.
+        const XMVECTOR landed=XMVector3Rotate(from,XMQuaternionRotationNormal(hinge,bend));
+        if(XMVectorGetX(XMVector3Dot(XMVector3Normalize(landed),XMVector3Normalize(to)))<0.999f)bend=-bend;
+        SetRotation(keys,rig.knee[side],XMQuaternionRotationNormal(XMVectorSet(1,0,0,0),bend));
     }
 
     void GeneratedMotion::AimArm(std::vector<Key>& keys,int side,FXMVECTOR upper,FXMVECTOR fore)
@@ -1820,20 +1866,23 @@ namespace MikuMikuDesktopPerch
                     h+=std::max(0.0f,e*std::sin(pitch)+hA*std::cos(pitch)-hA);
                 }
             };
-            // The feet step in toward the middle (people walk on a narrow track), are placed from
+            // The feet step on a narrow track (as wide as the model's hips allow), are placed from
             // under the hip joints (u is measured from there), and turn with the hips about
             // 下半身's pivot so they stay under the hips when she is side-on.
             const XMMATRIX turn=XMMatrixRotationY(yaw);
             const XMVECTOR pivot=XMVectorSet(rig.lowerBodyRest.x,0,rig.lowerBodyRest.z,0);
             const float middle=0.5f*(rig.hipRest[0].x+rig.hipRest[1].x),under=0.5f*(rig.hipRest[0].z+rig.hipRest[1].z);
+            const float hipWidth=std::abs(rig.hipRest[0].x-rig.hipRest[1].x);
+            XMVECTOR ankles[2];
             for(int side=0;side<2;++side)
             {
                 float u,h,pitch;
                 place(side,Frac(p+side*0.5),u,h,pitch);
                 const auto& rest=rig.ankleRest[side];
-                const float x=rest.x-(rest.x>middle?1.0f:-1.0f)*g.narrow*L*a;
+                const float x=rest.x+(middle+(rest.x>middle?0.5f:-0.5f)*g.track*hipWidth-rest.x)*a;
                 const XMVECTOR base=XMVectorAdd(pivot,XMVector3TransformNormal(XMVectorSubtract(XMVectorSet(x,0,under,0),pivot),turn));
-                footKey(side,XMVectorAdd(XMVectorAdd(base,XMVectorScale(forward,u)),XMVectorSet(0,rest.y+h,0,0)),pitch,yaw);
+                ankles[side]=XMVectorAdd(XMVectorAdd(base,XMVectorScale(forward,u)),XMVectorSet(0,rest.y+h,0,0));
+                footKey(side,ankles[side],pitch,yaw);
             }
             // センター travels with the planted foot: stance feet move back at exactly this speed.
             const float speed=g.stride*L/(g.stance*static_cast<float>(cycle));
@@ -1870,10 +1919,12 @@ namespace MikuMikuDesktopPerch
             else
                 arms(back+swing0,back+swing1,rig.armLower[0],rig.armLower[1],
                      g.elbow+g.elbowSwing*std::max(0.0f,swing0),g.elbow+g.elbowSwing*std::max(0.0f,swing1));
-            // The thighs turn out a little: the IK starts from there, so the knees bend outward
-            // as the feet come in toward the middle (+Y turns the left knee in).
+            // The knees bend toward the front, kneeOut to the outside, whatever way the model's
+            // legs are built (the IK then finds the feet where they are and leaves the knees).
+            const XMVECTOR outward=XMVector3TransformNormal(XMVectorSet(1,0,0,0),turn);   // her left
             for(int side=0;side<2;++side)
-                SetRotation(keys,rig.leg[side],XMQuaternionRotationRollPitchYaw(0,(side==0?-1.0f:1.0f)*g.kneeOut*a,0));
+                SolveLeg(keys,side,ankles[side],XMVectorAdd(XMVectorScale(forward,std::cos(g.kneeOut)),
+                                                            XMVectorScale(outward,(side==0?1.0f:-1.0f)*std::sin(g.kneeOut))));
         };
 
         switch(activity)

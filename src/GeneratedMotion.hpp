@@ -207,6 +207,7 @@ namespace MikuMikuDesktopPerch
             std::array<DirectX::XMFLOAT3,2> claviclePos{},hangElbow{};
             std::array<DirectX::XMFLOAT3,2> ankleRest{},hipRest{};
             DirectX::XMFLOAT3 lowerBodyRest{};   // 下半身's pivot: the hips (and legs) turn about it
+            std::array<DirectX::XMFLOAT3,2> kneeRest{},footRest{};   // ひざ, and the bone the leg IK brings to 足ＩＫ (足首)
             // The toe tip relative to the ankle at rest: how far forward and how far down it
             // is (the foot rolls over it when the heel comes up).
             std::array<float,2> toeAhead{},toeBelow{};
@@ -245,6 +246,10 @@ namespace MikuMikuDesktopPerch
         void DistributeTwist(std::vector<Key>& keys) const;
         Key& KeyOf(std::vector<Key>& keys,int bone);
         void SetRotation(std::vector<Key>& keys,int bone,DirectX::FXMVECTOR rotation);
+        // Key 足 and ひざ so the ankle reaches target (model space, as 足ＩＫ is keyed) with the
+        // knee bent toward aim (a direction), from センター, グルーブ and 下半身 as keyed already.
+        // The leg IK then finds the foot there and leaves the knee as it is.
+        void SolveLeg(std::vector<Key>& keys,int side,DirectX::FXMVECTOR target,DirectX::FXMVECTOR aim);
         // Point the upper arm along upper and the forearm along fore (unit vectors, model space):
         // the upper arm turns about its own length so the elbow bends in the plane of the two.
         void AimArm(std::vector<Key>& keys,int side,DirectX::FXMVECTOR upper,DirectX::FXMVECTOR fore);
