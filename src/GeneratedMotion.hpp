@@ -135,8 +135,7 @@ namespace MikuMikuDesktopPerch
         // body bent forward (18 degrees, up to 35 toward a point far off), over whatever else the arm does. It
         // eases in (on) and out (off) in 0.4 s. Standing or sitting.
         void Hold(int side,const DirectX::XMFLOAT3& wrist,bool on);
-        // How far (radians) the body is bent forward by Hold now (0 with nothing held).
-        float HeldLean() const {return heldLean;}
+        bool Holding(int side) const {return side>=0&&side<2&&holds[side].on;}
         // Stops in front of solid things (MascotModel::SetSolids), from the check after each
         // solve. StopArm: the hand or arm on side is depth in (counting a margin; 0: near, held
         // where it is; below 0: well clear), its way out push (a unit vector in the frame
@@ -348,7 +347,6 @@ namespace MikuMikuDesktopPerch
         std::array<DirectX::XMFLOAT3,2> askedWrist{};  // where the motion first asked it to go this frame
         std::array<bool,2> wristDriven{},wristHeld{};  // this frame: ReachArm moved it; a stop held it back
         float leanLimit=1.6f,lastLean=0;               // Reach's lean (radians): most allowed, last asked
-        float heldLean=0;                              // Hold's, as it is now (HeldLean)
         bool leanDriven=false;
         double stopDt=0;
         std::array<std::uint32_t,2> armStopCount{};
@@ -359,6 +357,7 @@ namespace MikuMikuDesktopPerch
             bool on=false;
             DirectX::XMFLOAT3 wrist{};
             float weight=0;
+            float twist=0;             // the upper body turned toward the hand (radians, eased)
             std::vector<Key> smooth;   // the held pose as last given, eased toward each new one (no trembling)
         };
         std::array<HoldArm,2> holds{};

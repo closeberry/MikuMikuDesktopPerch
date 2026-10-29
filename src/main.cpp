@@ -2282,7 +2282,6 @@ namespace
     void GameHeard(Mascot& m,const std::wstring& line,bool done)
     {
         if(m.inMahjong)MahjongHeard(line,done);
-        else if(m.inAirHockey)AirHockeyHeard(line,done);
         else DungeonHeard(line,done);
     }
 
@@ -3939,6 +3938,20 @@ namespace
         return true;
     }
 
+    // Her little lines for a table game, asked for ahead on a request of their own (the answer
+    // goes to MahjongLines or AirHockeyLines, whichever game she is at).
+    bool PrefetchLines(Mascot& m,const std::wstring& ask)
+    {
+        if(ExternalChat()||!ChatReady(m,false))return false;
+        if(!m.linesChat)m.linesChat=std::make_unique<LocalChat>(m.hwnd);
+        if(m.linesChat->Busy())return false;
+        m.linesReply.clear();
+        m.linesRequest=m.linesChat->Start(app.settings.chatEndpoint,app.settings.chatModel,{
+            {L"system",Fmt(T(L"あなたは「{0}」です。\n{1}\n言われた形だけで答えます。",L"You are \"{0}\".\n{1}\nYou answer only in the form asked."),{m.character.name,m.character.persona})},
+            {L"user",ask}});
+        return true;
+    }
+
     // Back from a game's window: her last word there, if still coming, is not carried onto the
     // desktop, and its bubble (kept out of sight there) goes.
     void DropGameWords(Mascot& m)
@@ -3980,13 +3993,13 @@ namespace
         her.msaa=std::min(app.settings.msaa,4);
         her.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
         her.light=app.settings.dungeonLight;
-        // She speaks at the table; those watching now and then say a word on it.
-        her.talk=[model](const std::wstring& situation){
+        // She speaks at the table (lines asked for ahead); those watching now and then say a word on it.
+        her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::AirHockey,facts,weight,fallback);};
+        her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
-                if(owned->modelPath==model&&owned->inAirHockey)return GameTalk(*owned,TableGame::AirHockey,situation);
+                if(owned->modelPath==model&&owned->inAirHockey)return PrefetchLines(*owned,ask);
             return false;
         };
-        her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::AirHockey,facts,weight,fallback);};
         if(m.chat)m.chat->Cancel();
         if(m.voice)m.voice->CancelAll();
         m.speech.Reset();
@@ -4048,18 +4061,7 @@ namespace
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Mahjong,facts,weight,fallback);};
         her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
-                if(owned->modelPath==model&&owned->inMahjong)
-                {
-                    Mascot& m=*owned;
-                    if(ExternalChat()||!ChatReady(m,false))return false;
-                    if(!m.linesChat)m.linesChat=std::make_unique<LocalChat>(m.hwnd);
-                    if(m.linesChat->Busy())return false;
-                    m.linesReply.clear();
-                    m.linesRequest=m.linesChat->Start(app.settings.chatEndpoint,app.settings.chatModel,{
-                        {L"system",Fmt(T(L"あなたは「{0}」です。\n{1}\n言われた形だけで答えます。",L"You are \"{0}\".\n{1}\nYou answer only in the form asked."),{m.character.name,m.character.persona})},
-                        {L"user",ask}});
-                    return true;
-                }
+                if(owned->modelPath==model&&owned->inMahjong)return PrefetchLines(*owned,ask);
             return false;
         };
         if(m.chat)m.chat->Cancel();
@@ -4832,8 +4834,9 @@ namespace
             {
                 std::unique_ptr<std::wstring> error(reinterpret_cast<std::wstring*>(wParam));
                 m.linesRequest=0;
-                Trace(L"%.1f mahjong lines: %s",app.clock,error->empty()?L"ready":error->c_str());
-                MahjongLines(error->empty()?m.linesReply:std::wstring());
+                Trace(L"%.1f table lines: %s",app.clock,error->empty()?L"ready":error->c_str());
+                if(m.inAirHockey)AirHockeyLines(error->empty()?m.linesReply:std::wstring());
+                else MahjongLines(error->empty()?m.linesReply:std::wstring());
                 return 0;
             }
             if(m.planRequest&&static_cast<int>(lParam)==m.planRequest)
@@ -5371,6 +5374,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     int snapshotMahjongLater=0;   // --mahjong-later n: n more moves played 20 seconds in (the watchers in place by then)
     bool snapshotAirHockey=false; // --airhockey: the snapshot is the air hockey window, your side played for you
     std::wstring snapshotAirHockeyCamera;   // --airhockey-camera pitch,distance,yaw
+    int snapshotAirHockeySize=0;            // --airhockey-size 1-4: the pieces' size (the ini's otherwise)
     int snapshotMahjongMoves=0;   // after this many moves of a simple player
     std::wstring snapshotMahjongCamera;   // --mahjong-camera pitch,distance,y,z[,yaw]
     bool snapshotMahjongReach=false;      // --mahjong-reach [far]: she reaches for her river once seated
@@ -5427,6 +5431,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--airhockey")snapshotAirHockey=true;
             else if(arg==L"--mahjong-later"&&i+1<argc)snapshotMahjongLater=_wtoi(argv[++i]);
             else if(arg==L"--airhockey-camera"&&i+1<argc)snapshotAirHockeyCamera=argv[++i];
+            else if(arg==L"--airhockey-size"&&i+1<argc)snapshotAirHockeySize=_wtoi(argv[++i]);
             else if(arg==L"--mahjong")
             {
                 snapshotMahjong=true;
@@ -6313,6 +6318,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(!opened)
             {
                 opened=true;
+                if(snapshotAirHockeySize>=1&&snapshotAirHockeySize<=4)app.settings.airHockeySize=snapshotAirHockeySize;
                 OpenAirHockey(*app.mascots.front());
                 PlayAirHockeyForTest();
                 float c[3]={};

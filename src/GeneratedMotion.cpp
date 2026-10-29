@@ -1623,7 +1623,6 @@ namespace MikuMikuDesktopPerch
 
     void GeneratedMotion::ApplyHold(std::vector<Key>& keys,double dt)
     {
-        heldLean=0;
         for(int s=0;s<2;++s)
         {
             HoldArm& h=holds[s];
@@ -1642,18 +1641,37 @@ namespace MikuMikuDesktopPerch
             lastLean=(18.0f+std::clamp((d-0.7f*reach)/(0.8f*reach),0.0f,1.0f)*17.0f)*Deg;
             leanDriven=true;
             const float lean=std::min(lastLean,leanLimit);
-            heldLean=std::max(heldLean,lean*weight);
-            // Only that lean: the idle motion's sway of the upper body would carry the hand about.
-            if(rig.upperBody>=0)XMStoreFloat4(&KeyOf(g,rig.upperBody).rotation,XMQuaternionRotationRollPitchYaw(-lean,0,0));
-            // Where the point is as the leaning body sees it, and no further than the arm goes.
-            target=XMVectorAdd(pivot,XMVector3Transform(XMVectorSubtract(target,pivot),XMMatrixRotationX(lean)));
+            // Turned from the waist toward the hand's way (part of it, eased: the shoulders lead
+            // the arm a little, and the legs stay as they are).
+            const float dx=XMVectorGetX(target)-XMVectorGetX(pivot),dz=XMVectorGetZ(target)-XMVectorGetZ(pivot);
+            const float twist=std::clamp(0.45f*std::atan2(-dx,std::max(-dz,0.1f*reach)),-22.0f*Deg,22.0f*Deg);
+            h.twist+=(twist-h.twist)*static_cast<float>(1.0-std::exp(-dt/0.22));
+            // Only that lean and turn: the idle motion's sway of the upper body would carry the hand about.
+            const XMVECTOR bend=XMQuaternionRotationRollPitchYaw(-lean,h.twist,0);
+            if(rig.upperBody>=0)XMStoreFloat4(&KeyOf(g,rig.upperBody).rotation,bend);
+            // Where the point is as the bent body sees it, and no further than the arm goes.
+            target=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(target,pivot),XMQuaternionConjugate(bend)));
             const XMVECTOR to=XMVectorSubtract(target,shoulder);
             const float far=0.95f*reach,dist=XMVectorGetX(XMVector3Length(to));
-            if(dist>far)target=XMVectorAdd(shoulder,XMVectorScale(to,far/dist));
+            if(dist>far)
+            {
+                // Out of reach: short of it across and along, at its height (the hand stays over
+                // the table instead of dropping toward it on the line from the shoulder).
+                const float y=XMVectorGetY(to),flat=std::sqrt(std::max(0.0f,dist*dist-y*y));
+                if(std::abs(y)<far&&flat>1e-4f)
+                {
+                    const float keep=std::sqrt(far*far-y*y)/flat;
+                    target=XMVectorAdd(shoulder,XMVectorSet(XMVectorGetX(to)*keep,y,XMVectorGetZ(to)*keep,0));
+                }
+                else target=XMVectorAdd(shoulder,XMVectorScale(to,far/dist));
+            }
             // The elbow out and a little down, the hand flat over the grip.
             ReachArm(g,s,target,XMVectorSet(out*0.8f,-1,0.2f,0),0.6f,true);
-            AimHand(g,s,XMVectorSet(-out*0.1f,-0.1f,-1,0),XMVectorSet(0,-1,0,0));
-            CurlFingers(g,s,{0.3f,0.35f,0.4f,0.45f});
+            // (As the bent body sees them, as the target is: so the fingers lie over the knob
+            // however far she leans, not tipped down into it.)
+            const XMVECTOR unbend=XMQuaternionConjugate(bend);
+            AimHand(g,s,XMVector3Rotate(XMVectorSet(-out*0.1f,-0.1f,-1,0),unbend),XMVector3Rotate(XMVectorSet(0,-1,0,0),unbend));
+            CurlFingers(g,s,{0.12f,0.15f,0.18f,0.2f});   // lightly over the low knob, the fingertips clear of the table
             // Eased toward the pose just made (0.07 s): the small shakes of the target (the
             // mallet's moves, the stops in front of the table) are not seen in the hand.
             if(h.smooth.size()!=g.size()||h.weight<=static_cast<float>(dt/0.4)+1e-4f)h.smooth=g;

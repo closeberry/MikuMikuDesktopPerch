@@ -31,12 +31,13 @@ namespace MikuMikuDesktopPerch
         int msaa=4;                               // MSAA samples and the textures' largest side
         unsigned maxTexture=1024;
         bool light=false;                         // fewer pixels drawn (the settings' light 3D)
-        // Her words in her own voice: asks the LLM about situation (a stage direction), the line
-        // coming back through AirHockeyHeard. False when it cannot now (a line of her own is shown).
-        std::function<bool(const std::wstring& situation)> talk;
         // Something those watching may speak of: what happened, told as to one watching, how
         // much it matters (1-9), and a line to say without the LLM.
         std::function<void(const std::wstring& facts,int weight,const std::wstring& fallback)> onEvent;
+        // Her lines for the game's moments, asked for ahead in one go (ask: the request to the
+        // LLM), the answer coming back through AirHockeyLines: said at once when the moment
+        // comes, with no wait. False when it cannot now.
+        std::function<bool(const std::wstring& ask)> prefetch;
     };
 
     // Opens it (or brings it forward when open). onEnd: once, when the window closes.
@@ -46,9 +47,8 @@ namespace MikuMikuDesktopPerch
     // watch the game from beside it, as at mahjong.
     HWND AirHockeyWindowHandle();
     bool AirHockeyWindowRect(RECT& r);
-    // Her line asked for through AirHockeyOpponent::talk, as it grows; done: it is all there
-    // (empty: none came, her own line is shown instead).
-    void AirHockeyHeard(const std::wstring& line,bool done);
+    // The lines asked for through AirHockeyOpponent::prefetch: the LLM's answer, whole (empty: none).
+    void AirHockeyLines(const std::wstring& answer);
     // After the window closes: what to say on the game (played to its end, or stopped midway),
     // a stage direction for the LLM and her own line without it. False when there was none.
     bool AirHockeyAfterword(std::wstring& situation,std::wstring& fallback);

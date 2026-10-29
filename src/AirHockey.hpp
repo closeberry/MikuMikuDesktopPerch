@@ -17,7 +17,7 @@ namespace MikuMikuDesktopPerch::AirHockey
 
     struct Rules
     {
-        float width=1.0f,length=1.8f;
+        float width=1.2f,length=1.8f;
         // The goal's mouth (across the middle of each end), the radii: as Game::SetPieceSize(1.5)
         // makes them, larger than a real table's, to be easy to see and hit.
         float goal=0.45f;
@@ -131,6 +131,7 @@ namespace MikuMikuDesktopPerch::AirHockey
         // Where its mallet should go now.
         Vec Think(const Game& game,double dt);
         const Style& Manner() const {return style;}
+        bool Striking() const {return strike>0;}   // going through the puck now
 
     private:
         struct Seen {double at=0;Vec p{},v{};};

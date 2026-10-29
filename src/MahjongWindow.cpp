@@ -77,6 +77,10 @@ namespace MikuMikuDesktopPerch
                 bool waiting=false;
                 int weight=0;
                 std::vector<std::wstring> recent;   // what she said lately (not to be said again)
+                // Shown a character at a time: how far, of which text, as of when.
+                std::wstring revealing;
+                double shown=0;
+                ULONGLONG shownAt=0;
                 std::wstring told;                  // diagnostics: what happened and what she said, for the snapshot's report
             } words;
             // Her little lines asked for ahead (MahjongOpponent::prefetch): for a call of hers, for
@@ -383,6 +387,9 @@ namespace MikuMikuDesktopPerch
         }
 
         std::wstring HerName(){return state.her.name.empty()?std::wstring(T(L"相手",L"Her")):state.her.name;}
+        // Her words come out a character at a time, as on the desktop without a voice (about a
+        // mora every 4 frames).
+        double CharSeconds(){return English()?0.045:0.12;}
 
         std::wstring Points(int n){return std::to_wstring(n)+T(L"点",L"");}
 
@@ -1425,7 +1432,7 @@ namespace MikuMikuDesktopPerch
             w.weight=weight;
             w.since=now;
             w.told+=L"  she says: "+line+L"\n";
-            w.until=now+2600+90*static_cast<ULONGLONG>(line.size());
+            w.until=now+static_cast<ULONGLONG>(CharSeconds()*1000*line.size())+2600+90*static_cast<ULONGLONG>(line.size());
             if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
             Redraw(Top);
         }
@@ -1535,6 +1542,16 @@ namespace MikuMikuDesktopPerch
             const ULONGLONG now=GetTickCount64();
             if(w.waiting&&now-w.since>AnswerWait)SayWords(w.fallback,w.weight);   // no answer: her own line
             if(!w.text.empty()&&!w.waiting&&now>w.until){w.text.clear();Redraw(Top);}
+            // A character at a time (a line that goes on from what is shown carries on from there).
+            if(w.text!=w.revealing)
+            {
+                if(w.revealing.empty()||w.revealing==L"…"||w.text.rfind(w.revealing,0)!=0)w.shown=0;
+                w.revealing=w.text;
+            }
+            const size_t before=static_cast<size_t>(w.shown);
+            w.shown=std::min(static_cast<double>(w.text.size()),w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
+            w.shownAt=now;
+            if(static_cast<size_t>(w.shown)!=before)Redraw(Top);
             if(Dealing())return;   // the tiles are still coming
             const std::wstring name=HerName();
             if(!seen.started)
@@ -1862,7 +1879,9 @@ namespace MikuMikuDesktopPerch
                 }
                 FillRound(g,RectF(x,y,bw,bh),14*s,Color(240,255,252,246),Color(255,214,170,120),1.5f*s);
                 SolidBrush ink(Color(255,60,44,36));
-                g.DrawString(said.c_str(),static_cast<INT>(said.size()),&font,RectF(x+pad,y+pad*0.8f,tw+4,th+4),&format,&ink);
+                // Sized to the whole line, shown as far as she has said it.
+                const std::wstring shown=said.substr(0,std::min(said.size(),std::max<size_t>(1,static_cast<size_t>(state.words.shown))));
+                g.DrawString(shown.c_str(),static_cast<INT>(shown.size()),&font,RectF(x+pad,y+pad*0.8f,tw+4,th+4),&format,&ink);
             }
             if(!state.said.empty())
             {
@@ -2238,7 +2257,7 @@ namespace MikuMikuDesktopPerch
         if(!line.empty())
         {
             w.text=line;
-            w.until=GetTickCount64()+2600+90*static_cast<ULONGLONG>(line.size());
+            w.until=GetTickCount64()+static_cast<ULONGLONG>(CharSeconds()*1000*line.size())+2600+90*static_cast<ULONGLONG>(line.size());
             Redraw(Top);
         }
         if(done)

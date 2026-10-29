@@ -707,7 +707,9 @@ namespace MikuMikuDesktopPerch
                 for(P part:{side?P::RightHand:P::LeftHand,side?P::RightForearm:P::LeftForearm,side?P::RightUpperArm:P::LeftUpperArm})
                     if(!worst||penetration[static_cast<size_t>(part)].depth>worst->depth)worst=&penetration[static_cast<size_t>(part)];
                 // The way out, in the rest frame of the bone above the arm (as ReachArm sees it).
-                XMVECTOR push=XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(worst->push.data()));
+                // A hand holding something on a table comes out upward (the nearest way out near
+                // the table's edge would take it off the edge toward her, under the top).
+                XMVECTOR push=motion.Holding(side)?XMVectorSet(0,1,0,0):XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(worst->push.data()));
                 if(const int frame=armFrame[side];frame>=0&&static_cast<size_t>(frame)<solver->boneMatrices.size())
                     push=XMVector3TransformNormal(push,XMMatrixInverse(nullptr,XMMatrixTranspose(solver->boneMatrices[frame])));
                 XMFLOAT3 way;
@@ -2298,13 +2300,21 @@ namespace MikuMikuDesktopPerch
 
     void MascotModel::LookToward(const std::array<float,3>& point,bool active)
     {
+        using namespace DirectX;
         std::array<float,3> head{};
+        auto& m=*impl;
+        const int bone=m.proc.head;
         if(!active||!HeadPosition(head)){SetLookTarget(0,0,false);return;}
-        // The face points to -Z; bent forward by a Hold, the head looks that much lower.
+        // Where the head faces now (the face points to -Z at rest), with the turn last given in
+        // it: that turn is put right by how far the face is off the point. So the motion's own
+        // bend of the head, and the body's lean and turn under it, are all counted.
+        const XMVECTOR face=XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0,0,-1,0),XMMatrixTranspose(m.solver->boneMatrices[bone])));
+        const float fx=XMVectorGetX(face),fy=XMVectorGetY(face),fz=XMVectorGetZ(face);
         const float dx=point[0]-head[0],dy=point[1]-head[1],dz=point[2]-head[2];
-        const float yaw=std::atan2(dx,-dz),pitch=std::atan2(dy,std::sqrt(dx*dx+dz*dz))+impl->motion.HeldLean();
-        const float limit=DirectX::XMConvertToRadians(45.0f);
-        SetLookTarget(std::clamp(yaw,-limit,limit),std::clamp(pitch,-limit,limit),true);
+        const float wantYaw=std::atan2(dx,-dz),wantPitch=std::atan2(dy,std::sqrt(dx*dx+dz*dz));
+        const float nowYaw=std::atan2(fx,-fz),nowPitch=std::atan2(fy,std::sqrt(fx*fx+fz*fz));
+        const float limit=XMConvertToRadians(45.0f);
+        SetLookTarget(std::clamp(m.proc.yaw+wantYaw-nowYaw,-limit,limit),std::clamp(m.proc.pitch+wantPitch-nowPitch,-limit,limit),true);
     }
 
     namespace
