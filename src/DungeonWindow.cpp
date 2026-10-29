@@ -12,6 +12,7 @@
 #include <objidl.h>
 #include <gdiplus.h>
 #include <commctrl.h>
+#include <windowsx.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -80,6 +81,7 @@ namespace MikuMikuDesktopPerch
             std::unique_ptr<Bitmap> face;
             std::function<void(const DungeonResult&)> onEnd;
             bool confirmQuit=false,ended=false,showBook=false;
+            RectF quitButtons[2];   // confirmQuit: where "go back" and "keep going" are drawn, for a click
             size_t skill=0;   // the skill E uses (in the order of those learned; Q goes on to the next)
             // The vacuum blade flying from her (seconds since it was asked, -1: none), from where, which way.
             double waveTime=-1;
@@ -1002,7 +1004,7 @@ namespace MikuMikuDesktopPerch
             // A question over everything when there is one.
             std::wstring ask;
             bool choosing=false;   // a new skill to choose: in 2D a larger box over the map, its lines long
-            if(state.confirmQuit)ask=T(L"冒険をやめて、デスクトップに帰る？\n\nY：帰る　　N・Esc：続ける",L"Give up and go back to the desktop?\n\nY: go back    N/Esc: keep going");
+            if(state.confirmQuit)ask=T(L"冒険をやめて、デスクトップに帰る？",L"Give up and go back to the desktop?");
             else if(const auto offer=game.SkillOffer();!offer.empty()&&game.GetState()==Dungeon::Game::State::Playing)
             {
                 choosing=true;
@@ -1023,6 +1025,23 @@ namespace MikuMikuDesktopPerch
                                L"{0}: {1} gold (you have {2})\nThe bag is full: sell something first (Shift + number)\nEnter: buy")
                             :T(L"{0}：{1}ゴールド（持っているのは{2}ゴールド）\n\nEnter：買う",L"{0}: {1} gold (you have {2})\n\nEnter: buy"),
                         {w->item.name,std::to_wstring(w->price),std::to_wstring(hero.gold)});
+            // The two answers to "go back?" as buttons (for the mouse; Y and N as before).
+            auto quitButtons=[&](float x,float y,float width){
+                const float gap=static_cast<float>(Px(12)),bw=(width-gap)/2,bh=static_cast<float>(Px(34));
+                const std::wstring labels[2]={T(L"帰る（Y）",L"Go back (Y)"),T(L"続ける（N）",L"Keep going (N)")};
+                for(int i=0;i<2;++i)
+                {
+                    const RectF b(x+i*(bw+gap),y,bw,bh);
+                    state.quitButtons[i]=b;
+                    SolidBrush face(i==0?Color(240,150,46,52):Color(240,46,92,150));
+                    Pen edge(Color(255,240,200,110),1);
+                    g.FillRectangle(&face,b);
+                    g.DrawRectangle(&edge,b);
+                    const float size=static_cast<float>(Px(14));
+                    Text(g,labels[i],b.X+(bw-size*0.95f*static_cast<float>(labels[i].size()))/2,b.Y+(bh-size*1.4f)/2,size,white,true);
+                }
+            };
+
             // Below the view: her words on the left, what happened on the right (a question in
             // 3D takes its place: the view hides what is drawn under it).
             const float top=ch-logHeight+pad/2,speechW=std::floor(areaW*0.56f);
@@ -1041,6 +1060,7 @@ namespace MikuMikuDesktopPerch
                 SolidBrush box(Color(255,40,34,58));
                 g.FillRectangle(&box,rx,ly,rw,top+logHeight-pad-ly);
                 Text(g,ask,rx+pad,ly+pad/2,static_cast<float>(Px(14)),gold);
+                if(state.confirmQuit)quitButtons(rx+pad,ly+pad/2+static_cast<float>(Px(30)),std::min(rw-pad*2,static_cast<float>(Px(360))));
                 ask.clear();
             }
             else
@@ -1062,6 +1082,7 @@ namespace MikuMikuDesktopPerch
                 g.FillRectangle(&box,bx,by,bw,bh);
                 g.DrawRectangle(&edge,bx,by,bw,bh);
                 Text(g,ask,bx+pad*2,by+pad*2,static_cast<float>(Px(choosing?15:16)),white);
+                if(state.confirmQuit)quitButtons(bx+pad*2,by+bh-pad*2-static_cast<float>(Px(34)),bw-pad*4);
             }
 
             Graphics screen(dc);
@@ -1564,6 +1585,12 @@ namespace MikuMikuDesktopPerch
                 break;
             case WM_LBUTTONDOWN:
                 SetFocus(state.window);
+                if(state.confirmQuit)
+                {
+                    const float x=static_cast<float>(GET_X_LPARAM(lParam)),y=static_cast<float>(GET_Y_LPARAM(lParam));
+                    if(state.quitButtons[0].Contains(x,y))Finish();
+                    else if(state.quitButtons[1].Contains(x,y)){state.confirmQuit=false;InvalidateRect(state.window,nullptr,FALSE);}
+                }
                 return 0;
             case WM_ERASEBKGND:
                 return 1;

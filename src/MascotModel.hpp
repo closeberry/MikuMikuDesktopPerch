@@ -183,6 +183,10 @@ namespace MikuMikuDesktopPerch
         // those bones.
         bool Grip(int side,std::array<float,3>& middle,std::array<float,3>& along) const;
         void EndGestures();   // the gesture and reaction playing fade out
+        // At once, out of sight (a game's window opening): no gesture, reaction or clip, and the
+        // arms' stops forgotten, so her hands are back in the standing pose's places.
+        void SettlePose();
+        void ClearArmStops();   // the stops the arms made against solids forgotten (a game's start)
         // Off: no gestures or built-in clips now and then while standing (Emote still plays one).
         void SetAutoGestures(bool on);
         // Between the eyes (左目 and 右目, or the one there is) from the latest solve; the head

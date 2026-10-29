@@ -916,6 +916,17 @@ namespace MikuMikuDesktopPerch
         nextGestureAt=std::max(nextGestureAt,clock+3.0);
     }
 
+    void GeneratedMotion::ClearGestures()
+    {
+        gesture=Gesture::None;gestureWeight=0;gestureCut=-1;frozenAt=-1;
+        reaction=Gesture::None;reactionWeight=0;reactionCut=-1;reactionTime=reactionLength=0;reactionSlow=false;
+        morphOut.clear();
+        reactionMorphs.clear();
+        clipRequest=-1;
+        nextGestureAt=std::max(nextGestureAt,clock+3.0);
+        ClearStops();
+    }
+
     bool GeneratedMotion::ForceGesture(const std::wstring& name)
     {
         // name or name@seconds: hold the gesture, or freeze it that far into its timeline.
@@ -1708,10 +1719,21 @@ namespace MikuMikuDesktopPerch
             if(h.weight<=0||rig.arm[s]<0||overrides.empty())continue;
             const float weight=Smooth(h.weight),out=s==0?1.0f:-1.0f;
             std::vector<Key> g=keys;
+            // The other arm, when it holds nothing, hangs loose at her side, nearly straight:
+            // bent forward (as she stands, or in a gesture still playing) it would reach into what
+            // she leans over, and the stops would then keep her from leaning far enough to reach.
+            if(const int o=1-s;rig.arm[o]>=0&&!holds[o].on)
+            {
+                SetRotation(g,rig.arm[o],XMQuaternionRotationRollPitchYaw(0,0,rig.armLower[o]));
+                if(rig.elbow[o]>=0)SetRotation(g,rig.elbow[o],Rotation(rig.elbowBendAxis[o],10.0f*Deg));
+                if(rig.armTwist[o]>=0)SetRotation(g,rig.armTwist[o],XMQuaternionIdentity());
+            }
             const XMVECTOR shoulder=XMLoadFloat3(&rig.shoulderPos[s]);
             const float hipY=(rig.hipRest[0].y+rig.hipRest[1].y)*0.5f,hipZ=(rig.hipRest[0].z+rig.hipRest[1].z)*0.5f;
             const XMVECTOR pivot=XMVectorSet(0,hipY,hipZ,0);
-            XMVECTOR target=XMLoadFloat3(&h.wrist);
+            // The wrist is asked for where she is (model space, her walks' travel included); the
+            // arm is worked out from where her body is before that travel goes on (AddRootOffset).
+            XMVECTOR target=XMVectorSubtract(XMLoadFloat3(&h.wrist),XMVectorSet(rootOffset,0,0,0));
             // Bent forward from the waist over the table as one plays, further toward a point
             // far off (no further into a solid).
             const float reach=rig.upperArm+0.75f*rig.foreArm;

@@ -153,6 +153,9 @@ namespace MikuMikuDesktopPerch
         // Fade out the gesture and the click reaction playing (from the weight each has now), and
         // hold off the next gesture for a few seconds.
         void EndGestures();
+        // At once (where she is out of sight): no gesture, reaction or clip asked for, the face's
+        // morphs off, and the arms' stops and lean limit forgotten.
+        void ClearGestures();
         // A walking (0) or running (1) motion played in place by the model instead of the
         // generated gait: its ground speed (units per second), 0 for the generated gait. The
         // pose passed to Apply then holds the motion's frame, which is turned to the side here.

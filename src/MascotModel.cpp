@@ -2467,6 +2467,15 @@ namespace MikuMikuDesktopPerch
         return true;
     }
     void MascotModel::EndGestures(){impl->motion.EndGestures();}
+    void MascotModel::SettlePose()
+    {
+        auto& m=*impl;
+        m.shotActive=m.shotEnding=m.shotIsGesture=false;
+        m.shotWeight=0;
+        m.shotFrozen=-1;
+        m.motion.ClearGestures();
+    }
+    void MascotModel::ClearArmStops(){impl->motion.ClearStops();}
     void MascotModel::SetAutoGestures(bool on)
     {
         impl->motion.SetAutoGestures(on);
@@ -2598,7 +2607,12 @@ namespace MikuMikuDesktopPerch
         m.UpdateMaterials();
     }
 
-    void MascotModel::Hold(int side,const std::array<float,3>& wrist,bool on){impl->motion.Hold(side,{wrist[0],wrist[1],wrist[2]},on);}
+    void MascotModel::Hold(int side,const std::array<float,3>& wrist,bool on)
+    {
+        // A clip playing over her would carry the holding hand off what it holds.
+        if(on&&impl->shotActive){impl->shotFrozen=-1;impl->shotEnding=true;}
+        impl->motion.Hold(side,{wrist[0],wrist[1],wrist[2]},on);
+    }
 
     void MascotModel::SetSolids(const std::vector<Solid>& solids)
     {

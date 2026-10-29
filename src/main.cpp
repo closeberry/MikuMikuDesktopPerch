@@ -2320,7 +2320,8 @@ namespace
             if(const Feeling* feeling=ReplyFeeling(m.reply))
             {
                 m.replyFeelingSet=true;
-                m.model.SetExpression(feeling->expression,true);
+                // No gesture with it in a game (her arms are the game's there).
+                m.model.SetExpression(feeling->expression,!(m.inDungeon||m.inMahjong||m.inAirHockey||m.inMetroid));
                 m.feelingUntil=-1;
                 Trace(L"%.1f talk: feeling %s",app.clock,feeling->english);
             }
@@ -3973,6 +3974,28 @@ namespace
 
     // docs/AirHockey.md: a game against her in its own window, where she stands at the far end
     // of the table and holds her mallet (off the desktop meanwhile, as at mahjong).
+    // Into a game's window: what she was doing on the desktop stops, and she comes in at ease,
+    // as she stands: no gesture or clip still playing (an arm held up would be where the game
+    // measures her from), awake, the face back to neutral (the main loop that would ease a talk's
+    // feeling away does not run for her while she plays). Settled before the window shows her.
+    void EnterGame(Mascot& m)
+    {
+        if(m.chat)m.chat->Cancel();
+        if(m.voice)m.voice->CancelAll();
+        m.speech.Reset();
+        m.bubble.Hide();
+        m.chatInput.Close();
+        if(m.place==Place::Ground)StopGroundActivity(m);
+        m.model.SetLookTarget(0,0,false);
+        if(m.dozing){m.dozing=false;m.model.SetDozing(false);}
+        m.feelingUntil=-1;
+        m.model.SetExpression(Expression::Neutral,false);
+        m.model.SettlePose();
+        m.model.ResetPose();
+        for(int i=0;i<45;++i)m.model.Update(1/30.0);   // the reset's ease (1.5 s)
+        m.model.TakeRootDelta();
+    }
+
     void OpenAirHockey(Mascot& m)
     {
         if(AirHockeyWindowOpen()){ShowAirHockeyWindow(m.hwnd,{},{});return;}
@@ -4004,13 +4027,7 @@ namespace
                 if(owned->modelPath==model&&owned->inAirHockey)return PrefetchLines(*owned,ask);
             return false;
         };
-        if(m.chat)m.chat->Cancel();
-        if(m.voice)m.voice->CancelAll();
-        m.speech.Reset();
-        m.bubble.Hide();
-        m.chatInput.Close();
-        if(m.place==Place::Ground)StopGroundActivity(m);
-        m.model.SetLookTarget(0,0,false);
+        EnterGame(m);
         m.inAirHockey=true;
         ShowWindow(m.hwnd,SW_HIDE);
         ShowAirHockeyWindow(m.hwnd,her,[model]{
@@ -4048,13 +4065,7 @@ namespace
         her.msaa=std::min(app.settings.msaa,4);
         her.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
         her.light=app.settings.dungeonLight;
-        if(m.chat)m.chat->Cancel();
-        if(m.voice)m.voice->CancelAll();
-        m.speech.Reset();
-        m.bubble.Hide();
-        m.chatInput.Close();
-        if(m.place==Place::Ground)StopGroundActivity(m);
-        m.model.SetLookTarget(0,0,false);
+        EnterGame(m);
         m.inMetroid=true;
         ShowWindow(m.hwnd,SW_HIDE);
         ShowMetroidWindow(m.hwnd,her,[model]{
@@ -4108,13 +4119,7 @@ namespace
                 if(owned->modelPath==model&&owned->inMahjong)return PrefetchLines(*owned,ask);
             return false;
         };
-        if(m.chat)m.chat->Cancel();
-        if(m.voice)m.voice->CancelAll();
-        m.speech.Reset();
-        m.bubble.Hide();
-        m.chatInput.Close();
-        if(m.place==Place::Ground)StopGroundActivity(m);
-        m.model.SetLookTarget(0,0,false);
+        EnterGame(m);
         m.inMahjong=true;
         ShowWindow(m.hwnd,SW_HIDE);
         ShowMahjongWindow(m.hwnd,her,[model]{
@@ -4165,13 +4170,7 @@ namespace
             return false;
         };
         // She goes into the dungeon: off the desktop, standing, looking where her model faces.
-        if(m.chat)m.chat->Cancel();
-        if(m.voice)m.voice->CancelAll();
-        m.speech.Reset();
-        m.bubble.Hide();
-        m.chatInput.Close();
-        if(m.place==Place::Ground)StopGroundActivity(m);
-        m.model.SetLookTarget(0,0,false);
+        EnterGame(m);
         m.inDungeon=true;
         ShowWindow(m.hwnd,SW_HIDE);
         ShowDungeonWindow(m.hwnd,hero,[model](const DungeonResult& r){
@@ -5422,6 +5421,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     bool snapshotAirHockey=false; // --airhockey: the snapshot is the air hockey window, your side played for you
     std::wstring snapshotAirHockeyCamera;   // --airhockey-camera pitch,distance,yaw
     int snapshotAirHockeySize=0;            // --airhockey-size 1-4: the pieces' size (the ini's otherwise)
+    double snapshotAirHockeyAt=0;           // --airhockey-at <seconds>: the table opens then (a gesture under way first)
     bool snapshotMetroid=false;   // --metroid [room]: the snapshot is the ruins' window, she starts in that room
     int snapshotMetroidRoom=0;
     std::wstring snapshotMetroidKeys;   // --metroid-play "R1.0 RZ0.3": the keys held in turn (PlayMetroidForTest)
@@ -5483,6 +5483,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--mahjong-later"&&i+1<argc)snapshotMahjongLater=_wtoi(argv[++i]);
             else if(arg==L"--airhockey-camera"&&i+1<argc)snapshotAirHockeyCamera=argv[++i];
             else if(arg==L"--airhockey-size"&&i+1<argc)snapshotAirHockeySize=_wtoi(argv[++i]);
+            else if(arg==L"--airhockey-at"&&i+1<argc)snapshotAirHockeyAt=_wtof(argv[++i]);
             else if(arg==L"--metroid")
             {
                 snapshotMetroid=true;
@@ -6122,6 +6123,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 m.model.Update(dt);
                 m.model.TakeRootDelta();
+                UpdateFeeling(m);   // a line's feeling eases out here too (it would stay on her face)
                 // Her bubble, hidden as she went in, still fades out (and stays out of sight).
                 m.bubble.Tick(dt,{},0,WorkAreaOfWindow(m),true);
                 if(m.inDungeon)TickDungeonWindow(m.model,dt);
@@ -6395,7 +6397,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         if(app.diagnostic&&snapshotAirHockey)
         {
             static bool opened=false;
-            if(!opened)
+            if(!opened&&app.clock>=snapshotAirHockeyAt)
             {
                 opened=true;
                 if(snapshotAirHockeySize>=1&&snapshotAirHockeySize<=4)app.settings.airHockeySize=snapshotAirHockeySize;

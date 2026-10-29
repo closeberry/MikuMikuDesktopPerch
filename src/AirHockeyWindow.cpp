@@ -48,6 +48,7 @@ namespace MikuMikuDesktopPerch
             Layout layout;
             LARGE_INTEGER last{};
             bool paused=false,asking=false,overTold=false;
+            RectF askButtons[2];   // asking: where "stop" and "go on" are drawn (window pixels), for a click
             bool held=false;   // the cursor is kept over your half (ClipCursor)
             ULONGLONG speedShownUntil=0;   // GetTickCount64: until then, the speed just chosen is shown
             ULONGLONG sizeShownUntil=0;    // and the size
@@ -346,7 +347,29 @@ namespace MikuMikuDesktopPerch
                 if(live)note+=T(L"　Enterでもう一度・Escで閉じる",L"   Enter: again, Esc: close");
                 banner(game.Winner()==You?T(L"あなたの勝ち！",L"You win!"):HerName()+T(L"の勝ち",L" wins"),note);
             }
-            else if(asking)banner(T(L"やめますか？",L"Stop playing?"),T(L"Y：やめる　N：続ける",L"Y: stop   N: go on"));
+            else if(asking)
+            {
+                // Two buttons under the question, for the mouse too (Y and N as before).
+                const float bw=std::min(static_cast<float>(w)-40*s,420*s),bh=120*s;
+                const RectF box(w/2.0f-bw/2,mid-bh/2,bw,bh);
+                GraphicsPath path;
+                RoundRect(path,box,12*s);
+                SolidBrush back(Color(215,16,22,36));
+                g.FillPath(&back,&path);
+                Text(g,T(L"やめますか？",L"Stop playing?"),RectF(box.X,box.Y+8*s,box.Width,48*s),26*s,gold,true);
+                const float gap=16*s,width=(box.Width-3*gap)/2;
+                const std::wstring labels[2]={T(L"やめる（Y）",L"Stop (Y)"),T(L"続ける（N）",L"Go on (N)")};
+                for(int i=0;i<2;++i)
+                {
+                    const RectF button(box.X+gap+i*(width+gap),box.Y+62*s,width,44*s);
+                    state.askButtons[i]=button;
+                    GraphicsPath shape;
+                    RoundRect(shape,button,10*s);
+                    SolidBrush face(i==0?Color(235,150,46,52):Color(235,46,92,150));
+                    g.FillPath(&face,&shape);
+                    Text(g,labels[i],RectF(button.X,button.Y+10*s,button.Width,26*s),17*s,white,true);
+                }
+            }
             else if(speedChosen)banner(T(L"パックの速さ：",L"Puck speed: ")+SpeedName(SpeedLevel(game)),L"");
             else if(GetTickCount64()<state.sizeShownUntil)banner(T(L"パックとマレット：",L"Puck and mallets: ")+SizeName(SizeLevel(game)),L"");
             else if(paused)banner(T(L"一時停止",L"Paused"),live?T(L"Spaceで再開",L"Space to go on"):L"");
@@ -698,6 +721,12 @@ namespace MikuMikuDesktopPerch
             state.herZ=(rules.length/2+Rim)*state.k+0.40f*D;
             model.SetActivity(Activity::Idle);
             model.SetAutoGestures(false);
+            // A gesture or clip still playing (arms folded, a yawn) would hold an arm where her
+            // reach is measured from (and where her hand's offset from the grip is first learned):
+            // let it go first, all the way.
+            model.EndGestures();
+            model.StopMotion();
+            for(int i=0;i<15||(i<90&&model.MotionPlaying());++i)model.Update(1/30.0);
             auto reach=[&](Vec toward){
                 std::array<float,3> wrist=ModelPoint(model,World(toward,GripHeight()*state.k+0.06f*D));
                 std::array<float,3> middle{},along{};
@@ -711,6 +740,8 @@ namespace MikuMikuDesktopPerch
             state.reachLeft=std::max(-rules.width/2,left.x);
             state.reachRight=std::min(rules.width/2,right.x);
             for(int i=0;i<15;++i){model.Hold(HerHand,{},false);model.Update(1/30.0);}
+            // The stops her arm made reaching out to measure would fence her hand in all game.
+            model.ClearArmStops();
             model.ResetPhysics();
             Log(L"air hockey: hips %.1f, upper body %.1f, table %.1f long at %.1f; her mallet reaches %.2f..%.2f across, to %.2f",
                 state.hips,state.upper,rules.length*state.k,state.top,state.reachLeft,state.reachRight,state.reachNear);
@@ -1336,7 +1367,14 @@ namespace MikuMikuDesktopPerch
                 else if(wParam>=VK_NUMPAD5&&wParam<=VK_NUMPAD8)ChooseSize(static_cast<int>(wParam-VK_NUMPAD5)+1);
                 return 0;
             case WM_LBUTTONDOWN:
-                if(state.paused&&!state.asking){state.paused=false;QueryPerformanceCounter(&state.last);}
+                if(state.asking)
+                {
+                    const float x=static_cast<float>(GET_X_LPARAM(lParam)),y=static_cast<float>(GET_Y_LPARAM(lParam));
+                    if(state.askButtons[0].Contains(x,y)){Finish();return 0;}
+                    if(state.askButtons[1].Contains(x,y)){state.asking=false;QueryPerformanceCounter(&state.last);}
+                    return 0;
+                }
+                if(state.paused){state.paused=false;QueryPerformanceCounter(&state.last);}
                 return 0;
             case WM_PAINT:
             {

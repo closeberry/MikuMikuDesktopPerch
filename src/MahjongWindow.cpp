@@ -63,6 +63,7 @@ namespace MikuMikuDesktopPerch
             bool gameOverTold=false;   // this game's end told (MahjongOpponent::onGameOver)
             int selected=-1,hover=-1;
             bool riichiMode=false,confirmQuit=false;
+            RectF quitButtons[2];   // confirmQuit: where "stop" and "keep playing" are drawn, for a click
             ULONGLONG nextAt=0;
             int callsSeen=0;
             std::wstring said;
@@ -2028,7 +2029,16 @@ namespace MikuMikuDesktopPerch
                 const RectF box(mid-220*s,ch/2.0f-70*s,440*s,140*s);
                 FillRound(g,box,14*s,Color(250,24,40,36),Color(255,200,170,90),2*s);
                 Text(g,T(L"麻雀をやめますか？",L"Stop playing?"),RectF(box.X,box.Y+22*s,box.Width,36*s),24*s,white,true,StringAlignmentCenter);
-                Text(g,T(L"Y：やめる　N：続ける",L"Y: stop   N: keep playing"),RectF(box.X,box.Y+80*s,box.Width,30*s),18*s,soft,false,StringAlignmentCenter);
+                // Two buttons, for the mouse too (Y and N as before).
+                const float gap=20*s,width=(box.Width-3*gap)/2;
+                const std::wstring labels[2]={T(L"やめる（Y）",L"Stop (Y)"),T(L"続ける（N）",L"Keep playing (N)")};
+                for(int i=0;i<2;++i)
+                {
+                    const RectF button(box.X+gap+i*(width+gap),box.Y+74*s,width,44*s);
+                    state.quitButtons[i]=button;
+                    FillRound(g,button,10*s,i==0?Color(240,150,46,52):Color(240,46,92,150),Color(255,200,170,90),1.5f*s);
+                    Text(g,labels[i],RectF(button.X,button.Y+11*s,button.Width,26*s),17*s,white,true,StringAlignmentCenter);
+                }
             }
 
             if(hud)
@@ -2144,7 +2154,12 @@ namespace MikuMikuDesktopPerch
             {
                 const float x=static_cast<float>(GET_X_LPARAM(lParam)),y=static_cast<float>(GET_Y_LPARAM(lParam));
                 auto& t=state.table;
-                if(state.confirmQuit)return 0;
+                if(state.confirmQuit)
+                {
+                    if(state.quitButtons[0].Contains(x,y))Finish();
+                    else if(state.quitButtons[1].Contains(x,y)){state.confirmQuit=false;InvalidateRect(state.window,nullptr,FALSE);}
+                    return 0;
+                }
                 if(t.Now()==Phase::GameOver||(t.Now()==Phase::RoundOver&&!Waiting())){Continue();return 0;}
                 for(const Button& b:state.buttons)if(b.box.Contains(x,y)){Do(b);return 0;}
                 if(PassByClick())return 0;
