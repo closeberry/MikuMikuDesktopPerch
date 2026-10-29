@@ -294,8 +294,9 @@ namespace MikuMikuDesktopPerch
         // How far down the arms hang standing: as far as the hand stays clear of what is beside
         // it at that height (hips, thighs, a skirt), measured on the model's own mesh, between
         // 72° (as before: loose clothes at the sides, such as an open coat, do not push the arms
-        // out further) and 86° below horizontal. Narrow hips and no skirt let the arms hang
-        // straighter. Hair and the arms' own vertices do not count.
+        // out further) and 74° below horizontal: people's arms hang 16 to 25 degrees out from
+        // the body (measured), so narrow hips and no skirt do not let them hang straighter.
+        // Hair and the arms' own vertices do not count.
         {
             const int head=Find(pmx,{L"頭"});
             auto under=[&](int bone,int ancestor){
@@ -329,7 +330,7 @@ namespace MikuMikuDesktopPerch
                 const float surface=std::max(0.0f,XMVectorGetX(XMVector3Dot(XMLoadFloat3(&rig.palmContact[side]),XMLoadFloat3(&rig.palmRestNormal[side]))));
                 const XMVECTOR wristRel=XMVectorSubtract(restPos(wrist),shoulder),tipRel=XMVectorSubtract(restPos(tip),shoulder);
                 float best=72.0f;
-                for(float degrees=86.0f;degrees>=72.0f;degrees-=1.0f)
+                for(float degrees=74.0f;degrees>=72.0f;degrees-=1.0f)
                 {
                     const XMVECTOR turn=XMQuaternionRotationRollPitchYaw(0,0,(degrees*Deg-rest)*(side==0?-1.0f:1.0f));
                     const XMVECTOR w=XMVectorAdd(shoulder,XMVector3Rotate(wristRel,turn)),t=XMVectorAdd(shoulder,XMVector3Rotate(tipRel,turn));
@@ -358,6 +359,7 @@ namespace MikuMikuDesktopPerch
                 const XMVECTOR tip=restPos(toe);
                 rig.toeAhead[side]=std::clamp(ankle.z-XMVectorGetZ(tip),0.02f*rig.legLength,0.3f*rig.legLength);   // the front is -Z
                 rig.toeBelow[side]=std::clamp(ankle.y-XMVectorGetY(tip),0.0f,0.3f*rig.legLength);
+                rig.toeOut[side]=std::atan2((XMVectorGetX(tip)-ankle.x)*(side==0?1.0f:-1.0f),ankle.z-XMVectorGetZ(tip));
             }
             else
             {
@@ -1973,19 +1975,26 @@ namespace MikuMikuDesktopPerch
                 weightHoldUntil=clock+weightDuration+(next==0?2.5+3.0*Random01():4.0+6.0*Random01());
             }
             const float shift=weightFrom+(weightTo-weightFrom)*Smooth(static_cast<float>(weightTime/weightDuration));
+            // As people stand (measured): the feet 1.45 times as far apart as the hip joints,
+            // the toes turned out 12 degrees (from however the model's feet point), the head a little ahead of the hips (the chest
+            // tips forward as far as the model stands with it behind), the elbows bent.
+            const float middle=0.5f*(rig.hipRest[0].x+rig.hipRest[1].x),hipWidth=std::abs(rig.hipRest[0].x-rig.hipRest[1].x);
             for(int side=0;side<2;++side)
             {
                 const float out=side==0?1.0f:-1.0f;
                 const float relaxed=std::clamp(-shift*out,0.0f,1.0f);   // this foot carries no weight
-                footKey(side,XMVectorAdd(standingFoot(side,0.04f*L*relaxed,0.012f*L*relaxed),XMVectorSet(out*0.035f*L,0,0,0)),-7.0f*Deg*relaxed,0);
+                const float wide=middle+out*0.725f*hipWidth-rig.ankleRest[side].x;
+                footKey(side,XMVectorAdd(standingFoot(side,0.04f*L*relaxed,0.012f*L*relaxed),XMVectorSet(wide,0,0,0)),-7.0f*Deg*relaxed,
+                        -out*std::clamp(12.0f*Deg-rig.toeOut[side],-10.0f*Deg,20.0f*Deg));
             }
             KeyOf(keys,rig.center).position={0.05f*L*shift,0,0};
             KeyOf(keys,rig.groove).position={0,-0.012f*L*std::abs(shift),0};
             SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,0,3.5f*Deg*shift));
-            SetRotation(keys,rig.upperBody,XMQuaternionRotationRollPitchYaw(1.0f*Deg,0,-2.5f*Deg*shift));
+            const float lean=std::clamp((3.0f*Deg-rig.headLean)*1.25f,-5.0f*Deg,8.0f*Deg);
+            SetRotation(keys,rig.upperBody,XMQuaternionRotationRollPitchYaw(-lean,0,-2.5f*Deg*shift));
             SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(0,0,1.0f*Deg*shift));
             const float sway=1.5f*Deg*std::sin(XM_2PI*t/5.3f);
-            limbs(sway,-sway,10.0f*Deg);
+            arms(sway+4.0f*Deg,-sway+4.0f*Deg,rig.armLower[0],rig.armLower[1],30.0f*Deg,30.0f*Deg);
             if(generatedIdle)Gestures(keys,dt);
             break;
         }
@@ -2010,10 +2019,10 @@ namespace MikuMikuDesktopPerch
             SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw((-18.0f*crouch-4.0f*air)*Deg,0,0),
                                                 XMQuaternionRotationRollPitchYaw(0,yaw*(WalkChestYaw/WalkYaw),0)));
             SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(0,-yaw*(WalkNeckYaw/WalkYaw),0));
-            // Arms swing back in the crouch, forward and up through the push, and spread a little
-            // lower for balance on the way down.
-            const float swing=(-35.0f*crouch+65.0f*air-25.0f*air*falling)*Deg;
-            limbs(swing,swing,(20.0f+15.0f*air)*Deg);
+            // Arms swing well back in the crouch (as people jump, measured), forward and up through
+            // the push, elbows bending, and spread a little lower for balance on the way down.
+            const float swing=(-55.0f*crouch+75.0f*air-30.0f*air*falling)*Deg;
+            limbs(swing,swing,(20.0f+30.0f*air)*Deg);
             break;
         }
         case Activity::Bound:
@@ -2218,9 +2227,13 @@ namespace MikuMikuDesktopPerch
                 footKey(side,target,-25.0f*Deg,yaw);
             }
             SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw,0));
-            SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(3.0f*Deg,0,0),XMQuaternionRotationRollPitchYaw(0,yaw*0.5f,0)));
+            // As people sit (measured): the head a little ahead of the hips (the chest tips
+            // forward as far as the model stands with it behind), the hands resting forward on
+            // the lap, the elbows bent.
+            const float lean=std::clamp((2.3f*Deg-rig.headLean)*1.25f,-5.0f*Deg,8.0f*Deg);
+            SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(-lean,0,0),XMQuaternionRotationRollPitchYaw(0,yaw*0.5f,0)));
             SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(0,-yaw*0.4f,0));
-            limbs(-10.0f*Deg,-10.0f*Deg,12.0f*Deg);
+            arms(19.0f*Deg,19.0f*Deg,rig.armLower[0],rig.armLower[1],54.0f*Deg,54.0f*Deg);
             break;
         }
         case Activity::Grabbed:
