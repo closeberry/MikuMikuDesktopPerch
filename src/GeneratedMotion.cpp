@@ -35,6 +35,7 @@ namespace MikuMikuDesktopPerch
             float swingSkew;     // < 1 brings the swing foot forward sooner, so it lands with the knee straight
             float trail;         // share of the stride the foot goes on back after push-off (the leg straight behind)
             float reach;         // how far (leg lengths) the foot reaches past its landing place before it comes down
+            float narrow;        // each foot this far (leg lengths) in from where it stands at rest, toward the middle
         };
         // Measured on human motion at like speeds: the elbows stay
         // bent; running has a long flight with a deep bounce, lands flat-footed, and swings the
@@ -42,13 +43,13 @@ namespace MikuMikuDesktopPerch
         // Walking lands well ahead of the hips on a straight knee.
         constexpr Gait WalkGait{1.07,0.625f,0.5f,0.035f,0.003f,0.031f,1.5f*Deg,15.0f*Deg,30.0f*Deg,5.0f*Deg,5.0f*Deg,
                                 10.0f*Deg,30.0f*Deg,0.8f,30.0f*Deg,0.3f,0.0f,-0.05f,0.5f,0.04f,0.35f,
-                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,3.0f*Deg,0.7f,0.0f,0.0f};
+                                4.0f*Deg,0.27f,3.0f*Deg,0.016f,0.34f,3.0f*Deg,0.7f,0.0f,0.0f,0.06f};
         // Running lands about 0.2 leg lengths ahead of the hips and pushes off 0.45 behind; the
         // leg stays straight behind a while, folds less than knee-high, reaches out straight and
         // pulls back as it lands. The hips rise above standing height in flight.
         constexpr Gait RunGait{0.78,0.26f,0.68f,0.2f,-0.03f,0.12f,10.0f*Deg,35.0f*Deg,120.0f*Deg,5.0f*Deg,17.0f*Deg,
                                5.0f*Deg,50.0f*Deg,0.62f,85.0f*Deg,0.25f,0.3f,0.21f,1.1f,0.15f,0.22f,
-                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.1f};
+                               3.0f*Deg,0.0f,3.0f*Deg,0.014f,0.1f,25.0f*Deg,0.75f,0.5f,0.1f,0.07f};
 
         // Walking and running are in profile so planted feet never slide in depth; the chest
         // and neck turn back toward the viewer a little.
@@ -274,6 +275,7 @@ namespace MikuMikuDesktopPerch
                 rig.gripReach=XMVectorGetX(XMVector3Length(XMVectorSubtract(restPos(wrist),restPos(rig.elbow[side]))))+palmLength+0.4f*fingerLength;
         }
         if(legs>0)rig.legLength=std::max(legLength/legs,0.1f);
+        if(rig.lowerBody>=0)XMStoreFloat3(&rig.lowerBodyRest,restPos(rig.lowerBody));
 
         // How far down the arms hang standing: as far as the hand stays clear of what is beside
         // it at that height (hips, thighs, a skirt), measured on the model's own mesh, between
@@ -1815,11 +1817,20 @@ namespace MikuMikuDesktopPerch
                     h+=std::max(0.0f,e*std::sin(pitch)+hA*std::cos(pitch)-hA);
                 }
             };
+            // The feet step in toward the middle (people walk on a narrow track), are placed from
+            // under the hip joints (u is measured from there), and turn with the hips about
+            // 下半身's pivot so they stay under the hips when she is side-on.
+            const XMMATRIX turn=XMMatrixRotationY(yaw);
+            const XMVECTOR pivot=XMVectorSet(rig.lowerBodyRest.x,0,rig.lowerBodyRest.z,0);
+            const float middle=0.5f*(rig.hipRest[0].x+rig.hipRest[1].x),under=0.5f*(rig.hipRest[0].z+rig.hipRest[1].z);
             for(int side=0;side<2;++side)
             {
                 float u,h,pitch;
                 place(side,Frac(p+side*0.5),u,h,pitch);
-                footKey(side,standingFoot(side,u,h),pitch,yaw);
+                const auto& rest=rig.ankleRest[side];
+                const float x=rest.x-(rest.x>middle?1.0f:-1.0f)*g.narrow*L*a;
+                const XMVECTOR base=XMVectorAdd(pivot,XMVector3TransformNormal(XMVectorSubtract(XMVectorSet(x,0,under,0),pivot),turn));
+                footKey(side,XMVectorAdd(XMVectorAdd(base,XMVectorScale(forward,u)),XMVectorSet(0,rest.y+h,0,0)),pitch,yaw);
             }
             // センター travels with the planted foot: stance feet move back at exactly this speed.
             const float speed=g.stride*L/(g.stance*static_cast<float>(cycle));

@@ -206,6 +206,7 @@ namespace MikuMikuDesktopPerch
             std::array<int,2> shoulder{-1,-1};
             std::array<DirectX::XMFLOAT3,2> claviclePos{},hangElbow{};
             std::array<DirectX::XMFLOAT3,2> ankleRest{},hipRest{};
+            DirectX::XMFLOAT3 lowerBodyRest{};   // 下半身's pivot: the hips (and legs) turn about it
             // The toe tip relative to the ankle at rest: how far forward and how far down it
             // is (the foot rolls over it when the heel comes up).
             std::array<float,2> toeAhead{},toeBelow{};
