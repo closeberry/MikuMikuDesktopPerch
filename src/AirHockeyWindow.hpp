@@ -13,13 +13,15 @@ namespace MikuMikuDesktopPerch
     // there is no 3D). Move the mouse to move your mallet; drag with the right button to turn the
     // camera (the middle one, or Shift and the right, to move it), the wheel to come nearer, a
     // right double-click or F1 puts it back. Space pauses, Esc gives up (Y to leave, N to go
-    // on), Enter plays again once a game is over, 1-4 choose how fast the puck may go. One at a
-    // time.
+    // on), Enter plays again once a game is over, 1-4 choose how fast the puck may go, 5-8 how
+    // big the puck and mallets are. One at a time.
     struct AirHockeyOpponent
     {
         std::wstring name;
         int puckSpeed=2;                          // 1-4 (AirHockey::PuckSpeeds)
         std::function<void(int)> onPuckSpeed;     // another chosen with the keys (to keep in the settings)
+        int pieceSize=3;                          // 1-4 (AirHockey::PieceSizes)
+        std::function<void(int)> onPieceSize;     // likewise
         std::function<void()> onGameOver;         // each game played to its end (not one given up)
         // Her model, drawn standing at the table (null: 2D only). It must stay loaded while the
         // window is open; TickAirHockeyWindow is given it every frame.
@@ -29,6 +31,12 @@ namespace MikuMikuDesktopPerch
         int msaa=4;                               // MSAA samples and the textures' largest side
         unsigned maxTexture=1024;
         bool light=false;                         // fewer pixels drawn (the settings' light 3D)
+        // Her words in her own voice: asks the LLM about situation (a stage direction), the line
+        // coming back through AirHockeyHeard. False when it cannot now (a line of her own is shown).
+        std::function<bool(const std::wstring& situation)> talk;
+        // Something those watching may speak of: what happened, told as to one watching, how
+        // much it matters (1-9), and a line to say without the LLM.
+        std::function<void(const std::wstring& facts,int weight,const std::wstring& fallback)> onEvent;
     };
 
     // Opens it (or brings it forward when open). onEnd: once, when the window closes.
@@ -38,6 +46,12 @@ namespace MikuMikuDesktopPerch
     // watch the game from beside it, as at mahjong.
     HWND AirHockeyWindowHandle();
     bool AirHockeyWindowRect(RECT& r);
+    // Her line asked for through AirHockeyOpponent::talk, as it grows; done: it is all there
+    // (empty: none came, her own line is shown instead).
+    void AirHockeyHeard(const std::wstring& line,bool done);
+    // After the window closes: what to say on the game (played to its end, or stopped midway),
+    // a stage direction for the LLM and her own line without it. False when there was none.
+    bool AirHockeyAfterword(std::wstring& situation,std::wstring& fallback);
     // Every frame while open: the game goes on, and her model, as it is posed now, is drawn at
     // the table holding her mallet.
     void TickAirHockeyWindow(MascotModel& model,double dt);
@@ -45,8 +59,9 @@ namespace MikuMikuDesktopPerch
     // Diagnostics (--airhockey-sim): games between two of the opponent's players, checked for
     // what must not happen (the puck off the table, inside a mallet; a game that never ends),
     // as a report whose first line is "<n> wrong". Yours is played as a person might, with
-    // the mouse's quick mallet. speed: the puck's top speed chosen (1-4; 0: the default).
-    std::wstring RunAirHockeySim(int games,std::uint32_t seed,int speed=0);
+    // the mouse's quick mallet. speed, size: the puck's top speed and the pieces' size chosen
+    // (1-4; 0: the default).
+    std::wstring RunAirHockeySim(int games,std::uint32_t seed,int speed=0,int size=0);
     // Diagnostics (--snapshot with --airhockey): your side played for you (by a player like hers,
     // the window not paused when away), and the window as last drawn, to a PNG.
     void PlayAirHockeyForTest();

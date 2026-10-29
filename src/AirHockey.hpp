@@ -18,9 +18,11 @@ namespace MikuMikuDesktopPerch::AirHockey
     struct Rules
     {
         float width=1.0f,length=1.8f;
-        float goal=0.34f;               // the goal's mouth, across the middle of each end
-        float puck=0.035f;              // radii
-        std::array<float,2> mallet{0.06f,0.06f};
+        // The goal's mouth (across the middle of each end), the radii: as Game::SetPieceSize(1.5)
+        // makes them, larger than a real table's, to be easy to see and hit.
+        float goal=0.45f;
+        float puck=0.0525f;
+        std::array<float,2> mallet{0.09f,0.09f};
         std::array<float,2> malletSpeed{7.0f,3.4f};   // the fastest each mallet moves (units per second)
         float herAcceleration=40.0f;    // how quickly her mallet gets up to speed
         float puckSpeed=2.6f;           // the fastest the puck goes (PuckSpeeds: the window's choices)
@@ -32,6 +34,9 @@ namespace MikuMikuDesktopPerch::AirHockey
     // The puck's top speeds to choose from (the settings' 1 to 4): from a slow one to see
     // and reach easily, to one that crosses the table in under half a second.
     constexpr std::array<float,4> PuckSpeeds{2.0f,2.6f,3.2f,4.0f};
+    // The puck's and mallets' sizes to choose from (the settings' 1 to 4), against a real
+    // table's (1); the goal widens with them.
+    constexpr std::array<float,4> PieceSizes{1.0f,1.25f,1.5f,1.75f};
 
     enum class Phase {Serve,Play,Over};
 
@@ -51,6 +56,9 @@ namespace MikuMikuDesktopPerch::AirHockey
         void NewGame(int serving=You);
         // A new top speed for the puck, from now on (a puck going faster slows to it).
         void SetPuckSpeed(float speed);
+        // The puck and mallets scale times a real table's (PieceSizes), the goal with them. A
+        // puck in play is served again on its half.
+        void SetPieceSize(float scale);
         // The mallet on side held by a hand (hers, drawn in 3D): over the next Step it goes
         // straight to at (kept on its half), at the speed that takes, instead of toward its target.
         void HoldMallet(int side,Vec at);

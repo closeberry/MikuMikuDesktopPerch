@@ -533,7 +533,7 @@ namespace MikuMikuDesktopPerch
             stop->offset=std::min(stop->offset,XMVectorGetX(XMVector3Dot(XMLoadFloat3(&askedWrist[side]),XMLoadFloat3(&stop->normal)))+0.4f*rig.legLength);
             ++armStopCount[side];
         }
-        else if(held)
+        else if(held&&depth<0)
         {
             // Clear while held back: let it come a little nearer again, so a stop made in one
             // pose does not keep the hand off in another (the margin keeps it clear meanwhile).
@@ -542,14 +542,14 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    void GeneratedMotion::StopLean(bool into)
+    void GeneratedMotion::StopLean(bool into,bool room)
     {
         if(into&&leanDriven&&lastLean>0)
         {
             leanLimit=std::max(0.0f,std::min(leanLimit,lastLean)-2.0f*Deg);
             ++leanStopCount;
         }
-        else if(!into)leanLimit=std::min(1.6f,leanLimit+static_cast<float>(10.0*stopDt)*Deg);
+        else if(!into&&room)leanLimit=std::min(1.6f,leanLimit+static_cast<float>(10.0*stopDt)*Deg);
     }
 
     void GeneratedMotion::ClearStops()
@@ -1623,6 +1623,7 @@ namespace MikuMikuDesktopPerch
 
     void GeneratedMotion::ApplyHold(std::vector<Key>& keys,double dt)
     {
+        heldLean=0;
         for(int s=0;s<2;++s)
         {
             HoldArm& h=holds[s];
@@ -1641,6 +1642,7 @@ namespace MikuMikuDesktopPerch
             lastLean=(18.0f+std::clamp((d-0.7f*reach)/(0.8f*reach),0.0f,1.0f)*17.0f)*Deg;
             leanDriven=true;
             const float lean=std::min(lastLean,leanLimit);
+            heldLean=std::max(heldLean,lean*weight);
             // Only that lean: the idle motion's sway of the upper body would carry the hand about.
             if(rig.upperBody>=0)XMStoreFloat4(&KeyOf(g,rig.upperBody).rotation,XMQuaternionRotationRollPitchYaw(-lean,0,0));
             // Where the point is as the leaning body sees it, and no further than the arm goes.

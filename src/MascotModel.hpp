@@ -147,6 +147,9 @@ namespace MikuMikuDesktopPerch
         // Desired look direction in radians: yaw > 0 turns toward screen right, pitch > 0 looks up.
         // active=false lets the head ease back to the motion's own pose.
         void SetLookTarget(float yaw,float pitch,bool active);
+        // Her face turned toward point (model space; the one she talks to), counting the lean
+        // of a Hold. active=false: as SetLookTarget's.
+        void LookToward(const std::array<float,3>& point,bool active);
         // Turn standing in place toward screen left (yaw > 0) or right, in radians: the hips
         // and the upper body turn, and the feet are set down turned with them (leg IK), so she
         // faces someone beside her. Eased in and out; only while standing (otherwise it eases

@@ -716,9 +716,12 @@ namespace MikuMikuDesktopPerch
                 const float last=armDepth[side];
                 armDepth[side]=worst->depth;
                 const float ahead=worst->depth+(last>-1e8f?std::max(0.0f,worst->depth-last):0.0f);
-                motion.StopArm(side,way,ahead+solidMargin);
+                // Near (within two margins): held where it is; only well clear may it come back.
+                const float in=ahead+solidMargin;
+                motion.StopArm(side,way,in>0?in:in>-solidMargin?0.0f:in);
             }
-            motion.StopLean(std::max(penetration[static_cast<size_t>(P::Body)].depth,penetration[static_cast<size_t>(P::Head)].depth)>-solidMargin);
+            const float body=std::max(penetration[static_cast<size_t>(P::Body)].depth,penetration[static_cast<size_t>(P::Head)].depth);
+            motion.StopLean(body>-solidMargin,body<-3*solidMargin);
         }
 
         // One-shot motion, sampled by a solver of its own (no physics) and blended over the
@@ -2291,6 +2294,17 @@ namespace MikuMikuDesktopPerch
         impl->proc.targetYaw=yaw;
         impl->proc.targetPitch=pitch;
         impl->proc.lookActive=active;
+    }
+
+    void MascotModel::LookToward(const std::array<float,3>& point,bool active)
+    {
+        std::array<float,3> head{};
+        if(!active||!HeadPosition(head)){SetLookTarget(0,0,false);return;}
+        // The face points to -Z; bent forward by a Hold, the head looks that much lower.
+        const float dx=point[0]-head[0],dy=point[1]-head[1],dz=point[2]-head[2];
+        const float yaw=std::atan2(dx,-dz),pitch=std::atan2(dy,std::sqrt(dx*dx+dz*dz))+impl->motion.HeldLean();
+        const float limit=DirectX::XMConvertToRadians(45.0f);
+        SetLookTarget(std::clamp(yaw,-limit,limit),std::clamp(pitch,-limit,limit),true);
     }
 
     namespace

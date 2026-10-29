@@ -83,6 +83,9 @@ namespace MikuMikuDesktopPerch
             // when she stops to think. Taken one by one; asked for again when few are left.
             std::vector<std::wstring> callLines,thinkLines;
             bool prefetching=false;
+            // Where her head is on the screen, and a little to its right (her words' bubble goes
+            // there), as last drawn in 3D; x < 0: not known.
+            POINT headScreen{-1,-1},besideHead{-1,-1};
             // The last game played to its end, for a word on it back on the desktop (MahjongAfterword).
             std::wstring afterword,afterwordLine;
             // What the words last saw of the game (for what is new).
@@ -1258,6 +1261,15 @@ namespace MikuMikuDesktopPerch
             if(!state.window)return;
             KillTimer(state.window,TimerId);
             if(state.her.model)state.her.model->SetSolids({});
+            // Stopped before the game's end: a word on that, back on the desktop.
+            if(state.afterword.empty()&&state.seen.started&&state.table.Now()!=Phase::GameOver)
+            {
+                const auto& t=state.table;
+                state.afterword=Fmt(T(L"いま、話し相手と麻雀を打っていたが、対局の途中でやめてデスクトップに戻ってきたところ（あなた{0}点、相手{1}点だった）。そのことを話し相手にひと言（1〜2文）",
+                                      L"You were playing mahjong with them, but they stopped before the game's end and you have come back to the desktop (you had {0} points, they had {1}). Say a word about it to them (one or two sentences)"),
+                                    {std::to_wstring(t.Of(Mahjong::Her).points),std::to_wstring(t.Of(Mahjong::You).points)});
+                state.afterwordLine=T(L"また続き、やろうね。",L"Let's finish it another time.");
+            }
             auto onEnd=std::move(state.onEnd);
             DestroyWindow(state.window);
             if(onEnd)onEnd();
@@ -1276,6 +1288,11 @@ namespace MikuMikuDesktopPerch
             state.said.clear();
             state.nextAt=GetTickCount64()+HerDrawWait;
             state.seen={};
+            // The last game's word, if still coming, is not said in this one.
+            state.words.waiting=false;
+            state.words.text.clear();
+            state.afterword.clear();
+            state.afterwordLine.clear();
             Prefetch();
         }
 
@@ -1445,6 +1462,11 @@ namespace MikuMikuDesktopPerch
             {
                 std::wstring situation=facts+Fmt(T(L"（いまは{0}、あなたは{1}点、相手は{2}点）",L" (Now {0}; you have {1} points, they have {2})"),
                                                  {round,std::to_wstring(her.points),std::to_wstring(you.points)});
+                // Mid-game, the LLM tends to wrap up ("next time, ..."): tell it the game goes on.
+                if(t.Now()!=Mahjong::Phase::GameOver)
+                    situation+=T(L"対局はまだ途中で、このあとも続く。終わったときのような言い方（「楽しかった」「また遊ぼう」「次は」など）はしないで。",
+                                 L"The game is still going on. Do not talk as if it were over (no \"that was fun\", \"let's play again\", \"next time\"). ");
+                else situation+=T(L"対局はこれで終わり。",L"The game is over now. ");
                 if(!w.recent.empty())
                 {
                     situation+=T(L"さっきあなたが言ったこと：",L" What you said just before: ");
@@ -1810,8 +1832,9 @@ namespace MikuMikuDesktopPerch
             Text(g,HerName(),RectF(nameX,nameY,240*s,28*s),20*s,white,true);
             Text(g,Points(her.points)+(t.Dealer()==Mahjong::Her?T(L"　親",L"  dealer"):L""),RectF(nameX,nameY+30*s,240*s,24*s),17*s,soft);
             if(her.riichi){FillRound(g,RectF(nameX,nameY+60*s,90*s,8*s),3*s,Color(255,245,245,240));SolidBrush dot(Color(255,210,30,40));g.FillEllipse(&dot,nameX+41*s,nameY+60*s,8*s,8*s);}
-            // Her words: a bubble at the right, under the hand's box, as wide as they need (to two
-            // fifths of the window, then wrapped), its tail toward her.
+            // Her words: a bubble just right of her head (at the right under the hand's box without
+            // the 3D table), as wide as they need (to two fifths of the window, then wrapped), its
+            // tail toward her.
             if(!state.words.text.empty())
             {
                 const std::wstring& said=state.words.text;
@@ -1822,10 +1845,14 @@ namespace MikuMikuDesktopPerch
                 g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,PointF(0,0),&format,&one);
                 g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,RectF(0,0,most-2*pad,600*s),&format,&need);
                 const float tw=std::min(one.Width,most-2*pad)+2,th=need.Height;
-                const float bw=tw+2*pad,bh=th+2*pad*0.8f,x=W-14*s-bw,y=hud?88*s:72*s;
+                const float bw=tw+2*pad,bh=th+2*pad*0.8f;
+                const float H=static_cast<float>(ch);
+                const bool beside=hud&&state.besideHead.x>=0;
+                const float x=beside?std::clamp(static_cast<float>(state.besideHead.x),14*s,W-14*s-bw):W-14*s-bw;
+                const float y=beside?std::clamp(static_cast<float>(state.headScreen.y)-bh*0.6f,88*s,std::max(88*s,H*0.6f-bh)):hud?88*s:72*s;
                 {
                     // The tail, out of the bubble's left side toward her.
-                    const float ty=y+std::min(bh*0.5f,30*s);
+                    const float ty=beside?std::clamp(static_cast<float>(state.headScreen.y),y+12*s,y+bh-12*s):y+std::min(bh*0.5f,30*s);
                     const PointF tail[3]={PointF(x+2*s,ty-9*s),PointF(x-16*s,ty+4*s),PointF(x+2*s,ty+9*s)};
                     SolidBrush fill(Color(240,255,252,246));
                     Pen edge(Color(255,214,170,120),1.5f*s);
@@ -2528,7 +2555,23 @@ namespace MikuMikuDesktopPerch
         const auto& c=state.camera;
         const XMVECTOR target=XMVectorSet(c.x*D,top+(0.47f+c.y+0.7f*standing)*D,(c.z-1.17f)*D,0);
         const XMVECTOR toEye=XMVectorSet(std::sin(c.yaw)*std::cos(c.pitch),std::sin(c.pitch),-std::cos(c.yaw)*std::cos(c.pitch),0);
-        r.SetCamera(XMVectorAdd(target,XMVectorScale(toEye,c.distance*(1+0.22f*standing)*D)),target,XMConvertToRadians(42.0f));
+        const XMVECTOR eye=XMVectorAdd(target,XMVectorScale(toEye,c.distance*(1+0.22f*standing)*D));
+        r.SetCamera(eye,target,XMConvertToRadians(42.0f));
+        // Her head as it is seen, and beside it to the right (as the camera sees it), for her bubble.
+        if(std::array<float,3> head{};model.HeadPosition(head))
+        {
+            const XMVECTOR at=XMVector3Transform(XMVectorSet(head[0],head[1],head[2],1),world);
+            const XMVECTOR right=XMVector3Normalize(XMVector3Cross(XMVectorSet(0,1,0,0),XMVectorSubtract(target,eye)));
+            const XMVECTOR beside=XMVectorAdd(at,XMVectorScale(right,0.26f*D));
+            state.headScreen=r.Project({XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at)});
+            state.besideHead=r.Project({XMVectorGetX(beside),XMVectorGetY(beside),XMVectorGetZ(beside)});
+        }
+        // While she talks, she looks up at you (the camera).
+        {
+            XMVECTOR det;
+            const XMVECTOR you=XMVector3Transform(eye,XMMatrixInverse(&det,world));
+            model.LookToward({XMVectorGetX(you),XMVectorGetY(you),XMVectorGetZ(you)},!state.words.text.empty());
+        }
         // Your tiles as they are seen, for pointing and clicking.
         state.handBoxes.assign(state.handCorners.size(),RectF());
         for(size_t i=0;i<state.handCorners.size();++i)

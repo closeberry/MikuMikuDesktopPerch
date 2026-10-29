@@ -152,6 +152,7 @@ namespace MikuMikuDesktopPerch
         albumFolder=ReadString(path,L"AlbumFolder",albumFolder);
         dungeonLight=ReadInt(path,L"DungeonLight",dungeonLight?1:0)!=0;
         airHockeyPuck=std::clamp(ReadInt(path,L"AirHockeyPuckSpeed",airHockeyPuck),1,4);
+        airHockeySize=std::clamp(ReadInt(path,L"AirHockeyPieceSize",airHockeySize),1,4);
         chatInitiative=ReadInt(path,L"ChatInitiative",chatInitiative?1:0)!=0;
         chatterMinutes=std::clamp(ReadInt(path,L"ChatterMinutes",chatterMinutes),5,600);
         banterMinutes=std::clamp(ReadInt(path,L"BanterMinutes",banterMinutes),0,600);
@@ -241,6 +242,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"AlbumFolder",albumFolder);
         WriteString(path,L"DungeonLight",dungeonLight?L"1":L"0");
         WriteString(path,L"AirHockeyPuckSpeed",std::to_wstring(airHockeyPuck));
+        WriteString(path,L"AirHockeyPieceSize",std::to_wstring(airHockeySize));
         WriteString(path,L"ChatInitiative",chatInitiative?L"1":L"0");
         WriteString(path,L"ChatterMinutes",std::to_wstring(chatterMinutes));
         WriteString(path,L"BanterMinutes",std::to_wstring(banterMinutes));

@@ -50,6 +50,7 @@ namespace MikuMikuDesktopPerch
             bool paused=false,asking=false,overTold=false;
             bool held=false;   // the cursor is kept over your half (ClipCursor)
             ULONGLONG speedShownUntil=0;   // GetTickCount64: until then, the speed just chosen is shown
+            ULONGLONG sizeShownUntil=0;    // and the size
             int frames=0;   // drawn, for the snapshot's report
             Vec target{};
 
@@ -79,6 +80,23 @@ namespace MikuMikuDesktopPerch
             POINT dragFrom{};
             int dragging=0;            // 0, or the button held: 1 turns, 2 moves
             std::wstring hudShown;     // what the picture over the table last showed
+            // Her words in the bubble beside her (AirHockeyOpponent::talk, or a line of her own),
+            // as at mahjong.
+            struct Words
+            {
+                std::wstring text,fallback;
+                ULONGLONG since=0,until=0,asked=0;
+                bool waiting=false;
+                int weight=0;
+                std::vector<std::wstring> recent;
+                std::wstring told;   // diagnostics: what happened and what she said, for the snapshot's report
+            } words;
+            bool started=false,overSeen=false,cheered=false;
+            std::array<bool,2> matchPoint{};
+            double faceUntil=0,overAt=0;   // the game's clock: her face back, the game's end
+            std::wstring afterword,afterwordLine;   // AirHockeyAfterword
+            // Her head on the screen and beside it to the right (her bubble), as last drawn; x < 0: not known.
+            POINT headScreen{-1,-1},besideHead{-1,-1};
             DirectX::XMFLOAT3 eye{},look{};   // the camera as last set
         } state;
 
@@ -106,6 +124,24 @@ namespace MikuMikuDesktopPerch
         {
             int best=1;
             for(int i=0;i<4;++i)if(std::abs(AirHockey::PuckSpeeds[i]-game.Rule().puckSpeed)<std::abs(AirHockey::PuckSpeeds[best-1]-game.Rule().puckSpeed))best=i+1;
+            return best;
+        }
+        // The puck's and mallets' size chosen (1-4, AirHockey::PieceSizes), in words.
+        std::wstring SizeName(int level)
+        {
+            switch(level)
+            {
+            case 1:return T(L"本物くらい",L"real size");
+            case 2:return T(L"少し大きい",L"a little big");
+            case 3:return T(L"大きい",L"big");
+            default:return T(L"とても大きい",L"very big");
+            }
+        }
+        int SizeLevel(const AirHockey::Game& game)
+        {
+            const float scale=game.Rule().mallet[AirHockey::You]/0.06f;
+            int best=1;
+            for(int i=0;i<4;++i)if(std::abs(AirHockey::PieceSizes[i]-scale)<std::abs(AirHockey::PieceSizes[best-1]-scale))best=i+1;
             return best;
         }
 
@@ -228,10 +264,43 @@ namespace MikuMikuDesktopPerch
             }
             Text(g,HerName(),RectF(16*s,8*s,w/2.0f-60*s,24*s),15*s,soft,false,StringAlignmentNear);
             Text(g,T(L"あなた",L"You"),RectF(w/2.0f+44*s,8*s,w/2.0f-60*s,24*s),15*s,soft,false,StringAlignmentFar);
-            if(live)Text(g,T(L"パック：",L"Puck: ")+SpeedName(SpeedLevel(game))+T(L"（1〜4キー）",L" (keys 1-4)"),
+            if(live)Text(g,T(L"パック：",L"Puck: ")+SpeedName(SpeedLevel(game))+T(L"（1〜4キー）　大きさ：",L" (keys 1-4)   Size: ")+
+                           SizeName(SizeLevel(game))+T(L"（5〜8キー）",L" (keys 5-8)"),
                          RectF(w/2.0f+44*s,30*s,w/2.0f-60*s,22*s),12*s,soft,false,StringAlignmentFar);
             Text(g,std::to_wstring(game.Score(Her))+L"  -  "+std::to_wstring(game.Score(You)),RectF(0,4*s,static_cast<float>(w),46*s),30*s,white,true);
             Text(g,T(L"先に",L"First to ")+std::to_wstring(rules.toWin)+T(L"点",L""),RectF(16*s,30*s,w/2.0f-60*s,22*s),12*s,soft,false,StringAlignmentNear);
+
+            // Her words: a bubble just right of her head (in 2D, right of her end), as wide as
+            // they need, its tail toward her.
+            if(!state.words.text.empty())
+            {
+                const std::wstring& said=state.words.text;
+                Font font(Family(),16*s,FontStyleRegular,UnitPixel);
+                StringFormat format;
+                const float W=static_cast<float>(w),most=std::max(160*s,W*0.36f),pad=14*s;
+                RectF one,need;
+                g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,PointF(0,0),&format,&one);
+                g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,RectF(0,0,most-2*pad,600*s),&format,&need);
+                const float tw=std::min(one.Width,most-2*pad)+2,th=need.Height,bw=tw+2*pad,bh=th+2*pad*0.8f;
+                const bool beside=state.renderer&&state.besideHead.x>=0;
+                const PointF end2D(W/2+70*s,70*s);
+                const float x=std::clamp(beside?static_cast<float>(state.besideHead.x):end2D.X,14*s,W-14*s-bw);
+                const float headY=beside?static_cast<float>(state.headScreen.y):end2D.Y+bh/2;
+                const float y=std::clamp(headY-bh*0.6f,64*s,std::max(64*s,mid-bh));
+                const float ty=std::clamp(headY,y+12*s,y+bh-12*s);
+                const PointF tail[3]={PointF(x+2*s,ty-9*s),PointF(x-16*s,ty+4*s),PointF(x+2*s,ty+9*s)};
+                SolidBrush fill(Color(240,255,252,246));
+                Pen edge(Color(255,214,170,120),1.5f*s);
+                g.FillPolygon(&fill,tail,3);
+                g.DrawLine(&edge,tail[0],tail[1]);
+                g.DrawLine(&edge,tail[1],tail[2]);
+                GraphicsPath path;
+                RoundRect(path,RectF(x,y,bw,bh),14*s);
+                g.FillPath(&fill,&path);
+                g.DrawPath(&edge,&path);
+                SolidBrush ink(Color(255,60,44,36));
+                g.DrawString(said.c_str(),static_cast<INT>(said.size()),&font,RectF(x+pad,y+pad*0.8f,tw+4,th+4),&format,&ink);
+            }
 
             auto banner=[&](const std::wstring& big,const std::wstring& note){
                 const float bw=std::min(static_cast<float>(w)-40*s,420*s),bh=note.empty()?64*s:96*s;
@@ -252,6 +321,7 @@ namespace MikuMikuDesktopPerch
             }
             else if(asking)banner(T(L"やめますか？",L"Stop playing?"),T(L"Y：やめる　N：続ける",L"Y: stop   N: go on"));
             else if(speedChosen)banner(T(L"パックの速さ：",L"Puck speed: ")+SpeedName(SpeedLevel(game)),L"");
+            else if(GetTickCount64()<state.sizeShownUntil)banner(T(L"パックとマレット：",L"Puck and mallets: ")+SizeName(SizeLevel(game)),L"");
             else if(paused)banner(T(L"一時停止",L"Paused"),live?T(L"Spaceで再開",L"Space to go on"):L"");
             else if(game.Now()==Phase::Serve&&game.GoalServe()&&game.ServeLeft()>0.3)
                 banner(game.LastScorer()==You?T(L"ゴール！",L"Goal!"):HerName()+T(L"のゴール",L" scores"),L"");
@@ -382,11 +452,12 @@ namespace MikuMikuDesktopPerch
 
         XMFLOAT3 World(Vec p,float above=0){return {p.x*state.k,state.top+above,p.y*state.k};}
 
-        // The mallet's height (table units): its base, and the knob on it up to its top.
+        // The mallet's height (table units): its base, and the knob on it up to its top (a low one).
         float MalletBase(int side){return 0.35f*state.game->Rule().mallet[side];}
-        float MalletTop(int side){return 2.4f*state.game->Rule().mallet[side];}
-        // Where her grip's middle goes over her mallet (table units above the top): the knob's top.
-        float GripHeight(){return MalletTop(AirHockey::Her);}
+        float MalletTop(int side){return 0.8f*state.game->Rule().mallet[side];}
+        // Where her grip's middle goes over her mallet (table units above the top): over the knob's
+        // top by the hand's half thickness, so the knob comes up under her palm, not through it.
+        float GripHeight(){return MalletTop(AirHockey::Her)+0.045f*state.upper/state.k;}
 
         // What moves: the puck and the two mallets.
         std::vector<MascotRenderer::GeometryVertex> BuildPieces()
@@ -496,7 +567,7 @@ namespace MikuMikuDesktopPerch
             state.top=0.9f*state.hips;
             // Back from her end by her thighs' depth, and a little more (her front above them
             // leans over the table).
-            state.herZ=(rules.length/2+Rim)*state.k+0.34f*D;
+            state.herZ=(rules.length/2+Rim)*state.k+0.40f*D;
             model.SetActivity(Activity::Idle);
             model.SetAutoGestures(false);
             auto reach=[&](Vec toward){
@@ -515,6 +586,160 @@ namespace MikuMikuDesktopPerch
             model.ResetPhysics();
             Log(L"air hockey: hips %.1f, upper body %.1f, table %.1f long at %.1f; her mallet reaches %.2f..%.2f across, to %.2f",
                 state.hips,state.upper,rules.length*state.k,state.top,state.reachLeft,state.reachRight,state.reachNear);
+        }
+
+        // ---- Her words and the watchers' (docs/AirHockey.md, しゃべる・反応) ----
+
+        constexpr ULONGLONG WordsHold=3000;   // a lighter word does not cut in on a weightier one this soon
+        constexpr ULONGLONG AskEvery=10000;   // her own words through the LLM for small things, at most this often
+        constexpr ULONGLONG AnswerWait=8000;  // the LLM's line waited for this long, then hers instead
+
+        std::uint32_t& WordsRandom(){static std::uint32_t r=0x2545F491u;return r;}
+        const std::wstring& Pick(const std::vector<std::wstring>& lines)
+        {
+            auto& r=WordsRandom();
+            r^=r<<13;r^=r>>17;r^=r<<5;
+            return lines[r%lines.size()];
+        }
+
+        // Her line in the bubble beside her, for as long as it takes to read.
+        void SayWords(const std::wstring& line,int weight)
+        {
+            auto& w=state.words;
+            const ULONGLONG now=GetTickCount64();
+            w.text=line;
+            w.waiting=false;
+            w.weight=weight;
+            w.since=now;
+            w.until=now+2400+90*static_cast<ULONGLONG>(line.size());
+            if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
+            w.told+=L"  she says: "+line+L"\n";
+        }
+
+        // Something happened: she speaks of it (in her own words when the LLM is there and it is
+        // worth it), and those watching hear of it. facts: for her (she is "you", the user her
+        // opponent); seen: the same for one watching; lines: hers without the LLM; theirs: the watchers'.
+        void Happened(int weight,const std::wstring& facts,const std::vector<std::wstring>& lines,
+                      const std::wstring& seen,const std::vector<std::wstring>& theirs)
+        {
+            const auto& g=*state.game;
+            state.words.told+=Fmt(L"  {0} s, weight {1}: {2}\n",{std::to_wstring(static_cast<int>(g.Clock())),std::to_wstring(weight),seen});
+            if(state.her.onEvent&&!theirs.empty())
+                state.her.onEvent(seen+Fmt(T(L"（点数は{0}が{1}点、持ち主が{2}点、{3}点先取）",L" ({0} has {1}, the owner {2}; first to {3})"),
+                                           {HerName(),std::to_wstring(g.Score(AirHockey::Her)),std::to_wstring(g.Score(AirHockey::You)),std::to_wstring(g.Rule().toWin)}),weight,Pick(theirs));
+            if(lines.empty())return;
+            auto& w=state.words;
+            const ULONGLONG now=GetTickCount64();
+            if((w.waiting||now-w.since<WordsHold)&&weight<w.weight)return;
+            const std::wstring line=Pick(lines);
+            if(state.her.talk&&(weight>=7||now-w.asked>AskEvery))
+            {
+                std::wstring situation=facts+Fmt(T(L"（いまはあなた{0}点、相手{1}点。{2}点先取）",L" (Now you have {0}, they have {1}; first to {2})"),
+                                                 {std::to_wstring(g.Score(AirHockey::Her)),std::to_wstring(g.Score(AirHockey::You)),std::to_wstring(g.Rule().toWin)});
+                // Mid-game, the LLM tends to wrap up ("next time, ..."): tell it the game goes on.
+                if(g.Now()!=AirHockey::Phase::Over)
+                    situation+=T(L"対戦はまだ途中で、このあとも続く。終わったときのような言い方（「楽しかった」「また遊ぼう」「次は」など）はしないで。",
+                                 L"The game is still going on. Do not talk as if it were over (no \"that was fun\", \"let's play again\", \"next time\"). ");
+                else situation+=T(L"対戦はこれで終わり。",L"The game is over now. ");
+                if(!w.recent.empty())
+                {
+                    situation+=T(L"さっきあなたが言ったこと：",L" What you said just before: ");
+                    for(const auto& r:w.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
+                    situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
+                }
+                situation+=T(L"そのことを、対戦相手に一言（1文の短い話し言葉）",L"Say a word about it to them (one short sentence)");
+                if(state.her.talk(situation))
+                {
+                    w.waiting=true;
+                    w.fallback=line;
+                    w.text=L"…";
+                    w.weight=weight;
+                    w.since=w.asked=now;
+                    w.until=now+AnswerWait+4000;
+                    return;
+                }
+            }
+            SayWords(line,weight);
+        }
+
+        // Her face for a moment, after a goal: pleased, or a little put out.
+        void Face(Expression e,double seconds)
+        {
+            if(!state.her.model)return;
+            state.her.model->SetExpression(e,false);
+            state.faceUntil=state.game->Clock()+seconds;
+        }
+
+        // What happened in the game since the last step, for words and her reactions: its start,
+        // a goal (after a long rally, too), a match point, its end.
+        void NoticeWords(const std::vector<AirHockey::Event>& events,int rallyBefore)
+        {
+            using namespace AirHockey;
+            const auto& g=*state.game;
+            auto& w=state.words;
+            const ULONGLONG now=GetTickCount64();
+            if(w.waiting&&now-w.since>AnswerWait)SayWords(w.fallback,w.weight);   // no answer: her own line
+            if(!w.text.empty()&&!w.waiting&&now>w.until)w.text.clear();
+            if(state.faceUntil>0&&g.Clock()>state.faceUntil){state.faceUntil=0;if(state.her.model)state.her.model->SetExpression(Expression::Neutral,false);}
+            const std::wstring name=HerName();
+            if(!state.started)
+            {
+                state.started=true;
+                Happened(7,T(L"これからエアホッケーの対戦が始まる。",L"The air hockey game is about to begin."),
+                         {T(L"よーし、勝負だよ！",L"Okay, let's play!"),T(L"負けないからね！",L"I won't lose!"),T(L"手加減しないよ？",L"I'm not going easy on you!")},
+                         Fmt(T(L"{0}と、このパソコンの持ち主のエアホッケーの対戦が始まる。",L"An air hockey game between {0} and the owner of this computer is about to begin."),{name}),
+                         {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
+            }
+            for(const Event& e:events)
+            {
+                if(e.kind!=Event::Goal)continue;
+                const bool hers=e.side==Her,long_=rallyBefore>=10;
+                Face(hers?Expression::Smile:Expression::Troubled,2.5);
+                if(g.Now()==Phase::Over)continue;   // the end is spoken of below
+                const std::wstring rally=std::to_wstring(rallyBefore);
+                if(hers)
+                    Happened(long_?7:5,long_?Fmt(T(L"{0}回の長い打ち合いのあと、あなたがゴールを決めた。",L"After a long rally of {0} hits, you scored."),{rally}):std::wstring(T(L"あなたがゴールを決めた。",L"You scored a goal.")),
+                             long_?std::vector<std::wstring>{T(L"長かったね、いい打ち合い！",L"What a rally!"),T(L"やっと決まった～！",L"Finally!")}
+                                  :std::vector<std::wstring>{T(L"やった、入った！",L"Yes, it went in!"),T(L"よしっ、決まった！",L"Got it!"),T(L"えへへ、1点！",L"Hehe, one point!")},
+                             Fmt(T(L"エアホッケーで、{0}がゴールを決めた。",L"In the air hockey game, {0} scored."),{name}),
+                             {Fmt(T(L"{0}、ナイス！",L"Nice one, {0}!"),{name}),T(L"おお、入った！",L"Ooh, in!")});
+                else
+                    Happened(long_?7:5,long_?Fmt(T(L"{0}回の長い打ち合いのあと、相手にゴールを決められた。",L"After a long rally of {0} hits, they scored on you."),{rally}):std::wstring(T(L"相手にゴールを決められた。",L"They scored on you.")),
+                             long_?std::vector<std::wstring>{T(L"いい打ち合いだったのに～！",L"That was such a good rally!"),T(L"うう、粘ったのに…",L"I held on so long...")}
+                                  :std::vector<std::wstring>{T(L"あっ、やられた！",L"Ah, you got me!"),T(L"うう、速い…",L"Ugh, so fast..."),T(L"今の見えなかった！",L"I didn't even see that!")},
+                             T(L"エアホッケーで、持ち主がゴールを決めた。",L"In the air hockey game, the owner scored."),
+                             {T(L"おお、決まった！",L"Oh, a goal!"),T(L"いいシュート！",L"Nice shot!")});
+                // One more to win.
+                for(int side:{Her,You})
+                    if(g.Score(side)==g.Rule().toWin-1&&!state.matchPoint[side])
+                    {
+                        state.matchPoint[side]=true;
+                        if(side==Her)Happened(6,T(L"あなたはあと1点で勝ち。",L"One more point and you win."),{T(L"あと1点！",L"One more!"),T(L"マッチポイントだよ！",L"Match point!")},
+                                              Fmt(T(L"エアホッケーで、{0}があと1点で勝つ。",L"In the air hockey game, {0} needs one more point to win."),{name}),{T(L"マッチポイントだ！",L"Match point!")});
+                        else Happened(6,T(L"相手はあと1点で勝つ。",L"They need one more point to win."),{T(L"うっ、あと1点で負けちゃう…",L"Uh-oh, one more and I lose..."),T(L"まだまだ、ここからだよ！",L"It's not over yet!")},
+                                      T(L"エアホッケーで、持ち主があと1点で勝つ。",L"In the air hockey game, the owner needs one more point to win."),{T(L"マッチポイント！",L"Match point!")});
+                    }
+            }
+            if(g.Now()==Phase::Over&&!state.overSeen)
+            {
+                state.overSeen=true;
+                const bool won=g.Winner()==Her;
+                const std::wstring score=Fmt(T(L"あなた{0}点、相手{1}点",L"you {0}, they {1}"),{std::to_wstring(g.Score(Her)),std::to_wstring(g.Score(You))});
+                if(won)Happened(9,T(L"エアホッケーの対戦が終わって、あなたの勝ち（",L"The air hockey game is over, and you won (")+score+T(L"）。",L")."),
+                                {T(L"勝った！楽しかったね！",L"I won! That was fun!"),T(L"やったー、わたしの勝ち！",L"Yay, I win!")},
+                                Fmt(T(L"{0}と持ち主のエアホッケーの対戦が終わり、{0}が勝った。",L"The air hockey game between {0} and the owner is over: {0} won."),{name}),
+                                {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
+                else Happened(9,T(L"エアホッケーの対戦が終わって、あなたの負け（",L"The air hockey game is over, and you lost (")+score+T(L"）。",L")."),
+                              {T(L"負けちゃった…でも楽しかった！",L"I lost... but that was fun!"),T(L"くやしい！もう一回！",L"So close! One more!")},
+                              Fmt(T(L"{0}と持ち主のエアホッケーの対戦が終わり、持ち主が勝った。",L"The air hockey game between {0} and the owner is over: the owner won."),{name}),
+                              {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"勝った！おめでとう！",L"You won! Congratulations!")});
+                state.afterword=Fmt(T(L"いま、話し相手とエアホッケーを最後までして、デスクトップに戻ってきたところ。結果は{0}（{1}、いちばん長い打ち合いは{2}回）。その感想を、話し相手にひと言（1〜2文）",
+                                      L"You have just played air hockey to the end with them and come back to the desktop. {0} ({1}; the longest rally was {2} hits). Tell them what you thought of it (one or two sentences)"),
+                                    {won?T(L"あなたの勝ち",L"You won"):T(L"あなたの負け",L"You lost"),score,std::to_wstring(g.LongestRally())});
+                state.afterwordLine=won?T(L"エアホッケー、楽しかったね！",L"Air hockey was fun!"):T(L"くやしいなあ、次は勝つよ！",L"So close... I'll win next time!");
+                state.overAt=g.Clock();
+                state.cheered=false;
+            }
         }
 
         bool Playing(){return state.game&&state.game->Now()!=AirHockey::Phase::Over&&!state.paused&&!state.asking;}
@@ -688,11 +913,12 @@ namespace MikuMikuDesktopPerch
             GetClientRect(state.window,&client);
             const int w=std::max(1L,client.right),h=std::max(1L,client.bottom);
             const auto& g=game();
-            const bool speedChosen=GetTickCount64()<state.speedShownUntil;
+            const bool speedChosen=GetTickCount64()<state.speedShownUntil,sizeChosen=GetTickCount64()<state.sizeShownUntil;
             const bool goal=g.Now()==AirHockey::Phase::Serve&&g.GoalServe()&&g.ServeLeft()>0.3;
             const std::wstring shown=std::to_wstring(w)+L"x"+std::to_wstring(h)+L" "+std::to_wstring(g.Score(0))+L"-"+std::to_wstring(g.Score(1))+
-                                     L" "+std::to_wstring(static_cast<int>(g.Now()))+(state.paused?L"p":L"")+(state.asking?L"a":L"")+(speedChosen?L"s":L"")+
-                                     (goal?L"g":L"")+std::to_wstring(SpeedLevel(g));
+                                     L" "+std::to_wstring(static_cast<int>(g.Now()))+(state.paused?L"p":L"")+(state.asking?L"a":L"")+(speedChosen?L"s":L"")+(sizeChosen?L"z":L"")+
+                                     (goal?L"g":L"")+std::to_wstring(SpeedLevel(g))+std::to_wstring(SizeLevel(g))+L"|"+state.words.text+L"|"+
+                                     std::to_wstring(state.besideHead.x/12)+L","+std::to_wstring(state.headScreen.y/12);
             if(shown==state.hudShown)return;
             state.hudShown=shown;
             Bitmap canvas(w,h,PixelFormat32bppPARGB);
@@ -726,11 +952,20 @@ namespace MikuMikuDesktopPerch
         {
             state.game=std::make_unique<AirHockey::Game>();
             state.game->SetPuckSpeed(AirHockey::PuckSpeeds[std::clamp(state.her.puckSpeed,1,4)-1]);
-            state.speedShownUntil=0;
+            state.game->SetPieceSize(AirHockey::PieceSizes[std::clamp(state.her.pieceSize,1,4)-1]);
+            state.speedShownUntil=state.sizeShownUntil=0;
             AirHockey::Style manner;
             if(state.renderer)manner.reach=std::clamp(1-state.reachNear/(state.game->Rule().length/2),0.2f,1.0f);
             state.brain=std::make_unique<AirHockey::Brain>(AirHockey::Her,manner,Seed());
             state.paused=state.asking=state.overTold=false;
+            state.started=state.overSeen=state.cheered=false;
+            state.matchPoint={};
+            state.faceUntil=0;
+            // The last game's word, if still coming, is not said in this one.
+            state.words.waiting=false;
+            state.words.text.clear();
+            state.afterword.clear();
+            state.afterwordLine.clear();
             state.target=state.game->Mallet(AirHockey::You);
             state.goal=state.intent=state.game->Mallet(AirHockey::Her);
             state.intentVelocity={};
@@ -795,9 +1030,19 @@ namespace MikuMikuDesktopPerch
             if(!state.window)return;
             HoldCursor(false);
             KillTimer(state.window,TimerId);
+            // Stopped before the game's end: a word on that, back on the desktop.
+            if(state.afterword.empty()&&state.game&&state.game->Now()!=AirHockey::Phase::Over&&state.game->Clock()>3)
+            {
+                const auto& g=*state.game;
+                state.afterword=Fmt(T(L"いま、話し相手とエアホッケーをしていたが、途中でやめてデスクトップに戻ってきたところ（あなた{0}点、相手{1}点だった）。そのことを話し相手にひと言（1〜2文）",
+                                      L"You were playing air hockey with them, but they stopped before the end and you have come back to the desktop (you had {0}, they had {1}). Say a word about it to them (one or two sentences)"),
+                                    {std::to_wstring(g.Score(AirHockey::Her)),std::to_wstring(g.Score(AirHockey::You))});
+                state.afterwordLine=T(L"また今度、続きしようね。",L"Let's play again another time.");
+            }
             if(MascotModel* model=state.her.model)
             {
                 model->Hold(HerHand,{},false);
+                model->SetExpression(Expression::Neutral,false);
                 model->SetSolids({});
                 model->SetAutoGestures(true);
             }
@@ -832,10 +1077,11 @@ namespace MikuMikuDesktopPerch
                 herTarget.y=std::max(herTarget.y,state.reachNear);
                 // Her hand stays where it is until she means it to go somewhere else (no
                 // twitching after each small change of mind).
-                if(std::hypot(herTarget.x-state.goal.x,herTarget.y-state.goal.y)>0.035f)state.goal=herTarget;
+                if(std::hypot(herTarget.x-state.goal.x,herTarget.y-state.goal.y)>0.06f)state.goal=herTarget;
             }
+            const int rallyBefore=state.game->Rally();
             state.game->Step(dt,state.target,herTarget);
-            state.game->TakeEvents();
+            NoticeWords(state.game->TakeEvents(),rallyBefore);
             if(state.game->Now()==AirHockey::Phase::Over&&!state.overTold)
             {
                 state.overTold=true;
@@ -861,7 +1107,21 @@ namespace MikuMikuDesktopPerch
             state.her.puckSpeed=level;
             state.game->SetPuckSpeed(AirHockey::PuckSpeeds[level-1]);
             state.speedShownUntil=GetTickCount64()+1200;
+            state.sizeShownUntil=0;
             if(state.her.onPuckSpeed)state.her.onPuckSpeed(level);
+            InvalidateRect(state.window,nullptr,FALSE);
+        }
+
+        void ChooseSize(int level)
+        {
+            // The puck's and mallets' size, from now on (a puck in play served again; kept for
+            // the next time).
+            state.her.pieceSize=level;
+            state.game->SetPieceSize(AirHockey::PieceSizes[level-1]);
+            if(state.renderer)state.renderer->SetGeometry(BuildRoom());   // the goals' mouths widen with them
+            state.sizeShownUntil=GetTickCount64()+1200;
+            state.speedShownUntil=0;
+            if(state.her.onPieceSize)state.her.onPieceSize(level);
             InvalidateRect(state.window,nullptr,FALSE);
         }
 
@@ -897,6 +1157,8 @@ namespace MikuMikuDesktopPerch
                 else if(wParam==VK_F1)state.camera={};   // the camera back where it was
                 else if(wParam>='1'&&wParam<='4')ChooseSpeed(static_cast<int>(wParam-'1')+1);
                 else if(wParam>=VK_NUMPAD1&&wParam<=VK_NUMPAD4)ChooseSpeed(static_cast<int>(wParam-VK_NUMPAD1)+1);
+                else if(wParam>='5'&&wParam<='8')ChooseSize(static_cast<int>(wParam-'5')+1);
+                else if(wParam>=VK_NUMPAD5&&wParam<=VK_NUMPAD8)ChooseSize(static_cast<int>(wParam-VK_NUMPAD5)+1);
                 return 0;
             case WM_LBUTTONDOWN:
                 if(state.paused&&!state.asking){state.paused=false;QueryPerformanceCounter(&state.last);}
@@ -1078,23 +1340,76 @@ namespace MikuMikuDesktopPerch
             // would teach it wrong) and when it is off by more than a little: across and along
             // freely, up and down only a little (the stops lift a hand that comes too near the
             // table, and the wrist must not chase it down). Slowly, about half a second.
+            // After the first moments, only a clear miss (no small corrections that would move the hand).
             const float off=std::sqrt((grip[0]-middle[0])*(grip[0]-middle[0])+(grip[2]-middle[2])*(grip[2]-middle[2]));
-            if(still&&off>0.02f*D)
+            if(still&&off>(state.holding<3?0.02f:0.08f)*D)
             {
                 const float learn=static_cast<float>(1.0-std::exp(-dt/0.5));
                 for(int a:{0,2})state.holdOffset[a]=std::clamp(state.holdOffset[a]+(grip[a]-middle[a])*learn,-0.35f*D,0.35f*D);
                 state.holdOffset[1]=std::clamp(state.holdOffset[1]+(grip[1]-middle[1])*learn,0.0f,0.15f*D);
             }
         }
-        model.Hold(HerHand,{grip[0]+state.holdOffset[0],grip[1]+state.holdOffset[1],grip[2]+state.holdOffset[2]},true);
+        if(g.Now()!=AirHockey::Phase::Over)
+            model.Hold(HerHand,{grip[0]+state.holdOffset[0],grip[1]+state.holdOffset[1],grip[2]+state.holdOffset[2]},true);
+        else
+        {
+            // The game over: her hand off the mallet, then claps when she won, "oops" when not.
+            model.Hold(HerHand,{},false);
+            state.holding=0;
+            if(!state.cheered&&g.Clock()>state.overAt+0.6&&model.EmoteSeated(g.Winner()==AirHockey::Her?L"clap":L"oops",3.2))state.cheered=true;
+        }
         SetTableSolids(model);
 
         r.SetMovingGeometry(BuildPieces());
         r.SetModelTransform(HerWorld(model));
         PlaceCamera();
+        // Her head as it is seen, and beside it to the right, for her bubble.
+        if(std::array<float,3> head{};model.HeadPosition(head))
+        {
+            const XMVECTOR at=XMVector3Transform(XMVectorSet(head[0],head[1],head[2],1),HerWorld(model));
+            const XMVECTOR right=XMVector3Normalize(XMVector3Cross(XMVectorSet(0,1,0,0),XMVectorSubtract(XMLoadFloat3(&state.look),XMLoadFloat3(&state.eye))));
+            const XMVECTOR beside=XMVectorAdd(at,XMVectorScale(right,0.3f*D));
+            state.headScreen=r.Project({XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at)});
+            state.besideHead=r.Project({XMVectorGetX(beside),XMVectorGetY(beside),XMVectorGetZ(beside)});
+        }
+        // While she talks, she looks up at you (the camera).
+        {
+            XMVECTOR det;
+            const XMVECTOR you=XMVector3Transform(XMLoadFloat3(&state.eye),XMMatrixInverse(&det,HerWorld(model)));
+            model.LookToward({XMVectorGetX(you),XMVectorGetY(you),XMVectorGetZ(you)},!state.words.text.empty());
+        }
         UpdateOverlay();
         r.Render(model,state.her.edgeScale);
         ++state.frames;
+    }
+
+    void AirHockeyHeard(const std::wstring& line,bool done)
+    {
+        auto& w=state.words;
+        if(!w.waiting||!state.window)return;
+        if(done&&line.empty()){SayWords(w.fallback,w.weight);return;}
+        if(!line.empty())
+        {
+            w.text=line;
+            w.until=GetTickCount64()+2400+90*static_cast<ULONGLONG>(line.size());
+        }
+        if(done)
+        {
+            w.waiting=false;
+            if(w.recent.size()>=4)w.recent.erase(w.recent.begin());
+            w.recent.push_back(line);
+            w.told+=L"  she says (LLM): "+line+L"\n";
+        }
+    }
+
+    bool AirHockeyAfterword(std::wstring& situation,std::wstring& fallback)
+    {
+        if(state.afterword.empty())return false;
+        situation=std::move(state.afterword);
+        fallback=std::move(state.afterwordLine);
+        state.afterword.clear();
+        state.afterwordLine.clear();
+        return true;
     }
 
     void PlayAirHockeyForTest(){state.autoplay=std::make_unique<AirHockey::Brain>(AirHockey::You,AirHockey::Style{0.25f,0.12f,0.6f,1.0f},7);}
@@ -1140,10 +1455,11 @@ namespace MikuMikuDesktopPerch
         swprintf_s(line,L"airhockey: her %d you %d, %.1f s, %s, rally %d (longest %d), frames %d, paused %d\n",g.Score(AirHockey::Her),g.Score(AirHockey::You),
                    g.Clock(),g.Now()==AirHockey::Phase::Over?L"over":g.Now()==AirHockey::Phase::Serve?L"serve":L"play",g.Rally(),g.LongestRally(),state.frames,state.paused?1:0);
         text+=line;
+        if(!state.words.told.empty())text+=L"airhockey words:\n"+state.words.told;
         return text;
     }
 
-    std::wstring RunAirHockeySim(int games,std::uint32_t seed,int speed)
+    std::wstring RunAirHockeySim(int games,std::uint32_t seed,int speed,int size)
     {
         using namespace AirHockey;
         std::wstring lines;
@@ -1154,6 +1470,7 @@ namespace MikuMikuDesktopPerch
         {
             Game game;
             if(speed>=1&&speed<=4)game.SetPuckSpeed(PuckSpeeds[speed-1]);
+            if(size>=1&&size<=4)game.SetPieceSize(PieceSizes[size-1]);
             game.NewGame(i%2);
             // Yours as a person plays it (a little slower to see, the mouse quick to move).
             Brain you(You,Style{0.25f,0.12f,0.6f,1.0f},seed*7919u+i*2+1),her(Her,Style{},seed*104729u+i*2+2);

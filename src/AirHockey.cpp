@@ -61,6 +61,22 @@ namespace MikuMikuDesktopPerch::AirHockey
         if(now>rules.puckSpeed)puckVelocity=puckVelocity*(rules.puckSpeed/now);
     }
 
+    void Game::SetPieceSize(float scale)
+    {
+        scale=std::clamp(scale,0.5f,2.0f);
+        rules.puck=0.035f*scale;
+        rules.mallet={0.06f*scale,0.06f*scale};
+        rules.goal=0.34f+0.22f*(scale-1);
+        // Mallets back inside their halves; a puck in play is put down again where it is not in
+        // the way of a grown mallet or wall.
+        for(int side:{You,Her})
+        {
+            const float R=rules.mallet[side],W=rules.width/2-R,L=rules.length/2-R,s=End(side);
+            mallet[side]={std::clamp(mallet[side].x,-W,W),std::clamp(mallet[side].y*s,R,L)*s};
+        }
+        if(phase==Phase::Play)Serve(puck.y>0?Her:You);
+    }
+
     void Game::HoldMallet(int side,Vec at)
     {
         const float R=rules.mallet[side],W=rules.width/2-R,L=rules.length/2-R,s=End(side);

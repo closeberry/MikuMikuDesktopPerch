@@ -2282,6 +2282,7 @@ namespace
     void GameHeard(Mascot& m,const std::wstring& line,bool done)
     {
         if(m.inMahjong)MahjongHeard(line,done);
+        else if(m.inAirHockey)AirHockeyHeard(line,done);
         else DungeonHeard(line,done);
     }
 
@@ -3804,31 +3805,36 @@ namespace
         return true;
     }
 
-    // docs/Mahjong.md (しゃべる麻雀): a word of hers at the mahjong table about situation (a
-    // stage direction), in her own voice, streamed to the table's bubble (MahjongHeard).
-    bool MahjongTalk(Mascot& m,const std::wstring& situation)
+    // The mini games at a table she plays with the user (her words there, the watchers').
+    enum class TableGame {Mahjong,AirHockey};
+
+    // docs/Mahjong.md (しゃべる麻雀), docs/AirHockey.md: a word of hers at the table about
+    // situation (a stage direction), in her own voice, streamed to the table's bubble
+    // (MahjongHeard, AirHockeyHeard).
+    bool GameTalk(Mascot& m,TableGame game,const std::wstring& situation)
     {
         if(ExternalChat()||!ChatReady(m,false))return false;
         if(m.chat->Busy()&&!m.gameLine)return false;
         if(m.chat->Busy())m.chat->Cancel();   // her last word there, not finished: this one instead
         const std::wstring& user=app.settings.userName;
         const std::wstring bond=app.settings.bond?BondPrompt(m):std::wstring();
+        const bool mahjong=game==TableGame::Mahjong;
         std::vector<ChatMessage> messages;
         if(English())
             messages.push_back({L"system",
                 L"You are \""+m.character.name+L"\".\n"+m.character.persona+L"\n"+bond+L"\n"
-                L"You are now playing two-player mahjong at a table against "+(user.empty()?std::wstring(L"the person you talk with"):L"\""+user+L"\"")+
+                L"You are now playing "+(mahjong?L"two-player mahjong":L"air hockey")+L" at a table against "+(user.empty()?std::wstring(L"the person you talk with"):L"\""+user+L"\"")+
                 L", in a little game on their computer. Your words appear in a speech bubble at the table. "
-                L"Write only your own line, in English, as short casual speech. No names, stage directions, anything in ( ), Markdown, lists, emoji or emoticons. "
-                L"Never tell what tiles you hold or wait on.\n"
+                L"Write only your own line, in English, as short casual speech. No names, stage directions, anything in ( ), Markdown, lists, emoji or emoticons."+
+                (mahjong?L" Never tell what tiles you hold or wait on.":L"")+L"\n"
                 L"Begin your line with how you feel, as exactly one of "+FeelingTags()+L"(for example: [smile] Here we go!)."});
         else
             messages.push_back({L"system",
                 L"あなたは「"+m.character.name+L"」です。\n"+m.character.persona+L"\n"+bond+L"\n"
-                L"いま、"+(user.empty()?std::wstring(L"話し相手"):L"話し相手の「"+user+L"」")+L"と、パソコンのミニゲームで2人打ちの麻雀を打っています。"
-                L"あなたのセリフは、卓の上の吹き出しに表示されます。"
-                L"あなたのセリフだけを、短い話し言葉で書いてください。名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。"
-                L"自分の手牌や待ちは言わないでください。\n"
+                L"いま、"+(user.empty()?std::wstring(L"話し相手"):L"話し相手の「"+user+L"」")+L"と、パソコンのミニゲームで"+(mahjong?L"2人打ちの麻雀を打っています。":L"エアホッケーをしています。")+
+                L"あなたのセリフは、台の上の吹き出しに表示されます。"
+                L"あなたのセリフだけを、短い話し言葉で書いてください。名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。"+
+                (mahjong?L"自分の手牌や待ちは言わないでください。":L"")+L"\n"
                 L"セリフのいちばん最初に、そのときの気持ちを"+FeelingTags()+L"のどれか1つで書いてください（例：［笑顔］よーし、いくよ！）。"});
         messages.push_back({L"user",English()?L"("+situation+L")":L"（"+situation+L"）"});
         m.gameLine=true;
@@ -3839,7 +3845,7 @@ namespace
 
     // docs/Mahjong.md (観戦者の解説): a watcher's word on the game she is watching, in her own
     // bubble beside its window (through the LLM, or the fallback as it is).
-    void WatcherComment(Mascot& c,const std::wstring& facts,const std::wstring& fallback)
+    void WatcherComment(Mascot& c,TableGame game,const std::wstring& facts,const std::wstring& fallback)
     {
         if(ExternalChat()||!ChatReady(c,false))
         {
@@ -3847,12 +3853,13 @@ namespace
             return;
         }
         const std::wstring& user=app.settings.userName;
+        const bool mahjong=game==TableGame::Mahjong;
         std::vector<ChatMessage> messages;
         if(English())
         {
             messages.push_back({L"system",
                 L"You are \""+c.character.name+L"\".\n"+c.character.persona+L"\n\n"
-                L"You are standing on the desktop beside a mahjong game's window, watching the game between another character and the owner of this computer"+
+                L"You are standing on the desktop beside "+(mahjong?L"a mahjong":L"an air hockey")+L" game's window, watching the game between another character and the owner of this computer"+
                 (user.empty()?std::wstring():L" (\""+user+L"\")")+L". Your word appears in a speech bubble over your head. "
                 L"Write only your own line, in English: one short, casual spoken line, like a friend watching and cheering or commenting. "
                 L"No names in front, stage directions, anything in ( ), Markdown, lists, emoji or emoticons.\n"
@@ -3863,8 +3870,8 @@ namespace
         {
             messages.push_back({L"system",
                 L"あなたは「"+c.character.name+L"」です。\n"+c.character.persona+L"\n\n"
-                L"いま、デスクトップの上で麻雀のウィンドウの横に立って、ほかのキャラクターとこのパソコンの持ち主"+
-                (user.empty()?std::wstring():L"（「"+user+L"」）")+L"の対局を観戦しています。あなたのセリフは、あなたの頭上の吹き出しに表示されます。"
+                L"いま、デスクトップの上で"+(mahjong?L"麻雀":L"エアホッケー")+L"のウィンドウの横に立って、ほかのキャラクターとこのパソコンの持ち主"+
+                (user.empty()?std::wstring():L"（「"+user+L"」）")+L"の対戦を観戦しています。あなたのセリフは、あなたの頭上の吹き出しに表示されます。"
                 L"観戦している友だちとして、応援や実況・解説のひと言を、短い話し言葉で1つだけ書いてください。"
                 L"名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
                 L"セリフのいちばん最初に、そのときの気持ちを"+FeelingTags()+L"のどれか1つで書いてください（例：［驚き］おおっ、すごい！）。"});
@@ -3877,9 +3884,9 @@ namespace
         c.commentFallback=fallback;
     }
 
-    // Something happened at the mahjong table: one of those watching it (now and then, more
-    // often the more it matters) says a word on it.
-    void WatchersHear(const std::wstring& facts,int weight,const std::wstring& fallback)
+    // Something happened at a table (mahjong, air hockey): one of those watching it (now and
+    // then, more often the more it matters) says a word on it.
+    void WatchersHear(TableGame game,const std::wstring& facts,int weight,const std::wstring& fallback)
     {
         static double lastAt=-1e9;
         if(app.clock-lastAt<(weight>=7?6.0:15.0))return;
@@ -3888,14 +3895,14 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& c=*owned;
-            if(!c.watchingMahjong||c.inMahjong||c.dozing||c.chatInput.IsOpen()||InBanter(c)||c.bubble.Visible())continue;
+            if(!c.watchingMahjong||c.inMahjong||c.inAirHockey||c.dozing||c.chatInput.IsOpen()||InBanter(c)||c.bubble.Visible())continue;
             if(c.chat&&c.chat->Busy())continue;
             free.push_back(&c);
         }
         if(free.empty())return;
         lastAt=app.clock;
         Mascot& c=*free[std::min(free.size()-1,static_cast<size_t>(app.Random01()*free.size()))];
-        WatcherComment(c,facts,fallback);
+        WatcherComment(c,game,facts,fallback);
     }
 
     // docs/Dungeon.md: a talk with her by a campfire in the dungeon. said: what the user wrote;
@@ -3962,12 +3969,24 @@ namespace
             app.settings.airHockeyPuck=level;
             if(!app.diagnostic)app.settings.Save(app.settingsPath);
         };
+        her.pieceSize=app.settings.airHockeySize;
+        her.onPieceSize=[](int level){
+            app.settings.airHockeySize=level;
+            if(!app.diagnostic)app.settings.Save(app.settingsPath);
+        };
         her.model=&m.model;
         her.toonDir=app.settings.toonDir;
         her.edgeScale=app.settings.edgeScale;
         her.msaa=std::min(app.settings.msaa,4);
         her.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
         her.light=app.settings.dungeonLight;
+        // She speaks at the table; those watching now and then say a word on it.
+        her.talk=[model](const std::wstring& situation){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inAirHockey)return GameTalk(*owned,TableGame::AirHockey,situation);
+            return false;
+        };
+        her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::AirHockey,facts,weight,fallback);};
         if(m.chat)m.chat->Cancel();
         if(m.voice)m.voice->CancelAll();
         m.speech.Reset();
@@ -3984,6 +4003,9 @@ namespace
                     Mascot& m=*owned;
                     m.inAirHockey=false;
                     DropGameWords(m);
+                    // A word on the game, back on the desktop.
+                    std::wstring situation,fallback;
+                    if(AirHockeyAfterword(situation,fallback))SpeakFirst(m,situation,fallback);
                     // Away from the table, standing where she was on the desktop.
                     m.model.SetActivity(Activity::Idle);
                     m.model.TakeRootDelta();
@@ -4020,10 +4042,10 @@ namespace
         // She speaks at the table; those watching now and then say a word on it.
         her.talk=[model](const std::wstring& situation){
             for(const auto& owned:app.mascots)
-                if(owned->modelPath==model&&owned->inMahjong)return MahjongTalk(*owned,situation);
+                if(owned->modelPath==model&&owned->inMahjong)return GameTalk(*owned,TableGame::Mahjong,situation);
             return false;
         };
-        her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(facts,weight,fallback);};
+        her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Mahjong,facts,weight,fallback);};
         her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
                 if(owned->modelPath==model&&owned->inMahjong)
@@ -5669,11 +5691,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return saved?0:1;
         }
-        // --airhockey-sim <out.txt> [games] [seed] [speed 1-4]: games between two of the air hockey
-        // opponent's players, checked throughout (AirHockey::Game's counts).
+        // --airhockey-sim <out.txt> [games] [seed] [speed 1-4] [size 1-4]: games between two of the
+        // air hockey opponent's players, checked throughout (AirHockey::Game's counts).
         if(argc>=3&&std::wstring(argv[1])==L"--airhockey-sim")
         {
-            const std::wstring report=RunAirHockeySim(argc>=4?_wtoi(argv[3]):50,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1,argc>=6?_wtoi(argv[5]):0);
+            const std::wstring report=RunAirHockeySim(argc>=4?_wtoi(argv[3]):50,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1,argc>=6?_wtoi(argv[5]):0,argc>=7?_wtoi(argv[6]):0);
             if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
             {
                 fputws(report.c_str(),out);
