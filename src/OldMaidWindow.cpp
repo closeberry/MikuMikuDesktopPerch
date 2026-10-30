@@ -168,6 +168,8 @@ namespace MikuMikuDesktopPerch
             std::vector<MascotRenderer::Particle> roomGlows;
             std::mt19937 sparkRandom{12345};
             double thinkFor=0;
+            Expression reactFace=Expression::Neutral;   // her face on the joker drawn, until then
+            double reactUntil=0;
             std::wstring endGesture;
             double endGestureUntil=0;
             int gestureFor=-1;        // the draw count her reaction was last given for
@@ -1127,6 +1129,7 @@ namespace MikuMikuDesktopPerch
                 const bool joker=card==OldMaid::Joker;
                 e=joker==state.honest[card]?Expression::Smile:Expression::Troubled;
             }
+            else if(state.clock<state.reactUntil)e=state.reactFace;   // a moment's face on the joker drawn
             SetTell(e);
         }
 
@@ -2185,18 +2188,28 @@ namespace MikuMikuDesktopPerch
         for(const auto& [from,card]:state.waver)if(state.clock>=from)state.reachCard=card;
         // Your hand held out toward her while she takes from it.
         state.offer+=(((t.Now()==Phase::HerDraw&&state.clock<state.handsBusyUntil)?1.0f:0.0f)-state.offer)*static_cast<float>(1.0-std::exp(-dt/0.35));
-        if(state.thinkFor>0&&state.entrance==5){model.EmoteSeated(L"ponder",state.thinkFor);state.thinkFor=0;}
         {
-            // The joker drawn, or the game over: a clap (or her cheeks) when it goes her way,
-            // "oops" when it does not.
+            // The joker drawn, or the game over: glad when it goes her way, "oops" when it does
+            // not. With cards in her hands, her face only (a gesture of the arms would let go of
+            // them); a clap (or her cheeks) or "oops" once her hands are empty.
             if(!Flying()&&state.gestureFor!=t.Draws()&&t.Draws()>0)
             {
                 state.gestureFor=t.Draws();
-                std::uniform_real_distribution<double> any(0,1);
-                const std::wstring glad=any(state.sparkRandom)<0.5?L"cheeks":L"clap";
-                if(t.Now()==Phase::GameOver)state.endGesture=t.Loser()==OldMaid::Her?L"oops":glad;
-                else if(t.LastCard()==OldMaid::Joker)state.endGesture=t.LastDrawer()==OldMaid::Her?L"oops":glad;
-                if(!state.endGesture.empty()){state.endGestureUntil=state.clock+1.5;state.gestureFreeAt=state.clock+3.6;}
+                int glad=-1;
+                if(t.Now()==Phase::GameOver)glad=t.Loser()==OldMaid::Her?0:1;
+                else if(t.LastCard()==OldMaid::Joker)glad=t.LastDrawer()==OldMaid::Her?0:1;
+                if(glad>=0&&!t.Hand(OldMaid::Her).empty())
+                {
+                    state.reactFace=glad?Expression::Smile:Expression::Troubled;
+                    state.reactUntil=state.clock+2.5;
+                }
+                else if(glad>=0)
+                {
+                    std::uniform_real_distribution<double> any(0,1);
+                    state.endGesture=!glad?L"oops":any(state.sparkRandom)<0.5?L"cheeks":L"clap";
+                    state.endGestureUntil=state.clock+1.5;
+                    state.gestureFreeAt=state.clock+3.6;
+                }
             }
             if(!state.endGesture.empty()&&state.entrance==5&&(model.EmoteSeated(state.endGesture,3.2)||state.clock>state.endGestureUntil))
                 state.endGesture.clear();
