@@ -2,6 +2,25 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.2
+
+### New
+
+- **Hanafuda (koi-koi)**: "Play hanafuda (koi-koi)" in the right-click menu opens a window where you play koi-koi against that character (twelve rounds, January to December)
+  - She comes to the same Japanese-style room as for mahjong and sits at the table, playing her own hand from the cards she can see (taking the cards your yaku need, and weighing koi-koi against stopping)
+  - The field, the pile and both piles taken lie on the 3D table, and the cards fly across it as they are dealt, played, turned up and taken (with the sound of cards slapped down)
+  - Click a card in your hand (or ←→ and Enter) to play it. On your turn, the cards in your hand that would take from the field are rimmed in gold. When a card matches two on the field, click the one to take. With a yaku made, choose koi-koi or stop with the buttons (or 1 and 2)
+  - The yaku: the five, four, rainy four and three brights, viewing the cherry and the moon with sake, boar-deer-butterflies, red poem and blue ribbons, animals, ribbons and chaff, and the deal wins (four of a month, four pairs). Seven points or more, and a win after the other's koi-koi, are doubled
+  - She talks at a koi-koi, a win and the game's end, those watching now and then comment, and she says what she thought back on the desktop. The camera turns as at mahjong
+  - Playing all twelve months raises bond by 3 (up to 9 a day)
+  - The design (in Japanese): `docs/Hanafuda.md`
+
+### Fixed
+
+- In the games (mahjong, air hockey and the others), the expression of a line she said (smiling eyes and the like) stayed on her face for good
+- Her lines in the games are voiced too, as the voice settings say
+- Her lines through the LLM in the games fit the moment better (she no longer congratulates you on her own win, for one)
+
 ## 1.5.1
 
 ### Changed
