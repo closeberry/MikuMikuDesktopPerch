@@ -2650,6 +2650,16 @@ namespace MikuMikuDesktopPerch
     }
     const std::array<MascotModel::Penetration,MascotModel::PartCount>& MascotModel::Penetrations() const {return impl->penetration;}
     void MascotModel::SetSolidStops(bool on){SolidStops()=on;}
+    std::wstring MascotModel::DescribeFace() const
+    {
+        const auto& m=*impl;
+        std::wstring text=L"face: expression "+std::to_wstring(static_cast<int>(m.proc.expression))+L", doze "+std::to_wstring(m.proc.doze)+L", blink gate "+std::to_wstring(m.proc.blinkGate)+L";";
+        if(!m.pmx||!m.solver)return text+L"\n";
+        for(size_t i=0;i<m.solver->solvedPose.morphKeys.size()&&i<m.pmx->morphs.size();++i)
+            if(m.solver->solvedPose.morphKeys[i].value>0.05f)text+=L" "+m.pmx->morphs[i].name+L"="+std::to_wstring(m.solver->solvedPose.morphKeys[i].value).substr(0,4);
+        return text+L"\n";
+    }
+
     std::wstring MascotModel::DescribePenetration() const
     {
         const auto& m=*impl;

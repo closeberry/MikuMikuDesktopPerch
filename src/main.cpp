@@ -2327,7 +2327,10 @@ namespace
                 m.replyFeelingSet=true;
                 // No gesture with it in a game (her arms are the game's there).
                 m.model.SetExpression(feeling->expression,!(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inMetroid));
-                m.feelingUntil=-1;
+                // Eases out a while after (UpdateFeeling holds it on while she talks). Not
+                // left unset: a quick answer can end before a frame sees the chat busy, and
+                // her face then kept the feeling for good (smiling eyes through a whole game).
+                m.feelingUntil=app.clock+3;
                 Trace(L"%.1f talk: feeling %s",app.clock,feeling->english);
             }
         if(m.gameLine&&m.gameChat)
@@ -6235,6 +6238,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 m.model.Update(dt);
                 m.model.TakeRootDelta();
+                // Her line's speech runs on here too (its voice, and its end: unticked, she
+                // seemed to be speaking for good and the line's feeling never eased out).
+                m.speech.Tick(dt);
                 UpdateFeeling(m);   // a line's feeling eases out here too (it would stay on her face)
                 // Her bubble, hidden as she went in, still fades out (and stays out of sight).
                 m.bubble.Tick(dt,{},0,WorkAreaOfWindow(m),true);
@@ -6512,7 +6518,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             static bool opened=false;
             if(!opened){opened=true;OpenHanafuda(*app.mascots.front());}
             static double openedAt=app.clock;
-            if(snapshotHanafudaMoves>0&&app.clock>openedAt+12){PlayHanafudaMoves(snapshotHanafudaMoves);snapshotHanafudaMoves=0;}
+            if(snapshotHanafudaMoves>0&&app.clock>openedAt+12){PlayHanafudaMoves(snapshotHanafudaMoves,app.viewYaw);snapshotHanafudaMoves=0;}
         }
         if(app.diagnostic&&snapshotAirHockey)
         {
@@ -6559,6 +6565,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(snapshotMahjong)fwprintf(info,L"%s",DescribeMahjongFeet().c_str());
                 if(!CommentsSaid().empty())fwprintf(info,L"watchers said:\n%s",CommentsSaid().c_str());
                 fwprintf(info,L"%s",m.model.DescribePenetration().c_str());
+                fwprintf(info,L"%s",m.model.DescribeFace().c_str());
                 if(snapshotAirHockey)fwprintf(info,L"%s",DescribeAirHockey().c_str());
                 if(snapshotMetroid)fwprintf(info,L"%s",DescribeMetroid().c_str());
                 if(snapshotHanafuda)fwprintf(info,L"%s",DescribeHanafuda().c_str());

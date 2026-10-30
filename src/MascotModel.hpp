@@ -272,6 +272,8 @@ namespace MikuMikuDesktopPerch
         // Diagnostics: the deepest per part since the solids were set, and how often the arms and
         // the lean were stopped; one "penetration:" line (empty with no solids).
         std::wstring DescribePenetration() const;
+        // Diagnostics: the face's morphs at work now (weight over 0.05), and the feeling and dozing.
+        std::wstring DescribeFace() const;
         // Diagnostics (--no-solid-stops): the check runs, but nothing is stopped.
         static void SetSolidStops(bool on);
         // World units センター has walked since the last call (positive = screen right).

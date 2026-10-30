@@ -59,10 +59,11 @@ namespace MikuMikuDesktopPerch
     void TickHanafudaWindow(MascotModel& model,double dt);
 
     // Diagnostics (--snapshot with --hanafuda [moves]): the table's 3D view as last drawn, to a
-    // PNG, after moves steps played for you; "hanafuda:" lines for the snapshot's report.
+    // PNG, after moves steps played for you (the camera then turned by yaw radians, as with
+    // --view-yaw); "hanafuda:" lines for the snapshot's report.
     bool SaveHanafudaView(const std::wstring& path);
     std::wstring DescribeHanafuda();
-    void PlayHanafudaMoves(int moves);
+    void PlayHanafudaMoves(int moves,float yaw=0);
     // Diagnostics (--hanafuda-shot): a game played for you for moves steps, drawn as the 2D
     // window would be, to a PNG. stop: L"koi" stops instead where you can first koi-koi,
     // L"pick" where you first have two cards to take from, L"end" at the first round won by a

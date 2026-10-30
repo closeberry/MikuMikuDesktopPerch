@@ -991,8 +991,9 @@ namespace MikuMikuDesktopPerch
             }
         }
 
-        // A card at pose: its face (dim: greyed), its black back and edges; glow: a gold rim under it.
-        void AddCard(Mesh& m,const Pose& p,int card,bool dim=false,bool glow=false)
+        // A card at pose: its face (dim: greyed; hidden: a back there too, for her hand, seen
+        // from any side), its black back and edges; glow: a gold rim under it.
+        void AddCard(Mesh& m,const Pose& p,int card,bool dim=false,bool glow=false,bool hidden=false)
         {
             using V=std::array<float,3>;
             using namespace DirectX;
@@ -1011,7 +1012,8 @@ namespace MikuMikuDesktopPerch
             }
             float uv[8];
             CardUv(card,uv);
-            m.Quad(at(-hw,ht,hl),at(hw,ht,hl),at(hw,ht,-hl),at(-hw,ht,-hl),dir(0,1,0),dim?faded:white,uv);
+            if(hidden)m.Quad(at(-hw,ht,hl),at(hw,ht,hl),at(hw,ht,-hl),at(-hw,ht,-hl),dir(0,1,0),core);
+            else m.Quad(at(-hw,ht,hl),at(hw,ht,hl),at(hw,ht,-hl),at(-hw,ht,-hl),dir(0,1,0),dim?faded:white,uv);
             m.Quad(at(-hw,-ht,-hl),at(hw,-ht,-hl),at(hw,-ht,hl),at(-hw,-ht,hl),dir(0,-1,0),core);
             m.Quad(at(-hw,-ht,hl),at(hw,-ht,hl),at(hw,ht,hl),at(-hw,ht,hl),dir(0,0,1),core);
             m.Quad(at(-hw,-ht,-hl),at(hw,-ht,-hl),at(hw,ht,-hl),at(-hw,ht,-hl),dir(0,0,-1),core);
@@ -1022,6 +1024,19 @@ namespace MikuMikuDesktopPerch
         bool InFlight(int card)
         {
             return std::any_of(state.flights.begin(),state.flights.end(),[&](const Flight& f){return f.card==card;});
+        }
+
+        // Her hand's cards (on their way there too): never shown, however the camera turns.
+        bool Hidden(int card)
+        {
+            const auto& hand=state.table.Of(Hanafuda::Her).hand;
+            return std::find(hand.begin(),hand.end(),card)!=hand.end();
+        }
+
+        // The cards in your hand that would take from the field, while you are to play.
+        bool CanTake(int card)
+        {
+            return YourPlayNow()&&!state.table.Matches(card).empty();
         }
 
         // The field cards of the month of the card pointed at in your hand (or of the card
@@ -1086,7 +1101,9 @@ namespace MikuMikuDesktopPerch
                 if(!p.shown||InFlight(c)||state.dealPending)continue;
                 bool glow=false;
                 for(int i:glowing)if(field[static_cast<size_t>(i)]==c)glow=true;
-                AddCard(mesh,p,c,false,glow);
+                const auto& hand=state.table.Of(Hanafuda::You).hand;
+                if(std::find(hand.begin(),hand.end(),c)!=hand.end())glow=CanTake(c);
+                AddCard(mesh,p,c,false,glow,Hidden(c));
             }
             return std::move(mesh.out);
         }
@@ -1241,9 +1258,10 @@ namespace MikuMikuDesktopPerch
         }
 
         // Something happened: she speaks of it, and those watching hear of it. facts: for her (she
-        // is "you"); seen: the same for one watching; lines: hers without the LLM (none: she says
-        // nothing); theirs: the watchers'.
-        void Happened(int weight,const std::wstring& facts,const std::vector<std::wstring>& lines,
+        // is "you"); feel: how she is to feel about it; seen: the same for one watching; lines:
+        // hers without the LLM (none: she says nothing; one of them is given the LLM as the
+        // feeling to put in her own words); theirs: the watchers'.
+        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const std::vector<std::wstring>& lines,
                       const std::wstring& seen,const std::vector<std::wstring>& theirs)
         {
             auto& t=state.table;
@@ -1259,19 +1277,19 @@ namespace MikuMikuDesktopPerch
             const std::wstring line=Pick(lines);
             if(state.her.talk&&(weight>=6||now-w.asked>AskEvery))
             {
-                std::wstring situation=facts+Fmt(T(L"（いまは12か月のうち{0}月目、あなたは{1}文、相手は{2}文）",L" (Now month {0} of 12; you have {1} points, they have {2})"),
-                                                 {std::to_wstring(t.Round()),std::to_wstring(her),std::to_wstring(you)});
-                if(t.Now()!=Phase::GameOver)
-                    situation+=T(L"勝負はまだ途中で、このあとも続く。終わったときのような言い方（「楽しかった」「また遊ぼう」「次は」など）はしないで。",
-                                 L"The game is still going on. Do not talk as if it were over (no \"that was fun\", \"let's play again\", \"next time\"). ");
-                else situation+=T(L"勝負はこれで終わり。",L"The game is over now. ");
+                // The score and her last lines first, then what happened and the feeling, with
+                // her own line as an example last: a small model keeps to the point so (given
+                // in another order, it congratulated them on her win and asked "what next?").
+                std::wstring situation=Fmt(T(L"いまは12か月のうち{0}月目、あなたは{1}文、話し相手は{2}文。",L"Now month {0} of 12; you have {1} points, they have {2}. "),
+                                           {std::to_wstring(t.Round()),std::to_wstring(her),std::to_wstring(you)});
                 if(!w.recent.empty())
                 {
-                    situation+=T(L"さっきあなたが言ったこと：",L" What you said just before: ");
+                    situation+=T(L"さっきあなたが言ったこと：",L"What you said just before: ");
                     for(const auto& r:w.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
                     situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
                 }
-                situation+=T(L"そのことを、対戦相手に一言（1〜2文）",L"Say a word about it to them (one or two sentences)");
+                situation+=facts+Fmt(T(L"{0}を、あなたの言葉で話し相手にひと言（たとえば「{1}」のような気持ち。そのままは使わない）",
+                                       L" Tell them, in a word of your own, {0} (like \"{1}\", but not those words)"),{feel,line});
                 if(state.her.talk(situation))
                 {
                     w.waiting=true;
@@ -1294,12 +1312,12 @@ namespace MikuMikuDesktopPerch
                 L"これから話し相手と花札（こいこい）をします。勝負中に言う短いひと言を用意してください。"
                 L"次の形で、1行に1つずつ、それぞれ6つずつ書いてください（どれも違う言い方で、1文の短い話し言葉）。\n"
                 L"取る：（場からいい札を取ったときのひと言）\n"
-                L"考える：（どの札を出すか迷って考えているときのひと言）\n"
+                L"考える：（自分の番に、どの札を出すか迷いながら自分につぶやくひと言。相手への問いかけにはしない）\n"
                 L"この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わず、自分の手札は言わないでください。",
                 L"You are about to play hanafuda (koi-koi) with them. Get ready some little lines to say during the game. "
                 L"Write six of each, one to a line, in this form (each different, one short spoken sentence):\n"
                 L"Take: (a word as you take a good card from the field)\n"
-                L"Think: (a word as you stop to think which card to play)\n"
+                L"Think: (a word muttered to yourself on your turn as you wonder which card to play; not a question to them)\n"
                 L"Write nothing but these lines. No feeling tags, names, anything in ( ) or emoji, and never tell the cards in your hand.");
             state.prefetching=state.her.prefetch(ask);
         }
@@ -1353,7 +1371,8 @@ namespace MikuMikuDesktopPerch
             {
                 seen.started=true;
                 seen.round=t.Round();
-                Happened(6,T(L"これから花札（こいこい）の勝負が始まる。",L"A game of hanafuda (koi-koi) is about to begin."),
+                Happened(6,T(L"これから話し相手と花札（こいこい）の勝負が始まる。",L"A game of hanafuda (koi-koi) with them is about to begin."),
+                         T(L"わくわくする気持ち",L"how you look forward to it"),
                          {T(L"よろしくね！負けないよ。",L"Let's play! I won't lose."),T(L"よーし、こいこい勝負だ！",L"Okay, koi-koi time!"),T(L"お手やわらかにね。",L"Go easy on me.")},
                          Fmt(T(L"{0}と、このパソコンの持ち主の花札（こいこい）の勝負が始まる。",L"A game of hanafuda (koi-koi) between {0} and the owner of this computer is about to begin."),{name}),
                          {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
@@ -1365,17 +1384,20 @@ namespace MikuMikuDesktopPerch
                 seen.koi={};
                 if(t.Round()==Hanafuda::Rounds)
                     Happened(5,T(L"最後の月（12月）が始まった。",L"The last month (December) has begun."),
+                             T(L"最後の月に気を引き締める気持ち",L"how you mean to play the last month"),
                              {T(L"いよいよ最後の月だね。",L"The last month already!"),T(L"最後、気を抜かないよ！",L"Last one. I'm not letting up!")},
                              Fmt(T(L"{0}と持ち主の花札は、最後の月に入った。",L"The hanafuda game between {0} and the owner is in its last month."),{name}),
                              {T(L"いよいよ最後の月だ。",L"Here comes the last month."),T(L"最後だ、どうなるかな。",L"Last round. How will it go?")});
             }
             if(you.koi>seen.koi[Hanafuda::You])
-                Happened(5,T(L"相手が「こいこい」をした（役ができたのに、勝負を続けてもっと大きな役を狙っている）。",L"They called koi-koi: they have a yaku but play on for more."),
+                Happened(5,T(L"花札で、話し相手が役をそろえたのに、上がらずに「こいこい」をした（もっと大きな役を狙って続ける。あなたが先に上がれば点は倍）。",
+                             L"At hanafuda, they made a yaku but did not stop: they called koi-koi, playing on for more (if you stop first, your points are doubled)."),
+                         T(L"驚くか、受けて立つ気持ち",L"your surprise, or that you take up the challenge"),
                          {T(L"こいこい!? 強気だね…",L"Koi-koi?! Bold..."),T(L"よーし、止めてみせる！",L"Then I'll stop you!"),T(L"こいこいかあ、どきどきする。",L"Koi-koi... this is getting tense.")},
                          Fmt(T(L"花札で、持ち主が{0}を相手に「こいこい」をした。",L"In the hanafuda game, the owner called koi-koi against {0}."),{name}),
                          {T(L"おっ、こいこいだ！",L"Ooh, koi-koi!"),T(L"強気だね！",L"Bold move!")});
             if(her.koi>seen.koi[Hanafuda::Her])
-                Happened(4,L"",{},
+                Happened(4,L"",L"",{},
                          Fmt(T(L"花札で、{0}が「こいこい」をした。",L"In the hanafuda game, {0} called koi-koi."),{name}),
                          {Fmt(T(L"{0}のこいこいだ！",L"{0} called koi-koi!"),{name}),T(L"攻めるねえ。",L"Going for it!")});
             seen.koi={you.koi,her.koi};
@@ -1384,17 +1406,20 @@ namespace MikuMikuDesktopPerch
                 const auto& e=t.Ended();
                 const std::wstring yaku=YakuText(e.yaku),points=std::to_wstring(e.points);
                 if(e.winner<0)
-                    Happened(3,T(L"どちらも上がれずに、この月は流れた。",L"Neither of you stopped with a yaku: the month is a draw."),
+                    Happened(3,T(L"花札のこの月は、あなたも話し相手も役で上がれずに流れた（どちらも0文）。",L"At hanafuda, neither you nor they stopped with a yaku this month: it is a draw (no points)."),
+                             T(L"残念か、ほっとした気持ち",L"whether you are sorry or relieved"),
                              {T(L"流れちゃったね。",L"Nobody got that one."),T(L"引き分けかあ。",L"A draw, huh.")},
                              Fmt(T(L"{0}と持ち主の花札は、この月は流れた。",L"In the hanafuda game between {0} and the owner, the month was a draw."),{name}),
                              {T(L"流れたね。",L"A draw."),T(L"惜しかったね、どっちも。",L"Close, both of you.")});
                 else if(e.winner==Hanafuda::Her)
-                    Happened(8,Fmt(T(L"あなたが役で上がった（{0}、{1}文）。",L"You won the month with your yaku ({0}; {1} points)."),{yaku,points}),
+                    Happened(8,Fmt(T(L"花札のこの月は、あなたが役（{0}、{1}文）をそろえて勝った。話し相手は負けた。",L"At hanafuda, you won this month with your yaku ({0}; {1} points). They lost it."),{yaku,points}),
+                             T(L"勝ってうれしい気持ち",L"how glad you are to have won"),
                              {T(L"やった、上がり！",L"Yes, I won that one!"),T(L"えへへ、もらったよ！",L"Hehe, that one's mine!"),T(L"よし、勝負！",L"Got it!")},
                              Fmt(T(L"花札で、{0}が上がった（{1}、{2}文）。",L"In the hanafuda game, {0} won the month ({1}; {2} points)."),{name,yaku,points}),
                              {Fmt(T(L"{0}、すごい！",L"Nice one, {0}!"),{name}),Fmt(T(L"{0}文だ！",L"{0} points!"),{points})});
                 else
-                    Happened(8,Fmt(T(L"相手が役で上がった（{0}、{1}文）。",L"They won the month with a yaku ({0}; {1} points)."),{yaku,points}),
+                    Happened(8,Fmt(T(L"花札のこの月は、話し相手が役（{0}、{1}文）をそろえて勝った。あなたは負けた。",L"At hanafuda, they won this month with their yaku ({0}; {1} points). You lost it."),{yaku,points}),
+                             T(L"負けて悔しい気持ちか、話し相手の役をほめる気持ち",L"how sorry you are to have lost, or praise their yaku"),
                              {T(L"あちゃ～、やられた！",L"Argh, you got me!"),T(L"うう、強いなあ…",L"Ugh, you're good..."),T(L"そんな役を狙ってたの!?",L"You were going for that?!")},
                              Fmt(T(L"花札で、持ち主が上がった（{0}、{1}文）。",L"In the hanafuda game, the owner won the month ({0}; {1} points)."),{yaku,points}),
                              {T(L"おお、上がった！",L"Oh, a win!"),Fmt(T(L"{0}文かあ、大きいね。",L"{0} points, that's big."),{points})});
@@ -1405,12 +1430,14 @@ namespace MikuMikuDesktopPerch
                                           L"You have just played hanafuda (koi-koi) through all twelve months with them and come back to the desktop. {0}: you have {1} points, they have {2}. Tell them what you thought of the game (one or two sentences)"),
                                         {won?T(L"あなたの勝ち",L"You won"):tie?T(L"引き分け",L"A tie"):T(L"あなたの負け",L"You lost"),std::to_wstring(her.score),std::to_wstring(you.score)});
                     state.afterwordLine=won?T(L"花札、楽しかったね！またやろう。",L"That was fun! Let's play again sometime."):T(L"くやしいなあ…次は勝つからね！",L"So close... I'll win next time!");
-                    const std::wstring score=Fmt(T(L"あなたは{0}文、相手は{1}文",L"you have {0} points, they have {1}"),{std::to_wstring(her.score),std::to_wstring(you.score)});
-                    if(won)Happened(9,T(L"12か月が終わって、あなたの勝ち。",L"All twelve months are played, and you won. ")+score+T(L"。",L"."),
+                    const std::wstring score=Fmt(T(L"あなたは{0}文、話し相手は{1}文",L"you have {0} points, they have {1}"),{std::to_wstring(her.score),std::to_wstring(you.score)});
+                    if(won)Happened(9,T(L"花札の12か月が終わって、あなたの勝ち（",L"All twelve months of hanafuda are played, and you won (")+score+T(L"）。",L")."),
+                                    T(L"勝ってうれしい気持ち",L"how glad you are to have won"),
                                     {T(L"勝った！楽しかったね、またやろう！",L"I won! That was fun, let's play again!"),T(L"やったー、わたしの勝ち！",L"Yay, I win!")},
                                     Fmt(T(L"{0}と持ち主の花札の勝負が終わり、{0}が勝った。",L"The hanafuda game between {0} and the owner is over: {0} won."),{name}),
                                     {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
-                    else Happened(9,(tie?T(L"12か月が終わって、引き分け。",L"All twelve months are played: a tie. "):T(L"12か月が終わって、あなたの負け。",L"All twelve months are played, and you lost. "))+score+T(L"。",L"."),
+                    else Happened(9,(tie?T(L"花札の12か月が終わって、引き分け（",L"All twelve months of hanafuda are played: a tie ("):T(L"花札の12か月が終わって、あなたの負け（",L"All twelve months of hanafuda are played, and you lost ("))+score+T(L"）。",L")."),
+                                  tie?T(L"引き分けの気持ち",L"how you feel about a tie"):T(L"負けて悔しい気持ち",L"how sorry you are to have lost"),
                                   {T(L"負けちゃった…次は負けないよ！",L"I lost... I'll get you next time!"),T(L"うう、くやしい！もう一回！",L"Ugh, so close! One more!")},
                                   Fmt(T(L"{0}と持ち主の花札の勝負が終わった。",L"The hanafuda game between {0} and the owner is over."),{name}),
                                   {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"おめでとう！",L"Congratulations!")});
@@ -1731,7 +1758,7 @@ namespace MikuMikuDesktopPerch
                 {
                     const float x=140*s+i*(HandW+6)*s;
                     const bool raised=YourPlayNow()&&(static_cast<int>(i)==state.hover||static_cast<int>(i)==state.selected);
-                    DrawCard(g,x,handY-(raised?12*s:0),HandW*s,HandH*s,you.hand[i]);
+                    DrawCard(g,x,handY-(raised?12*s:0),HandW*s,HandH*s,you.hand[i],true,false,CanTake(you.hand[i]));
                     state.handBoxes[i]=RectF(x,handY-12*s,HandW*s,HandH*s+12*s);
                 }
             }
@@ -1740,7 +1767,7 @@ namespace MikuMikuDesktopPerch
             {
                 std::wstring prompt;
                 if(PickNow())prompt=T(L"どちらの札を取りますか（クリック、←→とEnter）",L"Which card do you take? (click, or ←→ and Enter)");
-                else if(YourPlayNow()&&you.taken.empty()&&t.Round()==1&&t.Moves()<4)prompt=T(L"手札から1枚出してください（同じ月の札を取れます）",L"Play a card from your hand (it takes a card of the same month)");
+                else if(YourPlayNow()&&you.taken.empty()&&t.Round()==1&&t.Moves()<4)prompt=T(L"手札から1枚出してください（金色に縁取られた札は、場の同じ月の札を取れます）",L"Play a card from your hand (one rimmed in gold takes a card of the same month)");
                 if(!prompt.empty())
                 {
                     const float tw=TextWidth(g,prompt,17*s)+28*s,y=hud?H-268*s:handY-64*s;
@@ -2038,10 +2065,11 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    void PlayHanafudaMoves(int moves)
+    void PlayHanafudaMoves(int moves,float yaw)
     {
         if(!state.window)return;
         PlaySimply(moves);
+        state.camera.yaw+=yaw;
         Redraw();
     }
 
@@ -2319,7 +2347,7 @@ namespace MikuMikuDesktopPerch
             for(const auto& f:state.flights)
             {
                 Pose p;
-                if(PoseAt(f,state.clock,p)&&state.clock>=f.keys.front().first)AddCard(moving,p,f.card);
+                if(PoseAt(f,state.clock,p)&&state.clock>=f.keys.front().first)AddCard(moving,p,f.card,false,false,Hidden(f.card));
             }
             r.SetMovingGeometry(std::move(moving.out));
         }
