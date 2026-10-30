@@ -6,6 +6,7 @@
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
+#include "BubbleText.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -1856,33 +1857,17 @@ namespace MikuMikuDesktopPerch
             if(!state.words.text.empty())
             {
                 const std::wstring& said=state.words.text;
-                Font font(Family(),16*s,FontStyleRegular,UnitPixel);
-                StringFormat format;
-                const float most=std::max(160*s,W*0.4f),pad=14*s;
-                RectF one,need;
-                g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,PointF(0,0),&format,&one);
-                g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,RectF(0,0,most-2*pad,600*s),&format,&need);
-                const float tw=std::min(one.Width,most-2*pad)+2,th=need.Height;
-                const float bw=tw+2*pad,bh=th+2*pad*0.8f;
+                const float most=std::max(160*s,W*0.4f);
+                const WordsBubble bubble(g,said,s,most);
+                const float bw=bubble.Width(),bh=bubble.Height();
                 const float H=static_cast<float>(ch);
                 const bool beside=hud&&state.besideHead.x>=0;
                 const float x=beside?std::clamp(static_cast<float>(state.besideHead.x),14*s,W-14*s-bw):W-14*s-bw;
                 const float y=beside?std::clamp(static_cast<float>(state.headScreen.y)-bh*0.6f,88*s,std::max(88*s,H*0.6f-bh)):hud?88*s:72*s;
-                {
-                    // The tail, out of the bubble's left side toward her.
-                    const float ty=beside?std::clamp(static_cast<float>(state.headScreen.y),y+12*s,y+bh-12*s):y+std::min(bh*0.5f,30*s);
-                    const PointF tail[3]={PointF(x+2*s,ty-9*s),PointF(x-16*s,ty+4*s),PointF(x+2*s,ty+9*s)};
-                    SolidBrush fill(Color(240,255,252,246));
-                    Pen edge(Color(255,214,170,120),1.5f*s);
-                    g.FillPolygon(&fill,tail,3);
-                    g.DrawLine(&edge,tail[0],tail[1]);
-                    g.DrawLine(&edge,tail[1],tail[2]);
-                }
-                FillRound(g,RectF(x,y,bw,bh),14*s,Color(240,255,252,246),Color(255,214,170,120),1.5f*s);
-                SolidBrush ink(Color(255,60,44,36));
+                const float ty=beside?std::clamp(static_cast<float>(state.headScreen.y),y+12*s,y+bh-12*s):y+std::min(bh*0.5f,30*s);
                 // Sized to the whole line, shown as far as she has said it.
                 const std::wstring shown=said.substr(0,std::min(said.size(),std::max<size_t>(1,static_cast<size_t>(state.words.shown))));
-                g.DrawString(shown.c_str(),static_cast<INT>(shown.size()),&font,RectF(x+pad,y+pad*0.8f,tw+4,th+4),&format,&ink);
+                bubble.Draw(g,x,y,ty,shown);
             }
             if(!state.said.empty())
             {
@@ -2702,6 +2687,7 @@ namespace MikuMikuDesktopPerch
                 state.hover=state.selected=t.RiichiDiscards().front();
             }
         }
+        if(!SampleWords().empty()){state.words.text=SampleWords();state.words.shown=1e9;}
         RECT client{};
         GetClientRect(state.window,&client);
         Bitmap shot(client.right,client.bottom,PixelFormat32bppARGB);

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include "ChatWindows.hpp"
 #include "Text.hpp"
+#include "BubbleText.hpp"
 #include <commctrl.h>
 #include <objidl.h>
 // GDI+ uses min and max unqualified; give it the std ones instead of the windows.h macros.
@@ -34,14 +35,10 @@ namespace MikuMikuDesktopPerch
             return RegisterClassExW(&wc)!=0;
         }
 
-        std::unique_ptr<Gdiplus::Font> BubbleFont(float pixels,INT style)
+        // In the font set, else the first of these installed.
+        std::unique_ptr<Gdiplus::Font> SpeechFont(float pixels,INT style)
         {
-            for(const wchar_t* family:{L"BIZ UDPGothic",L"Yu Gothic UI",L"Meiryo UI",L"MS UI Gothic"})
-            {
-                Gdiplus::FontFamily f(family);
-                if(f.IsAvailable())return std::make_unique<Gdiplus::Font>(&f,pixels,style,Gdiplus::UnitPixel);
-            }
-            return std::make_unique<Gdiplus::Font>(Gdiplus::FontFamily::GenericSansSerif(),pixels,style,Gdiplus::UnitPixel);
+            return BubbleFont(pixels,style,{L"BIZ UDPGothic",L"Yu Gothic UI",L"Meiryo UI",L"MS UI Gothic"});
         }
 
         void RoundRect(Gdiplus::GraphicsPath& path,Gdiplus::RectF r,float radius)
@@ -169,9 +166,12 @@ namespace MikuMikuDesktopPerch
         const bool dots=waiting&&shown.empty();
 
         const float s=Scale();
-        const float pad=14*s,padTop=18*s,radius=20*s,tail=18*s,border=2.5f*s,maxWidth=300*s,margin=14*s;
-        auto font=BubbleFont(15*s,FontStyleRegular);
-        auto tagFont=BubbleFont(12*s,FontStyleBold);
+        // The words at the size set, the width they wrap at with them (inside the work area).
+        const float k=BubbleTextScale();
+        const float pad=14*s,padTop=18*s,radius=20*s,tail=18*s,border=2.5f*s,margin=14*s;
+        const float maxWidth=std::max(120*s,std::min(300*s*k,static_cast<float>(work.right-work.left)-2*margin-2*pad-2));
+        auto font=SpeechFont(15*s*k,FontStyleRegular);
+        auto tagFont=SpeechFont(12*s,FontStyleBold);
         StringFormat format(StringFormat::GenericTypographic());
         format.SetFormatFlags(format.GetFormatFlags()&~StringFormatFlagsNoWrap);
         Bitmap probe(1,1,PixelFormat32bppPARGB);

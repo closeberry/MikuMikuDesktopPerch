@@ -1,5 +1,6 @@
 #include "SettingsWindow.hpp"
 #include "Album.hpp"
+#include "BubbleText.hpp"
 #include <shellapi.h>
 #include "Text.hpp"
 #include "LocalChat.hpp"
@@ -33,7 +34,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdGestureOwn,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdTabs
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdGestureOwn,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdBubbleFont,IdBubbleSize,IdTabs
         };
         // The longest persona (characters, a line break counting as one).
         constexpr size_t MaxPersona=4000;
@@ -63,6 +64,7 @@ namespace MikuMikuDesktopPerch
             std::function<void(int,int)> onLight;
             std::function<void()> onCheckUpdate;
             std::string sample;     // the sample voice playing (PlaySound reads it from here)
+            std::vector<std::wstring> fonts;   // the bubble font choices (after the bubbles' own)
             int dpi=96;
         } state;
 
@@ -171,6 +173,30 @@ namespace MikuMikuDesktopPerch
             return value==0||static_cast<size_t>(value)>gpus.size()?std::wstring():gpus[value-1].first;
         }
 
+        // The bubbles' own font first, then each installed one. The item data is the place in
+        // state.fonts plus one (0: their own); a font set that is not installed now is kept.
+        void FillFonts()
+        {
+            state.fonts=InstalledFonts();
+            const std::wstring& chosen=state.choice.settings.bubbleFont;
+            std::vector<std::pair<std::wstring,int>> items{{T(L"標準",L"Standard"),0}};
+            int value=0;
+            for(size_t i=0;i<state.fonts.size();++i)
+            {
+                items.push_back({state.fonts[i],static_cast<int>(i+1)});
+                if(state.fonts[i]==chosen)value=static_cast<int>(i+1);
+            }
+            if(!chosen.empty()&&value==0)value=-1;
+            FillCombo(IdBubbleFont,items,value,Fmt(T(L"見つからないフォント（{0}）",L"Font not found ({0})"),{chosen}));
+        }
+
+        std::wstring FontValue()
+        {
+            const int value=ComboValue(IdBubbleFont,-1);
+            if(value<0)return state.choice.settings.bubbleFont;
+            return value==0||static_cast<size_t>(value)>state.fonts.size()?std::wstring():state.fonts[static_cast<size_t>(value-1)];
+        }
+
         // How often only matters while speaking first is on.
         void UpdateInitiative()
         {
@@ -260,6 +286,14 @@ namespace MikuMikuDesktopPerch
             FillCombo(IdVoiceStrength,{{T(L"0.5（弱め）",L"0.5 (weak)"),50},{T(L"1.0（標準）",L"1.0 (standard)"),100},{T(L"1.5（強め）",L"1.5 (strong)"),150},{T(L"2.0（とても強い）",L"2.0 (very strong)"),200}},
                       s.voiceStyleStrength,std::to_wstring(s.voiceStyleStrength/100)+L"."+std::to_wstring(s.voiceStyleStrength/10%10)+std::to_wstring(s.voiceStyleStrength%10));
             UpdateVoiceMode();
+            // The desktop's bubbles and the mini games'.
+            y=top+288;
+            Group(T(L"吹き出し",L"Speech bubbles"),y,54);
+            Label(T(L"フォント",L"Font"),28,y+22,70);
+            Combo(IdBubbleFont,100,y+20,190);
+            FillFonts();
+            Label(T(L"文字の大きさ",L"Text size"),300,y+22,80);
+            Combo(IdBubbleSize,380,y+20,56);
             y=top;
             Page(T(L"秘書",L"Assistant"));
             Group(T(L"秘書（タイマー・リマインダー・やることは、メニューと会話から）",L"Assistant (timers, reminders and to-dos: from the menu or by talking)"),y,164);
@@ -313,7 +347,7 @@ namespace MikuMikuDesktopPerch
             Group(T(L"ダンジョン",L"Dungeon"),y+202,52);
             CheckBox(IdDungeonLight,T(L"3Dを軽く表示する（アンチエイリアスなし、テクスチャ512、解像度75%）",L"Draw the 3D view light (no antialiasing, 512 textures, 75% resolution)"),28,y+224,410,s.dungeonLight);
             state.page=-1;
-            y=top+138+166;
+            y=top+288+62;
             Add(L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,276,y,82,28,IDOK);
             Add(L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,366,y,82,28,IDCANCEL);
 
@@ -341,6 +375,11 @@ namespace MikuMikuDesktopPerch
                       s.chatterMinutes,Fmt(T(L"{0}分ごと",L"Every {0} min"),{std::to_wstring(s.chatterMinutes)}));
             FillCombo(IdBanterMinutes,{{T(L"しない",L"Never"),0},{T(L"1分ごと",L"Every minute"),1},{T(L"10分ごと",L"Every 10 min"),10},{T(L"20分ごと",L"Every 20 min"),20},{T(L"30分ごと（標準）",L"Every 30 min"),30},{T(L"45分ごと",L"Every 45 min"),45},{T(L"1時間ごと",L"Every hour"),60},{T(L"1時間半ごと",L"Every 1.5 hours"),90}},
                       s.banterMinutes,Fmt(T(L"{0}分ごと",L"Every {0} min"),{std::to_wstring(s.banterMinutes)}));
+            {
+                std::vector<std::pair<std::wstring,int>> sizes;
+                for(int p:{70,80,90,100,110,125,150,175,200})sizes.push_back({std::to_wstring(p)+L"%",p});
+                FillCombo(IdBubbleSize,sizes,s.bubbleTextSize,std::to_wstring(s.bubbleTextSize)+L"%");
+            }
             FillCombo(IdLanguage,{{T(L"自動",L"Auto"),0},{L"日本語",1},{L"English",2}},s.language==L"ja"?1:s.language==L"en"?2:0,L"");
             UpdateInitiative();
             // Down to the tab row, leaving the pane's top line under it.
@@ -953,6 +992,8 @@ namespace MikuMikuDesktopPerch
             s.albumHotkey=static_cast<int>(SendDlgItemMessageW(state.window,IdAlbumHotkey,HKM_GETHOTKEY,0,0)&0xFFFF);
             s.shutterSound=Checked(IdShutterSound);
             s.dungeonLight=Checked(IdDungeonLight);
+            s.bubbleFont=FontValue();
+            s.bubbleTextSize=ComboValue(IdBubbleSize,s.bubbleTextSize);
             {
                 std::wstring folder(MAX_PATH*2,L'\0');
                 folder.resize(GetDlgItemTextW(state.window,IdAlbumFolder,folder.data(),static_cast<int>(folder.size())));
@@ -1129,7 +1170,7 @@ namespace MikuMikuDesktopPerch
         // Client 460 x 400 logical pixels, centred on the screen the cursor is on.
         const DWORD style=WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
         const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-        RECT frame{0,0,Px(460),Px(400)};
+        RECT frame{0,0,Px(460),Px(448)};
         AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
         POINT cursor{};
         GetCursorPos(&cursor);

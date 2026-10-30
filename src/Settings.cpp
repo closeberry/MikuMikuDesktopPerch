@@ -174,6 +174,8 @@ namespace MikuMikuDesktopPerch
         calendarLeadMinutes=std::clamp(ReadInt(path,L"CalendarLeadMinutes",calendarLeadMinutes),0,120);
         language=ReadString(path,L"Language",language);
         if(language!=L"ja"&&language!=L"en")language.clear();
+        bubbleFont=ReadString(path,L"BubbleFont",bubbleFont);
+        bubbleTextSize=std::clamp(ReadInt(path,L"BubbleTextSize",bubbleTextSize),50,300);
         voice=ReadInt(path,L"Voice",voice?1:0)!=0;
         voiceEndpoint=ReadString(path,L"VoiceEndpoint",voiceEndpoint);
         voiceStyleStrength=std::clamp(ReadInt(path,L"VoiceStyleStrength",voiceStyleStrength),0,200);
@@ -261,6 +263,8 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"CalendarAddress",calendarAddress.empty()?std::wstring():ProtectText(calendarAddress));
         WriteString(path,L"CalendarLeadMinutes",std::to_wstring(calendarLeadMinutes));
         WriteString(path,L"Language",language);
+        WriteString(path,L"BubbleFont",bubbleFont);
+        WriteString(path,L"BubbleTextSize",std::to_wstring(bubbleTextSize));
         WriteString(path,L"Voice",voice?L"1":L"0");
         WriteString(path,L"VoiceEndpoint",voiceEndpoint);
         WriteString(path,L"VoiceStyleStrength",std::to_wstring(voiceStyleStrength));

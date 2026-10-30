@@ -107,6 +107,10 @@ namespace MikuMikuDesktopPerch
         std::wstring calendarAddress;
         int calendarLeadMinutes=10;
         std::wstring language;      // "ja", "en", or empty: Windows' display language (see Text.hpp)
+        // The words in speech bubbles (the desktop's and the mini games'): an installed font
+        // (empty: the bubbles' own) and their size in percent (BubbleText.hpp).
+        std::wstring bubbleFont;
+        int bubbleTextSize=100;
         // Speaking aloud through a VOICEVOX-compatible engine on this computer, in one of its voices.
         bool voice=false;
         bool voiceDirect=false;     // VOICEVOX's files used directly (voiceFolder), not its engine

@@ -7,6 +7,7 @@
 #include "Memory.hpp"
 #include "Bond.hpp"
 #include "Album.hpp"
+#include "BubbleText.hpp"
 #include "DungeonWindow.hpp"
 #include "Dungeon.hpp"
 #include "Mahjong.hpp"
@@ -1746,6 +1747,17 @@ namespace
         return error;
     }
 
+    // Diagnostics: --bubble-font <name> and --bubble-size <percent> in place of the settings'.
+    std::wstring bubbleFontArg;
+    bool bubbleFontGiven=false;
+    int bubbleSizeArg=0;
+
+    // The bubbles' font and size, for every bubble from now on.
+    void ApplyBubbleText(const Settings& s)
+    {
+        SetBubbleText(bubbleFontGiven?bubbleFontArg:s.bubbleFont,bubbleSizeArg>0?bubbleSizeArg:s.bubbleTextSize);
+    }
+
     // OK in the settings window: switches and display options take effect at once (for every
     // character; the size, the voice and the persona for the one the window was opened for);
     // the detailed ones (frame rate, antialiasing, textures, physics rate, toon folder) are read
@@ -1771,6 +1783,9 @@ namespace
         const bool topmostChanged=s.topmost!=current.topmost;
         current.topmost=s.topmost;
         current.edgeScale=s.edgeScale;
+        current.bubbleFont=s.bubbleFont;
+        current.bubbleTextSize=s.bubbleTextSize;
+        ApplyBubbleText(current);
         current.chatEndpoint=s.chatEndpoint;
         const bool chatModelChanged=s.chatModel!=current.chatModel;
         current.chatModel=s.chatModel;
@@ -6014,6 +6029,63 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     {
         int argc=0;
         LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+        // The bubbles as set (for the window shots below too), unless --bubble-font <name> or
+        // --bubble-size <percent> say otherwise; --words <text>: said in the mini games' window shots.
+        for(int i=1;i+1<argc;++i)
+        {
+            const std::wstring arg=argv[i];
+            if(arg==L"--bubble-font"){bubbleFontArg=argv[++i];bubbleFontGiven=true;}
+            else if(arg==L"--bubble-size")bubbleSizeArg=std::clamp(_wtoi(argv[++i]),50,300);
+            else if(arg==L"--words")SetSampleWords(argv[++i]);
+        }
+        {
+            Settings set;
+            set.Load(Settings::DefaultPath());
+            ApplyBubbleText(set);
+        }
+        // --settings-shot <out.png> [tab]: the settings window as the settings fill it, on that
+        // tab (from 0); nothing is saved.
+        if(argc>=3&&std::wstring(argv[1])==L"--settings-shot")
+        {
+            Settings set;
+            set.Load(Settings::DefaultPath());
+            SetLanguage(set.language);
+            ShowSettingsWindow(nullptr,{set,false,set.characters.front(),{},nullptr,{},{},{}},[](const SettingsChoice&){},[](int,int){},[]{});
+            bool saved=false;
+            if(HWND window=SettingsWindowHandle())
+            {
+                if(HWND tabs=FindWindowExW(window,nullptr,WC_TABCONTROLW,nullptr);tabs&&argc>=4)
+                {
+                    TabCtrl_SetCurSel(tabs,_wtoi(argv[3]));
+                    NMHDR n{tabs,static_cast<UINT_PTR>(GetDlgCtrlID(tabs)),TCN_SELCHANGE};
+                    SendMessageW(window,WM_NOTIFY,n.idFrom,reinterpret_cast<LPARAM>(&n));
+                }
+                for(MSG msg;PeekMessageW(&msg,nullptr,0,0,PM_REMOVE);){TranslateMessage(&msg);DispatchMessageW(&msg);}
+                RECT r{};
+                GetWindowRect(window,&r);
+                const int w=r.right-r.left,h=r.bottom-r.top;
+                BITMAPINFO info{};
+                info.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB};
+                void* bits=nullptr;
+                HDC screen=GetDC(nullptr),memory=CreateCompatibleDC(screen);
+                if(HBITMAP dib=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0))
+                {
+                    HGDIOBJ old=SelectObject(memory,dib);
+                    PrintWindow(window,memory,PW_RENDERFULLCONTENT);
+                    GdiFlush();
+                    auto* p=static_cast<std::uint8_t*>(bits);
+                    for(size_t i=0;i<static_cast<size_t>(w)*h;++i)p[i*4+3]=255;
+                    saved=WritePng(argv[2],static_cast<UINT>(w),static_cast<UINT>(h),static_cast<UINT>(w*4),p);
+                    SelectObject(memory,old);
+                    DeleteObject(dib);
+                }
+                DeleteDC(memory);
+                ReleaseDC(nullptr,screen);
+                DestroyWindow(window);
+            }
+            LocalFree(argv);
+            return saved?0:1;
+        }
         // --voice-test <VOICEVOX folder | engine address> <style id> <out.wav> [style strength]:
         // say a line with VOICEVOX's files directly (no engine) or with the engine at http://...
         // (AivisSpeech's style strength, 1 by default), writing the sound, and the error or
@@ -6380,6 +6452,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     }
     app.settings.Load(app.settingsPath);
     SetAlbumFolder(app.settings.albumFolder);
+    ApplyBubbleText(app.settings);
     if(!app.usingSince.empty())
         for(const auto& c:app.settings.characters)if(!c.modelPath.empty())app.modelsBefore.insert(c.modelPath);
     SetLanguage(app.settings.language);
@@ -6987,6 +7060,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(snapshotBlackjack)SaveBlackjackView(snapshotPath);
             else if(snapshotOldMaid)SaveOldMaidView(snapshotPath);
             else m.renderer.SaveLastFrame(snapshotPath);
+            // Her bubble beside it, when it is up (--say).
+            if(AlbumLayer bubble;m.bubble.Picture(bubble.pixels,bubble.rect))
+            {
+                const UINT bw=static_cast<UINT>(bubble.rect.right-bubble.rect.left),bh=static_cast<UINT>(bubble.rect.bottom-bubble.rect.top);
+                WritePng(snapshotPath+L".bubble.png",bw,bh,bw*4,bubble.pixels.data());
+            }
             if(FILE* info=nullptr;_wfopen_s(&info,(snapshotPath+L".txt").c_str(),L"w, ccs=UTF-8")==0&&info)
             {
                 const auto rest=m.model.ArmRestAngles(),fix=m.model.ArmCorrections();

@@ -5,6 +5,7 @@
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
+#include "BubbleText.hpp"
 #include "TextureLoader.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -301,33 +302,18 @@ namespace MikuMikuDesktopPerch
             if(!state.words.text.empty())
             {
                 const std::wstring& said=state.words.text;
-                Font font(Family(),16*s,FontStyleRegular,UnitPixel);
-                StringFormat format;
-                const float W=static_cast<float>(w),most=std::max(160*s,W*0.36f),pad=14*s;
-                RectF one,need;
-                g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,PointF(0,0),&format,&one);
-                g.MeasureString(said.c_str(),static_cast<INT>(said.size()),&font,RectF(0,0,most-2*pad,600*s),&format,&need);
-                const float tw=std::min(one.Width,most-2*pad)+2,th=need.Height,bw=tw+2*pad,bh=th+2*pad*0.8f;
+                const float W=static_cast<float>(w),most=std::max(160*s,W*0.36f);
+                const WordsBubble bubble(g,said,s,most);
+                const float bw=bubble.Width(),bh=bubble.Height();
                 const bool beside=state.renderer&&state.besideHead.x>=0;
                 const PointF end2D(W/2+70*s,70*s);
                 const float x=std::clamp(beside?static_cast<float>(state.besideHead.x):end2D.X,14*s,W-14*s-bw);
                 const float headY=beside?static_cast<float>(state.headScreen.y):end2D.Y+bh/2;
                 const float y=std::clamp(headY-bh*0.6f,64*s,std::max(64*s,mid-bh));
                 const float ty=std::clamp(headY,y+12*s,y+bh-12*s);
-                const PointF tail[3]={PointF(x+2*s,ty-9*s),PointF(x-16*s,ty+4*s),PointF(x+2*s,ty+9*s)};
-                SolidBrush fill(Color(240,255,252,246));
-                Pen edge(Color(255,214,170,120),1.5f*s);
-                g.FillPolygon(&fill,tail,3);
-                g.DrawLine(&edge,tail[0],tail[1]);
-                g.DrawLine(&edge,tail[1],tail[2]);
-                GraphicsPath path;
-                RoundRect(path,RectF(x,y,bw,bh),14*s);
-                g.FillPath(&fill,&path);
-                g.DrawPath(&edge,&path);
-                SolidBrush ink(Color(255,60,44,36));
                 // Sized to the whole line, shown as far as she has said it.
                 const std::wstring shown=ShownWords();
-                g.DrawString(shown.c_str(),static_cast<INT>(shown.size()),&font,RectF(x+pad,y+pad*0.8f,tw+4,th+4),&format,&ink);
+                bubble.Draw(g,x,y,ty,shown);
             }
 
             auto banner=[&](const std::wstring& big,const std::wstring& note){
@@ -1803,6 +1789,7 @@ namespace MikuMikuDesktopPerch
                 game.Step(dt,a,b);
                 game.TakeEvents();
             }
+            if(!SampleWords().empty())state.words.text=SampleWords();
             const int w=600,h=900;
             Bitmap image(w,h,PixelFormat32bppPARGB);
             Graphics g(&image);

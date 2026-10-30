@@ -129,6 +129,7 @@
     <ClCompile Include="src\PlannerWindow.cpp" />
     <ClCompile Include="src\Calendar.cpp" />
     <ClCompile Include="src\Updater.cpp" />
+    <ClCompile Include="src\BubbleText.cpp" />
     <ClCompile Include="src\Text.cpp" />
     <ClCompile Include="src\Log.cpp" />
     <ClCompile Include="external\DirectXTK12\Src\SimpleMath.cpp" />
@@ -144,6 +145,7 @@
     <ClInclude Include="src\Updater.hpp" />
     <ClInclude Include="src\ApiServer.hpp" />
     <ClInclude Include="src\AudioDecode.hpp" />
+    <ClInclude Include="src\BubbleText.hpp" />
     <ClInclude Include="src\Text.hpp" />
     <ClInclude Include="src\Log.hpp" />
     <ClInclude Include="src\ChatWindows.hpp" />
