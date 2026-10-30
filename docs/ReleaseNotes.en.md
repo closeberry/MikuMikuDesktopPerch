@@ -2,6 +2,12 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.4
+
+### New
+
+- **A choice of gestures for each character**: "Gestures..." in the settings has "A choice for (name) only". Checked, the character the settings were opened on gets its own choice of which idle gestures, built-in idle motions and window motions to use, apart from the other characters (it starts as a copy of the shared choice; unchecking it goes back to the shared one). Characters without one follow the shared choice as before. In the ini, it is `OwnGestures` / `OwnDisabledGestures` in `[Mascot]`–`[Mascot6]`
+
 ## 1.5.3
 
 ### New
