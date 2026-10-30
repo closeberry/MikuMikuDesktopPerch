@@ -102,6 +102,8 @@
     <ClCompile Include="src\MetroidWindow.cpp" />
     <ClCompile Include="src\Hanafuda.cpp" />
     <ClCompile Include="src\HanafudaWindow.cpp" />
+    <ClCompile Include="src\Othello.cpp" />
+    <ClCompile Include="src\OthelloWindow.cpp" />
     <ClCompile Include="src\Mahjong.cpp" />
     <ClCompile Include="src\MahjongSound.cpp" />
     <ClCompile Include="src\MahjongTable.cpp" />
@@ -154,6 +156,8 @@
     <ClInclude Include="src\MetroidWindow.hpp" />
     <ClInclude Include="src\Hanafuda.hpp" />
     <ClInclude Include="src\HanafudaWindow.hpp" />
+    <ClInclude Include="src\Othello.hpp" />
+    <ClInclude Include="src\OthelloWindow.hpp" />
     <ClInclude Include="src\Mahjong.hpp" />
     <ClInclude Include="src\MahjongSound.hpp" />
     <ClInclude Include="src\MahjongWindow.hpp" />
