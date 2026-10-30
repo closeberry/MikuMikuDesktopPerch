@@ -15,6 +15,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <sstream>
 #include <memory>
 #include <tuple>
 #include <random>
@@ -116,16 +117,17 @@ namespace MikuMikuDesktopPerch
                 ULONGLONG shownAt=0;
                 std::wstring told;
             } words;
-            std::vector<std::wstring> dealLines,drawLines;   // as you choose; as she draws
-            // As you point at a card: tempting you to it, fretting, at ease (no joker); a pair of
-            // yours made from her hand, of hers from yours.
-            std::vector<std::wstring> temptLines,fretLines,easyLines,takenLines,matchedLines;
+            // Her lines by scene (res/oldmaid/lines.txt): the plain draft, and the same put in her
+            // own way of talking by the LLM (kept per character); the scene being asked for.
+            struct Scene {std::wstring name,about;std::vector<std::wstring> draft,styled;bool asked=false;};
+            std::vector<Scene> scenes;
+            int asking=-1;
             bool prefetching=false;
             POINT headScreen{-1,-1},besideHead{-1,-1};
             std::wstring afterword,afterwordLine;
             struct Seen
             {
-                bool started=false,over=false;
+                bool started=false,over=false,sorted=false,nearEnd=false;
                 int draws=0,teased=-1,muttered=-1;
             } seen;
             std::unique_ptr<Bitmap> canvas;
@@ -1219,104 +1221,152 @@ namespace MikuMikuDesktopPerch
             const ULONGLONG now=GetTickCount64();
             if((w.waiting||now-w.since<WordsHold)&&weight<w.weight)return;
             const std::wstring line=Pick(lines);
-            if(state.her.talk&&(weight>=6||now-w.asked>AskEvery))
-            {
-                // The score and her last lines first, then what happened and the feeling, with
-                // her own line as an example last (a small model keeps to the point so).
-                std::wstring situation=Fmt(T(L"いま話し相手とババ抜きをしていて、手札はあなた{0}枚、話し相手{1}枚、ババ（ジョーカー）は{2}が持っている。",
-                                             L"Now you are playing Old Maid with them: you have {0} cards, they have {1}, and {2} the joker. "),
-                                           {std::to_wstring(t.Hand(OldMaid::Her).size()),std::to_wstring(t.Hand(OldMaid::You).size()),
-                                            HerJoker()?std::wstring(T(L"あなた",L"you have")):std::wstring(T(L"話し相手",L"they have"))});
-                if(!w.recent.empty())
-                {
-                    situation+=T(L"さっきあなたが言ったこと：",L"What you said just before: ");
-                    for(const auto& r:w.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
-                    situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
-                }
-                situation+=facts+Fmt(T(L"{0}を、あなたの言葉で話し相手にひと言（たとえば「{1}」のような気持ち。そのままは使わない）",
-                                       L" Tell them, in a word of your own, {0} (like \"{1}\", but not those words)"),{feel,line});
-                if(state.her.talk(situation))
-                {
-                    w.waiting=true;
-                    w.fallback=line;
-                    w.text=L"…";
-                    w.weight=weight;
-                    w.since=w.asked=now;
-                    w.until=now+AnswerWait+4000;
-                    Redraw();
-                    return;
-                }
-            }
-            SayWords(line,weight);
+            if(!line.empty())SayWords(line,weight);
         }
 
-        // The lines asked for ahead, a kind at a time (a small model writes eight of one kind
-        // well, not eight of each of several): the scene, and examples of the feeling.
-        struct LineKind {std::vector<std::wstring>* pool;const wchar_t *ja,*jaScene,*jaExample,*en,*enScene,*enExample;};
-        std::vector<LineKind> LineKinds()
+        // The scenes' plain lines (res/oldmaid/lines.txt: "[name] about" then a line each).
+        void LoadScenes()
         {
-            return {
-                {&state.temptLines,L"誘う",L"話し相手が、あなたの手札からどれを持っていくか選んでいて、あるカードに手をかけました。あなたはそのカードを話し相手に持っていってほしいので、にこにこして「それを取っていいよ」と勧めます",
-                 L"それ、いいと思うな～／それにしちゃいなよ／ふふ、それがおすすめだよ",
-                 L"Tempt",L"They are choosing which card to take from your hand and have put a hand on one. You want them to take it, so you smile and urge them to take it",
-                 L"That one looks good~ / Go on, take that one / Hehe, I'd recommend it"},
-                {&state.fretLines,L"焦る",L"話し相手が、あなたの手札からどれを持っていくか選んでいて、あるカードに手をかけました。あなたはそのカードを持っていってほしくないので、ちょっと焦ります",
-                 L"えっ、それにするの？／ちょ、ちょっと待って",
-                 L"Fret",L"They are choosing which card to take from your hand and have put a hand on one. You would rather they did not take it, and you are a little flustered",
-                 L"Huh, that one? / W-wait a sec"},
-                {&state.easyLines,L"余裕",L"話し相手が、あなたの手札からどれを持っていくか選んでいます。どれを取られても平気なので、余裕を見せます",
-                 L"どれでもどうぞ～／好きなの取っていいよ",
-                 L"Easy",L"They are choosing which card to take from your hand. You do not mind which they take, and you show it",
-                 L"Take any you like~ / Go ahead, pick whichever"},
-                {&state.dealLines,L"選ぶ",L"話し相手が、あなたの手札から1枚取る番になりました。どれを取るか、話し相手を揺さぶります",
-                 L"さあ、どれにする？／ふふ、よーく考えてね",
-                 L"Choose",L"It is their turn to take a card from your hand. You try to unsettle them",
-                 L"So, which one? / Hehe, think carefully"},
-                {&state.takenLines,L"取られた",L"話し相手が、あなたの手札から1枚取って、同じ数の組をそろえて捨てました",
-                 L"あーあ、そろえられちゃった／むむ、順調だね",
-                 L"Taken",L"They took a card from your hand and made a pair with it, and threw the pair out",
-                 L"Aw, you got a pair / Hmm, you're doing well"},
-                {&state.matchedLines,L"そろった",L"あなたが話し相手の手札から1枚取ったら、自分の手札と同じ数で組がそろいました。うれしいです",
-                 L"やった、そろった！／ふふ、ペアだよ",
-                 L"Matched",L"You took a card from their hand and it made a pair with one of yours. You are pleased",
-                 L"Yay, a pair! / Hehe, that's a pair"},
-                {&state.drawLines,L"引く",L"あなたが、話し相手の手札から1枚取ろうとしています。どれにするか迷いながら、自分につぶやきます",
-                 L"どれにしようかな…／これかな？",
-                 L"Draw",L"You are about to take a card from their hand, and you mutter to yourself as you choose",
-                 L"Which one, I wonder... / This one?"}};
+            state.scenes.clear();
+            const HRSRC info=FindResourceW(nullptr,L"LINES",L"OLDMAIDLINES");
+            const HGLOBAL data=info?LoadResource(nullptr,info):nullptr;
+            const char* text=data?static_cast<const char*>(LockResource(data)):nullptr;
+            if(!text)return;
+            const int size=static_cast<int>(SizeofResource(nullptr,info));
+            std::wstring all(static_cast<size_t>(MultiByteToWideChar(CP_UTF8,0,text,size,nullptr,0)),L'\0');
+            MultiByteToWideChar(CP_UTF8,0,text,size,all.data(),static_cast<int>(all.size()));
+            for(size_t start=0;start<all.size();)
+            {
+                size_t end=all.find(L'\n',start);
+                if(end==std::wstring::npos)end=all.size();
+                std::wstring line=all.substr(start,end-start);
+                start=end+1;
+                if(!line.empty()&&line.back()==L'\r')line.pop_back();
+                if(!line.empty()&&line[0]==0xFEFF)line.erase(0,1);
+                if(line.empty()||line[0]==L'#')continue;
+                if(line[0]==L'[')
+                {
+                    const size_t close=line.find(L']');
+                    if(close==std::wstring::npos)continue;
+                    State::Scene scene;
+                    scene.name=line.substr(1,close-1);
+                    const size_t about=line.find_first_not_of(L" \t",close+1);
+                    if(about!=std::wstring::npos)scene.about=line.substr(about);
+                    state.scenes.push_back(std::move(scene));
+                }
+                else if(!state.scenes.empty())state.scenes.back().draft.push_back(line);
+            }
         }
 
+        State::Scene* SceneNamed(const wchar_t* name)
+        {
+            for(auto& scene:state.scenes)if(scene.name==name)return &scene;
+            return nullptr;
+        }
+
+        // The key her styled lines are kept under: who she is and how she talks, the language,
+        // and the draft (a change to any asks again).
+        std::wstring StyleKey()
+        {
+            std::wstring all=state.her.styleKey+(English()?L"\nen":L"\nja");
+            for(const auto& scene:state.scenes){all+=L"\n["+scene.name+L"]";for(const auto& l:scene.draft)all+=L"\n"+l;}
+            unsigned long long hash=1469598103934665603ull;
+            for(const wchar_t c:all){hash^=static_cast<unsigned long long>(c);hash*=1099511628211ull;}
+            wchar_t hex[20]{};
+            swprintf_s(hex,L"%016llx",hash);
+            return hex;
+        }
+
+        // Her styled lines kept from before (the file: "# key", then "[name]" and a line each).
+        void LoadStyled()
+        {
+            if(state.her.linesFile.empty())return;
+            FILE* in=nullptr;
+            if(_wfopen_s(&in,state.her.linesFile.c_str(),L"r, ccs=UTF-8")!=0||!in)return;
+            std::wstring all;
+            wchar_t chunk[1024];
+            while(fgetws(chunk,1024,in))all+=chunk;
+            fclose(in);
+            std::wstringstream lines(all);
+            std::wstring line,key=L"# "+StyleKey();
+            if(!std::getline(lines,line)||line!=key)return;
+            State::Scene* at=nullptr;
+            while(std::getline(lines,line))
+            {
+                if(!line.empty()&&line.back()==L'\r')line.pop_back();
+                if(line.empty())continue;
+                if(line[0]==L'['){const size_t close=line.find(L']');at=close==std::wstring::npos?nullptr:SceneNamed(line.substr(1,close-1).c_str());continue;}
+                if(at)at->styled.push_back(line);
+            }
+            for(auto& scene:state.scenes)scene.asked=!scene.styled.empty();
+        }
+
+        void SaveStyled()
+        {
+            if(state.her.linesFile.empty())return;
+            FILE* out=nullptr;
+            if(_wfopen_s(&out,state.her.linesFile.c_str(),L"w, ccs=UTF-8")!=0||!out)return;
+            fputws((L"# "+StyleKey()+L"\n").c_str(),out);
+            for(const auto& scene:state.scenes)
+            {
+                if(scene.styled.empty())continue;
+                fputws((L"["+scene.name+L"]\n").c_str(),out);
+                for(const auto& l:scene.styled)fputws((l+L"\n").c_str(),out);
+            }
+            fclose(out);
+        }
+
+        // The next scene not yet in her own words: its draft given to the LLM to say again her
+        // way, a scene at a time (a small model keeps to the form so).
         void Prefetch()
         {
             if(state.prefetching||!state.her.prefetch)return;
-            // The kind with fewest lines ready, while any has fewer than four.
-            const auto kinds=LineKinds();
-            const LineKind* want=nullptr;
-            for(const auto& k:kinds)if(k.pool->size()<4&&(!want||k.pool->size()<want->pool->size()))want=&k;
+            State::Scene* want=nullptr;
+            for(auto& scene:state.scenes)if(!scene.asked&&!scene.draft.empty()){want=&scene;break;}
             if(!want)return;
+            std::wstring numbered;
+            for(size_t i=0;i<want->draft.size();++i)numbered+=std::to_wstring(i+1)+(English()?L": ":L"：")+want->draft[i]+L"\n";
+            const std::wstring count=std::to_wstring(want->draft.size());
             const std::wstring ask=English()?
-                Fmt(L"You are playing Old Maid with them. Think of eight things you might say in this moment.\nThe moment: {0}.\nFor example: {1}\n"
-                    L"Write eight lines, each beginning \"{2}:\" and then one short spoken sentence. All eight different, none the same as the examples. Do not say \"joker\".\n"
-                    L"Write nothing but these lines. No feeling tags, names, anything in ( ) or emoji.",{want->enScene,want->enExample,want->en}):
-                Fmt(L"話し相手とババ抜きをしています。次の場面であなたが言うひと言を8つ考えてください。\n場面：{0}。\n例：{1}\n"
-                    L"8行書いてください。どの行も「{2}：」で始め、そのあとに1文の短い話し言葉を書きます。8つとも違う言い方にし、例と同じものは使いません。ババやジョーカーという言葉は使いません。\n"
-                    L"この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わないでください。",{want->jaScene,want->jaExample,want->ja});
+                Fmt(L"You are playing Old Maid with them. The moment: {0}.\n"
+                    L"Say each of these {1} lines (Japanese) in English, the way you yourself talk to them (your way of speaking in every line). "
+                    L"Keep what each says; add nothing, one sentence each.\n{2}"
+                    L"Answer in {1} lines, numbered as these, in the form \"1: the line\". Do not say \"joker\" unless the line does. "
+                    L"Write nothing else. No feeling tags, names, anything in ( ) or emoji.",{want->about,count,numbered}):
+                Fmt(L"話し相手とババ抜きをしています。場面：{0}。台詞はどれも、あなたが話し相手に向かって言うものです。\n"
+                    L"次の{1}個の台詞を、それぞれ、あなたがふだん話すときの口調に言い換えてください（一人称、語尾、口ぐせなど、あなたらしい話し方をどの行にも必ず入れる。元のままの行は作らない）。"
+                    L"言っていることは変えず、言葉を足したり、2文にしたりしません。\n{2}"
+                    L"答えは{1}行で、元と同じ番号を付けて「1：言い換えた台詞」の形で書きます。"
+                    L"ババやジョーカーという言葉は、元になければ使いません。この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わないでください。",
+                    {want->about,count,numbered});
             state.prefetching=state.her.prefetch(ask);
+            if(state.prefetching)
+            {
+                want->asked=true;
+                state.asking=static_cast<int>(want-state.scenes.data());
+            }
         }
 
-        std::wstring TakeLine(std::vector<std::wstring>& ready,const std::vector<std::wstring>& own)
+        // A line of the scene: in her own words when there are, else the draft (none in English
+        // until they come); not one of her last few.
+        std::wstring Line(const wchar_t* name)
         {
-            std::wstring line;
-            if(!ready.empty())
-            {
-                std::uniform_int_distribution<size_t> any(0,ready.size()-1);
-                const size_t i=any(state.sparkRandom);
-                line=ready[i];
-                ready.erase(ready.begin()+static_cast<std::ptrdiff_t>(i));
-            }
-            else line=Pick(own);
-            Prefetch();
-            return line;
+            const State::Scene* scene=SceneNamed(name);
+            if(!scene)return {};
+            const auto& pool=!scene->styled.empty()?scene->styled:English()?scene->styled:scene->draft;
+            if(pool.empty())return {};
+            std::vector<const std::wstring*> fresh;
+            for(const auto& l:pool)
+                if(std::find(state.words.recent.begin(),state.words.recent.end(),l)==state.words.recent.end())fresh.push_back(&l);
+            if(fresh.empty())for(const auto& l:pool)fresh.push_back(&l);
+            std::uniform_int_distribution<size_t> any(0,fresh.size()-1);
+            return *fresh[any(state.sparkRandom)];
+        }
+
+        void Say(const wchar_t* name,int weight=2)
+        {
+            const std::wstring line=Line(name);
+            if(!line.empty())SayWords(line,weight);
         }
 
         // What is new in the game since the last tick, for words: its start, the joker drawn
@@ -1345,35 +1395,34 @@ namespace MikuMikuDesktopPerch
                 seen.started=true;
                 Happened(6,T(L"これから話し相手とババ抜きが始まる。",L"A game of Old Maid with them is about to begin. "),
                          T(L"わくわくする気持ち",L"how you look forward to it"),
-                         {T(L"ババ抜き、負けないよ！",L"I won't lose at Old Maid!"),T(L"ババはどこかな～？",L"Where's the joker, I wonder?"),T(L"よーし、勝負だよ！",L"Okay, let's play!")},
+                         {Line(L"始まり")},
                          Fmt(T(L"{0}とこのパソコンの持ち主のババ抜きが始まる。",L"{0} and the owner of this computer are starting a game of Old Maid."),{name}),
                          {T(L"がんばれー！",L"Good luck!"),T(L"ババを引くのはどっちかな？",L"Who'll end up with the joker?")});
             }
-            // The joker drawn.
+            // After her first word, a word on the pairs she threw out as the cards were dealt.
+            if(!seen.sorted&&t.Draws()==0&&w.text.empty()&&now-w.since>1200)
+            {
+                seen.sorted=true;
+                Say(L"揃えて捨てる");
+            }
+            // Each draw gets a word: the joker drawn, a pair made, or none.
             if(t.Draws()!=seen.draws&&t.Now()!=Phase::GameOver)
             {
                 seen.draws=t.Draws();
                 if(t.LastCard()==OldMaid::Joker&&t.LastDrawer()==OldMaid::You)
                     Happened(5,T(L"ババ抜きで、話し相手があなたの手札からババ（ジョーカー）を引いた。",L"At Old Maid, they drew the joker from your hand."),
                              T(L"ほっとして喜ぶ気持ち",L"how relieved and pleased you are"),
-                             {T(L"やった、ババ引いたね！",L"Yes, you took the joker!"),T(L"ふふ、引いちゃったね～。",L"Hehe, you drew it~")},
+                             {Line(L"ジョーカーを引かせた")},
                              Fmt(T(L"ババ抜きで、持ち主が{0}からババを引いた。",L"At Old Maid, the owner drew the joker from {0}."),{name}),
                              {T(L"あっ、ババ引いた！",L"Oh, the joker!")});
                 else if(t.LastCard()==OldMaid::Joker)
                     Happened(5,T(L"ババ抜きで、あなたが話し相手の手札からババ（ジョーカー）を引いてしまった。",L"At Old Maid, you drew the joker from their hand."),
                              T(L"がっかりする気持ち",L"how let down you are"),
-                             {T(L"うわっ、ババ引いちゃった…",L"Ugh, I drew the joker..."),T(L"えー、ババだ～！",L"Nooo, the joker!")},
+                             {Line(L"ジョーカーを引いた")},
                              Fmt(T(L"ババ抜きで、{0}が持ち主からババを引いた。",L"At Old Maid, {0} drew the joker from the owner."),{name}),
                              {Fmt(T(L"{0}がババを引いた！",L"{0} drew the joker!"),{name})});
-                else if(t.LastPaired()&&!w.waiting)
-                {
-                    if(t.LastDrawer()==OldMaid::You)
-                        SayWords(TakeLine(state.takenLines,{T(L"あっ、そろっちゃった。",L"Oh, that made a pair."),T(L"むむ、またそろえたね。",L"Hmm, another pair."),
-                                                            T(L"順調だね～。",L"You're doing well~"),T(L"ふーん、やるじゃない。",L"Hmm, not bad.")}),3);
-                    else
-                        SayWords(TakeLine(state.matchedLines,{T(L"やった、そろった！",L"Yay, a pair!"),T(L"ふふ、ペアだよ。",L"Hehe, a pair."),
-                                                              T(L"いい感じ～！",L"Going well~"),T(L"よし、1組捨てるね。",L"Okay, out goes a pair.")}),3);
-                }
+                else if(t.LastDrawer()==OldMaid::You)Say(t.LastPaired()?L"取られた":L"引かれた",3);
+                else Say(t.LastPaired()?L"そろった":L"外れた",3);
             }
             const bool over=t.Now()==Phase::GameOver;
             if(over&&!seen.over)
@@ -1386,12 +1435,12 @@ namespace MikuMikuDesktopPerch
                 state.afterwordLine=herLoss?T(L"ババ抜き、次は負けないよ！",L"I'll win at Old Maid next time!"):T(L"ババ抜き、楽しかったね！またやろう。",L"Old Maid was fun! Let's play again.");
                 if(herLoss)Happened(9,Fmt(T(L"ババ抜きが終わって、あなたがババ（ジョーカー）を最後まで持っていて負けた（{0}）。",L"The game of Old Maid is over: you were left with the joker and lost ({0})."),{tally}),
                                     T(L"悔しい気持ち",L"how annoyed you are"),
-                                    {T(L"うう、ババが残っちゃった…",L"Ugh, I'm stuck with the joker..."),T(L"負けた～！もう一回！",L"I lost! One more!")},
+                                    {Line(L"負けた")},
                                     Fmt(T(L"{0}と持ち主のババ抜きが終わり、{0}がババを持って負けた。",L"The Old Maid between {0} and the owner is over: {0} was left with the joker."),{name}),
                                     {T(L"持ち主の勝ちだ！",L"The owner wins!"),T(L"おつかれさま！",L"Well played!")});
                 else Happened(9,Fmt(T(L"ババ抜きが終わって、話し相手がババ（ジョーカー）を最後まで持っていて、あなたの勝ち（{0}）。",L"The game of Old Maid is over: they were left with the joker, and you won ({0})."),{tally}),
                               T(L"うれしい気持ち",L"how pleased you are"),
-                              {T(L"やったー、わたしの勝ち！",L"Yay, I win!"),T(L"ふふ、ババは返さないよ～。",L"Hehe, you keep the joker~")},
+                              {Line(L"勝った")},
                               Fmt(T(L"{0}と持ち主のババ抜きが終わり、{0}が勝った。",L"The Old Maid between {0} and the owner is over: {0} won."),{name}),
                               {Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name}),T(L"おつかれさま！",L"Well played!")});
             }
@@ -1424,28 +1473,25 @@ namespace MikuMikuDesktopPerch
                 {
                     state.saidFor=card;
                     state.hoverSaid=now;
-                    if(state.tell==Expression::Smile)
-                        SayWords(TakeLine(state.temptLines,{T(L"それ、いいと思うな～。",L"That one looks good~"),T(L"それにしちゃう？",L"Going with that one?"),
-                                                           T(L"ふふ、それおすすめ。",L"Hehe, I'd recommend it."),T(L"どうぞどうぞ～。",L"Go ahead, go ahead~")}),2);
-                    else
-                        SayWords(TakeLine(state.fretLines,{T(L"えっ、それ…？",L"Huh, that one...?"),T(L"ちょ、ちょっと待って。",L"W-wait a sec."),
-                                                          T(L"それはやめといたら？",L"Maybe not that one?"),T(L"う、うーん…",L"Um, well...")}),2);
+                    Say(state.tell==Expression::Smile?L"誘う":L"焦る");
                 }
                 else if(!HerJoker()&&state.seen.teased!=-t.Draws()-2)
                 {
                     state.seen.teased=-t.Draws()-2;
                     state.hoverSaid=now;
-                    SayWords(TakeLine(state.easyLines,{T(L"どれでもどうぞ～。",L"Take any you like~"),T(L"ふふ、余裕だよ。",L"Hehe, I'm not worried."),
-                                                       T(L"好きなの引いていいよ。",L"Pick whichever you want.")}),2);
+                    Say(L"余裕");
                 }
             }
-            // Your turn, she holding the joker: now and then a word to unsettle you.
-            if(YourDrawNow()&&HerJoker()&&state.seen.teased!=t.Draws()&&state.hover<0)
+            // Your turn starting: a word (the end coming near; her hand just shuffled; to unsettle
+            // you when she holds the joker; else to let you choose).
+            const bool ending=std::min(t.Hand(OldMaid::You).size(),t.Hand(OldMaid::Her).size())<=3;
+            if(YourDrawNow()&&state.seen.teased!=t.Draws()&&state.hover<0)
             {
                 state.seen.teased=t.Draws();
                 std::uniform_real_distribution<double> any(0,1);
-                if(any(state.sparkRandom)<0.5&&!state.words.waiting&&now-state.words.since>WordsHold)
-                    SayWords(TakeLine(state.dealLines,{T(L"どれにする？",L"Which one?"),T(L"ふふ、どれかな～？",L"Hehe, which will it be?"),T(L"いいカード、あるよ？",L"There's a good one in here...")}),2);
+                if(ending&&!state.seen.nearEnd){state.seen.nearEnd=true;Say(L"残りわずか");}
+                else if(any(state.sparkRandom)<0.75&&now-state.words.since>WordsHold/2)
+                    Say(t.Draws()>0&&any(state.sparkRandom)<0.3?L"混ぜる":HerJoker()?L"揺さぶる":L"あなたの番");
             }
             // Her draw coming: which card of yours, time for her hand to go out to it, now and
             // then a word.
@@ -1455,8 +1501,8 @@ namespace MikuMikuDesktopPerch
                 state.herPick=t.HerPick();
                 state.nextAt=std::max(state.nextAt,now+(state.renderer?HerPlayWait3D:HerPlayWait));
                 std::uniform_real_distribution<double> any(0,1);
-                if(any(state.sparkRandom)<0.85&&!state.words.waiting&&now-state.words.since>WordsHold/2)
-                    SayWords(TakeLine(state.drawLines,{T(L"これかな…？",L"This one...?"),T(L"えいっ。",L"Here goes."),T(L"ババじゃありませんように…",L"Please don't be the joker...")}),2);
+                if(ending&&!state.seen.nearEnd){state.seen.nearEnd=true;Say(L"残りわずか");}
+                else if(any(state.sparkRandom)<0.85&&now-state.words.since>WordsHold/2)Say(L"迷う");
             }
             if(now>=state.nextAt&&t.Now()==Phase::HerDraw&&state.plannedFor==t.Moves()&&seated)
             {
@@ -1826,29 +1872,45 @@ namespace MikuMikuDesktopPerch
     {
         state.prefetching=false;
         if(!state.window)return;
-        size_t at=0;
-        while(at<answer.size())
+        const int at=state.asking;
+        state.asking=-1;
+        if(at>=0&&at<static_cast<int>(state.scenes.size()))
         {
-            size_t end=answer.find(L'\n',at);
-            if(end==std::wstring::npos)end=answer.size();
-            std::wstring line=answer.substr(at,end-at);
-            at=end+1;
-            const size_t colon=line.find_first_of(L":：");
-            if(colon==std::wstring::npos)continue;
-            const std::wstring kind=line.substr(0,colon);
-            std::wstring said=line.substr(colon+1);
-            for(const wchar_t* cut:{L"「",L"」",L"\"",L"*"})
-                for(size_t p;(p=said.find(cut))!=std::wstring::npos;)said.erase(p,wcslen(cut));
-            const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
-            if(a==std::wstring::npos)continue;
-            said=said.substr(a,b-a+1);
-            if(said.size()>60)continue;
-            for(const auto& k:LineKinds())
-                if(kind.find(k.ja)!=std::wstring::npos||kind.find(k.en)!=std::wstring::npos){k.pool->push_back(said);break;}
+            auto& scene=state.scenes[static_cast<size_t>(at)];
+            std::vector<std::wstring> got;
+            for(size_t from=0;from<answer.size();)
+            {
+                size_t end=answer.find(L'\n',from);
+                if(end==std::wstring::npos)end=answer.size();
+                std::wstring line=answer.substr(from,end-from);
+                from=end+1;
+                // "1：line" (a model may put 番号 or a dot before it): what follows the number.
+                size_t i=0;
+                auto skip=[&](const wchar_t* chars){while(i<line.size()&&wcschr(chars,line[i]))++i;};
+                skip(L" \t\r　");
+                if(line.compare(i,2,L"番号")==0)i+=2;
+                skip(L"：: ");
+                const size_t digits=i;
+                skip(L"0123456789０１２３４５６７８９");
+                if(i==digits)continue;   // no number: not one of the lines
+                skip(L"：:.．)） \t　");
+                std::wstring said=line.substr(i);
+                for(const wchar_t* drop:{L"「",L"」",L"\"",L"*"})
+                    for(size_t p;(p=said.find(drop))!=std::wstring::npos;)said.erase(p,wcslen(drop));
+                const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
+                if(a==std::wstring::npos)continue;
+                said=said.substr(a,b-a+1);
+                if(said.size()>60||std::find(got.begin(),got.end(),said)!=got.end())continue;
+                got.push_back(said);
+            }
+            // Kept when most came back (a few short is fine; a stray answer is not).
+            if(got.size()*2>=scene.draft.size())
+            {
+                scene.styled=std::move(got);
+                SaveStyled();
+            }
+            state.words.told+=Fmt(L"  lines in her words: {0} ({1} of {2})\n",{scene.name,std::to_wstring(scene.styled.size()),std::to_wstring(scene.draft.size())});
         }
-        state.words.told+=Fmt(L"  lines ready: tempt {0}, fret {1}, easy {2}, choose {3}, taken {4}, matched {5}, draw {6}\n",
-                              {std::to_wstring(state.temptLines.size()),std::to_wstring(state.fretLines.size()),std::to_wstring(state.easyLines.size()),std::to_wstring(state.dealLines.size()),
-                               std::to_wstring(state.takenLines.size()),std::to_wstring(state.matchedLines.size()),std::to_wstring(state.drawLines.size())});
         Prefetch();
     }
 
@@ -2461,9 +2523,9 @@ namespace MikuMikuDesktopPerch
         state.poses={};
         state.flights.clear();
         state.gestureFor=-1;
-        state.dealLines.clear();
-        state.drawLines.clear();
-        for(auto* v:{&state.temptLines,&state.fretLines,&state.easyLines,&state.takenLines,&state.matchedLines})v->clear();
+        LoadScenes();
+        LoadStyled();
+        state.asking=-1;
         state.fanSet=state.faceSet=state.holdSet=false;
         state.warps.clear();
         state.handsBusyUntil=state.gestureFreeAt=0;

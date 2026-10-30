@@ -36,6 +36,9 @@ namespace MikuMikuDesktopPerch
         // Little lines of hers asked for ahead, all at once (for your choosing, for her drawing):
         // sends ask to the LLM, the lines coming back through OldMaidLines.
         std::function<bool(const std::wstring& ask)> prefetch;
+        // Her lines in her own words are kept in this file (empty: not kept), under this key
+        // (her name and persona: a change asks again).
+        std::wstring linesFile,styleKey;
     };
 
     // Opens it (or brings it forward when open). onEnd: once, when the window closes.
