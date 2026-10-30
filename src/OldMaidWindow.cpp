@@ -89,6 +89,8 @@ namespace MikuMikuDesktopPerch
             ULONGLONG hoverSince=0,hoverSaid=0;
             int saidFor=-1;            // the card her last word as you pointed was for
             std::array<float,3> fanAt{};   // where her hand holds her cards (world units)
+            float faceFront=0;             // the z her face comes out to (world units)
+            bool faceFrontSet=false;
             bool fanSet=false;
             double handsBusyUntil=0;   // her right hand reaching: it lets go of her cards
             double gestureFreeAt=0;    // a gesture of hers playing: both let go
@@ -937,7 +939,13 @@ namespace MikuMikuDesktopPerch
             p.x=foot[0]+dx;
             p.y=foot[1]+r*std::cos(a)*upY;
             p.z=foot[2]+dz;
-            if(hers&&state.table.Now()==Phase::YourDraw&&static_cast<int>(i)==state.hover)p.z-=0.03f*state.upper;
+            if(hers&&state.table.Now()==Phase::YourDraw&&static_cast<int>(i)==state.hover)
+            {
+                p.z-=0.03f*state.upper;
+                // Kept before her face (a big head's nose comes out past where the fan is).
+                const float top=At(p,0,0,p.l/2)[2];
+                if(state.faceFrontSet&&top>state.faceFront)p.z-=top-state.faceFront;
+            }
             // The card of yours her hand is over drawn up a little toward her.
             if(!hers&&state.table.Hand(OldMaid::You)[i]==state.reachCard&&state.clock<state.handsBusyUntil)
             {
@@ -2307,6 +2315,15 @@ namespace MikuMikuDesktopPerch
                 state.fanAt=want;
                 state.fanSet=true;
             }
+            // How near you her face comes (its nose and cheeks): before her eyes by 3/4 of
+            // the way from her head bone to them, the size of her head; it varies by model.
+            if(std::array<float,3> e{},h{};model.EyePosition(e)&&model.HeadPosition(h))
+            {
+                const XMVECTOR ew=XMVector3Transform(XMVectorSet(e[0],e[1],e[2],1),world);
+                const float size=std::sqrt((e[0]-h[0])*(e[0]-h[0])+(e[1]-h[1])*(e[1]-h[1])+(e[2]-h[2])*(e[2]-h[2]));
+                state.faceFront=XMVectorGetZ(ew)-0.75f*size;
+                state.faceFrontSet=true;
+            }
         }
         // Close before her, a little above her hands, looking at her and her cards.
         const auto& c=state.camera;
@@ -2539,7 +2556,7 @@ namespace MikuMikuDesktopPerch
         LoadScenes();
         LoadStyled();
         state.asking=-1;
-        state.fanSet=state.faceSet=state.holdSet=false;
+        state.fanSet=state.faceSet=state.holdSet=state.faceFrontSet=false;
         state.warps.clear();
         state.handsBusyUntil=state.gestureFreeAt=0;
         state.reachCard=-1;
