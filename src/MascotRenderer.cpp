@@ -439,7 +439,10 @@ namespace MikuMikuDesktopPerch
         for(int i=0;i<2;++i)
         {
             auto& s=samplers[i];
-            s.Filter=D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+            // The clamped one anisotropic: the geometry's texture (a goban's lines, cards) seen at
+            // a low angle stays sharp instead of blurring away.
+            s.Filter=i==1?D3D12_FILTER_ANISOTROPIC:D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+            s.MaxAnisotropy=i==1?8:1;
             s.AddressU=s.AddressV=s.AddressW=i==0?D3D12_TEXTURE_ADDRESS_MODE_WRAP:D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
             s.MaxLOD=D3D12_FLOAT32_MAX;
             s.ShaderRegister=i;
