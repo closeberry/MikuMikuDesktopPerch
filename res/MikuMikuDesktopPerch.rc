@@ -76,6 +76,8 @@ BRUSH MAHJONGFONT "mahjong\\brush.ttf"
 // The hanafuda cards' faces (see docs/Hanafuda.md): 192x320 each, eight across, card n (month
 // n/4, the highest first) at column n%8, row n/8.
 CARDS HANAFUDACARDS "hanafuda\\cards.jpg"
+// The blackjack mini game's card faces (docs/Blackjack.md).
+CARDS BLACKJACKCARDS "blackjack\\cards.jpg"
 
 // The mahjong table's tile sounds (src/MahjongSound.cpp): 44.1 kHz, mono, 16-bit WAV files.
 // A tile set down (three of them, taken by turns), softly (hers, appearing in her river) and

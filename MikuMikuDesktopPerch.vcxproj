@@ -106,6 +106,8 @@
     <ClCompile Include="src\OthelloWindow.cpp" />
     <ClCompile Include="src\Gomoku.cpp" />
     <ClCompile Include="src\GomokuWindow.cpp" />
+    <ClCompile Include="src\Blackjack.cpp" />
+    <ClCompile Include="src\BlackjackWindow.cpp" />
     <ClCompile Include="src\Mahjong.cpp" />
     <ClCompile Include="src\MahjongSound.cpp" />
     <ClCompile Include="src\MahjongTable.cpp" />
@@ -162,6 +164,8 @@
     <ClInclude Include="src\OthelloWindow.hpp" />
     <ClInclude Include="src\Gomoku.hpp" />
     <ClInclude Include="src\GomokuWindow.hpp" />
+    <ClInclude Include="src\Blackjack.hpp" />
+    <ClInclude Include="src\BlackjackWindow.hpp" />
     <ClInclude Include="src\Mahjong.hpp" />
     <ClInclude Include="src\MahjongSound.hpp" />
     <ClInclude Include="src\MahjongWindow.hpp" />
