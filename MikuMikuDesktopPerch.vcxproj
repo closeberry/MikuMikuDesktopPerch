@@ -100,6 +100,8 @@
     <ClCompile Include="src\AirHockeyWindow.cpp" />
     <ClCompile Include="src\Metroid.cpp" />
     <ClCompile Include="src\MetroidWindow.cpp" />
+    <ClCompile Include="src\Hanafuda.cpp" />
+    <ClCompile Include="src\HanafudaWindow.cpp" />
     <ClCompile Include="src\Mahjong.cpp" />
     <ClCompile Include="src\MahjongSound.cpp" />
     <ClCompile Include="src\MahjongTable.cpp" />
@@ -150,6 +152,8 @@
     <ClInclude Include="src\AirHockeyWindow.hpp" />
     <ClInclude Include="src\Metroid.hpp" />
     <ClInclude Include="src\MetroidWindow.hpp" />
+    <ClInclude Include="src\Hanafuda.hpp" />
+    <ClInclude Include="src\HanafudaWindow.hpp" />
     <ClInclude Include="src\Mahjong.hpp" />
     <ClInclude Include="src\MahjongSound.hpp" />
     <ClInclude Include="src\MahjongWindow.hpp" />

@@ -21,7 +21,7 @@ namespace MikuMikuDesktopPerch
         constexpr double Volume=0.45;   // all the made ones, against the voice and the desktop's sounds
         constexpr double FileVolume=0.8;   // and the tiles' (theirs peak at about -5 dB)
         using Pcm=std::vector<std::int16_t>;
-        constexpr int Sounds=static_cast<int>(MahjongSound::Deal)+1;
+        constexpr int Sounds=static_cast<int>(MahjongSound::CardDeal)+1;
 
         // seconds long, each sample from f(t).
         template<class F>
@@ -90,6 +90,24 @@ namespace MikuMikuDesktopPerch
             }
         };
 
+        // A card slapped onto the felt (at start seconds, as loud as loud): a crack of paper over
+        // a short, dull thump.
+        void Slap(Pcm& pcm,double start,double loud,std::uint32_t& n)
+        {
+            Swish crack,body;
+            const size_t from=static_cast<size_t>(start*Rate),length=static_cast<size_t>(0.12*Rate);
+            if(pcm.size()<from+length)pcm.resize(from+length);
+            for(size_t i=0;i<length;++i)
+            {
+                const double t=static_cast<double>(i)/Rate;
+                const double in=std::min(1.0,t/0.0015);
+                const double v=in*(0.9*std::exp(-t/0.012)*crack(Noise(n),3200,0.9)+
+                                   0.8*std::exp(-t/0.025)*body(Noise(n),420,1.2)+
+                                   0.5*std::exp(-t/0.03)*std::sin(2*Pi*130*t));
+                pcm[from+i]=static_cast<std::int16_t>(std::clamp(pcm[from+i]/32767.0+v*loud*Volume,-1.0,1.0)*32767);
+            }
+        }
+
         const Pcm& Sound(MahjongSound which)
         {
             // Kept to the very end (never freed): an output may still be reading one as the
@@ -114,6 +132,22 @@ namespace MikuMikuDesktopPerch
             case MahjongSound::Pon:pcm=File(L"PON");break;
             case MahjongSound::Kan:pcm=File(L"KAN");break;
             case MahjongSound::Deal:pcm=File(L"DEAL");break;
+            case MahjongSound::CardPlace:Slap(pcm,0,1.0,n);break;
+            case MahjongSound::CardTake:Slap(pcm,0,0.55,n);Slap(pcm,0.07,0.45,n);break;
+            case MahjongSound::CardFlip:
+            {
+                // A flick: a quick rising hiss of the card turning, then it lands.
+                Swish swish;
+                pcm=Make(0.09,[&](double t){
+                    const double u=t/0.09;
+                    return 0.5*std::sin(Pi*u)*swish(Noise(n),1500+3500*u,1.0);});
+                Slap(pcm,0.08,0.8,n);
+                break;
+            }
+            case MahjongSound::CardDeal:
+                // Twenty-four cards, one after another, a little unevenly.
+                for(int i=0;i<24;++i)Slap(pcm,0.02+i*0.062+0.008*std::sin(i*2.3),0.35+0.1*std::sin(i*1.7),n);
+                break;
             case MahjongSound::Vanish:
             {
                 // Whisked away: a soft breath of air swelling and dying away, falling from middle
@@ -194,7 +228,7 @@ namespace MikuMikuDesktopPerch
 
     bool SaveMahjongSounds(const std::wstring& folder)
     {
-        static const wchar_t* names[Sounds]={L"place",L"place-hard",L"draw",L"vanish",L"appear",L"pon",L"kan",L"riichi",L"deal"};
+        static const wchar_t* names[Sounds]={L"place",L"place-hard",L"draw",L"vanish",L"appear",L"pon",L"kan",L"riichi",L"deal",L"card-place",L"card-take",L"card-flip",L"card-deal"};
         for(int i=0;i<Sounds;++i)
         {
             const Pcm& pcm=Sound(static_cast<MahjongSound>(i));
