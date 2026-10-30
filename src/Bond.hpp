@@ -10,7 +10,7 @@ namespace MikuMikuDesktopPerch
     // day. The stage (how she talks) tops out after about a month; the points never stop.
     // Kept per model in characters\<name>.bond.dat, scrambled and signed so that it is not
     // edited by hand (reading the source still tells how).
-    enum class BondAction {Present,Talk,Click,Focus,Todo,Dungeon,Mahjong,Hanafuda,Othello,Gomoku,Blackjack};
+    enum class BondAction {Present,Talk,Click,Focus,Todo,Dungeon,Mahjong,Hanafuda,Othello,Gomoku,Blackjack,OldMaid};
 
     class Bond
     {

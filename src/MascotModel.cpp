@@ -1264,7 +1264,7 @@ namespace MikuMikuDesktopPerch
                 using E=Expression;
                 struct Part {E e;std::initializer_list<const wchar_t*> names;float weight;};
                 const Part parts[]={
-                    {E::Smile,{L"笑い"},0.7f},{E::Smile,{L"にこり",L"にっこり"},0.5f},
+                    {E::Smile,{L"笑い"},1.0f},{E::Smile,{L"にこり",L"にっこり"},0.5f},
                     {E::Surprise,{L"びっくり",L"驚き"},0.7f},{E::Surprise,{L"上"},0.6f},
                     {E::Troubled,{L"困る",L"困り"},0.8f},
                     {E::Angry,{L"怒り"},0.7f},{E::Angry,{L"ジト目",L"じと目"},0.3f},
@@ -2607,11 +2607,19 @@ namespace MikuMikuDesktopPerch
         m.UpdateMaterials();
     }
 
-    void MascotModel::Hold(int side,const std::array<float,3>& wrist,bool on)
+    void MascotModel::HoldPose(int side,const std::array<std::array<float,4>,5>* keys)
+    {
+        if(!keys){impl->motion.HoldPose(side,nullptr);return;}
+        std::array<DirectX::XMFLOAT4,5> q{};
+        for(size_t k=0;k<5;++k)q[k]={(*keys)[k][0],(*keys)[k][1],(*keys)[k][2],(*keys)[k][3]};
+        impl->motion.HoldPose(side,&q);
+    }
+
+    void MascotModel::Hold(int side,const std::array<float,3>& wrist,bool on,int style)
     {
         // A clip playing over her would carry the holding hand off what it holds.
         if(on&&impl->shotActive){impl->shotFrozen=-1;impl->shotEnding=true;}
-        impl->motion.Hold(side,{wrist[0],wrist[1],wrist[2]},on);
+        impl->motion.Hold(side,{wrist[0],wrist[1],wrist[2]},on,style);
     }
 
     void MascotModel::SetSolids(const std::vector<Solid>& solids)

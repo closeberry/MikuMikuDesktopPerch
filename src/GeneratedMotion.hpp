@@ -135,7 +135,12 @@ namespace MikuMikuDesktopPerch
         // kept at wrist (model space) every frame, palm down and the fingers round a grip, the
         // body bent forward (18 degrees, up to 35 toward a point far off), over whatever else the arm does. It
         // eases in (on) and out (off) in 0.4 s. Standing or sitting.
-        void Hold(int side,const DirectX::XMFLOAT3& wrist,bool on);
+        // style: 0 leaning over what it holds (palm down), 1 sitting up (palm down), 2 sitting
+        // up and holding something up before her (cards: the wrist nearly straight).
+        void Hold(int side,const DirectX::XMFLOAT3& wrist,bool on,int style=0);
+        // The arm's own pose for style 2 (腕, 腕捩, ひじ, 手捩, 手首 as keyed in MMD) in place of
+        // one worked out to a wrist point; none: worked out.
+        void HoldPose(int side,const std::array<DirectX::XMFLOAT4,5>* keys);
         bool Holding(int side) const {return side>=0&&side<2&&holds[side].on;}
         // Stops in front of solid things (MascotModel::SetSolids), from the check after each
         // solve. StopArm: the hand or arm on side is depth in (counting a margin; 0: near, held
@@ -372,6 +377,10 @@ namespace MikuMikuDesktopPerch
             DirectX::XMFLOAT3 wrist{};
             float weight=0;
             float twist=0;             // the upper body turned toward the hand (radians, eased)
+            bool upright=false;        // the hand only: no lean or turn, the other arm left as it is
+            bool raised=false;         // holding something up (style 2)
+            bool posed=false;          // with these keys (HoldPose)
+            std::array<DirectX::XMFLOAT4,5> pose{};
             std::vector<Key> smooth;   // the held pose as last given, eased toward each new one (no trembling)
         };
         std::array<HoldArm,2> holds{};

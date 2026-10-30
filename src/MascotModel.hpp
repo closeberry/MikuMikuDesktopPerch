@@ -251,7 +251,12 @@ namespace MikuMikuDesktopPerch
         // whenever they move against her; empty: none.
         // Hold something on a table (the air hockey mallet): the wrist on side (0: the left) kept
         // at wrist (model space) every update, palm down round a grip; see GeneratedMotion::Hold.
-        void Hold(int side,const std::array<float,3>& wrist,bool on);
+        // style: 0 leaning over it, palm down (the mallet); 1 sitting up, palm down; 2 sitting up,
+        // holding something up before her (cards).
+        void Hold(int side,const std::array<float,3>& wrist,bool on,int style=0);
+        // The arm's own pose for style 2: 腕, 腕捩, ひじ, 手捩, 手首 (x, y, z, w as keyed in MMD);
+        // null: worked out to the wrist point.
+        void HoldPose(int side,const std::array<std::array<float,4>,5>* keys);
         struct Solid
         {
             std::array<float,3> middle{},half{};
