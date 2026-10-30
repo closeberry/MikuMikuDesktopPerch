@@ -2,6 +2,32 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.5
+
+### New
+
+- **A Mini games menu**: with more games, the right-click menu's games are now under "Mini games" (the dungeon, mahjong, hanafuda, Othello, gomoku, blackjack, Old Maid, air hockey)
+- **Gomoku**: "Mini games" → "Play gomoku" to play gomoku against that character (15 by 15, the first to make five in a row wins)
+  - Black, who moves first, may not make a double three, a double four or six or more in a row (white may); such a point is refused
+  - Click where the lines cross (or the arrow keys and Enter). Who has black is drawn by lot for the first game, then goes back and forth
+  - She sits at the same table as for mahjong, talks when you are one stone short of five and at the game's end; a game played to its end raises bond by 3
+  - The design (in Japanese): `docs/Gomoku.md`
+- **Blackjack**: "Mini games" → "Play blackjack" and that character deals for you (one 52-card deck, ten hands, 200 chips to start)
+  - Bet 10, 20, 50 or 100 each hand and play it with Hit, Stand, Double and Split toward 21 (a blackjack pays 3 to 2; the dealer draws to 17)
+  - Cards are dealt from a shoe and chips stacked on the table; she talks over blackjacks, busts and the end; ten hands played raise bond by 3
+  - The design (in Japanese): `docs/Blackjack.md`
+- **Old Maid**: "Mini games" → "Play Old Maid" to play Old Maid (babanuki) with that character (52 cards and a joker), a game more for the talk with her than the score
+  - No table: she holds her cards up in both hands close before you, and yours float at the lower right. Pointing at a card of hers draws it up; click it (or the arrows and Enter) to take it
+  - While she holds the joker, her face and words change with the card you point at (she may smile on purpose to fool you); she looks at the card you point at and says something at every draw
+  - When she draws, she wavers over your cards, looking at the card and at you by turns, before she takes one
+  - Her lines come from about 200 set lines, put in her own way of talking by the local LLM when there is one (kept for each character)
+  - A game played to its end raises bond by 3. The design (in Japanese): `docs/OldMaid.md`
+- **The speech bubbles' font and text size**: "Speech bubbles" on the "Talking and voice" tab of the settings sets the bubbles' font (any installed one) and text size, on the desktop and in the mini games
+
+### Changed
+
+- Her smile now closes her eyes fully (it could look as if her eyes were half open)
+
 ## 1.5.4
 
 ### New
