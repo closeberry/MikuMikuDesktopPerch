@@ -23,6 +23,11 @@ namespace MikuMikuDesktopPerch
         // The user's own window motions (resting on a window's top edge, or moving along it; see
         // docs/WindowMotions.md), stored like IdleMotion as the WindowMotion line.
         std::vector<std::wstring> windowMotionPaths;
+        // A choice of idle gestures and built-in motions of its own (keys left out, as
+        // Settings::disabledGestures); without one it follows that shared choice. Stored as the
+        // OwnGestures and OwnDisabledGestures lines.
+        bool ownGestures=false;
+        std::vector<std::wstring> disabledGestures;
         int x=-1;                   // -1: place at the bottom right of the work area
         int voiceSpeaker=3;
         std::wstring voiceName;     // the voice's name as the engine gave it (for the settings window)
@@ -87,7 +92,9 @@ namespace MikuMikuDesktopPerch
         int apiPort=50080;
         // Idle gestures and built-in idle motions left out of the standing pose's picks, by
         // key (hip, wave, ..., clip:<name>); everything else is used, new ones included.
+        // A character with a choice of its own (CharacterSettings::ownGestures) uses that instead.
         std::vector<std::wstring> disabledGestures;
+        const std::vector<std::wstring>& DisabledGesturesOf(const CharacterSettings& c) const {return c.ownGestures?c.disabledGestures:disabledGestures;}
         // Like a secretary: today's reminders and to-dos told in the morning; a break suggested
         // after so many minutes at the computer without one (0: never); focus mode's work and
         // break lengths (minutes; every fourth break is three times as long).

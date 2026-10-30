@@ -85,6 +85,8 @@ namespace MikuMikuDesktopPerch
             c.windowMotionPaths=ReadList(path,L"WindowMotion",section);
             c.walkMotionPath=ReadString(path,L"WalkMotion",c.walkMotionPath,section);
             c.runMotionPath=ReadString(path,L"RunMotion",c.runMotionPath,section);
+            c.ownGestures=ReadInt(path,L"OwnGestures",c.ownGestures?1:0,section)!=0;
+            c.disabledGestures=c.ownGestures?ReadList(path,L"OwnDisabledGestures",section):std::vector<std::wstring>{};
             c.x=ReadInt(path,L"X",c.x,section);
             c.voiceSpeaker=ReadInt(path,L"VoiceSpeaker",c.voiceSpeaker,section);
             c.voiceName=ReadString(path,L"VoiceName",c.voiceName,section);
@@ -99,6 +101,8 @@ namespace MikuMikuDesktopPerch
             WriteList(path,L"WindowMotion",c.windowMotionPaths,section);
             WriteString(path,L"WalkMotion",c.walkMotionPath,section);
             WriteString(path,L"RunMotion",c.runMotionPath,section);
+            WriteString(path,L"OwnGestures",c.ownGestures?L"1":L"0",section);
+            WriteList(path,L"OwnDisabledGestures",c.ownGestures?c.disabledGestures:std::vector<std::wstring>{},section);
             WriteString(path,L"X",std::to_wstring(c.x),section);
             WriteString(path,L"VoiceSpeaker",std::to_wstring(c.voiceSpeaker),section);
             WriteString(path,L"VoiceName",c.voiceName,section);

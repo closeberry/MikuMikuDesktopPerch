@@ -19,7 +19,7 @@ namespace MikuMikuDesktopPerch
         // since notes keep arriving from conversations while the settings are open.
         CharacterMemory* memory=nullptr;
         // The gestures and built-in idle motions to choose from (key, label); the choice is
-        // settings.disabledGestures.
+        // settings.disabledGestures, or mascot.disabledGestures when mascot.ownGestures.
         std::vector<std::pair<std::wstring,std::wstring>> gestures;
         // The GPUs to choose from (id, name) and the one drawing now; the choice is settings.gpu.
         std::vector<std::pair<std::wstring,std::wstring>> gpus;

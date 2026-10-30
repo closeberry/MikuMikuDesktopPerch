@@ -33,7 +33,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdTabs
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdGestureOwn,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdTabs
         };
         // The longest persona (characters, a line break counting as one).
         constexpr size_t MaxPersona=4000;
@@ -49,6 +49,10 @@ namespace MikuMikuDesktopPerch
             HWND persona=nullptr;   // the persona dialog, while open
             HWND memory=nullptr;    // the memory dialog, while open
             HWND gestures=nullptr;  // the gesture choice, while open
+            // While it is open: the shared choice and the character's own (keys left out), and
+            // which one the list shows.
+            std::vector<std::wstring> sharedGestures,ownGestures;
+            bool gesturesOwn=false;
             HWND tabs=nullptr;
             // The controls on each tab, and the tab Add puts controls on (-1: on every tab).
             std::vector<std::vector<HWND>> pages;
@@ -603,8 +607,10 @@ namespace MikuMikuDesktopPerch
         }
 
         // The gesture choice: a checked list of the gestures and built-in idle motions picked
-        // while standing. OK keeps it in state.choice.settings.disabledGestures (saved with the
-        // settings); keys not in the list (a motion no longer built in) stay as they were.
+        // while standing, either the shared one (state.choice.settings.disabledGestures) or,
+        // ticking "only for this character", the character's own (state.choice.mascot's). OK
+        // keeps both (saved with the settings); keys not in the list (a motion no longer built
+        // in) stay as they were.
         void CloseGestures()
         {
             if(!state.gestures)return;
@@ -621,6 +627,24 @@ namespace MikuMikuDesktopPerch
             for(int i=0;i<count;++i)ListView_SetCheckState(list,i,on);
         }
 
+        // The list's checks into, or from, the choice it shows.
+        void ReadGestureChecks(HWND hwnd)
+        {
+            HWND list=GetDlgItem(hwnd,IdGestureList);
+            auto& disabled=state.gesturesOwn?state.ownGestures:state.sharedGestures;
+            std::erase_if(disabled,[](const std::wstring& key){
+                return std::any_of(state.choice.gestures.begin(),state.choice.gestures.end(),[&](const auto& g){return g.first==key;});});
+            for(size_t i=0;i<state.choice.gestures.size();++i)
+                if(!ListView_GetCheckState(list,static_cast<int>(i)))disabled.push_back(state.choice.gestures[i].first);
+        }
+        void ShowGestureChecks(HWND hwnd)
+        {
+            HWND list=GetDlgItem(hwnd,IdGestureList);
+            const auto& disabled=state.gesturesOwn?state.ownGestures:state.sharedGestures;
+            for(size_t i=0;i<state.choice.gestures.size();++i)
+                ListView_SetCheckState(list,static_cast<int>(i),std::find(disabled.begin(),disabled.end(),state.choice.gestures[i].first)==disabled.end());
+        }
+
         LRESULT CALLBACK GesturesProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
         {
             switch(message)
@@ -630,15 +654,20 @@ namespace MikuMikuDesktopPerch
                 {
                 case IDOK:
                 {
-                    HWND list=GetDlgItem(hwnd,IdGestureList);
-                    auto& disabled=state.choice.settings.disabledGestures;
-                    std::erase_if(disabled,[](const std::wstring& key){
-                        return std::any_of(state.choice.gestures.begin(),state.choice.gestures.end(),[&](const auto& g){return g.first==key;});});
-                    for(size_t i=0;i<state.choice.gestures.size();++i)
-                        if(!ListView_GetCheckState(list,static_cast<int>(i)))disabled.push_back(state.choice.gestures[i].first);
+                    ReadGestureChecks(hwnd);
+                    state.choice.settings.disabledGestures=state.sharedGestures;
+                    state.choice.mascot.ownGestures=state.gesturesOwn;
+                    state.choice.mascot.disabledGestures=state.gesturesOwn?state.ownGestures:std::vector<std::wstring>{};
                     CloseGestures();
                     return 0;
                 }
+                case IdGestureOwn:
+                    // Switches the list between the two choices; the character's own starts as
+                    // a copy of the shared one.
+                    ReadGestureChecks(hwnd);
+                    state.gesturesOwn=IsDlgButtonChecked(hwnd,IdGestureOwn)==BST_CHECKED;
+                    ShowGestureChecks(hwnd);
+                    return 0;
                 case IDCANCEL:
                     CloseGestures();
                     return 0;
@@ -675,7 +704,7 @@ namespace MikuMikuDesktopPerch
             }
             const DWORD style=WS_CAPTION|WS_SYSMENU;
             const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-            RECT frame{0,0,Px(360),Px(520)};
+            RECT frame{0,0,Px(360),Px(548)};
             AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
             RECT owner{};
             GetWindowRect(state.window,&owner);
@@ -685,24 +714,30 @@ namespace MikuMikuDesktopPerch
             const HWND p=state.gestures;
             AddTo(p,L"STATIC",T(L"立っているときに、チェックしたものの中からランダムに選びます。",L"While standing, she picks at random among the checked ones."),
                   SS_LEFT,16,12,328,36);
-            HWND list=AddTo(p,WC_LISTVIEWW,L"",LVS_REPORT|LVS_NOCOLUMNHEADER|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_BORDER|WS_TABSTOP,16,50,328,404,IdGestureList);
+            // Off: the choice every character without one of its own follows.
+            const std::wstring name=state.choice.character.name.empty()?std::wstring(T(L"このキャラクター",L"this character")):state.choice.character.name;
+            AddTo(p,L"BUTTON",Fmt(T(L"{0} だけの選び方にする",L"A choice for {0} only"),{name}).c_str(),BS_AUTOCHECKBOX|WS_TABSTOP,16,48,328,24,IdGestureOwn);
+            state.sharedGestures=state.choice.settings.disabledGestures;
+            state.ownGestures=state.choice.settings.DisabledGesturesOf(state.choice.mascot);
+            state.gesturesOwn=state.choice.mascot.ownGestures;
+            CheckDlgButton(p,IdGestureOwn,state.gesturesOwn?BST_CHECKED:BST_UNCHECKED);
+            HWND list=AddTo(p,WC_LISTVIEWW,L"",LVS_REPORT|LVS_NOCOLUMNHEADER|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_BORDER|WS_TABSTOP,16,78,328,404,IdGestureList);
             ListView_SetExtendedListViewStyle(list,LVS_EX_CHECKBOXES|LVS_EX_FULLROWSELECT);
             LVCOLUMNW column{LVCF_WIDTH};
             column.cx=Px(300);
             ListView_InsertColumn(list,0,&column);
-            const auto& disabled=state.choice.settings.disabledGestures;
             for(size_t i=0;i<state.choice.gestures.size();++i)
             {
                 LVITEMW item{LVIF_TEXT};
                 item.iItem=static_cast<int>(i);
                 item.pszText=const_cast<wchar_t*>(state.choice.gestures[i].second.c_str());
                 ListView_InsertItem(list,&item);
-                ListView_SetCheckState(list,static_cast<int>(i),std::find(disabled.begin(),disabled.end(),state.choice.gestures[i].first)==disabled.end());
             }
-            AddTo(p,L"BUTTON",T(L"すべて選ぶ",L"All"),BS_PUSHBUTTON|WS_TABSTOP,16,470,80,28,IdGestureAll);
-            AddTo(p,L"BUTTON",T(L"すべて外す",L"None"),BS_PUSHBUTTON|WS_TABSTOP,102,470,80,28,IdGestureNone);
-            AddTo(p,L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,198,470,70,28,IDOK);
-            AddTo(p,L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,274,470,70,28,IDCANCEL);
+            ShowGestureChecks(p);
+            AddTo(p,L"BUTTON",T(L"すべて選ぶ",L"All"),BS_PUSHBUTTON|WS_TABSTOP,16,498,80,28,IdGestureAll);
+            AddTo(p,L"BUTTON",T(L"すべて外す",L"None"),BS_PUSHBUTTON|WS_TABSTOP,102,498,80,28,IdGestureNone);
+            AddTo(p,L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,198,498,70,28,IDOK);
+            AddTo(p,L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,274,498,70,28,IDCANCEL);
             EnableWindow(state.window,FALSE);
             ShowWindow(p,SW_SHOWNORMAL);
             SetForegroundWindow(p);

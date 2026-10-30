@@ -464,7 +464,7 @@ namespace
     {
         m.model.SetProcedural(app.settings.blink,app.settings.breath,app.settings.lookAtMouse);
         m.model.SetPhysicsFilter(app.settings.physicsFilter);
-        m.model.SetDisabledGestures(app.settings.disabledGestures);
+        m.model.SetDisabledGestures(app.settings.DisabledGesturesOf(Own(m)));
         m.renderer.SetSelfShadow(app.settings.selfShadow);
         m.renderer.SetLight(static_cast<float>(app.settings.lightAzimuth),static_cast<float>(app.settings.lightElevation));
     }
@@ -1774,11 +1774,10 @@ namespace
         }
         if(s.updateCheck&&!current.updateCheck)app.nextUpdateCheck=app.clock+5;
         current.updateCheck=s.updateCheck;
-        if(s.disabledGestures!=current.disabledGestures)
-        {
-            current.disabledGestures=s.disabledGestures;
-            for(const auto& each:app.mascots)each->model.SetDisabledGestures(current.disabledGestures);
-        }
+        // The gesture choice: the shared one, and this character's own (taken up below).
+        current.disabledGestures=s.disabledGestures;
+        Own(m).ownGestures=choice.mascot.ownGestures;
+        Own(m).disabledGestures=choice.mascot.disabledGestures;
         current.morningSummary=s.morningSummary;
         current.shutterSound=s.shutterSound;
         current.dungeonLight=s.dungeonLight;   // from the next time the dungeon opens
@@ -5580,6 +5579,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     bool snapshotClearance=false;
     std::wstring snapshotGaitTrace;   // --gait-trace <file>: the first character's GaitTrace each frame
     std::wstring snapshotOnlyGestures;   // --only-gestures a,b,...: leave every other gesture out
+    // --character-gestures <n> a,b,...: character n (1 = the first) has a choice of its own, only those
+    std::vector<std::pair<int,std::wstring>> snapshotCharacterGestures;
     std::vector<std::array<float,3>> clearance;
     std::vector<std::array<std::wstring,2>> clearanceBones;
     bool snapshotDoze=false;         // --doze: doze off from the start
@@ -5674,6 +5675,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--only-gestures"&&i+1<argc)
             {
                 snapshotOnlyGestures=argv[++i];
+            }
+            else if(arg==L"--character-gestures"&&i+2<argc)
+            {
+                const int n=_wtoi(argv[++i]);
+                snapshotCharacterGestures.push_back({n,argv[++i]});
             }
             else if(arg==L"--clearance")
             {
@@ -6137,7 +6143,24 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             auto c=app.settings.characters[0];
             c.modelPath=watcher;
             c.x=GetSystemMetrics(SM_CXSCREEN)/2-200;
+            c.ownGestures=false;
             app.settings.characters.push_back(c);
+        }
+        if(!snapshotCharacterGestures.empty())
+        {
+            for(const auto& [n,list]:snapshotCharacterGestures)
+            {
+                if(n<1||n>static_cast<int>(app.settings.characters.size()))continue;
+                auto& c=app.settings.characters[static_cast<size_t>(n-1)];
+                c.ownGestures=true;
+                c.disabledGestures.clear();
+                const std::wstring only=L","+list+L",";
+                for(const auto& [key,label]:MascotModel::IdleGestureChoices())
+                    if(only.find(L","+key+L",")==std::wstring::npos)c.disabledGestures.push_back(key);
+            }
+            // Through the file and back, as the next start reads it.
+            app.settings.Save(app.settingsPath);
+            app.settings.Load(app.settingsPath);
         }
         app.settings.autoBehavior=false;app.settings.windowMode=false;app.settings.chatInitiative=false;
     }
@@ -6663,7 +6686,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 fwprintf(info,L"%s",m.model.DescribeRig().c_str());
                 fwprintf(info,L"idle clips=%d played=%d\n",m.model.IdleClipCount(),m.model.IdleClipPlays());
                 for(const auto& c:app.mascots)
-                    fwprintf(info,L"character %zu x=%.0f watching=%d\n",c->slot,CenterX(*c),c->watchingMahjong?1:0);
+                    fwprintf(info,L"character %zu x=%.0f watching=%d gestures=%s off=%zu clips played=%d\n",c->slot,CenterX(*c),c->watchingMahjong?1:0,
+                             Own(*c).ownGestures?L"own":L"shared",app.settings.DisabledGesturesOf(Own(*c)).size(),c->model.IdleClipPlays());
                 if(snapshotMahjong)fwprintf(info,L"%s",DescribeMahjongFeet().c_str());
                 if(!CommentsSaid().empty())fwprintf(info,L"watchers said:\n%s",CommentsSaid().c_str());
                 fwprintf(info,L"%s",m.model.DescribePenetration().c_str());

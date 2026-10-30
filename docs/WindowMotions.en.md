@@ -7,7 +7,7 @@ When a character is on a window's top edge (with "Ride on the active window" on)
 - **Built in**: motions people give are put into the exe for everyone (see "Giving motions" below)
 - **Your own**: "Motion" → "Open window motions..." in the right-click menu picks VMDs on your computer (one or more; kept per character)
 
-Each time she gets on a window, one of those she can use (built-in ones, your own, and the app's "sit" and "hang") is picked and played over and over. If there are moving ones, now and then (every 20–60 seconds) she moves along the window with one, then goes back to resting as before. "Gestures..." in the settings chooses which to use (the built-in ones, and the app's "sit" and "hang").
+Each time she gets on a window, one of those she can use (built-in ones, your own, and the app's "sit" and "hang") is picked and played over and over. If there are moving ones, now and then (every 20–60 seconds) she moves along the window with one, then goes back to resting as before. "Gestures..." in the settings chooses which to use (the built-in ones, and the app's "sit" and "hang"; each character can also have a choice of its own).
 
 ## How to make them
 
