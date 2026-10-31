@@ -2,6 +2,25 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.6
+
+### New
+
+- **Your own lines for the mini games (a lines file)**: put a JSON file named after the model's PMX in the `lines` folder of the app's folder (`Miku.pmx`: `lines\Miku.json`) to set what that character says in each scene of the mini games
+  - A scene you fill in is said as written (no rewording by the LLM); the others keep the app's own lines
+  - Give a line a sound file (WAV, MP3 and so on) and it is played in place of VOICEVOX or the like; how often a scene is spoken can be set too
+  - The file may be in UTF-8, UTF-16 or Shift-JIS; a mistake in it is reported with where it is
+  - The template `lines/Example.json` lists every scene. The details (in Japanese): `docs/GameLines.md`
+  - **WARNING: using someone else's voice (a voice actor, a real person, a game's or anime's character) without the rights holder's permission may infringe copyright or break terms of use. Check the rights and terms of any voice yourself. The author of this app bears no responsibility for, and will not deal with, any problem arising from lines or voice files.**
+- **Old Maid's last card**: when you hold only one card, she takes it at once, a little sad, owning the loss; when she holds her last card and it is your draw, she has won and beams and gloats
+- **Gomoku and blackjack**: she says something fitting once the win or the loss is certain. Hanafuda and gomoku gain a scene for a draw
+
+### Changed
+
+- **The mini games' lines**: every mini game now picks her lines from ones prepared for each scene. With a local LLM they are put in the character's own way of talking once and kept, so there is no waiting on the LLM while you play. With speaking aloud on, they are voiced by VOICEVOX or the like as before
+- **Her gaze**: while she looks at one spot, her eyes shift to points nearby and now and then glance aside, and her head sways a little (in the mini games she could stare at you without moving). A large shift of the eyes or a turn of the head often brings a blink
+- **Old Maid**: when she takes your card she looks at the card rather than up at you. On models whose face stands far before their hands, the card you point at no longer goes into her face
+
 ## 1.5.5
 
 ### New
