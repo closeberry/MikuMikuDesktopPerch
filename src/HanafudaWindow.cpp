@@ -7,6 +7,7 @@
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
 #include "BubbleText.hpp"
+#include "GameLines.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -87,9 +88,13 @@ namespace MikuMikuDesktopPerch
                 std::wstring revealing;
                 double shown=0;
                 ULONGLONG shownAt=0;
+                bool voiced=false;   // the words are said by a voice file of their own
                 std::wstring told;
             } words;
-            std::vector<std::wstring> takeLines,thinkLines;
+            // Her lines by scene (res/hanafuda/lines.txt, said again her way by the LLM, and the
+            // user's own), and the voice of a line that has one.
+            GameLines lines;
+            GameVoice voice;
             bool prefetching=false;
             POINT headScreen{-1,-1},besideHead{-1,-1};
             std::wstring afterword,afterwordLine;
@@ -1133,7 +1138,12 @@ namespace MikuMikuDesktopPerch
         {
             if(!state.window)return;
             KillTimer(state.window,TimerId);
-            if(state.her.model)state.her.model->SetSolids({});
+            state.voice.Stop();
+            if(state.her.model)
+            {
+                state.her.model->SetSolids({});
+                state.her.model->SetMouth({},false);
+            }
             if(state.afterword.empty()&&state.seen.started&&state.table.Now()!=Phase::GameOver)
             {
                 const auto& t=state.table;
@@ -1235,22 +1245,32 @@ namespace MikuMikuDesktopPerch
         // ---- Her words and the watchers' (as at mahjong) ----
 
         constexpr ULONGLONG WordsHold=3500;
-        constexpr ULONGLONG AskEvery=12000;
         constexpr ULONGLONG AnswerWait=9000;
 
-        void SayWords(const std::wstring& line,int weight)
+        // Her words: shown in the bubble (none for a voice alone) and, with a voice file of
+        // their own, played (the words revealed over it).
+        void SayLine(const GameLine& line,int weight)
         {
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
-            w.text=line;
+            state.voice.Stop();
+            std::wstring error;
+            w.voiced=!line.voice.empty()&&state.voice.Play(line,error);
+            // In her voice (the voice engine) when she speaks aloud and the line has no sound of its own.
+            if(state.her.speak)state.her.speak(w.voiced?std::wstring():line.text);
+            if(!error.empty())w.told+=L"  voice: "+error+L"\n";
+            w.text=line.text;
             w.waiting=false;
             w.weight=weight;
             w.since=now;
-            w.told+=L"  she says: "+line+L"\n";
-            w.until=now+static_cast<ULONGLONG>(CharSeconds()*1000*line.size())+2600+90*static_cast<ULONGLONG>(line.size());
-            if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
+            w.told+=L"  she says: "+line.text+(line.voice.empty()?L"":L" ["+line.voice+L"]")+L"\n";
+            const ULONGLONG reading=static_cast<ULONGLONG>(CharSeconds()*1000*line.text.size())+2600+90*static_cast<ULONGLONG>(line.text.size());
+            w.until=now+(w.voiced?std::max(reading,static_cast<ULONGLONG>(state.voice.Seconds()*1000)+1800):reading);
+            if(!line.text.empty()){w.recent.push_back(line.text);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
             Redraw();
         }
+
+        void SayWords(const std::wstring& line,int weight){SayLine({line,{}},weight);}
 
         const std::wstring& Pick(const std::vector<std::wstring>& lines)
         {
@@ -1258,11 +1278,24 @@ namespace MikuMikuDesktopPerch
             return lines[any(state.sparkRandom)];
         }
 
+        // A line of the scene, said now (no chance rolled here).
+        void SayScene(const wchar_t* name,int weight)
+        {
+            GameLine line;
+            if(state.lines.Pick(name,state.words.recent,state.sparkRandom,line))SayLine(line,weight);
+        }
+
+        // A line of the scene, said now and then (chance: how often, unless the user's lines
+        // file says otherwise).
+        void Say(const wchar_t* name,int weight=2,double chance=1)
+        {
+            if(state.lines.Roll(name,chance,state.sparkRandom))SayScene(name,weight);
+        }
+
         // Something happened: she speaks of it, and those watching hear of it. facts: for her (she
-        // is "you"); feel: how she is to feel about it; seen: the same for one watching; lines:
-        // hers without the LLM (none: she says nothing; one of them is given the LLM as the
-        // feeling to put in her own words); theirs: the watchers'.
-        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const std::vector<std::wstring>& lines,
+        // is "you"); feel: how she is to feel about it; seen: the same for one watching; scene:
+        // the scene of her lines (null: she says nothing); theirs: the watchers'.
+        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const wchar_t* scene,
                       const std::wstring& seen,const std::vector<std::wstring>& theirs)
         {
             auto& t=state.table;
@@ -1271,71 +1304,19 @@ namespace MikuMikuDesktopPerch
             if(state.her.onEvent&&!theirs.empty())
                 state.her.onEvent(seen+Fmt(T(L"（{0}月目、{1}が{2}文、持ち主が{3}文）",L" (month {0}; {1} has {2} points, the owner {3})"),
                                            {std::to_wstring(t.Round()),HerName(),std::to_wstring(her),std::to_wstring(you)}),weight,Pick(theirs));
-            if(lines.empty())return;
+            if(!scene)return;
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
             if((w.waiting||now-w.since<WordsHold)&&weight<w.weight)return;
-            const std::wstring line=Pick(lines);
-            if(state.her.talk&&(weight>=6||now-w.asked>AskEvery))
-            {
-                // The score and her last lines first, then what happened and the feeling, with
-                // her own line as an example last: a small model keeps to the point so (given
-                // in another order, it congratulated them on her win and asked "what next?").
-                std::wstring situation=Fmt(T(L"いまは12か月のうち{0}月目、あなたは{1}文、話し相手は{2}文。",L"Now month {0} of 12; you have {1} points, they have {2}. "),
-                                           {std::to_wstring(t.Round()),std::to_wstring(her),std::to_wstring(you)});
-                if(!w.recent.empty())
-                {
-                    situation+=T(L"さっきあなたが言ったこと：",L"What you said just before: ");
-                    for(const auto& r:w.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
-                    situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
-                }
-                situation+=facts+Fmt(T(L"{0}を、あなたの言葉で話し相手にひと言（たとえば「{1}」のような気持ち。そのままは使わない）",
-                                       L" Tell them, in a word of your own, {0} (like \"{1}\", but not those words)"),{feel,line});
-                if(state.her.talk(situation))
-                {
-                    w.waiting=true;
-                    w.fallback=line;
-                    w.text=L"…";
-                    w.weight=weight;
-                    w.since=w.asked=now;
-                    w.until=now+AnswerWait+4000;
-                    Redraw();
-                    return;
-                }
-            }
-            SayWords(line,weight);
+            Say(scene,weight);
         }
 
+        // The next scene not yet in her own words, asked of the LLM.
         void Prefetch()
         {
-            if(state.prefetching||!state.her.prefetch||(state.takeLines.size()>=2&&state.thinkLines.size()>=2))return;
-            const std::wstring ask=T(
-                L"これから話し相手と花札（こいこい）をします。勝負中に言う短いひと言を用意してください。"
-                L"次の形で、1行に1つずつ、それぞれ6つずつ書いてください（どれも違う言い方で、1文の短い話し言葉）。\n"
-                L"取る：（場からいい札を取ったときのひと言）\n"
-                L"考える：（自分の番に、どの札を出すか迷いながら自分につぶやくひと言。相手への問いかけにはしない）\n"
-                L"この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わず、自分の手札は言わないでください。",
-                L"You are about to play hanafuda (koi-koi) with them. Get ready some little lines to say during the game. "
-                L"Write six of each, one to a line, in this form (each different, one short spoken sentence):\n"
-                L"Take: (a word as you take a good card from the field)\n"
-                L"Think: (a word muttered to yourself on your turn as you wonder which card to play; not a question to them)\n"
-                L"Write nothing but these lines. No feeling tags, names, anything in ( ) or emoji, and never tell the cards in your hand.");
-            state.prefetching=state.her.prefetch(ask);
-        }
-
-        std::wstring TakeLine(std::vector<std::wstring>& ready,const std::vector<std::wstring>& own)
-        {
-            std::wstring line;
-            if(!ready.empty())
-            {
-                std::uniform_int_distribution<size_t> any(0,ready.size()-1);
-                const size_t i=any(state.sparkRandom);
-                line=ready[i];
-                ready.erase(ready.begin()+static_cast<std::ptrdiff_t>(i));
-            }
-            else line=Pick(own);
-            Prefetch();
-            return line;
+            if(state.prefetching||!state.her.prefetch)return;
+            const std::wstring ask=state.lines.NextAsk();
+            if(!ask.empty())state.prefetching=state.her.prefetch(ask);
         }
 
         std::wstring YakuText(const std::vector<Hanafuda::Yaku>& yaku)
@@ -1361,7 +1342,7 @@ namespace MikuMikuDesktopPerch
                 w.revealing=w.text;
             }
             const size_t before=static_cast<size_t>(w.shown);
-            w.shown=std::min(static_cast<double>(w.text.size()),w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
+            w.shown=std::min(static_cast<double>(w.text.size()),w.voiced?state.voice.Revealed():w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
             w.shownAt=now;
             if(static_cast<size_t>(w.shown)!=before)Redraw();
             if(Flying())return;   // the cards are still on their way
@@ -1374,7 +1355,7 @@ namespace MikuMikuDesktopPerch
                 seen.round=t.Round();
                 Happened(6,T(L"これから話し相手と花札（こいこい）の勝負が始まる。",L"A game of hanafuda (koi-koi) with them is about to begin."),
                          T(L"わくわくする気持ち",L"how you look forward to it"),
-                         {T(L"よろしくね！負けないよ。",L"Let's play! I won't lose."),T(L"よーし、こいこい勝負だ！",L"Okay, koi-koi time!"),T(L"お手やわらかにね。",L"Go easy on me.")},
+                         L"始まり",
                          Fmt(T(L"{0}と、このパソコンの持ち主の花札（こいこい）の勝負が始まる。",L"A game of hanafuda (koi-koi) between {0} and the owner of this computer is about to begin."),{name}),
                          {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
             }
@@ -1386,7 +1367,7 @@ namespace MikuMikuDesktopPerch
                 if(t.Round()==Hanafuda::Rounds)
                     Happened(5,T(L"最後の月（12月）が始まった。",L"The last month (December) has begun."),
                              T(L"最後の月に気を引き締める気持ち",L"how you mean to play the last month"),
-                             {T(L"いよいよ最後の月だね。",L"The last month already!"),T(L"最後、気を抜かないよ！",L"Last one. I'm not letting up!")},
+                             L"最後の月",
                              Fmt(T(L"{0}と持ち主の花札は、最後の月に入った。",L"The hanafuda game between {0} and the owner is in its last month."),{name}),
                              {T(L"いよいよ最後の月だ。",L"Here comes the last month."),T(L"最後だ、どうなるかな。",L"Last round. How will it go?")});
             }
@@ -1394,11 +1375,11 @@ namespace MikuMikuDesktopPerch
                 Happened(5,T(L"花札で、話し相手が役をそろえたのに、上がらずに「こいこい」をした（もっと大きな役を狙って続ける。あなたが先に上がれば点は倍）。",
                              L"At hanafuda, they made a yaku but did not stop: they called koi-koi, playing on for more (if you stop first, your points are doubled)."),
                          T(L"驚くか、受けて立つ気持ち",L"your surprise, or that you take up the challenge"),
-                         {T(L"こいこい!? 強気だね…",L"Koi-koi?! Bold..."),T(L"よーし、止めてみせる！",L"Then I'll stop you!"),T(L"こいこいかあ、どきどきする。",L"Koi-koi... this is getting tense.")},
+                         L"こいこいされた",
                          Fmt(T(L"花札で、持ち主が{0}を相手に「こいこい」をした。",L"In the hanafuda game, the owner called koi-koi against {0}."),{name}),
                          {T(L"おっ、こいこいだ！",L"Ooh, koi-koi!"),T(L"強気だね！",L"Bold move!")});
             if(her.koi>seen.koi[Hanafuda::Her])
-                Happened(4,L"",L"",{},
+                Happened(4,L"",L"",nullptr,
                          Fmt(T(L"花札で、{0}が「こいこい」をした。",L"In the hanafuda game, {0} called koi-koi."),{name}),
                          {Fmt(T(L"{0}のこいこいだ！",L"{0} called koi-koi!"),{name}),T(L"攻めるねえ。",L"Going for it!")});
             seen.koi={you.koi,her.koi};
@@ -1409,19 +1390,19 @@ namespace MikuMikuDesktopPerch
                 if(e.winner<0)
                     Happened(3,T(L"花札のこの月は、あなたも話し相手も役で上がれずに流れた（どちらも0文）。",L"At hanafuda, neither you nor they stopped with a yaku this month: it is a draw (no points)."),
                              T(L"残念か、ほっとした気持ち",L"whether you are sorry or relieved"),
-                             {T(L"流れちゃったね。",L"Nobody got that one."),T(L"引き分けかあ。",L"A draw, huh.")},
+                             L"月が流れた",
                              Fmt(T(L"{0}と持ち主の花札は、この月は流れた。",L"In the hanafuda game between {0} and the owner, the month was a draw."),{name}),
                              {T(L"流れたね。",L"A draw."),T(L"惜しかったね、どっちも。",L"Close, both of you.")});
                 else if(e.winner==Hanafuda::Her)
                     Happened(8,Fmt(T(L"花札のこの月は、あなたが役（{0}、{1}文）をそろえて勝った。話し相手は負けた。",L"At hanafuda, you won this month with your yaku ({0}; {1} points). They lost it."),{yaku,points}),
                              T(L"勝ってうれしい気持ち",L"how glad you are to have won"),
-                             {T(L"やった、上がり！",L"Yes, I won that one!"),T(L"えへへ、もらったよ！",L"Hehe, that one's mine!"),T(L"よし、勝負！",L"Got it!")},
+                             L"月に勝った",
                              Fmt(T(L"花札で、{0}が上がった（{1}、{2}文）。",L"In the hanafuda game, {0} won the month ({1}; {2} points)."),{name,yaku,points}),
                              {Fmt(T(L"{0}、すごい！",L"Nice one, {0}!"),{name}),Fmt(T(L"{0}文だ！",L"{0} points!"),{points})});
                 else
                     Happened(8,Fmt(T(L"花札のこの月は、話し相手が役（{0}、{1}文）をそろえて勝った。あなたは負けた。",L"At hanafuda, they won this month with their yaku ({0}; {1} points). You lost it."),{yaku,points}),
                              T(L"負けて悔しい気持ちか、話し相手の役をほめる気持ち",L"how sorry you are to have lost, or praise their yaku"),
-                             {T(L"あちゃ～、やられた！",L"Argh, you got me!"),T(L"うう、強いなあ…",L"Ugh, you're good..."),T(L"そんな役を狙ってたの!?",L"You were going for that?!")},
+                             L"月に負けた",
                              Fmt(T(L"花札で、持ち主が上がった（{0}、{1}文）。",L"In the hanafuda game, the owner won the month ({0}; {1} points)."),{yaku,points}),
                              {T(L"おお、上がった！",L"Oh, a win!"),Fmt(T(L"{0}文かあ、大きいね。",L"{0} points, that's big."),{points})});
                 if(t.Round()==Hanafuda::Rounds)
@@ -1434,12 +1415,12 @@ namespace MikuMikuDesktopPerch
                     const std::wstring score=Fmt(T(L"あなたは{0}文、話し相手は{1}文",L"you have {0} points, they have {1}"),{std::to_wstring(her.score),std::to_wstring(you.score)});
                     if(won)Happened(9,T(L"花札の12か月が終わって、あなたの勝ち（",L"All twelve months of hanafuda are played, and you won (")+score+T(L"）。",L")."),
                                     T(L"勝ってうれしい気持ち",L"how glad you are to have won"),
-                                    {T(L"勝った！楽しかったね、またやろう！",L"I won! That was fun, let's play again!"),T(L"やったー、わたしの勝ち！",L"Yay, I win!")},
+                                    L"勝負に勝った",
                                     Fmt(T(L"{0}と持ち主の花札の勝負が終わり、{0}が勝った。",L"The hanafuda game between {0} and the owner is over: {0} won."),{name}),
                                     {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
                     else Happened(9,(tie?T(L"花札の12か月が終わって、引き分け（",L"All twelve months of hanafuda are played: a tie ("):T(L"花札の12か月が終わって、あなたの負け（",L"All twelve months of hanafuda are played, and you lost ("))+score+T(L"）。",L")."),
                                   tie?T(L"引き分けの気持ち",L"how you feel about a tie"):T(L"負けて悔しい気持ち",L"how sorry you are to have lost"),
-                                  {T(L"負けちゃった…次は負けないよ！",L"I lost... I'll get you next time!"),T(L"うう、くやしい！もう一回！",L"Ugh, so close! One more!")},
+                                  tie?L"勝負が引き分け":L"勝負に負けた",
                                   Fmt(T(L"{0}と持ち主の花札の勝負が終わった。",L"The hanafuda game between {0} and the owner is over."),{name}),
                                   {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"おめでとう！",L"Congratulations!")});
                 }
@@ -1467,13 +1448,11 @@ namespace MikuMikuDesktopPerch
             {
                 state.plannedFor=t.Moves();
                 state.nextAt=std::max(state.nextAt,now+HerPlayWait3D);
-                std::uniform_real_distribution<double> any(0,1);
-                if(any(state.sparkRandom)<0.15)
+                if(state.lines.Roll(L"考える",0.15,state.sparkRandom))
                 {
                     state.nextAt+=ThinkExtra;
                     state.thinkFor=(HerPlayWait3D+ThinkExtra-ReachLead)/1000.0-0.1;
-                    if(!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)
-                        SayWords(TakeLine(state.thinkLines,{T(L"うーん…どれにしようかな。",L"Hmm... which one?"),T(L"ちょっと考えさせて…",L"Let me think..."),T(L"むむ…",L"Hmm...")}),2);
+                    if(!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)SayScene(L"考える",2);
                 }
             }
             if(now>=state.nextAt)
@@ -1488,9 +1467,7 @@ namespace MikuMikuDesktopPerch
                     if(static_cast<int>(taken.size())>took)
                     {
                         const bool good=std::any_of(taken.begin()+took,taken.end(),[](int c){return Hanafuda::KindOf(c)==Hanafuda::Kind::Bright;});
-                        std::uniform_real_distribution<double> any(0,1);
-                        if(good&&any(state.sparkRandom)<0.35&&!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)
-                            SayWords(TakeLine(state.takeLines,{T(L"これ、もらうね！",L"I'll take that!"),T(L"いい札きた！",L"Just what I needed!"),T(L"ふふ、光札いただき。",L"A bright for me!")}),2);
+                        if(good&&!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)Say(L"取る",2,0.35);
                     }
                     if(t.Now()==Phase::HerTurn)state.nextAt=now+(played?HerPlayWait:HerPileWait);
                     else if(t.Now()==Phase::RoundOver)state.nextAt=now+(state.renderer&&t.Ended().winner>=0?EndWait3D:EndWait);
@@ -1505,6 +1482,7 @@ namespace MikuMikuDesktopPerch
             }
             Redraw();
             Listen();
+            if(!state.renderer)state.voice.Tick(0.04);   // (at the 3D table the model's frame ticks it)
             NoticeWords();
             if(t.Now()==Phase::GameOver&&!state.gameOverTold)
             {
@@ -1998,27 +1976,8 @@ namespace MikuMikuDesktopPerch
     {
         state.prefetching=false;
         if(!state.window)return;
-        size_t at=0;
-        while(at<answer.size())
-        {
-            size_t end=answer.find(L'\n',at);
-            if(end==std::wstring::npos)end=answer.size();
-            std::wstring line=answer.substr(at,end-at);
-            at=end+1;
-            const size_t colon=line.find_first_of(L":：");
-            if(colon==std::wstring::npos)continue;
-            const std::wstring kind=line.substr(0,colon);
-            std::wstring said=line.substr(colon+1);
-            for(const wchar_t* cut:{L"「",L"」",L"\"",L"*"})
-                for(size_t p;(p=said.find(cut))!=std::wstring::npos;)said.erase(p,wcslen(cut));
-            const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
-            if(a==std::wstring::npos)continue;
-            said=said.substr(a,b-a+1);
-            if(said.size()>60)continue;
-            if(kind.find(L"取")!=std::wstring::npos||kind.find(L"ake")!=std::wstring::npos)state.takeLines.push_back(said);
-            else if(kind.find(L"考")!=std::wstring::npos||kind.find(L"hink")!=std::wstring::npos)state.thinkLines.push_back(said);
-        }
-        state.words.told+=L"  lines ready: "+std::to_wstring(state.takeLines.size())+L" for taking, "+std::to_wstring(state.thinkLines.size())+L" for thinking\n";
+        state.lines.Answered(answer);
+        Prefetch();
     }
 
     bool HanafudaAfterword(std::wstring& situation,std::wstring& fallback)
@@ -2414,6 +2373,22 @@ namespace MikuMikuDesktopPerch
             lamp.onModel=false;
             r.SetLights({lamp});
         }
+        {
+            // Her mouth moves while her words are being shown (a vowel or two, opening and
+            // closing about five times a second), and closes after; with a voice file, with it.
+            const auto& w=state.words;
+            const bool saying=!w.text.empty()&&w.text!=L"…"&&w.shown<static_cast<double>(w.text.size());
+            state.voice.Tick(dt);
+            if(state.voice.Playing())model.SetMouth(state.voice.Mouth(),true);
+            else if(saying)
+            {
+                const float u=static_cast<float>(state.clock*10.5);
+                const float open=0.25f+0.75f*std::abs(std::sin(u));
+                const int vowel=static_cast<int>(state.clock*5.3)%3;
+                model.SetMouth({vowel==0?open:0.0f,vowel==1?open*0.6f:0.0f,0,0,vowel==2?open*0.8f:0.0f,0},true);
+            }
+            else model.SetMouth({},false);
+        }
         r.Render(model,state.her.edgeScale);
     }
 
@@ -2557,6 +2532,13 @@ namespace MikuMikuDesktopPerch
         state.dealPending=false;
         state.reachedFor=-1;
         state.poses={};
+        state.lines.Load(L"HANAFUDALINES",L"hanafuda",her.ownLinesFile,her.linesFile,her.styleKey,English(),
+                         {L"花札（こいこい）",L"hanafuda (koi-koi)",L"",L""});
+        state.voice.Stop();
+        state.prefetching=false;
+        state.words={};
+        state.words.told=state.lines.Report();
+        if(!her.linesFile.empty())ShowLinesProblem(owner,state.lines);   // (none kept: a diagnostic run, which must not stop)
         NewGame();
 
         MONITORINFO info{sizeof(info)};

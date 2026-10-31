@@ -78,8 +78,15 @@ BRUSH MAHJONGFONT "mahjong\\brush.ttf"
 CARDS HANAFUDACARDS "hanafuda\\cards.jpg"
 // The blackjack mini game's card faces (docs/Blackjack.md).
 CARDS BLACKJACKCARDS "blackjack\\cards.jpg"
-// Old Maid's lines, plain (said again in each character's own words by the LLM).
-LINES OLDMAIDLINES "oldmaid\\lines.txt"
+// The mini games' lines, plain (said again in each character's own words by the LLM; see
+// docs/GameLines.md).
+OLDMAIDLINES LINES "oldmaid\\lines.txt"
+OTHELLOLINES LINES "othello\\lines.txt"
+GOMOKULINES LINES "gomoku\\lines.txt"
+BLACKJACKLINES LINES "blackjack\\lines.txt"
+MAHJONGLINES LINES "mahjong\\lines.txt"
+HANAFUDALINES LINES "hanafuda\\lines.txt"
+AIRHOCKEYLINES LINES "airhockey\\lines.txt"
 
 // The mahjong table's tile sounds (src/MahjongSound.cpp): 44.1 kHz, mono, 16-bit WAV files.
 // A tile set down (three of them, taken by turns), softly (hers, appearing in her river) and

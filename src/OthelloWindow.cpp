@@ -7,6 +7,7 @@
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
 #include "BubbleText.hpp"
+#include "GameLines.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -76,16 +77,20 @@ namespace MikuMikuDesktopPerch
             struct Words
             {
                 std::wstring text,fallback;
-                ULONGLONG since=0,until=0,asked=0;
+                ULONGLONG since=0,until=0;
                 bool waiting=false;
                 int weight=0;
                 std::vector<std::wstring> recent;
                 std::wstring revealing;
                 double shown=0;
                 ULONGLONG shownAt=0;
+                bool voiced=false;   // the words are said by a voice file of their own
                 std::wstring told;
             } words;
-            std::vector<std::wstring> goodLines,thinkLines;
+            // Her lines by scene (res/othello/lines.txt, said again her way by the LLM, and the
+            // user's own), and the voice of a line that has one.
+            GameLines lines;
+            GameVoice voice;
             bool prefetching=false;
             POINT headScreen{-1,-1},besideHead{-1,-1};
             std::wstring afterword,afterwordLine;
@@ -945,7 +950,12 @@ namespace MikuMikuDesktopPerch
         {
             if(!state.window)return;
             KillTimer(state.window,TimerId);
-            if(state.her.model)state.her.model->SetSolids({});
+            state.voice.Stop();
+            if(state.her.model)
+            {
+                state.her.model->SetSolids({});
+                state.her.model->SetMouth({},false);
+            }
             if(state.afterword.empty()&&state.seen.started&&state.table.Now()!=Phase::GameOver)
             {
                 const auto& t=state.table;
@@ -1026,22 +1036,32 @@ namespace MikuMikuDesktopPerch
         // ---- Her words and the watchers' (as at mahjong) ----
 
         constexpr ULONGLONG WordsHold=3500;
-        constexpr ULONGLONG AskEvery=12000;
         constexpr ULONGLONG AnswerWait=9000;
 
-        void SayWords(const std::wstring& line,int weight)
+        // Her words: shown in the bubble (none for a voice alone) and, with a voice file of
+        // their own, played (the words revealed over it).
+        void SayLine(const GameLine& line,int weight)
         {
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
-            w.text=line;
+            state.voice.Stop();
+            std::wstring error;
+            w.voiced=!line.voice.empty()&&state.voice.Play(line,error);
+            // In her voice (the voice engine) when she speaks aloud and the line has no sound of its own.
+            if(state.her.speak)state.her.speak(w.voiced?std::wstring():line.text);
+            if(!error.empty())w.told+=L"  voice: "+error+L"\n";
+            w.text=line.text;
             w.waiting=false;
             w.weight=weight;
             w.since=now;
-            w.told+=L"  she says: "+line+L"\n";
-            w.until=now+static_cast<ULONGLONG>(CharSeconds()*1000*line.size())+2600+90*static_cast<ULONGLONG>(line.size());
-            if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
+            w.told+=L"  she says: "+line.text+(line.voice.empty()?L"":L" ["+line.voice+L"]")+L"\n";
+            const ULONGLONG reading=static_cast<ULONGLONG>(CharSeconds()*1000*line.text.size())+2600+90*static_cast<ULONGLONG>(line.text.size());
+            w.until=now+(w.voiced?std::max(reading,static_cast<ULONGLONG>(state.voice.Seconds()*1000)+1800):reading);
+            if(!line.text.empty()){w.recent.push_back(line.text);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
             Redraw();
         }
+
+        void SayWords(const std::wstring& line,int weight){SayLine({line,{}},weight);}
 
         const std::wstring& Pick(const std::vector<std::wstring>& lines)
         {
@@ -1050,10 +1070,9 @@ namespace MikuMikuDesktopPerch
         }
 
         // Something happened: she speaks of it, and those watching hear of it. facts: for her (she
-        // is "you"); feel: how she is to feel about it; seen: the same for one watching; lines:
-        // hers without the LLM (none: she says nothing; one of them is given the LLM as the
-        // feeling to put in her own words); theirs: the watchers'.
-        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const std::vector<std::wstring>& lines,
+        // is "you"); feel: how she is to feel about it; seen: the same for one watching; scene:
+        // the scene of her lines (null: she says nothing); theirs: the watchers'.
+        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const wchar_t* scene,
                       const std::wstring& seen,const std::vector<std::wstring>& theirs)
         {
             auto& t=state.table;
@@ -1062,71 +1081,30 @@ namespace MikuMikuDesktopPerch
             if(state.her.onEvent&&!theirs.empty())
                 state.her.onEvent(seen+Fmt(T(L"（石は{0}が{1}枚、持ち主が{2}枚）",L" ({0} has {1} discs, the owner {2})"),
                                            {HerName(),std::to_wstring(her),std::to_wstring(you)}),weight,Pick(theirs));
-            if(lines.empty())return;
+            if(!scene)return;
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
             if((w.waiting||now-w.since<WordsHold)&&weight<w.weight)return;
-            const std::wstring line=Pick(lines);
-            if(state.her.talk&&(weight>=6||now-w.asked>AskEvery))
-            {
-                // The score and her last lines first, then what happened and the feeling, with
-                // her own line as an example last (a small model keeps to the point so).
-                std::wstring situation=Fmt(T(L"いまの石の数は、あなた（{0}）{1}枚、話し相手{2}枚、盤のあきは{3}マス。",
-                                             L"Now you ({0}) have {1} discs, they have {2}, and {3} squares are empty. "),
-                                           {ColourOf(Othello::Her),std::to_wstring(her),std::to_wstring(you),std::to_wstring(t.Empties())});
-                if(!w.recent.empty())
-                {
-                    situation+=T(L"さっきあなたが言ったこと：",L"What you said just before: ");
-                    for(const auto& r:w.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
-                    situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
-                }
-                situation+=facts+Fmt(T(L"{0}を、あなたの言葉で話し相手にひと言（たとえば「{1}」のような気持ち。そのままは使わない）",
-                                       L" Tell them, in a word of your own, {0} (like \"{1}\", but not those words)"),{feel,line});
-                if(state.her.talk(situation))
-                {
-                    w.waiting=true;
-                    w.fallback=line;
-                    w.text=L"…";
-                    w.weight=weight;
-                    w.since=w.asked=now;
-                    w.until=now+AnswerWait+4000;
-                    Redraw();
-                    return;
-                }
-            }
-            SayWords(line,weight);
+            if(!state.lines.Roll(scene,1,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(scene,w.recent,state.sparkRandom,line))SayLine(line,weight);
         }
 
+        // The next scene not yet in her own words, asked of the LLM.
         void Prefetch()
         {
-            if(state.prefetching||!state.her.prefetch||(state.goodLines.size()>=2&&state.thinkLines.size()>=2))return;
-            const std::wstring ask=T(
-                L"これから話し相手とオセロをします。対局中に言う短いひと言を用意してください。"
-                L"次の形で、1行に1つずつ、それぞれ6つずつ書いてください（どれも違う言い方で、1文の短い話し言葉）。\n"
-                L"いい手：（盤のすみ（角）を取ったときなど、いい手を打ったときのひと言）\n"
-                L"考える：（自分の番に、どこに置くか迷いながら自分につぶやくひと言。相手への問いかけにはしない）\n"
-                L"この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わないでください。",
-                L"You are about to play Othello with them. Get ready some little lines to say during the game. "
-                L"Write six of each, one to a line, in this form (each different, one short spoken sentence):\n"
-                L"Good: (a word as you make a good move, such as taking a corner)\n"
-                L"Think: (a word muttered to yourself on your turn as you wonder where to lay your disc; not a question to them)\n"
-                L"Write nothing but these lines. No feeling tags, names, anything in ( ) or emoji.");
-            state.prefetching=state.her.prefetch(ask);
+            if(state.prefetching||!state.her.prefetch)return;
+            const std::wstring ask=state.lines.NextAsk();
+            if(!ask.empty())state.prefetching=state.her.prefetch(ask);
         }
 
-        std::wstring TakeLine(std::vector<std::wstring>& ready,const std::vector<std::wstring>& own)
+        // A line of the scene, said now and then (chance: how often, unless the user's lines
+        // file says otherwise).
+        void Say(const wchar_t* name,int weight=2,double chance=1)
         {
-            std::wstring line;
-            if(!ready.empty())
-            {
-                std::uniform_int_distribution<size_t> any(0,ready.size()-1);
-                const size_t i=any(state.sparkRandom);
-                line=ready[i];
-                ready.erase(ready.begin()+static_cast<std::ptrdiff_t>(i));
-            }
-            else line=Pick(own);
-            Prefetch();
-            return line;
+            if(!state.lines.Roll(name,chance,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(name,state.words.recent,state.sparkRandom,line))SayLine(line,weight);
         }
 
         bool Corner(int s){return s==0||s==7||s==56||s==63;}
@@ -1147,7 +1125,7 @@ namespace MikuMikuDesktopPerch
                 w.revealing=w.text;
             }
             const size_t before=static_cast<size_t>(w.shown);
-            w.shown=std::min(static_cast<double>(w.text.size()),w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
+            w.shown=std::min(static_cast<double>(w.text.size()),w.voiced?state.voice.Revealed():w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
             w.shownAt=now;
             if(static_cast<size_t>(w.shown)!=before)Redraw();
             if(Flying())return;   // the discs are still on their way
@@ -1159,7 +1137,7 @@ namespace MikuMikuDesktopPerch
                 Happened(6,Fmt(T(L"これから話し相手とオセロの対局が始まる。あなたは{0}で、{1}。",L"A game of Othello with them is about to begin. You have {0} and {1}. "),
                                {ColourOf(Othello::Her),first?T(L"先に打つ",L"move first"):T(L"後から打つ",L"move second")}),
                          T(L"わくわくする気持ち",L"how you look forward to it"),
-                         {T(L"よろしくね！負けないよ。",L"Let's play! I won't lose."),T(L"よーし、オセロ勝負だ！",L"Okay, Othello time!"),T(L"お手やわらかにね。",L"Go easy on me.")},
+                         L"始まり",
                          Fmt(T(L"{0}と、このパソコンの持ち主のオセロの対局が始まる。",L"A game of Othello between {0} and the owner of this computer is about to begin."),{name}),
                          {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
             }
@@ -1170,17 +1148,17 @@ namespace MikuMikuDesktopPerch
                 if(m.who==Othello::You&&Corner(m.square))
                     Happened(4,T(L"オセロで、話し相手に盤のすみ（角）を取られた。",L"At Othello, they took a corner from you."),
                              T(L"しまったという気持ち",L"that you wish you had seen it coming"),
-                             {T(L"あっ、角取られた！",L"Oh no, a corner!"),T(L"うう、そこかあ…",L"Ugh, right there..."),T(L"やるなあ…",L"Not bad...")},
+                             L"角を取られた",
                              Fmt(T(L"オセロで、持ち主が角を取った（{0}との対局）。",L"At Othello, the owner took a corner (against {0})."),{name}),
                              {T(L"おっ、角だ！",L"Ooh, a corner!"),T(L"いいところ取ったね！",L"Nice spot!")});
                 else if(m.who==Othello::Her&&Corner(m.square))
-                    Happened(3,L"",L"",{},
+                    Happened(3,L"",L"",nullptr,
                              Fmt(T(L"オセロで、{0}が角を取った。",L"At Othello, {0} took a corner."),{name}),
                              {Fmt(T(L"{0}、角を取った！",L"{0} got a corner!"),{name}),T(L"これは大きいね。",L"That's a big one.")});
                 else if(m.who==Othello::You&&m.flipped.size()>=6)
                     Happened(3,Fmt(T(L"オセロで、話し相手の一手で、あなたの石が{0}枚まとめてひっくり返された。",L"At Othello, their move turned over {0} of your discs at once."),{std::to_wstring(m.flipped.size())}),
                              T(L"驚く気持ち",L"your surprise"),
-                             {T(L"わっ、そんなに返されるの!?",L"Whoa, that many?!"),T(L"ひっくり返されたー！",L"So many flipped!")},
+                             L"ひっくり返された",
                              Fmt(T(L"オセロで、持ち主が{0}の石を{1}枚まとめてひっくり返した。",L"At Othello, the owner turned over {1} of {0}'s discs at once."),{name,std::to_wstring(m.flipped.size())}),
                              {T(L"おお、いっぱい返した！",L"Wow, a lot of them!")});
             }
@@ -1190,13 +1168,13 @@ namespace MikuMikuDesktopPerch
                 if(t.LastPass()==Othello::You)
                     Happened(4,T(L"オセロで、話し相手は石を置ける場所がなくてパスになり、あなたがもう一度打つ。",L"At Othello, they have nowhere to lay a disc and must pass: you move again."),
                              T(L"うれしい気持ち",L"how pleased you are"),
-                             {T(L"やった、もう一回わたしの番！",L"Yay, my turn again!"),T(L"ふふ、置くところないでしょ。",L"Hehe, nowhere to go, right?")},
+                             L"あなたのパス",
                              Fmt(T(L"オセロで、持ち主が置ける場所がなくてパスした（{0}との対局）。",L"At Othello, the owner had to pass (against {0})."),{name}),
                              {T(L"パスだ！",L"A pass!")});
                 else if(t.LastPass()==Othello::Her)
                     Happened(4,T(L"オセロで、あなたは石を置ける場所がなくてパスになり、話し相手がもう一度打つ。",L"At Othello, you have nowhere to lay a disc and must pass: they move again."),
                              T(L"困った気持ち",L"how stuck you feel"),
-                             {T(L"うう、置ける所がない…",L"Ugh, nowhere to go..."),T(L"パスかあ…くやしい。",L"A pass... how annoying.")},
+                             L"自分のパス",
                              Fmt(T(L"オセロで、{0}が置ける場所がなくてパスした。",L"At Othello, {0} had to pass."),{name}),
                              {Fmt(T(L"{0}、パスだって！",L"{0} has to pass!"),{name})});
             }
@@ -1212,12 +1190,12 @@ namespace MikuMikuDesktopPerch
                 state.afterwordLine=won?T(L"オセロ、楽しかったね！またやろう。",L"That was fun! Let's play again sometime."):T(L"くやしいなあ…次は勝つからね！",L"So close... I'll win next time!");
                 if(won)Happened(9,T(L"オセロの対局が終わって、あなたの勝ち（",L"The game of Othello is over, and you won (")+count+T(L"）。",L")."),
                                 T(L"勝ってうれしい気持ち",L"how glad you are to have won"),
-                                {T(L"勝った！楽しかったね！",L"I won! That was fun!"),T(L"やったー、わたしの勝ち！",L"Yay, I win!")},
+                                L"勝った",
                                 Fmt(T(L"{0}と持ち主のオセロの対局が終わり、{0}が勝った。",L"The Othello game between {0} and the owner is over: {0} won."),{name}),
                                 {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
                 else Happened(9,(tie?T(L"オセロの対局が終わって、引き分け（",L"The game of Othello is over: a tie ("):T(L"オセロの対局が終わって、あなたの負け（",L"The game of Othello is over, and you lost ("))+count+T(L"）。",L")."),
                               tie?T(L"引き分けの気持ち",L"how you feel about a tie"):T(L"負けて悔しい気持ち",L"how sorry you are to have lost"),
-                              {T(L"負けちゃった…次は負けないよ！",L"I lost... I'll get you next time!"),T(L"うう、くやしい！もう一回！",L"Ugh, so close! One more!")},
+                              L"負けた",
                               Fmt(T(L"{0}と持ち主のオセロの対局が終わった。",L"The Othello game between {0} and the owner is over."),{name}),
                               {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"おめでとう！",L"Congratulations!")});
             }
@@ -1249,8 +1227,7 @@ namespace MikuMikuDesktopPerch
                 {
                     state.nextAt+=ThinkExtra;
                     state.thinkFor=(HerPlayWait3D+ThinkExtra-ReachLead)/1000.0-0.1;
-                    if(!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)
-                        SayWords(TakeLine(state.thinkLines,{T(L"うーん…どこにしようかな。",L"Hmm... where to go?"),T(L"ちょっと考えさせて…",L"Let me think..."),T(L"むむ…",L"Hmm...")}),2);
+                    if(!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)Say(L"考える",2);
                 }
             }
             if(now>=state.nextAt&&t.Now()==Phase::HerTurn&&(!state.renderer||state.entrance==5))
@@ -1260,13 +1237,14 @@ namespace MikuMikuDesktopPerch
                 const auto& m=t.LastMove();
                 std::uniform_real_distribution<double> any(0,1);
                 if(m.who==Othello::Her&&Corner(m.square)&&any(state.sparkRandom)<0.5&&!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)
-                    SayWords(TakeLine(state.goodLines,{T(L"角、もらうね！",L"I'll take this corner!"),T(L"ふふ、いいところ。",L"Hehe, a good spot."),T(L"ここ、ずっと狙ってたんだ。",L"I've been waiting for this one.")}),2);
+                    Say(L"いい手",2);
                 if(t.Now()==Phase::HerTurn)state.nextAt=now+HerPlayWait;
                 else if(t.Now()==Phase::GameOver)state.nextAt=now+(state.renderer?EndWait3D:EndWait);
                 else state.nextAt=now+150;
             }
             Redraw();
             Listen();
+            if(!state.renderer)state.voice.Tick(0.04);   // (at the 3D table the model's frame ticks it)
             NoticeWords();
             if(t.Now()==Phase::GameOver&&!state.gameOverTold)
             {
@@ -1676,27 +1654,8 @@ namespace MikuMikuDesktopPerch
     {
         state.prefetching=false;
         if(!state.window)return;
-        size_t at=0;
-        while(at<answer.size())
-        {
-            size_t end=answer.find(L'\n',at);
-            if(end==std::wstring::npos)end=answer.size();
-            std::wstring line=answer.substr(at,end-at);
-            at=end+1;
-            const size_t colon=line.find_first_of(L":：");
-            if(colon==std::wstring::npos)continue;
-            const std::wstring kind=line.substr(0,colon);
-            std::wstring said=line.substr(colon+1);
-            for(const wchar_t* cut:{L"「",L"」",L"\"",L"*"})
-                for(size_t p;(p=said.find(cut))!=std::wstring::npos;)said.erase(p,wcslen(cut));
-            const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
-            if(a==std::wstring::npos)continue;
-            said=said.substr(a,b-a+1);
-            if(said.size()>60)continue;
-            if(kind.find(L"いい")!=std::wstring::npos||kind.find(L"ood")!=std::wstring::npos)state.goodLines.push_back(said);
-            else if(kind.find(L"考")!=std::wstring::npos||kind.find(L"hink")!=std::wstring::npos)state.thinkLines.push_back(said);
-        }
-        state.words.told+=L"  lines ready: "+std::to_wstring(state.goodLines.size())+L" for good moves, "+std::to_wstring(state.thinkLines.size())+L" for thinking\n";
+        state.lines.Answered(answer);
+        Prefetch();
     }
 
     bool OthelloAfterword(std::wstring& situation,std::wstring& fallback)
@@ -2025,6 +1984,22 @@ namespace MikuMikuDesktopPerch
             const bool talking=!state.words.text.empty()&&model.HeadPosition(head);
             model.LookToward({XMVectorGetX(you),head[1],XMVectorGetZ(you)},talking);
         }
+        {
+            // Her mouth moves while her words are being shown (a vowel or two, opening and
+            // closing about five times a second), and closes after; with a voice file, with it.
+            const auto& w=state.words;
+            const bool saying=!w.text.empty()&&w.text!=L"…"&&w.shown<static_cast<double>(w.text.size());
+            state.voice.Tick(dt);
+            if(state.voice.Playing())model.SetMouth(state.voice.Mouth(),true);
+            else if(saying)
+            {
+                const float u=static_cast<float>(state.clock*10.5);
+                const float open=0.25f+0.75f*std::abs(std::sin(u));
+                const int vowel=static_cast<int>(state.clock*5.3)%3;
+                model.SetMouth({vowel==0?open:0.0f,vowel==1?open*0.6f:0.0f,0,0,vowel==2?open*0.8f:0.0f,0},true);
+            }
+            else model.SetMouth({},false);
+        }
         // The board's squares as they are seen, for pointing and clicking.
         {
             const float c=Cell()/2,y=BoardTop();
@@ -2148,10 +2123,13 @@ namespace MikuMikuDesktopPerch
         state.discs={};
         state.nextBlack=-1;
         state.quadsSet=false;
-        state.goodLines.clear();
-        state.thinkLines.clear();
+        state.lines.Load(L"OTHELLOLINES",L"othello",her.ownLinesFile,her.linesFile,her.styleKey,English(),
+                         {L"オセロ",L"Othello",L"",L""});
+        state.voice.Stop();
         state.prefetching=false;
         state.words={};
+        state.words.told=state.lines.Report();
+        if(!her.linesFile.empty())ShowLinesProblem(owner,state.lines);   // (none kept: a diagnostic run, which must not stop)
         NewGame();
 
         MONITORINFO info{sizeof(info)};

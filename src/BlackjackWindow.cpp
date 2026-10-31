@@ -7,6 +7,7 @@
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
 #include "BubbleText.hpp"
+#include "GameLines.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -79,9 +80,13 @@ namespace MikuMikuDesktopPerch
                 std::wstring revealing;
                 double shown=0;
                 ULONGLONG shownAt=0;
+                bool voiced=false;   // the words are said by a voice file of their own
                 std::wstring told;
             } words;
-            std::vector<std::wstring> dealLines,drawLines;
+            // Her lines by scene (res/blackjack/lines.txt, said again her way by the LLM, and the
+            // user's own), and the voice of a line that has one.
+            GameLines lines;
+            GameVoice voice;
             bool prefetching=false;
             POINT headScreen{-1,-1},besideHead{-1,-1};
             std::wstring afterword,afterwordLine;
@@ -89,6 +94,7 @@ namespace MikuMikuDesktopPerch
             {
                 bool started=false,over=false;
                 int round=0;
+                int sureRound=0;          // the round her sure win or loss was said for
             } seen;
             std::unique_ptr<Bitmap> canvas;
             // Her at the table in 3D (none: 2D only).
@@ -123,6 +129,7 @@ namespace MikuMikuDesktopPerch
             double endGestureUntil=0;
             int gestureRound=0;       // the round her reaction was last given for
             int heardMoves=-1;        // in 2D, the move last heard (its sound)
+            Expression tell=Expression::Neutral;   // her face held while a round is sure to go one way
         } state;
 
         float Scale()
@@ -1121,7 +1128,10 @@ namespace MikuMikuDesktopPerch
         {
             if(!state.window)return;
             KillTimer(state.window,TimerId);
+            state.voice.Stop();
             if(state.her.model)state.her.model->SetSolids({});
+            if(state.her.model&&state.tell!=Expression::Neutral)state.her.model->SetExpression(Expression::Neutral,false);
+            state.tell=Expression::Neutral;
             if(state.afterword.empty()&&state.seen.started&&state.table.Now()!=Phase::GameOver)
             {
                 const auto& t=state.table;
@@ -1204,22 +1214,32 @@ namespace MikuMikuDesktopPerch
         // ---- Her words and the watchers' (as at mahjong) ----
 
         constexpr ULONGLONG WordsHold=3500;
-        constexpr ULONGLONG AskEvery=12000;
         constexpr ULONGLONG AnswerWait=9000;
 
-        void SayWords(const std::wstring& line,int weight)
+        // Her words: shown in the bubble (none for a voice alone) and, with a voice file of
+        // their own, played (the words revealed over it).
+        void SayLine(const GameLine& line,int weight)
         {
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
-            w.text=line;
+            state.voice.Stop();
+            std::wstring error;
+            w.voiced=!line.voice.empty()&&state.voice.Play(line,error);
+            // In her voice (the voice engine) when she speaks aloud and the line has no sound of its own.
+            if(state.her.speak)state.her.speak(w.voiced?std::wstring():line.text);
+            if(!error.empty())w.told+=L"  voice: "+error+L"\n";
+            w.text=line.text;
             w.waiting=false;
             w.weight=weight;
             w.since=now;
-            w.told+=L"  she says: "+line+L"\n";
-            w.until=now+static_cast<ULONGLONG>(CharSeconds()*1000*line.size())+2600+90*static_cast<ULONGLONG>(line.size());
-            if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
+            w.told+=L"  she says: "+line.text+(line.voice.empty()?L"":L" ["+line.voice+L"]")+L"\n";
+            const ULONGLONG reading=static_cast<ULONGLONG>(CharSeconds()*1000*line.text.size())+2600+90*static_cast<ULONGLONG>(line.text.size());
+            w.until=now+(w.voiced?std::max(reading,static_cast<ULONGLONG>(state.voice.Seconds()*1000)+1800):reading);
+            if(!line.text.empty()){w.recent.push_back(line.text);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
             Redraw();
         }
+
+        void SayWords(const std::wstring& line,int weight){SayLine({line,{}},weight);}
 
         const std::wstring& Pick(const std::vector<std::wstring>& lines)
         {
@@ -1228,81 +1248,47 @@ namespace MikuMikuDesktopPerch
         }
 
         // Something happened: she speaks of it, and those watching hear of it. facts: for her (she
-        // is "you"); feel: how she is to feel about it; seen: the same for one watching; lines:
-        // hers without the LLM (none: she says nothing; one of them is given the LLM as the
-        // feeling to put in her own words); theirs: the watchers'.
-        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const std::vector<std::wstring>& lines,
+        // is "you"); feel: how she is to feel about it; seen: the same for one watching; scene:
+        // the scene of her lines (null: she says nothing); theirs: the watchers'.
+        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const wchar_t* scene,
                       const std::wstring& seen,const std::vector<std::wstring>& theirs)
         {
             auto& t=state.table;
             state.words.told+=Fmt(L"  {0} s, weight {1}: {2}\n",{std::to_wstring(static_cast<int>(state.clock)),std::to_wstring(weight),seen});
             if(state.her.onEvent&&!theirs.empty())
                 state.her.onEvent(seen+Fmt(T(L"（{0}回目、持ち主のチップは{1}枚）",L" (hand {0}; the owner has {1} chips)"),{std::to_wstring(t.Round()),std::to_wstring(t.Chips())}),weight,Pick(theirs));
-            if(lines.empty())return;
+            if(!scene)return;
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
             if((w.waiting||now-w.since<WordsHold)&&weight<w.weight)return;
-            const std::wstring line=Pick(lines);
-            if(state.her.talk&&(weight>=6||now-w.asked>AskEvery))
-            {
-                // The score and her last lines first, then what happened and the feeling, with
-                // her own line as an example last (a small model keeps to the point so).
-                std::wstring situation=Fmt(T(L"いまブラックジャックの{0}回目（全{1}回）、あなたがディーラー、話し相手のチップは{2}枚（始めは{3}枚）。",
-                                             L"Now hand {0} of {1} of blackjack; you are the dealer, and they have {2} chips (they began with {3}). "),
-                                           {std::to_wstring(t.Round()),std::to_wstring(Blackjack::Rounds),std::to_wstring(t.Chips()),std::to_wstring(Blackjack::StartChips)});
-                if(!w.recent.empty())
-                {
-                    situation+=T(L"さっきあなたが言ったこと：",L"What you said just before: ");
-                    for(const auto& r:w.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
-                    situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
-                }
-                situation+=facts+Fmt(T(L"{0}を、あなたの言葉で話し相手にひと言（たとえば「{1}」のような気持ち。そのままは使わない）",
-                                       L" Tell them, in a word of your own, {0} (like \"{1}\", but not those words)"),{feel,line});
-                if(state.her.talk(situation))
-                {
-                    w.waiting=true;
-                    w.fallback=line;
-                    w.text=L"…";
-                    w.weight=weight;
-                    w.since=w.asked=now;
-                    w.until=now+AnswerWait+4000;
-                    Redraw();
-                    return;
-                }
-            }
-            SayWords(line,weight);
+            if(!state.lines.Roll(scene,1,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(scene,w.recent,state.sparkRandom,line))SayLine(line,weight);
         }
 
+        // The next scene not yet in her own words, asked of the LLM.
         void Prefetch()
         {
-            if(state.prefetching||!state.her.prefetch||(state.dealLines.size()>=2&&state.drawLines.size()>=2))return;
-            const std::wstring ask=T(
-                L"これから話し相手とブラックジャックをします（あなたがディーラー）。勝負中に言う短いひと言を用意してください。"
-                L"次の形で、1行に1つずつ、それぞれ6つずつ書いてください（どれも違う言い方で、1文の短い話し言葉）。\n"
-                L"配る：（カードを配るときの、ディーラーらしいひと言）\n"
-                L"引く：（ディーラーとして自分のカードをもう1枚引くときに、自分につぶやくひと言。相手への問いかけにはしない）\n"
-                L"この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わないでください。",
-                L"You are about to deal blackjack for them (you are the dealer). Get ready some little lines to say during the game. "
-                L"Write six of each, one to a line, in this form (each different, one short spoken sentence):\n"
-                L"Deal: (a dealer's word as you deal the cards)\n"
-                L"Draw: (a word muttered to yourself as you draw another card for yourself as the dealer; not a question to them)\n"
-                L"Write nothing but these lines. No feeling tags, names, anything in ( ) or emoji.");
-            state.prefetching=state.her.prefetch(ask);
+            if(state.prefetching||!state.her.prefetch)return;
+            const std::wstring ask=state.lines.NextAsk();
+            if(!ask.empty())state.prefetching=state.her.prefetch(ask);
         }
 
-        std::wstring TakeLine(std::vector<std::wstring>& ready,const std::vector<std::wstring>& own)
+        // A line of the scene, said now and then (chance: how often, unless the user's lines
+        // file says otherwise).
+        void Say(const wchar_t* name,int weight=2,double chance=1)
         {
-            std::wstring line;
-            if(!ready.empty())
-            {
-                std::uniform_int_distribution<size_t> any(0,ready.size()-1);
-                const size_t i=any(state.sparkRandom);
-                line=ready[i];
-                ready.erase(ready.begin()+static_cast<std::ptrdiff_t>(i));
-            }
-            else line=Pick(own);
-            Prefetch();
-            return line;
+            if(!state.lines.Roll(name,chance,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(name,state.words.recent,state.sparkRandom,line))SayLine(line,weight);
+        }
+
+        // Her face while a round is sure to go one way (until her hand is turned and settled).
+        void SetTell(Expression e)
+        {
+            if(e==state.tell)return;
+            state.tell=e;
+            if(state.her.model&&state.renderer)state.her.model->SetExpression(e,false);
         }
 
         // What is new in the game since the last tick, for words: its start, a round's end (a
@@ -1321,7 +1307,7 @@ namespace MikuMikuDesktopPerch
                 w.revealing=w.text;
             }
             const size_t before=static_cast<size_t>(w.shown);
-            w.shown=std::min(static_cast<double>(w.text.size()),w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
+            w.shown=std::min(static_cast<double>(w.text.size()),w.voiced?state.voice.Revealed():w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
             w.shownAt=now;
             if(static_cast<size_t>(w.shown)!=before)Redraw();
             if(Flying())return;   // the cards are still on their way
@@ -1330,8 +1316,7 @@ namespace MikuMikuDesktopPerch
             {
                 seen.started=true;
                 Happened(6,T(L"これから話し相手とブラックジャックが始まる。あなたがディーラーで、10回勝負する。",L"A game of blackjack with them is about to begin; you deal, ten hands. "),
-                         T(L"わくわくする気持ち",L"how you look forward to it"),
-                         {T(L"いらっしゃい、ディーラーはわたしだよ！",L"Welcome! I'll be your dealer."),T(L"よーし、配るよ！",L"Okay, let's deal!"),T(L"お手やわらかにね。",L"Go easy on me.")},
+                         T(L"わくわくする気持ち",L"how you look forward to it"),L"始まり",
                          Fmt(T(L"{0}がディーラーになって、このパソコンの持ち主とブラックジャックが始まる。",L"{0} is dealing blackjack for the owner of this computer."),{name}),
                          {T(L"がんばれー！",L"Good luck!"),T(L"勝てるかな？",L"Can they win?")});
             }
@@ -1346,36 +1331,52 @@ namespace MikuMikuDesktopPerch
                 const int gain=t.RoundGain();
                 if(any(Blackjack::Result::Blackjack))
                     Happened(5,T(L"ブラックジャックで、話し相手が最初の2枚で21（ブラックジャック）を出した。チップは1.5倍払い。",L"At blackjack, they were dealt 21 in two cards (a blackjack), paid one and a half times."),
-                             T(L"驚く気持ちか、話し相手をほめる気持ち",L"your surprise, or praise them"),
-                             {T(L"わっ、ブラックジャック！",L"Whoa, a blackjack!"),T(L"やられた～、いきなり21！",L"Argh, 21 right away!")},
+                             T(L"驚く気持ちか、話し相手をほめる気持ち",L"your surprise, or praise them"),L"相手のブラックジャック",
                              Fmt(T(L"ブラックジャックで、持ち主がブラックジャックを出した（ディーラーは{0}）。",L"At blackjack, the owner was dealt a blackjack ({0} dealing)."),{name}),
                              {T(L"おっ、ブラックジャック！",L"Ooh, blackjack!"),T(L"いい引き！",L"Nice draw!")});
                 else if(herNatural)
                     Happened(5,T(L"ブラックジャックで、ディーラーのあなたが最初の2枚で21（ブラックジャック）になって、話し相手に勝った。",L"At blackjack, you (the dealer) had 21 in two cards (a blackjack) and won."),
-                             T(L"うれしい気持ち",L"how pleased you are"),
-                             {T(L"ふふ、ブラックジャック！",L"Hehe, blackjack!"),T(L"ごめんね、21だよ。",L"Sorry, it's 21.")},
+                             T(L"うれしい気持ち",L"how pleased you are"),L"ディーラーのブラックジャック",
                              Fmt(T(L"ブラックジャックで、ディーラーの{0}がブラックジャックを出した。",L"At blackjack, {0} (dealing) had a blackjack."),{name}),
                              {Fmt(T(L"{0}、ブラックジャックだ！",L"{0} got blackjack!"),{name})});
                 else if(allBust)
                     Happened(3,T(L"ブラックジャックで、話し相手が引きすぎて21を超え、バーストした（ディーラーのあなたの勝ち）。",L"At blackjack, they drew past 21 and went bust (you, the dealer, win)."),
-                             T(L"ちょっと得意な気持ちか、なぐさめる気持ち",L"a little pleased, or comfort them"),
-                             {T(L"あらら、バーストだね。",L"Oops, that's a bust."),T(L"引きすぎちゃったね。",L"One card too many.")},
+                             T(L"ちょっと得意な気持ちか、なぐさめる気持ち",L"a little pleased, or comfort them"),L"相手のバースト",
                              Fmt(T(L"ブラックジャックで、持ち主がバーストした（ディーラーは{0}）。",L"At blackjack, the owner went bust ({0} dealing)."),{name}),
                              {T(L"あー、バースト…",L"Ah, a bust...")});
                 else if(herBust)
                     Happened(4,T(L"ブラックジャックで、ディーラーのあなたが17になるまで引いて21を超え、バーストした（話し相手の勝ち）。",L"At blackjack, you (the dealer) drew past 21 and went bust (they win)."),
-                             T(L"悔しい気持ち",L"how annoyed you are"),
-                             {T(L"あっ、バーストしちゃった！",L"Oh no, I'm bust!"),T(L"うう、引きすぎた…",L"Ugh, too many...")},
+                             T(L"悔しい気持ち",L"how annoyed you are"),L"ディーラーのバースト",
                              Fmt(T(L"ブラックジャックで、ディーラーの{0}がバーストした。",L"At blackjack, {0} (dealing) went bust."),{name}),
                              {Fmt(T(L"{0}がバーストだ！",L"{0} went bust!"),{name})});
                 else if(gain>0)
                     Happened(3,Fmt(T(L"ブラックジャックで、この回は話し相手の勝ち（チップ{0}枚もうけた）。",L"At blackjack, they won this hand ({0} chips)."),{std::to_wstring(gain)}),
-                             T(L"悔しい気持ちか、話し相手をほめる気持ち",L"how annoyed you are, or praise them"),
-                             {T(L"むむ、やるね。",L"Hmm, not bad."),T(L"負けちゃった、次は取り返すよ！",L"You got me. I'll win it back!")},L"",{});
+                             T(L"悔しい気持ちか、話し相手をほめる気持ち",L"how annoyed you are, or praise them"),L"相手の勝ち",L"",{});
                 else if(gain<0)
                     Happened(3,Fmt(T(L"ブラックジャックで、この回はディーラーのあなたの勝ち（話し相手のチップ{0}枚をもらった）。",L"At blackjack, you (the dealer) won this hand ({0} of their chips)."),{std::to_wstring(-gain)}),
-                             T(L"うれしい気持ち",L"how pleased you are"),
-                             {T(L"ふふ、いただき。",L"Hehe, I'll take those."),T(L"この回はわたしの勝ち！",L"This one's mine!")},L"",{});
+                             T(L"うれしい気持ち",L"how pleased you are"),L"ディーラーの勝ち",L"",{});
+            }
+            // Her turn: she keeps to 17, so once her hand is 17 or more (its hidden card included)
+            // the round is settled whatever her hole card was. Every hand of yours beaten by it
+            // (bust, or below it) is a sure win for her; every hand of yours above it (and not bust)
+            // a sure loss. Said once a round, her face held until the hand is turned.
+            if(t.Now()==Phase::HerTurn&&seen.sureRound!=t.Round()&&Blackjack::Total(t.Dealer())>=17)
+            {
+                const int herTotal=Blackjack::Total(t.Dealer());
+                bool sureWin=true,sureLoss=true;
+                for(const auto& h:t.Hands())
+                {
+                    const int total=Blackjack::Total(h.cards);
+                    if(total>21||total<herTotal)sureLoss=false;   // one she wins
+                    else if(total>herTotal)sureWin=false;         // one you win
+                    else sureWin=sureLoss=false;                  // a push
+                }
+                if(sureWin||sureLoss)
+                {
+                    seen.sureRound=t.Round();
+                    SetTell(sureWin?Expression::Smile:Expression::Sad);
+                    Say(sureWin?L"勝ち確定":L"負け確定",3);
+                }
             }
             const bool over=t.Now()==Phase::GameOver;
             if(over&&!seen.over)
@@ -1386,13 +1387,11 @@ namespace MikuMikuDesktopPerch
                                       L"You have just dealt ten hands of blackjack for them and come back to the desktop. In the end {0}. Tell them what you thought of the game (one or two sentences)"),{result});
                 state.afterwordLine=gain>0?T(L"ブラックジャック、強かったね！次は負けないよ。",L"You were good at that! I'll win next time."):T(L"ブラックジャック、楽しかったね！またやろう。",L"That was fun! Let's play again sometime.");
                 if(gain>0)Happened(9,Fmt(T(L"ブラックジャックの10回が終わって、話し相手がチップを増やした（{0}）。ディーラーのあなたの負け。",L"The ten hands of blackjack are over and they came out ahead ({0}): you, the dealer, lost."),{result}),
-                                   T(L"悔しい気持ちか、話し相手をほめる気持ち",L"how sorry you are, or praise them"),
-                                   {T(L"負けちゃった…次は負けないよ！",L"I lost... I'll get you next time!"),T(L"うう、チップ取られすぎた～。",L"Ugh, you took so many chips!")},
+                                   T(L"悔しい気持ちか、話し相手をほめる気持ち",L"how sorry you are, or praise them"),L"負けて終わる",
                                    Fmt(T(L"{0}と持ち主のブラックジャックが終わり、持ち主がチップを増やした。",L"The blackjack between {0} and the owner is over: the owner came out ahead."),{name}),
                                    {T(L"おめでとう！",L"Congratulations!"),T(L"おつかれさま！",L"Well played!")});
                 else Happened(9,Fmt(T(L"ブラックジャックの10回が終わって、話し相手のチップは{0}（ディーラーのあなたの勝ち、または引き分け）。",L"The ten hands of blackjack are over: {0} (you, the dealer, won or came out even)."),{result}),
-                              T(L"うれしい気持ち",L"how pleased you are"),
-                              {T(L"ふふ、ディーラーの勝ち！楽しかったね。",L"Hehe, the house wins! That was fun."),T(L"やったー、わたしの勝ち！",L"Yay, I win!")},
+                              T(L"うれしい気持ち",L"how pleased you are"),L"勝って終わる",
                               Fmt(T(L"{0}と持ち主のブラックジャックが終わり、ディーラーの{0}が勝った。",L"The blackjack between {0} and the owner is over: {0}, dealing, won."),{name}),
                               {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
             }
@@ -1418,9 +1417,8 @@ namespace MikuMikuDesktopPerch
             {
                 state.plannedFor=t.Moves();
                 state.nextAt=std::max(state.nextAt,now+(state.renderer?HerPlayWait3D:HerPlayWait));
-                std::uniform_real_distribution<double> any(0,1);
-                if(t.HoleShown()&&Blackjack::Total(t.Dealer())<17&&any(state.sparkRandom)<0.3&&!state.words.waiting&&now-state.words.since>WordsHold)
-                    SayWords(TakeLine(state.drawLines,{T(L"もう一枚…！",L"One more..."),T(L"次は何かな。",L"What's next?"),T(L"えいっ。",L"Here goes.")}),2);
+                if(t.HoleShown()&&Blackjack::Total(t.Dealer())<17&&!state.words.waiting&&now-state.words.since>WordsHold)
+                    Say(L"引く",2,0.3);
             }
             if(now>=state.nextAt&&t.Now()==Phase::HerTurn&&(!state.renderer||state.entrance==5))
             {
@@ -1431,12 +1429,12 @@ namespace MikuMikuDesktopPerch
             if(t.Now()==Phase::YourTurn&&t.Hands().size()==1&&t.Hands()[0].cards.size()==2&&state.seen.round!=-t.Round()&&!Flying())
             {
                 state.seen.round=-t.Round();
-                std::uniform_real_distribution<double> any(0,1);
-                if(any(state.sparkRandom)<0.25&&!state.words.waiting&&now-state.words.since>WordsHold)
-                    SayWords(TakeLine(state.dealLines,{T(L"はい、どうぞ。",L"Here you go."),T(L"さあ、どうする？",L"Your call."),T(L"いいカード来たかな？",L"Get anything good?")}),2);
+                if(!state.words.waiting&&now-state.words.since>WordsHold)Say(L"配る",2,0.25);
             }
+            if(t.Now()!=Phase::HerTurn)SetTell(Expression::Neutral);
             Redraw();
             Listen();
+            if(!state.renderer)state.voice.Tick(0.04);   // (at the 3D table the model's frame ticks it)
             NoticeWords();
             if(t.Now()==Phase::GameOver&&!state.gameOverTold)
             {
@@ -1847,27 +1845,8 @@ namespace MikuMikuDesktopPerch
     {
         state.prefetching=false;
         if(!state.window)return;
-        size_t at=0;
-        while(at<answer.size())
-        {
-            size_t end=answer.find(L'\n',at);
-            if(end==std::wstring::npos)end=answer.size();
-            std::wstring line=answer.substr(at,end-at);
-            at=end+1;
-            const size_t colon=line.find_first_of(L":：");
-            if(colon==std::wstring::npos)continue;
-            const std::wstring kind=line.substr(0,colon);
-            std::wstring said=line.substr(colon+1);
-            for(const wchar_t* cut:{L"「",L"」",L"\"",L"*"})
-                for(size_t p;(p=said.find(cut))!=std::wstring::npos;)said.erase(p,wcslen(cut));
-            const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
-            if(a==std::wstring::npos)continue;
-            said=said.substr(a,b-a+1);
-            if(said.size()>60)continue;
-            if(kind.find(L"配")!=std::wstring::npos||kind.find(L"eal")!=std::wstring::npos)state.dealLines.push_back(said);
-            else if(kind.find(L"引")!=std::wstring::npos||kind.find(L"raw")!=std::wstring::npos)state.drawLines.push_back(said);
-        }
-        state.words.told+=L"  lines ready: "+std::to_wstring(state.dealLines.size())+L" for dealing, "+std::to_wstring(state.drawLines.size())+L" for drawing\n";
+        state.lines.Answered(answer);
+        Prefetch();
     }
 
     bool BlackjackAfterword(std::wstring& situation,std::wstring& fallback)
@@ -2229,6 +2208,22 @@ namespace MikuMikuDesktopPerch
             lamp.onModel=false;
             r.SetLights({lamp});
         }
+        {
+            // Her mouth moves while her words are being shown (a vowel or two, opening and
+            // closing about five times a second), and closes after; with a voice file, with it.
+            const auto& w=state.words;
+            const bool saying=!w.text.empty()&&w.text!=L"…"&&w.shown<static_cast<double>(w.text.size());
+            state.voice.Tick(dt);
+            if(state.voice.Playing())model.SetMouth(state.voice.Mouth(),true);
+            else if(saying)
+            {
+                const float u=static_cast<float>(state.clock*10.5);
+                const float open=0.25f+0.75f*std::abs(std::sin(u));
+                const int vowel=static_cast<int>(state.clock*5.3)%3;
+                model.SetMouth({vowel==0?open:0.0f,vowel==1?open*0.6f:0.0f,0,0,vowel==2?open*0.8f:0.0f,0},true);
+            }
+            else model.SetMouth({},false);
+        }
         r.Render(model,state.her.edgeScale);
     }
 
@@ -2327,10 +2322,14 @@ namespace MikuMikuDesktopPerch
         state.poses={};
         state.flights.clear();
         state.gestureRound=0;
-        state.dealLines.clear();
-        state.drawLines.clear();
+        state.lines.Load(L"BLACKJACKLINES",L"blackjack",her.ownLinesFile,her.linesFile,her.styleKey,English(),
+                         {L"ブラックジャック",L"blackjack",L"",L""});
+        state.voice.Stop();
         state.prefetching=false;
+        state.tell=Expression::Neutral;
         state.words={};
+        state.words.told=state.lines.Report();
+        if(!her.linesFile.empty())ShowLinesProblem(owner,state.lines);   // (none kept: a diagnostic run, which must not stop)
         NewGame();
 
         MONITORINFO info{sizeof(info)};

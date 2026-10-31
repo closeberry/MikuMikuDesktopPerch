@@ -354,6 +354,7 @@ namespace
         struct Showing {std::wstring model,id;int side=0;float turn=0;double since=0,quietSince=-1,endAt=-1;bool peeked=false;POINT at{};} showing;
         TreasurePicture picture;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
+        std::wstring ownLines;    // --own-lines: the user's lines file to use in its place (diagnostics)
         bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -4006,6 +4007,21 @@ namespace
 
     // Back from a game's window: her last word there, if still coming, is not carried onto the
     // desktop, and its bubble (kept out of sight there) goes.
+    // A prepared line of hers in a game's window, in her voice when she speaks aloud (the window
+    // shows the words and moves her mouth); an empty line stops it.
+    void GameSpeak(Mascot& m,const std::wstring& line)
+    {
+        if(!m.voice)return;
+        if(m.chat&&m.gameLine)m.chat->Cancel();
+        m.gameLine=m.gameChat=false;
+        m.chatRequest=0;
+        m.voice->CancelAll();
+        m.speech.Reset();
+        if(line.empty())return;
+        m.speech.Add(line);
+        m.speech.Finish();
+    }
+
     void DropGameWords(Mascot& m)
     {
         if(m.gameLine)
@@ -4043,6 +4059,22 @@ namespace
         m.model.TakeRootDelta();
     }
 
+    // The user's own lines for the mini games (docs/GameLines.md): lines\<PMX file name>.json in
+    // the app's folder (or the file given with --own-lines). An update leaves that folder alone.
+    std::wstring OwnLinesFile(const std::wstring& modelPath)
+    {
+        if(!app.ownLines.empty())return app.ownLines;
+        if(modelPath.empty())return {};
+        wchar_t exe[MAX_PATH]{};
+        GetModuleFileNameW(nullptr,exe,MAX_PATH);
+        std::wstring folder=exe;
+        folder.erase(folder.find_last_of(L"\\/")+1);
+        const size_t slash=modelPath.find_last_of(L"\\/");
+        std::wstring name=slash==std::wstring::npos?modelPath:modelPath.substr(slash+1);
+        if(const size_t dot=name.find_last_of(L'.');dot!=std::wstring::npos)name.erase(dot);
+        return folder+L"lines\\"+name+L".json";
+    }
+
     void OpenAirHockey(Mascot& m)
     {
         if(AirHockeyWindowOpen()){ShowAirHockeyWindow(m.hwnd,{},{});return;}
@@ -4069,6 +4101,13 @@ namespace
         her.light=app.settings.dungeonLight;
         // She speaks at the table (lines asked for ahead); those watching now and then say a word on it.
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::AirHockey,facts,weight,fallback);};
+        her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".airhockey.lines.txt",true);
+        her.styleKey=m.character.name+L"\n"+m.character.persona;
+        her.ownLinesFile=OwnLinesFile(m.modelPath);
+        her.speak=[model](const std::wstring& line){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inAirHockey)GameSpeak(*owned,line);
+        };
         her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
                 if(owned->modelPath==model&&owned->inAirHockey)return PrefetchLines(*owned,ask);
@@ -4161,6 +4200,13 @@ namespace
             return false;
         };
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Mahjong,facts,weight,fallback);};
+        her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".mahjong.lines.txt",true);
+        her.styleKey=m.character.name+L"\n"+m.character.persona;
+        her.ownLinesFile=OwnLinesFile(m.modelPath);
+        her.speak=[model](const std::wstring& line){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inMahjong)GameSpeak(*owned,line);
+        };
         her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
                 if(owned->modelPath==model&&owned->inMahjong)return PrefetchLines(*owned,ask);
@@ -4219,6 +4265,13 @@ namespace
             return false;
         };
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Hanafuda,facts,weight,fallback);};
+        her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".hanafuda.lines.txt",true);
+        her.styleKey=m.character.name+L"\n"+m.character.persona;
+        her.ownLinesFile=OwnLinesFile(m.modelPath);
+        her.speak=[model](const std::wstring& line){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inHanafuda)GameSpeak(*owned,line);
+        };
         her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
                 if(owned->modelPath==model&&owned->inHanafuda)return PrefetchLines(*owned,ask);
@@ -4275,6 +4328,13 @@ namespace
             return false;
         };
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Othello,facts,weight,fallback);};
+        her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".othello.lines.txt",true);
+        her.styleKey=m.character.name+L"\n"+m.character.persona;
+        her.ownLinesFile=OwnLinesFile(m.modelPath);
+        her.speak=[model](const std::wstring& line){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inOthello)GameSpeak(*owned,line);
+        };
         her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
                 if(owned->modelPath==model&&owned->inOthello)return PrefetchLines(*owned,ask);
@@ -4331,6 +4391,13 @@ namespace
             return false;
         };
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Gomoku,facts,weight,fallback);};
+        her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".gomoku.lines.txt",true);
+        her.styleKey=m.character.name+L"\n"+m.character.persona;
+        her.ownLinesFile=OwnLinesFile(m.modelPath);
+        her.speak=[model](const std::wstring& line){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inGomoku)GameSpeak(*owned,line);
+        };
         her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
                 if(owned->modelPath==model&&owned->inGomoku)return PrefetchLines(*owned,ask);
@@ -4387,6 +4454,13 @@ namespace
             return false;
         };
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Blackjack,facts,weight,fallback);};
+        her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".blackjack.lines.txt",true);
+        her.styleKey=m.character.name+L"\n"+m.character.persona;
+        her.ownLinesFile=OwnLinesFile(m.modelPath);
+        her.speak=[model](const std::wstring& line){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inBlackjack)GameSpeak(*owned,line);
+        };
         her.prefetch=[model](const std::wstring& ask){
             for(const auto& owned:app.mascots)
                 if(owned->modelPath==model&&owned->inBlackjack)return PrefetchLines(*owned,ask);
@@ -4434,6 +4508,11 @@ namespace
         her.light=app.settings.dungeonLight;
         her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".oldmaid.txt",true);
         her.styleKey=m.character.name+L"\n"+m.character.persona;
+        her.ownLinesFile=OwnLinesFile(m.modelPath);
+        her.speak=[model](const std::wstring& line){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inOldMaid)GameSpeak(*owned,line);
+        };
         // A game played to its end together brings them closer.
         her.onGameOver=[model]{
             for(const auto& owned:app.mascots)
@@ -5851,6 +5930,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotMetroidRoom=_wtoi(argv[++i]);
             }
             else if(arg==L"--metroid-play"&&i+1<argc)snapshotMetroidKeys=argv[++i];
+            else if(arg==L"--own-lines"&&i+1<argc)app.ownLines=argv[++i];
             else if(arg==L"--oldmaid")
             {
                 snapshotOldMaid=true;

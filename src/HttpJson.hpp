@@ -97,6 +97,7 @@ namespace MikuMikuDesktopPerch::Net
     public:
         explicit JsonParser(std::string_view text):s(text){}
         bool Parse(Json& out){Space();if(!Value(out,0))return false;Space();return p==s.size();}
+        size_t Stopped() const {return p;}   // where it got to (where it went wrong, after a failed Parse)
 
     private:
         std::string_view s;

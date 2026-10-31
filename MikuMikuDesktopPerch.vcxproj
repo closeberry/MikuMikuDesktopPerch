@@ -108,6 +108,7 @@
     <ClCompile Include="src\GomokuWindow.cpp" />
     <ClCompile Include="src\Blackjack.cpp" />
     <ClCompile Include="src\BlackjackWindow.cpp" />
+    <ClCompile Include="src\GameLines.cpp" />
     <ClCompile Include="src\OldMaid.cpp" />
     <ClCompile Include="src\OldMaidWindow.cpp" />
     <ClCompile Include="src\Mahjong.cpp" />
@@ -170,6 +171,7 @@
     <ClInclude Include="src\GomokuWindow.hpp" />
     <ClInclude Include="src\Blackjack.hpp" />
     <ClInclude Include="src\BlackjackWindow.hpp" />
+    <ClInclude Include="src\GameLines.hpp" />
     <ClInclude Include="src\OldMaid.hpp" />
     <ClInclude Include="src\OldMaidWindow.hpp" />
     <ClInclude Include="src\Mahjong.hpp" />

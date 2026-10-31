@@ -34,10 +34,18 @@ namespace MikuMikuDesktopPerch
         // Something those watching may speak of: what happened, told as to one watching, how
         // much it matters (1-9), and a line to say without the LLM.
         std::function<void(const std::wstring& facts,int weight,const std::wstring& fallback)> onEvent;
-        // Her lines for the game's moments, asked for ahead in one go (ask: the request to the
-        // LLM), the answer coming back through AirHockeyLines: said at once when the moment
+        // Her lines for the game's moments, asked for ahead a scene at a time (ask: the request to
+        // the LLM), the answer coming back through AirHockeyLines: said at once when the moment
         // comes, with no wait. False when it cannot now.
         std::function<bool(const std::wstring& ask)> prefetch;
+        // Her lines in her own words are kept in this file (empty: not kept), under this key
+        // (her name and persona: a change asks again).
+        std::wstring linesFile,styleKey;
+        // The user's own lines (JSON; docs/GameLines.md), when there is such a file.
+        std::wstring ownLinesFile;
+        // Her line said aloud in her voice (the voice engine), when speaking aloud is on; an empty
+        // line stops what she is saying.
+        std::function<void(const std::wstring& line)> speak;
     };
 
     // Opens it (or brings it forward when open). onEnd: once, when the window closes.

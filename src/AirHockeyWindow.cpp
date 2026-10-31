@@ -7,6 +7,7 @@
 #include "Text.hpp"
 #include "BubbleText.hpp"
 #include "TextureLoader.hpp"
+#include "GameLines.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -15,6 +16,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <random>
 #include <vector>
 #pragma comment(lib,"gdiplus.lib")
 
@@ -100,13 +102,16 @@ namespace MikuMikuDesktopPerch
                 ULONGLONG since=0,until=0;
                 int weight=0;
                 std::vector<std::wstring> recent;
+                bool voiced=false;   // the words are said by a voice file of their own
                 std::wstring told;   // diagnostics: what happened and what she said, for the snapshot's report
             } words;
-            // Her lines for each moment of the game (Moment), asked for ahead through
-            // AirHockeyOpponent::prefetch; each said once.
-            std::array<std::vector<std::wstring>,9> ready;
+            // Her lines by scene (res/airhockey/lines.txt, said again her way by the LLM, and the
+            // user's own), and the voice of a line that has one.
+            GameLines lines;
+            GameVoice voice;
             bool prefetching=false;
-            int prefetches=0;   // asked this many times since the window opened (a few at most)
+            bool mouthOn=false;   // her mouth set by a voice file (to be let go when it ends)
+            std::mt19937 sparkRandom{12345};
             bool started=false,overSeen=false,cheered=false;
             std::array<bool,2> matchPoint{};
             double faceUntil=0,overAt=0;   // the game's clock: her face back, the game's end
@@ -130,7 +135,7 @@ namespace MikuMikuDesktopPerch
         {
             const auto& w=state.words;
             if(w.text.empty())return {};
-            const size_t n=static_cast<size_t>((GetTickCount64()-w.since)/1000.0/CharSeconds())+1;
+            const size_t n=w.voiced?static_cast<size_t>(state.voice.Revealed()):static_cast<size_t>((GetTickCount64()-w.since)/1000.0/CharSeconds())+1;
             return w.text.substr(0,std::min(n,w.text.size()));
         }
 
@@ -737,13 +742,6 @@ namespace MikuMikuDesktopPerch
 
         constexpr ULONGLONG WordsHold=3000;   // a lighter word does not cut in on a weightier one this soon
 
-        // The moments she speaks at, each with its lines asked for ahead (their labels in the
-        // request and in the answer).
-        enum Moment {Start,Scored,Conceded,LongScored,LongConceded,AlmostWon,AlmostLost,Won,Lost,Moments};
-        const wchar_t* const MomentLabels[2][Moments]={
-            {L"始まり",L"決めた",L"決められた",L"長い打ち合いで決めた",L"長い打ち合いで決められた",L"あと1点で勝ち",L"あと1点で負け",L"勝った",L"負けた"},
-            {L"Start",L"Scored",L"Conceded",L"LongScored",L"LongConceded",L"AlmostWon",L"AlmostLost",L"Won",L"Lost"}};
-
         std::uint32_t& WordsRandom(){static std::uint32_t r=0x2545F491u;return r;}
         const std::wstring& Pick(const std::vector<std::wstring>& lines)
         {
@@ -752,86 +750,52 @@ namespace MikuMikuDesktopPerch
             return lines[r%lines.size()];
         }
 
-        // Her line in the bubble beside her, for as long as it takes to read.
-        void SayWords(const std::wstring& line,int weight)
+        // Her line in the bubble beside her, for as long as it takes to read (or, with a voice file
+        // of its own, as long as the voice plays).
+        void SayLine(const GameLine& line,int weight)
         {
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
-            w.text=line;
+            state.voice.Stop();
+            std::wstring error;
+            w.voiced=!line.voice.empty()&&state.voice.Play(line,error);
+            // In her voice (the voice engine) when she speaks aloud and the line has no sound of its own.
+            if(state.her.speak)state.her.speak(w.voiced?std::wstring():line.text);
+            if(!error.empty())w.told+=L"  voice: "+error+L"\n";
+            w.text=line.text;
             w.weight=weight;
             w.since=now;
-            w.until=now+static_cast<ULONGLONG>(CharSeconds()*1000*line.size())+2400+90*static_cast<ULONGLONG>(line.size());
-            if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
-            w.told+=L"  she says: "+line+L"\n";
+            w.told+=L"  she says: "+line.text+(line.voice.empty()?L"":L" ["+line.voice+L"]")+L"\n";
+            const ULONGLONG reading=static_cast<ULONGLONG>(CharSeconds()*1000*line.text.size())+2400+90*static_cast<ULONGLONG>(line.text.size());
+            w.until=now+(w.voiced?std::max(reading,static_cast<ULONGLONG>(state.voice.Seconds()*1000)+1800):reading);
+            if(!line.text.empty()){w.recent.push_back(line.text);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
         }
 
-        // Her lines for every moment, asked for ahead in one go (when some moment has none left,
-        // and the LLM is there), so that each is said at once when its moment comes.
+        // The next scene not yet in her own words, asked of the LLM (when there is one left).
         void Prefetch()
         {
-            if(state.prefetching||!state.her.prefetch||state.prefetches>=4)return;
-            bool few=false;
-            for(const auto& r:state.ready)few|=r.empty();
-            if(!few)return;
-            const std::wstring ask=T(
-                L"これから話し相手とエアホッケーで対戦します。対戦のそれぞれの場面で言う短いひと言を用意してください。"
-                L"次の形で、1行に1つずつ、それぞれ4つずつ書いてください（どれも違う言い方で、1文の短い話し言葉。"
-                L"対戦の途中の場面では、終わったような言い方はしないでください）。\n"
-                L"始まり：（対戦を始めるときのひと言）\n"
-                L"決めた：（あなたがゴールを決めたとき）\n"
-                L"決められた：（相手にゴールを決められたとき）\n"
-                L"長い打ち合いで決めた：（長い打ち合いのあと、あなたが決めたとき）\n"
-                L"長い打ち合いで決められた：（長い打ち合いのあと、相手に決められたとき）\n"
-                L"あと1点で勝ち：（あなたがあと1点で勝つとき）\n"
-                L"あと1点で負け：（相手があと1点で勝つとき）\n"
-                L"勝った：（対戦が終わって、あなたが勝ったとき）\n"
-                L"負けた：（対戦が終わって、あなたが負けたとき）\n"
-                L"この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わないでください。",
-                L"You are about to play air hockey with them. Get ready little lines to say at each moment of the game. "
-                L"Write four of each, one to a line, in this form (each different, one short spoken sentence; "
-                L"at the moments during the game, do not talk as if it were over):\n"
-                L"Start: (as the game begins)\n"
-                L"Scored: (you scored a goal)\n"
-                L"Conceded: (they scored on you)\n"
-                L"LongScored: (you scored after a long rally)\n"
-                L"LongConceded: (they scored on you after a long rally)\n"
-                L"AlmostWon: (one more point and you win)\n"
-                L"AlmostLost: (one more point and they win)\n"
-                L"Won: (the game is over and you won)\n"
-                L"Lost: (the game is over and you lost)\n"
-                L"Write nothing but these lines. No feeling tags, names, anything in ( ) or emoji.");
-            state.prefetching=state.her.prefetch(ask);
-            if(state.prefetching)++state.prefetches;
+            if(state.prefetching||!state.her.prefetch)return;
+            const std::wstring ask=state.lines.NextAsk();
+            if(!ask.empty())state.prefetching=state.her.prefetch(ask);
         }
 
-        // Something happened: she speaks of it at once (a line asked for ahead for that moment,
-        // or one of hers when none is ready), and those watching hear of it. seen: what happened,
-        // told as to one watching; lines: hers; theirs: the watchers'.
-        void Happened(int weight,Moment moment,const std::vector<std::wstring>& lines,
-                      const std::wstring& seen,const std::vector<std::wstring>& theirs)
+        // Something happened: she speaks of it at once (a line of the scene, or none when the
+        // scene has none ready yet), and those watching hear of it. seen: what happened, told as
+        // to one watching; scene: the scene of her lines (null: she says nothing); theirs: the
+        // watchers'.
+        void Happened(int weight,const wchar_t* scene,const std::wstring& seen,const std::vector<std::wstring>& theirs)
         {
             const auto& g=*state.game;
             state.words.told+=Fmt(L"  {0} s, weight {1}: {2}\n",{std::to_wstring(static_cast<int>(g.Clock())),std::to_wstring(weight),seen});
             if(state.her.onEvent&&!theirs.empty())
                 state.her.onEvent(seen+Fmt(T(L"（点数は{0}が{1}点、持ち主が{2}点、{3}点先取）",L" ({0} has {1}, the owner {2}; first to {3})"),
                                            {HerName(),std::to_wstring(g.Score(AirHockey::Her)),std::to_wstring(g.Score(AirHockey::You)),std::to_wstring(g.Rule().toWin)}),weight,Pick(theirs));
-            if(lines.empty())return;
+            if(!scene)return;
             auto& w=state.words;
             if(!w.text.empty()&&GetTickCount64()-w.since<WordsHold&&weight<w.weight)return;
-            auto& ready=state.ready[moment];
-            std::wstring line;
-            if(!ready.empty())
-            {
-                auto& r=WordsRandom();
-                r^=r<<13;r^=r>>17;r^=r<<5;
-                const size_t i=r%ready.size();
-                line=ready[i];
-                ready.erase(ready.begin()+static_cast<std::ptrdiff_t>(i));
-                w.told+=L"  (asked ahead)\n";
-            }
-            else line=Pick(lines);
-            SayWords(line,weight);
-            Prefetch();
+            if(!state.lines.Roll(scene,1,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(scene,w.recent,state.sparkRandom,line))SayLine(line,weight);
         }
 
         // Her face for a moment, after a goal: pleased, or a little put out.
@@ -853,11 +817,10 @@ namespace MikuMikuDesktopPerch
             if(state.faceUntil>0&&g.Clock()>state.faceUntil){state.faceUntil=0;if(state.her.model)state.her.model->SetExpression(Expression::Neutral,false);}
             const std::wstring name=HerName();
             // The start: once her lines asked for ahead are there (a few seconds at most).
-            if(!state.started&&(!state.ready[Start].empty()||!state.prefetching||g.Clock()>4))
+            if(!state.started&&(!state.prefetching||g.Clock()>4))
             {
                 state.started=true;
-                Happened(7,Start,
-                         {T(L"よーし、勝負だよ！",L"Okay, let's play!"),T(L"負けないからね！",L"I won't lose!"),T(L"手加減しないよ？",L"I'm not going easy on you!")},
+                Happened(7,L"始まり",
                          Fmt(T(L"{0}と、このパソコンの持ち主のエアホッケーの対戦が始まる。",L"An air hockey game between {0} and the owner of this computer is about to begin."),{name}),
                          {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
             }
@@ -868,15 +831,11 @@ namespace MikuMikuDesktopPerch
                 Face(hers?Expression::Smile:Expression::Troubled,2.5);
                 if(g.Now()==Phase::Over)continue;   // the end is spoken of below
                 if(hers)
-                    Happened(long_?7:5,long_?LongScored:Scored,
-                             long_?std::vector<std::wstring>{T(L"長かったね、いい打ち合い！",L"What a rally!"),T(L"やっと決まった～！",L"Finally!")}
-                                  :std::vector<std::wstring>{T(L"やった、入った！",L"Yes, it went in!"),T(L"よしっ、決まった！",L"Got it!"),T(L"えへへ、1点！",L"Hehe, one point!")},
+                    Happened(long_?7:5,long_?L"長い打ち合いで決めた":L"決めた",
                              Fmt(T(L"エアホッケーで、{0}がゴールを決めた。",L"In the air hockey game, {0} scored."),{name}),
                              {Fmt(T(L"{0}、ナイス！",L"Nice one, {0}!"),{name}),T(L"おお、入った！",L"Ooh, in!")});
                 else
-                    Happened(long_?7:5,long_?LongConceded:Conceded,
-                             long_?std::vector<std::wstring>{T(L"いい打ち合いだったのに～！",L"That was such a good rally!"),T(L"うう、粘ったのに…",L"I held on so long...")}
-                                  :std::vector<std::wstring>{T(L"あっ、やられた！",L"Ah, you got me!"),T(L"うう、速い…",L"Ugh, so fast..."),T(L"今の見えなかった！",L"I didn't even see that!")},
+                    Happened(long_?7:5,long_?L"長い打ち合いで決められた":L"決められた",
                              T(L"エアホッケーで、持ち主がゴールを決めた。",L"In the air hockey game, the owner scored."),
                              {T(L"おお、決まった！",L"Oh, a goal!"),T(L"いいシュート！",L"Nice shot!")});
                 // One more to win.
@@ -884,9 +843,9 @@ namespace MikuMikuDesktopPerch
                     if(g.Score(side)==g.Rule().toWin-1&&!state.matchPoint[side])
                     {
                         state.matchPoint[side]=true;
-                        if(side==Her)Happened(6,AlmostWon,{T(L"あと1点！",L"One more!"),T(L"マッチポイントだよ！",L"Match point!")},
+                        if(side==Her)Happened(6,L"あと1点で勝ち",
                                               Fmt(T(L"エアホッケーで、{0}があと1点で勝つ。",L"In the air hockey game, {0} needs one more point to win."),{name}),{T(L"マッチポイントだ！",L"Match point!")});
-                        else Happened(6,AlmostLost,{T(L"うっ、あと1点で負けちゃう…",L"Uh-oh, one more and I lose..."),T(L"まだまだ、ここからだよ！",L"It's not over yet!")},
+                        else Happened(6,L"あと1点で負け",
                                       T(L"エアホッケーで、持ち主があと1点で勝つ。",L"In the air hockey game, the owner needs one more point to win."),{T(L"マッチポイント！",L"Match point!")});
                     }
             }
@@ -895,12 +854,10 @@ namespace MikuMikuDesktopPerch
                 state.overSeen=true;
                 const bool won=g.Winner()==Her;
                 const std::wstring score=Fmt(T(L"あなた{0}点、相手{1}点",L"you {0}, they {1}"),{std::to_wstring(g.Score(Her)),std::to_wstring(g.Score(You))});
-                if(won)Happened(9,Won,
-                                {T(L"勝った！楽しかったね！",L"I won! That was fun!"),T(L"やったー、わたしの勝ち！",L"Yay, I win!")},
+                if(won)Happened(9,L"勝った",
                                 Fmt(T(L"{0}と持ち主のエアホッケーの対戦が終わり、{0}が勝った。",L"The air hockey game between {0} and the owner is over: {0} won."),{name}),
                                 {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
-                else Happened(9,Lost,
-                              {T(L"負けちゃった…でも楽しかった！",L"I lost... but that was fun!"),T(L"くやしい！もう一回！",L"So close! One more!")},
+                else Happened(9,L"負けた",
                               Fmt(T(L"{0}と持ち主のエアホッケーの対戦が終わり、持ち主が勝った。",L"The air hockey game between {0} and the owner is over: the owner won."),{name}),
                               {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"勝った！おめでとう！",L"You won! Congratulations!")});
                 state.afterword=Fmt(T(L"いま、話し相手とエアホッケーを最後までして、デスクトップに戻ってきたところ。結果は{0}（{1}、いちばん長い打ち合いは{2}回）。その感想を、話し相手にひと言（1〜2文）",
@@ -1207,6 +1164,7 @@ namespace MikuMikuDesktopPerch
             if(!state.window)return;
             HoldCursor(false);
             KillTimer(state.window,TimerId);
+            state.voice.Stop();
             // Stopped before the game's end: a word on that, back on the desktop.
             if(state.afterword.empty()&&state.game&&state.game->Now()!=AirHockey::Phase::Over&&state.game->Clock()>3)
             {
@@ -1435,9 +1393,13 @@ namespace MikuMikuDesktopPerch
         }
         state.her=her;
         state.onEnd=std::move(onEnd);
-        state.ready={};
+        state.lines.Load(L"AIRHOCKEYLINES",L"airhockey",her.ownLinesFile,her.linesFile,her.styleKey,English(),
+                         {L"エアホッケー",L"air hockey",L"",L""});
+        state.voice.Stop();
         state.prefetching=false;
-        state.prefetches=0;
+        state.words={};
+        state.words.told=state.lines.Report();
+        if(!her.linesFile.empty())ShowLinesProblem(owner,state.lines);   // (none kept: a diagnostic run, which must not stop)
         NewGame();
         Prefetch();
 
@@ -1621,6 +1583,10 @@ namespace MikuMikuDesktopPerch
             const XMVECTOR there=XMVector3Transform(XMLoadFloat3(&at),XMMatrixInverse(&det,HerWorld(model)));
             model.LookToward({XMVectorGetX(there),XMVectorGetY(there),XMVectorGetZ(there)},talking||g.Now()!=AirHockey::Phase::Over);
         }
+        // Her mouth follows a line's voice file while it plays.
+        state.voice.Tick(dt);
+        if(state.voice.Playing()){model.SetMouth(state.voice.Mouth(),true);state.mouthOn=true;}
+        else if(state.mouthOn){model.SetMouth({},false);state.mouthOn=false;}
         UpdateOverlay();
         r.Render(model,state.her.edgeScale);
         ++state.frames;
@@ -1630,41 +1596,8 @@ namespace MikuMikuDesktopPerch
     {
         state.prefetching=false;
         if(!state.window)return;
-        size_t at=0;
-        while(at<answer.size())
-        {
-            size_t end=answer.find(L'\n',at);
-            if(end==std::wstring::npos)end=answer.size();
-            std::wstring line=answer.substr(at,end-at);
-            at=end+1;
-            // "決めた：..." / "Scored: ...": the moment, then the line (marks, quotes, a feeling
-            // tag and spaces off).
-            const size_t colon=line.find_first_of(L":：");
-            if(colon==std::wstring::npos)continue;
-            std::wstring kind=line.substr(0,colon),said=line.substr(colon+1);
-            const size_t k0=kind.find_first_not_of(L" \t-*・0123456789.　"),k1=kind.find_last_not_of(L" \t*　");
-            if(k0==std::wstring::npos)continue;
-            kind=kind.substr(k0,k1-k0+1);
-            for(const wchar_t* cut:{L"「",L"」",L"\"",L"*"})
-                for(size_t p;(p=said.find(cut))!=std::wstring::npos;)said.erase(p,wcslen(cut));
-            for(const auto& [open,close]:{std::pair{L'［',L'］'},std::pair{L'[',L']'},std::pair{L'【',L'】'}})
-            {
-                const size_t a=said.find_first_not_of(L" \t　");
-                if(a!=std::wstring::npos&&said[a]==open)
-                    if(const size_t b=said.find(close,a);b!=std::wstring::npos)said.erase(0,b+1);
-            }
-            const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
-            if(a==std::wstring::npos)continue;
-            said=said.substr(a,b-a+1);
-            if(said.size()>60)continue;
-            for(int i=0;i<Moments;++i)
-                if(kind==MomentLabels[0][i]||_wcsicmp(kind.c_str(),MomentLabels[1][i])==0){state.ready[i].push_back(said);break;}
-        }
-        std::wstring counts;
-        size_t total=0;
-        for(int i=0;i<Moments;++i){counts+=(i?L" ":L"")+std::to_wstring(state.ready[i].size());total+=state.ready[i].size();}
-        if(total==0)state.words.told+=L"  lines answer (none taken): "+answer.substr(0,400)+L"\n";
-        state.words.told+=L"  lines ready (start, scored, conceded, long scored, long conceded, almost won, almost lost, won, lost): "+counts+L"\n";
+        state.lines.Answered(answer);
+        Prefetch();
     }
 
     bool AirHockeyAfterword(std::wstring& situation,std::wstring& fallback)

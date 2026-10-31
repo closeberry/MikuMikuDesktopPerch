@@ -36,6 +36,14 @@ namespace MikuMikuDesktopPerch
         // Little lines of hers asked for ahead, all at once (for dealing, for drawing):
         // sends ask to the LLM, the lines coming back through BlackjackLines.
         std::function<bool(const std::wstring& ask)> prefetch;
+        // Her lines in her own words are kept in this file (empty: not kept), under this key
+        // (her name and persona: a change asks again).
+        std::wstring linesFile,styleKey;
+        // The user's own lines (JSON; docs/GameLines.md), when there is such a file.
+        std::wstring ownLinesFile;
+        // Her line said aloud in her voice (the voice engine), when speaking aloud is on; an empty
+        // line stops what she is saying.
+        std::function<void(const std::wstring& line)> speak;
     };
 
     // Opens it (or brings it forward when open). onEnd: once, when the window closes.

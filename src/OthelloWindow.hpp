@@ -28,14 +28,23 @@ namespace MikuMikuDesktopPerch
         unsigned maxTexture=1024;
         bool light=false;                 // fewer pixels drawn (the settings' light 3D)
         std::function<void()> onGameOver; // each game played to its end (not one given up)
+        // Not asked any more (her lines come from their scenes); kept for the callers, which set it.
         // Her words in her own voice: asks the LLM about situation (a stage direction), the line
         // coming back through OthelloHeard. False when it cannot now (a line of her own is shown).
         std::function<bool(const std::wstring& situation)> talk;
         // Something those watching may speak of: what happened, told as to one watching, how
         // much it matters (1-9), and a line to say without the LLM.
         std::function<void(const std::wstring& facts,int weight,const std::wstring& fallback)> onEvent;
-        // Little lines of hers asked for ahead, all at once (for a good move, for thinking):
-        // sends ask to the LLM, the lines coming back through OthelloLines.
+        // Her lines in her own words are kept in this file (empty: not kept), under this key
+        // (her name and persona: a change asks again).
+        std::wstring linesFile,styleKey;
+        // The user's own lines (JSON; docs/GameLines.md), when there is such a file.
+        std::wstring ownLinesFile;
+        // Her line said aloud in her voice (the voice engine), when speaking aloud is on; an empty
+        // line stops what she is saying.
+        std::function<void(const std::wstring& line)> speak;
+        // Her lines (by scene, res/othello/lines.txt) asked for in her own words, one scene at a
+        // time: sends ask to the LLM, the answer coming back through OthelloLines.
         std::function<bool(const std::wstring& ask)> prefetch;
     };
 

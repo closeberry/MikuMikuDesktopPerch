@@ -7,6 +7,7 @@
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
 #include "BubbleText.hpp"
+#include "GameLines.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -35,6 +36,7 @@ namespace MikuMikuDesktopPerch
         // Her pace: before her draw (in 2D, and at the 3D table where her hand goes out first),
         // after a draw of yours.
         constexpr ULONGLONG HerPlayWait=900,HerPlayWait3D=3500,YourWait=250;
+        constexpr ULONGLONG LastCardWait3D=2000;   // your last card: her hand goes straight to it
         constexpr ULONGLONG SaidShown=1600;
         constexpr ULONGLONG ReachLead=3200;        // her hand starts out (and wavers) this long before her draw
         constexpr double LeanShare=0.35;           // how often she leans in to take your card
@@ -117,13 +119,13 @@ namespace MikuMikuDesktopPerch
                 std::wstring revealing;
                 double shown=0;
                 ULONGLONG shownAt=0;
+                bool voiced=false;   // the words are said by a voice file of their own
                 std::wstring told;
             } words;
-            // Her lines by scene (res/oldmaid/lines.txt): the plain draft, and the same put in her
-            // own way of talking by the LLM (kept per character); the scene being asked for.
-            struct Scene {std::wstring name,about;std::vector<std::wstring> draft,styled;bool asked=false;};
-            std::vector<Scene> scenes;
-            int asking=-1;
+            // Her lines by scene (res/oldmaid/lines.txt, said again her way by the LLM, and the
+            // user's own), and the voice of a line that has one.
+            GameLines lines;
+            GameVoice voice;
             bool prefetching=false;
             POINT headScreen{-1,-1},besideHead{-1,-1};
             std::wstring afterword,afterwordLine;
@@ -1084,6 +1086,7 @@ namespace MikuMikuDesktopPerch
         {
             if(!state.window)return;
             KillTimer(state.window,TimerId);
+            state.voice.Stop();
             if(state.her.model)
             {
                 state.her.model->SetSolids({});
@@ -1117,6 +1120,17 @@ namespace MikuMikuDesktopPerch
             if(state.her.model&&state.renderer)state.her.model->SetExpression(e,false);
         }
 
+        // She is to draw your last card (and so lose).
+        bool TakingLast()
+        {
+            return state.table.Now()==Phase::HerDraw&&state.table.Hand(OldMaid::You).size()==1;
+        }
+        // You are to draw her last card (and so she wins).
+        bool LastOfHers()
+        {
+            return state.table.Now()==Phase::YourDraw&&state.table.Hand(OldMaid::Her).size()==1;
+        }
+
         // Her face as you point at a card, when she holds the joker: a little smile at the
         // joker and a worried look at the others, or (each card once a turn, now and then) the
         // other way about, a smile put on to tempt you or a worried look to put you off.
@@ -1125,7 +1139,8 @@ namespace MikuMikuDesktopPerch
             auto& t=state.table;
             Expression e=Expression::Neutral;
             const auto& h=t.Hand(OldMaid::Her);
-            if(t.Now()==Phase::YourDraw&&HerJoker()&&state.hover>=0&&state.hover<static_cast<int>(h.size()))
+            if(LastOfHers())e=Expression::Smile;   // she has won: all smiles
+            else if(t.Now()==Phase::YourDraw&&HerJoker()&&state.hover>=0&&state.hover<static_cast<int>(h.size()))
             {
                 if(state.honestFor!=t.Draws()){state.honestFor=t.Draws();state.honest.clear();}
                 const int card=h[static_cast<size_t>(state.hover)];
@@ -1138,6 +1153,7 @@ namespace MikuMikuDesktopPerch
                 e=joker==state.honest[card]?Expression::Smile:Expression::Troubled;
             }
             else if(state.clock<state.reactUntil)e=state.reactFace;   // a moment's face on the joker drawn
+            else if(TakingLast()&&state.plannedFor==t.Moves())e=Expression::Sad;
             SetTell(e);
         }
 
@@ -1195,19 +1211,30 @@ namespace MikuMikuDesktopPerch
         constexpr ULONGLONG AskEvery=12000;
         constexpr ULONGLONG AnswerWait=9000;
 
-        void SayWords(const std::wstring& line,int weight)
+        // Her words: shown in the bubble (none for a voice alone) and, with a voice file of
+        // their own, played (the words revealed over it).
+        void SayLine(const GameLine& line,int weight)
         {
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
-            w.text=line;
+            state.voice.Stop();
+            std::wstring error;
+            w.voiced=!line.voice.empty()&&state.voice.Play(line,error);
+            // In her voice (the voice engine) when she speaks aloud and the line has no sound of its own.
+            if(state.her.speak)state.her.speak(w.voiced?std::wstring():line.text);
+            if(!error.empty())w.told+=L"  voice: "+error+L"\n";
+            w.text=line.text;
             w.waiting=false;
             w.weight=weight;
             w.since=now;
-            w.told+=L"  she says: "+line+L"\n";
-            w.until=now+static_cast<ULONGLONG>(CharSeconds()*1000*line.size())+2600+90*static_cast<ULONGLONG>(line.size());
-            if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
+            w.told+=L"  she says: "+line.text+(line.voice.empty()?L"":L" ["+line.voice+L"]")+L"\n";
+            const ULONGLONG reading=static_cast<ULONGLONG>(CharSeconds()*1000*line.text.size())+2600+90*static_cast<ULONGLONG>(line.text.size());
+            w.until=now+(w.voiced?std::max(reading,static_cast<ULONGLONG>(state.voice.Seconds()*1000)+1800):reading);
+            if(!line.text.empty()){w.recent.push_back(line.text);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
             Redraw();
         }
+
+        void SayWords(const std::wstring& line,int weight){SayLine({line,{}},weight);}
 
         const std::wstring& Pick(const std::vector<std::wstring>& lines)
         {
@@ -1216,10 +1243,9 @@ namespace MikuMikuDesktopPerch
         }
 
         // Something happened: she speaks of it, and those watching hear of it. facts: for her (she
-        // is "you"); feel: how she is to feel about it; seen: the same for one watching; lines:
-        // hers without the LLM (none: she says nothing; one of them is given the LLM as the
-        // feeling to put in her own words); theirs: the watchers'.
-        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const std::vector<std::wstring>& lines,
+        // is "you"); feel: how she is to feel about it; seen: the same for one watching; scene:
+        // the scene of her lines (null: she says nothing); theirs: the watchers'.
+        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const wchar_t* scene,
                       const std::wstring& seen,const std::vector<std::wstring>& theirs)
         {
             auto& t=state.table;
@@ -1227,157 +1253,30 @@ namespace MikuMikuDesktopPerch
             if(state.her.onEvent&&!theirs.empty())
                 state.her.onEvent(seen+Fmt(T(L"（手札は{0}が{1}枚、持ち主が{2}枚）",L" ({0} has {1} cards, the owner {2})"),
                                            {HerName(),std::to_wstring(t.Hand(OldMaid::Her).size()),std::to_wstring(t.Hand(OldMaid::You).size())}),weight,Pick(theirs));
-            if(lines.empty())return;
+            if(!scene)return;
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
             if((w.waiting||now-w.since<WordsHold)&&weight<w.weight)return;
-            const std::wstring line=Pick(lines);
-            if(!line.empty())SayWords(line,weight);
+            if(!state.lines.Roll(scene,1,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(scene,w.recent,state.sparkRandom,line))SayLine(line,weight);
         }
 
-        // The scenes' plain lines (res/oldmaid/lines.txt: "[name] about" then a line each).
-        void LoadScenes()
-        {
-            state.scenes.clear();
-            const HRSRC info=FindResourceW(nullptr,L"LINES",L"OLDMAIDLINES");
-            const HGLOBAL data=info?LoadResource(nullptr,info):nullptr;
-            const char* text=data?static_cast<const char*>(LockResource(data)):nullptr;
-            if(!text)return;
-            const int size=static_cast<int>(SizeofResource(nullptr,info));
-            std::wstring all(static_cast<size_t>(MultiByteToWideChar(CP_UTF8,0,text,size,nullptr,0)),L'\0');
-            MultiByteToWideChar(CP_UTF8,0,text,size,all.data(),static_cast<int>(all.size()));
-            for(size_t start=0;start<all.size();)
-            {
-                size_t end=all.find(L'\n',start);
-                if(end==std::wstring::npos)end=all.size();
-                std::wstring line=all.substr(start,end-start);
-                start=end+1;
-                if(!line.empty()&&line.back()==L'\r')line.pop_back();
-                if(!line.empty()&&line[0]==0xFEFF)line.erase(0,1);
-                if(line.empty()||line[0]==L'#')continue;
-                if(line[0]==L'[')
-                {
-                    const size_t close=line.find(L']');
-                    if(close==std::wstring::npos)continue;
-                    State::Scene scene;
-                    scene.name=line.substr(1,close-1);
-                    const size_t about=line.find_first_not_of(L" \t",close+1);
-                    if(about!=std::wstring::npos)scene.about=line.substr(about);
-                    state.scenes.push_back(std::move(scene));
-                }
-                else if(!state.scenes.empty())state.scenes.back().draft.push_back(line);
-            }
-        }
-
-        State::Scene* SceneNamed(const wchar_t* name)
-        {
-            for(auto& scene:state.scenes)if(scene.name==name)return &scene;
-            return nullptr;
-        }
-
-        // The key her styled lines are kept under: who she is and how she talks, the language,
-        // and the draft (a change to any asks again).
-        std::wstring StyleKey()
-        {
-            std::wstring all=state.her.styleKey+(English()?L"\nen":L"\nja");
-            for(const auto& scene:state.scenes){all+=L"\n["+scene.name+L"]";for(const auto& l:scene.draft)all+=L"\n"+l;}
-            unsigned long long hash=1469598103934665603ull;
-            for(const wchar_t c:all){hash^=static_cast<unsigned long long>(c);hash*=1099511628211ull;}
-            wchar_t hex[20]{};
-            swprintf_s(hex,L"%016llx",hash);
-            return hex;
-        }
-
-        // Her styled lines kept from before (the file: "# key", then "[name]" and a line each).
-        void LoadStyled()
-        {
-            if(state.her.linesFile.empty())return;
-            FILE* in=nullptr;
-            if(_wfopen_s(&in,state.her.linesFile.c_str(),L"r, ccs=UTF-8")!=0||!in)return;
-            std::wstring all;
-            wchar_t chunk[1024];
-            while(fgetws(chunk,1024,in))all+=chunk;
-            fclose(in);
-            std::wstringstream lines(all);
-            std::wstring line,key=L"# "+StyleKey();
-            if(!std::getline(lines,line)||line!=key)return;
-            State::Scene* at=nullptr;
-            while(std::getline(lines,line))
-            {
-                if(!line.empty()&&line.back()==L'\r')line.pop_back();
-                if(line.empty())continue;
-                if(line[0]==L'['){const size_t close=line.find(L']');at=close==std::wstring::npos?nullptr:SceneNamed(line.substr(1,close-1).c_str());continue;}
-                if(at)at->styled.push_back(line);
-            }
-            for(auto& scene:state.scenes)scene.asked=!scene.styled.empty();
-        }
-
-        void SaveStyled()
-        {
-            if(state.her.linesFile.empty())return;
-            FILE* out=nullptr;
-            if(_wfopen_s(&out,state.her.linesFile.c_str(),L"w, ccs=UTF-8")!=0||!out)return;
-            fputws((L"# "+StyleKey()+L"\n").c_str(),out);
-            for(const auto& scene:state.scenes)
-            {
-                if(scene.styled.empty())continue;
-                fputws((L"["+scene.name+L"]\n").c_str(),out);
-                for(const auto& l:scene.styled)fputws((l+L"\n").c_str(),out);
-            }
-            fclose(out);
-        }
-
-        // The next scene not yet in her own words: its draft given to the LLM to say again her
-        // way, a scene at a time (a small model keeps to the form so).
+        // The next scene not yet in her own words, asked of the LLM.
         void Prefetch()
         {
             if(state.prefetching||!state.her.prefetch)return;
-            State::Scene* want=nullptr;
-            for(auto& scene:state.scenes)if(!scene.asked&&!scene.draft.empty()){want=&scene;break;}
-            if(!want)return;
-            std::wstring numbered;
-            for(size_t i=0;i<want->draft.size();++i)numbered+=std::to_wstring(i+1)+(English()?L": ":L"：")+want->draft[i]+L"\n";
-            const std::wstring count=std::to_wstring(want->draft.size());
-            const std::wstring ask=English()?
-                Fmt(L"You are playing Old Maid with them. The moment: {0}.\n"
-                    L"Say each of these {1} lines (Japanese) in English, the way you yourself talk to them (your way of speaking in every line). "
-                    L"Keep what each says; add nothing, one sentence each.\n{2}"
-                    L"Answer in {1} lines, numbered as these, in the form \"1: the line\". Do not say \"joker\" unless the line does. "
-                    L"Write nothing else. No feeling tags, names, anything in ( ) or emoji.",{want->about,count,numbered}):
-                Fmt(L"話し相手とババ抜きをしています。場面：{0}。台詞はどれも、あなたが話し相手に向かって言うものです。\n"
-                    L"次の{1}個の台詞を、それぞれ、あなたがふだん話すときの口調に言い換えてください（一人称、語尾、口ぐせなど、あなたらしい話し方をどの行にも必ず入れる。元のままの行は作らない）。"
-                    L"言っていることは変えず、言葉を足したり、2文にしたりしません。\n{2}"
-                    L"答えは{1}行で、元と同じ番号を付けて「1：言い換えた台詞」の形で書きます。"
-                    L"ババやジョーカーという言葉は、元になければ使いません。この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わないでください。",
-                    {want->about,count,numbered});
-            state.prefetching=state.her.prefetch(ask);
-            if(state.prefetching)
-            {
-                want->asked=true;
-                state.asking=static_cast<int>(want-state.scenes.data());
-            }
+            const std::wstring ask=state.lines.NextAsk();
+            if(!ask.empty())state.prefetching=state.her.prefetch(ask);
         }
 
-        // A line of the scene: in her own words when there are, else the draft (none in English
-        // until they come); not one of her last few.
-        std::wstring Line(const wchar_t* name)
+        // A line of the scene, said now and then (chance: how often, unless the user's lines
+        // file says otherwise).
+        void Say(const wchar_t* name,int weight=2,double chance=1)
         {
-            const State::Scene* scene=SceneNamed(name);
-            if(!scene)return {};
-            const auto& pool=!scene->styled.empty()?scene->styled:English()?scene->styled:scene->draft;
-            if(pool.empty())return {};
-            std::vector<const std::wstring*> fresh;
-            for(const auto& l:pool)
-                if(std::find(state.words.recent.begin(),state.words.recent.end(),l)==state.words.recent.end())fresh.push_back(&l);
-            if(fresh.empty())for(const auto& l:pool)fresh.push_back(&l);
-            std::uniform_int_distribution<size_t> any(0,fresh.size()-1);
-            return *fresh[any(state.sparkRandom)];
-        }
-
-        void Say(const wchar_t* name,int weight=2)
-        {
-            const std::wstring line=Line(name);
-            if(!line.empty())SayWords(line,weight);
+            if(!state.lines.Roll(name,chance,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(name,state.words.recent,state.sparkRandom,line))SayLine(line,weight);
         }
 
         // What is new in the game since the last tick, for words: its start, the joker drawn
@@ -1396,7 +1295,7 @@ namespace MikuMikuDesktopPerch
                 w.revealing=w.text;
             }
             const size_t before=static_cast<size_t>(w.shown);
-            w.shown=std::min(static_cast<double>(w.text.size()),w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
+            w.shown=std::min(static_cast<double>(w.text.size()),w.voiced?state.voice.Revealed():w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
             w.shownAt=now;
             if(static_cast<size_t>(w.shown)!=before)Redraw();
             if(Flying())return;   // the cards are still on their way
@@ -1406,7 +1305,7 @@ namespace MikuMikuDesktopPerch
                 seen.started=true;
                 Happened(6,T(L"これから話し相手とババ抜きが始まる。",L"A game of Old Maid with them is about to begin. "),
                          T(L"わくわくする気持ち",L"how you look forward to it"),
-                         {Line(L"始まり")},
+                         L"始まり",
                          Fmt(T(L"{0}とこのパソコンの持ち主のババ抜きが始まる。",L"{0} and the owner of this computer are starting a game of Old Maid."),{name}),
                          {T(L"がんばれー！",L"Good luck!"),T(L"ババを引くのはどっちかな？",L"Who'll end up with the joker?")});
             }
@@ -1423,13 +1322,13 @@ namespace MikuMikuDesktopPerch
                 if(t.LastCard()==OldMaid::Joker&&t.LastDrawer()==OldMaid::You)
                     Happened(5,T(L"ババ抜きで、話し相手があなたの手札からババ（ジョーカー）を引いた。",L"At Old Maid, they drew the joker from your hand."),
                              T(L"ほっとして喜ぶ気持ち",L"how relieved and pleased you are"),
-                             {Line(L"ジョーカーを引かせた")},
+                             L"ジョーカーを引かせた",
                              Fmt(T(L"ババ抜きで、持ち主が{0}からババを引いた。",L"At Old Maid, the owner drew the joker from {0}."),{name}),
                              {T(L"あっ、ババ引いた！",L"Oh, the joker!")});
                 else if(t.LastCard()==OldMaid::Joker)
                     Happened(5,T(L"ババ抜きで、あなたが話し相手の手札からババ（ジョーカー）を引いてしまった。",L"At Old Maid, you drew the joker from their hand."),
                              T(L"がっかりする気持ち",L"how let down you are"),
-                             {Line(L"ジョーカーを引いた")},
+                             L"ジョーカーを引いた",
                              Fmt(T(L"ババ抜きで、{0}が持ち主からババを引いた。",L"At Old Maid, {0} drew the joker from the owner."),{name}),
                              {Fmt(T(L"{0}がババを引いた！",L"{0} drew the joker!"),{name})});
                 else if(t.LastDrawer()==OldMaid::You)Say(t.LastPaired()?L"取られた":L"引かれた",3);
@@ -1446,12 +1345,13 @@ namespace MikuMikuDesktopPerch
                 state.afterwordLine=herLoss?T(L"ババ抜き、次は負けないよ！",L"I'll win at Old Maid next time!"):T(L"ババ抜き、楽しかったね！またやろう。",L"Old Maid was fun! Let's play again.");
                 if(herLoss)Happened(9,Fmt(T(L"ババ抜きが終わって、あなたがババ（ジョーカー）を最後まで持っていて負けた（{0}）。",L"The game of Old Maid is over: you were left with the joker and lost ({0})."),{tally}),
                                     T(L"悔しい気持ち",L"how annoyed you are"),
-                                    {Line(L"負けた")},
+                                    // Lost by drawing their last card: she said so as she took it.
+                                    t.LastDrawer()==OldMaid::Her?nullptr:L"負けた",
                                     Fmt(T(L"{0}と持ち主のババ抜きが終わり、{0}がババを持って負けた。",L"The Old Maid between {0} and the owner is over: {0} was left with the joker."),{name}),
                                     {T(L"持ち主の勝ちだ！",L"The owner wins!"),T(L"おつかれさま！",L"Well played!")});
                 else Happened(9,Fmt(T(L"ババ抜きが終わって、話し相手がババ（ジョーカー）を最後まで持っていて、あなたの勝ち（{0}）。",L"The game of Old Maid is over: they were left with the joker, and you won ({0})."),{tally}),
                               T(L"うれしい気持ち",L"how pleased you are"),
-                              {Line(L"勝った")},
+                              L"勝った",
                               Fmt(T(L"{0}と持ち主のババ抜きが終わり、{0}が勝った。",L"The Old Maid between {0} and the owner is over: {0} won."),{name}),
                               {Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name}),T(L"おつかれさま！",L"Well played!")});
             }
@@ -1476,7 +1376,7 @@ namespace MikuMikuDesktopPerch
             // As you point at a card of hers (a moment on it): with the joker in her hand, a word
             // to go with her face (tempting with a smile, fretting with a worried look); without
             // it, once a turn, a word at ease.
-            if(YourDrawNow()&&state.hover>=0&&state.hover<static_cast<int>(t.Hand(OldMaid::Her).size())&&now-state.hoverSince>=HoverDwell&&
+            if(YourDrawNow()&&!LastOfHers()&&state.hover>=0&&state.hover<static_cast<int>(t.Hand(OldMaid::Her).size())&&now-state.hoverSince>=HoverDwell&&
                now-state.hoverSaid>=HoverEvery&&!state.words.waiting)
             {
                 const int card=t.Hand(OldMaid::Her)[static_cast<size_t>(state.hover)];
@@ -1493,27 +1393,31 @@ namespace MikuMikuDesktopPerch
                     Say(L"余裕");
                 }
             }
-            // Your turn starting: a word (the end coming near; her hand just shuffled; to unsettle
-            // you when she holds the joker; else to let you choose).
+            // Your turn starting: a word (her last card: she has won, and gloats; the end coming
+            // near; her hand just shuffled; to unsettle you when she holds the joker; else to let
+            // you choose).
             const bool ending=std::min(t.Hand(OldMaid::You).size(),t.Hand(OldMaid::Her).size())<=3;
-            if(YourDrawNow()&&state.seen.teased!=t.Draws()&&state.hover<0)
+            if(YourDrawNow()&&state.seen.teased!=t.Draws()&&(state.hover<0||LastOfHers()))
             {
                 state.seen.teased=t.Draws();
                 std::uniform_real_distribution<double> any(0,1);
-                if(ending&&!state.seen.nearEnd){state.seen.nearEnd=true;Say(L"残りわずか");}
-                else if(any(state.sparkRandom)<0.75&&now-state.words.since>WordsHold/2)
-                    Say(t.Draws()>0&&any(state.sparkRandom)<0.3?L"混ぜる":HerJoker()?L"揺さぶる":L"あなたの番");
+                if(LastOfHers())Say(L"勝ち確定");
+                else if(ending&&!state.seen.nearEnd){state.seen.nearEnd=true;Say(L"残りわずか");}
+                else if(now-state.words.since>WordsHold/2)
+                    Say(t.Draws()>0&&any(state.sparkRandom)<0.3?L"混ぜる":HerJoker()?L"揺さぶる":L"あなたの番",2,0.75);
             }
             // Her draw coming: which card of yours, time for her hand to go out to it, now and
-            // then a word.
+            // then a word. Your last card she takes without wavering, glum: taking it loses her
+            // the game.
             if(t.Now()==Phase::HerDraw&&state.plannedFor!=t.Moves()&&!Flying()&&seated)
             {
                 state.plannedFor=t.Moves();
                 state.herPick=t.HerPick();
-                state.nextAt=std::max(state.nextAt,now+(state.renderer?HerPlayWait3D:HerPlayWait));
+                state.nextAt=std::max(state.nextAt,now+(state.renderer?(TakingLast()?LastCardWait3D:HerPlayWait3D):HerPlayWait));
                 std::uniform_real_distribution<double> any(0,1);
-                if(ending&&!state.seen.nearEnd){state.seen.nearEnd=true;Say(L"残りわずか");}
-                else if(any(state.sparkRandom)<0.85&&now-state.words.since>WordsHold/2)Say(L"迷う");
+                if(TakingLast())Say(L"最後の1枚");
+                else if(ending&&!state.seen.nearEnd){state.seen.nearEnd=true;Say(L"残りわずか");}
+                else if(now-state.words.since>WordsHold/2)Say(L"迷う",2,0.85);
             }
             if(now>=state.nextAt&&t.Now()==Phase::HerDraw&&state.plannedFor==t.Moves()&&seated)
             {
@@ -1522,6 +1426,7 @@ namespace MikuMikuDesktopPerch
             }
             UpdateTell();
             Redraw();
+            if(!state.renderer)state.voice.Tick(0.04);   // (at the 3D table the model's frame ticks it)
             NoticeWords();
             if(t.Now()==Phase::GameOver&&!state.gameOverTold&&!Flying())
             {
@@ -1883,45 +1788,7 @@ namespace MikuMikuDesktopPerch
     {
         state.prefetching=false;
         if(!state.window)return;
-        const int at=state.asking;
-        state.asking=-1;
-        if(at>=0&&at<static_cast<int>(state.scenes.size()))
-        {
-            auto& scene=state.scenes[static_cast<size_t>(at)];
-            std::vector<std::wstring> got;
-            for(size_t from=0;from<answer.size();)
-            {
-                size_t end=answer.find(L'\n',from);
-                if(end==std::wstring::npos)end=answer.size();
-                std::wstring line=answer.substr(from,end-from);
-                from=end+1;
-                // "1：line" (a model may put 番号 or a dot before it): what follows the number.
-                size_t i=0;
-                auto skip=[&](const wchar_t* chars){while(i<line.size()&&wcschr(chars,line[i]))++i;};
-                skip(L" \t\r　");
-                if(line.compare(i,2,L"番号")==0)i+=2;
-                skip(L"：: ");
-                const size_t digits=i;
-                skip(L"0123456789０１２３４５６７８９");
-                if(i==digits)continue;   // no number: not one of the lines
-                skip(L"：:.．)） \t　");
-                std::wstring said=line.substr(i);
-                for(const wchar_t* drop:{L"「",L"」",L"\"",L"*"})
-                    for(size_t p;(p=said.find(drop))!=std::wstring::npos;)said.erase(p,wcslen(drop));
-                const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
-                if(a==std::wstring::npos)continue;
-                said=said.substr(a,b-a+1);
-                if(said.size()>60||std::find(got.begin(),got.end(),said)!=got.end())continue;
-                got.push_back(said);
-            }
-            // Kept when most came back (a few short is fine; a stray answer is not).
-            if(got.size()*2>=scene.draft.size())
-            {
-                scene.styled=std::move(got);
-                SaveStyled();
-            }
-            state.words.told+=Fmt(L"  lines in her words: {0} ({1} of {2})\n",{scene.name,std::to_wstring(scene.styled.size()),std::to_wstring(scene.draft.size())});
-        }
+        state.lines.Answered(answer);
         Prefetch();
     }
 
@@ -2165,8 +2032,7 @@ namespace MikuMikuDesktopPerch
         // Her hand goes out to the card of yours she will draw (tried again next frame while a
         // gesture of hers ends).
         // She wavers first: her hand goes over one or two other cards of yours before hers,
-        // her eyes on the card and up at you by turns. Now and then she leans in to it, looking
-        // up at you as she takes it.
+        // her eyes on the card her hand is over. Now and then she leans in to it as she takes it.
         if(t.Now()==Phase::HerDraw&&state.entrance==5&&!Flying()&&state.plannedFor==t.Moves()&&state.reachedFor!=t.Moves()&&
            GetTickCount64()+ReachLead>=state.nextAt)
         {
@@ -2176,7 +2042,8 @@ namespace MikuMikuDesktopPerch
             if(state.herPick>=0&&state.herPick<static_cast<int>(yours.size()))
             {
                 std::uniform_real_distribution<double> any(0,1);
-                const double start=state.clock+0.35,end=state.clock+ReachLead/1000.0;
+                const ULONGLONG tick=GetTickCount64();
+                const double start=state.clock+0.35,end=state.clock+(state.nextAt>tick?state.nextAt-tick:0)/1000.0;
                 const int others=yours.size()<2?0:(any(state.sparkRandom)<0.5?1:2);
                 std::uniform_int_distribution<int> pick(0,static_cast<int>(yours.size())-1);
                 const double each=(end-start)/(others+1);
@@ -2188,7 +2055,7 @@ namespace MikuMikuDesktopPerch
                 }
                 state.waver.push_back({start+others*each,yours[static_cast<size_t>(state.herPick)]});
                 state.reachCard=state.waver.front().second;
-                state.leanIn=any(state.sparkRandom)<LeanShare;
+                state.leanIn=!TakingLast()&&any(state.sparkRandom)<LeanShare;
                 state.handsBusyUntil=end+0.55;
             }
         }
@@ -2208,7 +2075,7 @@ namespace MikuMikuDesktopPerch
                 else if(t.LastCard()==OldMaid::Joker)glad=t.LastDrawer()==OldMaid::Her?0:1;
                 if(glad>=0&&!t.Hand(OldMaid::Her).empty())
                 {
-                    state.reactFace=glad?Expression::Smile:Expression::Troubled;
+                    state.reactFace=glad?Expression::Smile:t.Now()==Phase::GameOver?Expression::Sad:Expression::Troubled;
                     state.reactUntil=state.clock+2.5;
                 }
                 else if(glad>=0)
@@ -2412,9 +2279,8 @@ namespace MikuMikuDesktopPerch
             else if(state.clock<state.handsBusyUntil&&state.reachCard>=0&&std::find(yours.begin(),yours.end(),state.reachCard)!=yours.end())
             {
                 const Pose& p=state.poses[static_cast<size_t>(state.reachCard)];
-                const bool atYou=state.leanIn||std::fmod(state.clock,1.1)>0.7;
-                if(!atYou)look=XMVectorSet(p.x,p.y,p.z,1);
-                level=atYou;   // (at you at her own eyes' height: looking up rolled her eyes back)
+                look=XMVectorSet(p.x,p.y,p.z,1);   // on the card (looking up at you from it rolled her eyes up)
+                level=false;
             }
             const XMVECTOR at=XMVector3Transform(look,toModel);
             model.LookToward({XMVectorGetX(at),level?head[1]:XMVectorGetY(at),XMVectorGetZ(at)},true);
@@ -2429,10 +2295,12 @@ namespace MikuMikuDesktopPerch
         }
         {
             // Her mouth moves while her words are being shown (a vowel or two, opening and
-            // closing about five times a second), and closes after.
+            // closing about five times a second), and closes after; with a voice file, with it.
             const auto& w=state.words;
             const bool saying=!w.text.empty()&&w.text!=L"…"&&w.shown<static_cast<double>(w.text.size());
-            if(saying)
+            state.voice.Tick(dt);
+            if(state.voice.Playing())model.SetMouth(state.voice.Mouth(),true);
+            else if(saying)
             {
                 const float u=static_cast<float>(state.clock*10.5);
                 const float open=0.25f+0.75f*std::abs(std::sin(u));
@@ -2553,9 +2421,9 @@ namespace MikuMikuDesktopPerch
         state.poses={};
         state.flights.clear();
         state.gestureFor=-1;
-        LoadScenes();
-        LoadStyled();
-        state.asking=-1;
+        state.lines.Load(L"OLDMAIDLINES",L"oldmaid",her.ownLinesFile,her.linesFile,her.styleKey,English(),
+                         {L"ババ抜き",L"Old Maid",L"ババやジョーカーという言葉は、元になければ使いません。",L"Do not say \"joker\" unless the line does. "});
+        state.voice.Stop();
         state.fanSet=state.faceSet=state.holdSet=state.faceFrontSet=false;
         state.warps.clear();
         state.handsBusyUntil=state.gestureFreeAt=0;
@@ -2567,6 +2435,8 @@ namespace MikuMikuDesktopPerch
         state.tell=Expression::Neutral;
         state.prefetching=false;
         state.words={};
+        state.words.told=state.lines.Report();
+        if(!her.linesFile.empty())ShowLinesProblem(owner,state.lines);   // (none kept: a diagnostic run, which must not stop)
         NewGame();
 
         MONITORINFO info{sizeof(info)};

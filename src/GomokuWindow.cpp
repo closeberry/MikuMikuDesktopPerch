@@ -7,6 +7,7 @@
 #include "MascotRenderer.hpp"
 #include "Text.hpp"
 #include "BubbleText.hpp"
+#include "GameLines.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -75,6 +76,7 @@ namespace MikuMikuDesktopPerch
                 std::wstring text,fallback;
                 ULONGLONG since=0,until=0,asked=0;
                 bool waiting=false;
+                bool voiced=false;   // the words are said by a voice file of their own
                 int weight=0;
                 std::vector<std::wstring> recent;
                 std::wstring revealing;
@@ -82,14 +84,19 @@ namespace MikuMikuDesktopPerch
                 ULONGLONG shownAt=0;
                 std::wstring told;
             } words;
-            std::vector<std::wstring> goodLines,thinkLines;
+            // Her lines by scene (res/gomoku/lines.txt, said again her way by the LLM, and the
+            // user's own lines file), and her voice for a line that has one.
+            GameLines lines;
+            GameVoice voice;
             bool prefetching=false;
+            Expression tell=Expression::Neutral;   // her face while a game is certain
             POINT headScreen{-1,-1},besideHead{-1,-1};
             std::wstring afterword,afterwordLine;
             struct Seen
             {
                 bool started=false,over=false;
                 int moves=0;
+                bool sureWin=false,sureLoss=false;   // said once each game when it is certain
             } seen;
             std::array<float,2> boardOrigin{};                     // the 2D board's top left crossing
             float boardCell=0;                                     // and its spacing
@@ -994,7 +1001,14 @@ namespace MikuMikuDesktopPerch
         {
             if(!state.window)return;
             KillTimer(state.window,TimerId);
-            if(state.her.model)state.her.model->SetSolids({});
+            state.voice.Stop();
+            if(state.her.model)
+            {
+                state.her.model->SetSolids({});
+                state.her.model->SetMouth({},false);
+            }
+            if(state.her.model&&state.tell!=Expression::Neutral)state.her.model->SetExpression(Expression::Neutral,false);
+            state.tell=Expression::Neutral;
             if(state.afterword.empty()&&state.seen.started&&state.table.Now()!=Phase::GameOver)
             {
                 const auto& t=state.table;
@@ -1087,19 +1101,30 @@ namespace MikuMikuDesktopPerch
         constexpr ULONGLONG AskEvery=12000;
         constexpr ULONGLONG AnswerWait=9000;
 
-        void SayWords(const std::wstring& line,int weight)
+        // Her words: shown in the bubble (none for a voice alone) and, with a voice file of
+        // their own, played (the words revealed over it).
+        void SayLine(const GameLine& line,int weight)
         {
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
-            w.text=line;
+            state.voice.Stop();
+            std::wstring error;
+            w.voiced=!line.voice.empty()&&state.voice.Play(line,error);
+            // In her voice (the voice engine) when she speaks aloud and the line has no sound of its own.
+            if(state.her.speak)state.her.speak(w.voiced?std::wstring():line.text);
+            if(!error.empty())w.told+=L"  voice: "+error+L"\n";
+            w.text=line.text;
             w.waiting=false;
             w.weight=weight;
             w.since=now;
-            w.told+=L"  she says: "+line+L"\n";
-            w.until=now+static_cast<ULONGLONG>(CharSeconds()*1000*line.size())+2600+90*static_cast<ULONGLONG>(line.size());
-            if(!line.empty()){w.recent.push_back(line);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
+            w.told+=L"  she says: "+line.text+(line.voice.empty()?L"":L" ["+line.voice+L"]")+L"\n";
+            const ULONGLONG reading=static_cast<ULONGLONG>(CharSeconds()*1000*line.text.size())+2600+90*static_cast<ULONGLONG>(line.text.size());
+            w.until=now+(w.voiced?std::max(reading,static_cast<ULONGLONG>(state.voice.Seconds()*1000)+1800):reading);
+            if(!line.text.empty()){w.recent.push_back(line.text);if(w.recent.size()>4)w.recent.erase(w.recent.begin());}
             Redraw();
         }
+
+        void SayWords(const std::wstring& line,int weight){SayLine({line,{}},weight);}
 
         const std::wstring& Pick(const std::vector<std::wstring>& lines)
         {
@@ -1107,81 +1132,102 @@ namespace MikuMikuDesktopPerch
             return lines[any(state.sparkRandom)];
         }
 
+        // A line of the scene, said now and then (chance: how often, unless the user's lines
+        // file says otherwise).
+        void Say(const wchar_t* name,int weight=2,double chance=1)
+        {
+            if(!state.lines.Roll(name,chance,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(name,state.words.recent,state.sparkRandom,line))SayLine(line,weight);
+        }
+
+        // The points where a stone of who's would make five (black's five exactly, as the rules
+        // say: a six is no five for black). Empty points only.
+        std::vector<int> FivePoints(const Gomoku::Table& t,int who)
+        {
+            constexpr int Dirs[4][2]={{0,1},{1,0},{1,1},{1,-1}};
+            std::vector<int> out;
+            for(int p=0;p<Squares;++p)
+            {
+                if(t.At(p)!=-1)continue;
+                const int r=p/Gomoku::Size,c=p%Gomoku::Size;
+                for(const auto& d:Dirs)
+                {
+                    int n=1;
+                    for(int sign:{-1,1})
+                        for(int k=1;;++k)
+                        {
+                            const int qr=r+sign*k*d[0],qc=c+sign*k*d[1];
+                            if(qr<0||qr>=Gomoku::Size||qc<0||qc>=Gomoku::Size||t.At(qr*Gomoku::Size+qc)!=who)break;
+                            ++n;
+                        }
+                    if(t.Black()==who?n==5:n>=5){out.push_back(p);break;}
+                }
+            }
+            return out;
+        }
+
+        // What is certain now, while the game goes on: 1 when she is sure to make five (you have
+        // no five of your own, and two of hers at once or one you may not block), -1 when she is
+        // sure to lose (you can make five at once, or she has none of her own and two of yours
+        // at once or one she may not block), else 0.
+        int Certain()
+        {
+            const auto& t=state.table;
+            if(t.Now()==Phase::YourMove)
+            {
+                if(!FivePoints(t,Gomoku::You).empty())return -1;
+                const auto hers=FivePoints(t,Gomoku::Her);
+                if(hers.size()>=2||(hers.size()==1&&t.WhyNot(Gomoku::You,hers[0])!=Gomoku::Forbidden::None))return 1;
+            }
+            else if(t.Now()==Phase::HerTurn&&FivePoints(t,Gomoku::Her).empty())
+            {
+                const auto mine=FivePoints(t,Gomoku::You);
+                if(mine.size()>=2||(mine.size()==1&&t.WhyNot(Gomoku::Her,mine[0])!=Gomoku::Forbidden::None))return -1;
+            }
+            return 0;
+        }
+
+        void SetTell(Expression e)
+        {
+            if(e==state.tell)return;
+            state.tell=e;
+            if(state.her.model&&state.renderer)state.her.model->SetExpression(e,false);
+        }
+
+        // Her face while the game is certain: smiling when she is sure to win, glum when she is
+        // sure to lose.
+        void UpdateTell()
+        {
+            const int certain=Certain();
+            SetTell(certain>0?Expression::Smile:certain<0?Expression::Sad:Expression::Neutral);
+        }
+
         // Something happened: she speaks of it, and those watching hear of it. facts: for her (she
-        // is "you"); feel: how she is to feel about it; seen: the same for one watching; lines:
-        // hers without the LLM (none: she says nothing; one of them is given the LLM as the
-        // feeling to put in her own words); theirs: the watchers'.
-        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const std::vector<std::wstring>& lines,
+        // is "you"); feel: how she is to feel about it; seen: the same for one watching; scene:
+        // the scene of her lines (null: she says nothing); theirs: the watchers'.
+        void Happened(int weight,const std::wstring& facts,const std::wstring& feel,const wchar_t* scene,
                       const std::wstring& seen,const std::vector<std::wstring>& theirs)
         {
             auto& t=state.table;
             state.words.told+=Fmt(L"  {0} s, weight {1}: {2}\n",{std::to_wstring(static_cast<int>(state.clock)),std::to_wstring(weight),seen});
             if(state.her.onEvent&&!theirs.empty())
                 state.her.onEvent(seen+Fmt(T(L"（{0}手目）",L" (move {0})"),{std::to_wstring(t.Moves())}),weight,Pick(theirs));
-            if(lines.empty())return;
+            if(!scene)return;
             auto& w=state.words;
             const ULONGLONG now=GetTickCount64();
             if((w.waiting||now-w.since<WordsHold)&&weight<w.weight)return;
-            const std::wstring line=Pick(lines);
-            if(state.her.talk&&(weight>=6||now-w.asked>AskEvery))
-            {
-                // The score and her last lines first, then what happened and the feeling, with
-                // her own line as an example last (a small model keeps to the point so).
-                std::wstring situation=Fmt(T(L"いま五目並べの{0}手目、あなたは{1}の石。",L"Now move {0} of gomoku; you have {1}. "),
-                                           {std::to_wstring(t.Moves()),ColourOf(Gomoku::Her)});
-                if(!w.recent.empty())
-                {
-                    situation+=T(L"さっきあなたが言ったこと：",L"What you said just before: ");
-                    for(const auto& r:w.recent)situation+=English()?L"\""+r+L"\" ":L"「"+r+L"」";
-                    situation+=T(L"。同じ言い回しは避けて。",L"- do not say the same again. ");
-                }
-                situation+=facts+Fmt(T(L"{0}を、あなたの言葉で話し相手にひと言（たとえば「{1}」のような気持ち。そのままは使わない）",
-                                       L" Tell them, in a word of your own, {0} (like \"{1}\", but not those words)"),{feel,line});
-                if(state.her.talk(situation))
-                {
-                    w.waiting=true;
-                    w.fallback=line;
-                    w.text=L"…";
-                    w.weight=weight;
-                    w.since=w.asked=now;
-                    w.until=now+AnswerWait+4000;
-                    Redraw();
-                    return;
-                }
-            }
-            SayWords(line,weight);
+            if(!state.lines.Roll(scene,1,state.sparkRandom))return;
+            GameLine line;
+            if(state.lines.Pick(scene,w.recent,state.sparkRandom,line))SayLine(line,weight);
         }
 
+        // The next scene not yet in her own words, asked of the LLM.
         void Prefetch()
         {
-            if(state.prefetching||!state.her.prefetch||(state.goodLines.size()>=2&&state.thinkLines.size()>=2))return;
-            const std::wstring ask=T(
-                L"これから話し相手と五目並べをします。対局中に言う短いひと言を用意してください。"
-                L"次の形で、1行に1つずつ、それぞれ6つずつ書いてください（どれも違う言い方で、1文の短い話し言葉）。\n"
-                L"いい手：（あと一つで五つ並ぶ形を作ったときなど、いい手を打ったときのひと言）\n"
-                L"考える：（自分の番に、どこに置くか迷いながら自分につぶやくひと言。相手への問いかけにはしない）\n"
-                L"この形の行のほかは何も書かないでください。気持ちの印、名前、（ ）書き、絵文字は使わないでください。",
-                L"You are about to play gomoku with them. Get ready some little lines to say during the game. "
-                L"Write six of each, one to a line, in this form (each different, one short spoken sentence):\n"
-                L"Good: (a word as you make a good move, such as a row one stone short of five)\n"
-                L"Think: (a word muttered to yourself on your turn as you wonder where to lay your stone; not a question to them)\n"
-                L"Write nothing but these lines. No feeling tags, names, anything in ( ) or emoji.");
-            state.prefetching=state.her.prefetch(ask);
-        }
-
-        std::wstring TakeLine(std::vector<std::wstring>& ready,const std::vector<std::wstring>& own)
-        {
-            std::wstring line;
-            if(!ready.empty())
-            {
-                std::uniform_int_distribution<size_t> any(0,ready.size()-1);
-                const size_t i=any(state.sparkRandom);
-                line=ready[i];
-                ready.erase(ready.begin()+static_cast<std::ptrdiff_t>(i));
-            }
-            else line=Pick(own);
-            Prefetch();
-            return line;
+            if(state.prefetching||!state.her.prefetch)return;
+            const std::wstring ask=state.lines.NextAsk();
+            if(!ask.empty())state.prefetching=state.her.prefetch(ask);
         }
 
         const wchar_t* WhyText(Gomoku::Forbidden why)
@@ -1211,7 +1257,7 @@ namespace MikuMikuDesktopPerch
                 w.revealing=w.text;
             }
             const size_t before=static_cast<size_t>(w.shown);
-            w.shown=std::min(static_cast<double>(w.text.size()),w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
+            w.shown=std::min(static_cast<double>(w.text.size()),w.voiced?state.voice.Revealed():w.shown+(now-std::min(now,w.shownAt))/1000.0/CharSeconds());
             w.shownAt=now;
             if(static_cast<size_t>(w.shown)!=before)Redraw();
             if(Flying())return;   // the stones are still on their way
@@ -1223,7 +1269,7 @@ namespace MikuMikuDesktopPerch
                 Happened(6,Fmt(T(L"これから話し相手と五目並べの対局が始まる。あなたは{0}で、{1}。",L"A game of gomoku with them is about to begin. You have {0} and {1}. "),
                                {ColourOf(Gomoku::Her),first?T(L"先に打つ",L"move first"):T(L"後から打つ",L"move second")}),
                          T(L"わくわくする気持ち",L"how you look forward to it"),
-                         {T(L"よろしくね！負けないよ。",L"Let's play! I won't lose."),T(L"よーし、五目並べ勝負だ！",L"Okay, gomoku time!"),T(L"お手やわらかにね。",L"Go easy on me.")},
+                         L"始まり",
                          Fmt(T(L"{0}と、このパソコンの持ち主の五目並べの対局が始まる。",L"A game of gomoku between {0} and the owner of this computer is about to begin."),{name}),
                          {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
             }
@@ -1233,14 +1279,19 @@ namespace MikuMikuDesktopPerch
                 if(t.Now()!=Phase::GameOver&&t.LastWho()==Gomoku::You&&t.ThreatOf(Gomoku::You)>=0)
                     Happened(4,T(L"五目並べで、話し相手があと1つで5つ並ぶ形を作った（止めないと負ける）。",L"At gomoku, they have a row one stone short of five (you must stop it or lose)."),
                              T(L"あせる気持ち",L"how alarmed you are"),
-                             {T(L"あっ、危ない！",L"Whoa, that's close!"),T(L"そこは止めなきゃ…",L"I have to stop that..."),T(L"油断できないなあ。",L"Can't let my guard down.")},
+                             L"危ない",
                              Fmt(T(L"五目並べで、持ち主があと一つで五つ並ぶ形を作った（{0}との対局）。",L"At gomoku, the owner is one stone short of five (against {0})."),{name}),
                              {T(L"おっ、あと一つ！",L"Ooh, one more!"),T(L"止められるかな？",L"Can she stop it?")});
                 else if(t.Now()!=Phase::GameOver&&t.LastWho()==Gomoku::Her&&t.ThreatOf(Gomoku::Her)>=0)
-                    Happened(3,L"",L"",{},
+                    Happened(3,L"",L"",nullptr,
                              Fmt(T(L"五目並べで、{0}があと一つで五つ並ぶ形を作った。",L"At gomoku, {0} is one stone short of five."),{name}),
                              {Fmt(T(L"{0}、あと一つだ！",L"{0} is one away!"),{name})});
             }
+            // A win or loss she cannot be stopped from (or cannot stop): said once a game, and her
+            // face holds it (UpdateTell).
+            const int certain=t.Now()==Phase::GameOver?0:Certain();
+            if(certain>0&&!seen.sureWin){seen.sureWin=true;Say(L"勝ち確定");}
+            if(certain<0&&!seen.sureLoss){seen.sureLoss=true;Say(L"負け確定");}
             const bool over=t.Now()==Phase::GameOver;
             if(over&&!seen.over)
             {
@@ -1253,13 +1304,13 @@ namespace MikuMikuDesktopPerch
                 if(winner==Gomoku::Her)
                     Happened(9,Fmt(T(L"五目並べの対局が終わって、あなたが先に5つ並べて勝った（{0}）。",L"The game of gomoku is over: you made five first and won ({0})."),{moves}),
                              T(L"勝ってうれしい気持ち",L"how glad you are to have won"),
-                             {T(L"五つ並んだ！わたしの勝ち！",L"Five in a row! I win!"),T(L"やったー、勝った！",L"Yay, I won!")},
+                             L"勝った",
                              Fmt(T(L"{0}と持ち主の五目並べの対局が終わり、{0}が勝った。",L"The gomoku game between {0} and the owner is over: {0} won."),{name}),
                              {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
                 else Happened(9,winner<0?Fmt(T(L"五目並べの対局が終わって、盤が埋まって引き分け（{0}）。",L"The game of gomoku is over: the board filled up, a draw ({0})."),{moves}):
                                          Fmt(T(L"五目並べの対局が終わって、話し相手が先に5つ並べた。あなたの負け（{0}）。",L"The game of gomoku is over: they made five first and you lost ({0})."),{moves}),
                               winner<0?T(L"引き分けの気持ち",L"how you feel about a draw"):T(L"負けて悔しい気持ちか、話し相手をほめる気持ち",L"how sorry you are to have lost, or praise them"),
-                              {T(L"負けちゃった…次は負けないよ！",L"I lost... I'll get you next time!"),T(L"うう、そこに並べられるとは…",L"Ugh, I didn't see that five coming...")},
+                              winner<0?L"引き分け":L"負けた",
                               Fmt(T(L"{0}と持ち主の五目並べの対局が終わった。",L"The gomoku game between {0} and the owner is over."),{name}),
                               {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"おめでとう！",L"Congratulations!")});
             }
@@ -1283,8 +1334,7 @@ namespace MikuMikuDesktopPerch
                 {
                     state.nextAt+=ThinkExtra;
                     state.thinkFor=(HerPlayWait3D+ThinkExtra-ReachLead)/1000.0-0.1;
-                    if(!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)
-                        SayWords(TakeLine(state.thinkLines,{T(L"うーん…どこにしようかな。",L"Hmm... where to go?"),T(L"ちょっと考えさせて…",L"Let me think..."),T(L"むむ…",L"Hmm...")}),2);
+                    if(!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)Say(L"考える",2);
                 }
             }
             if(now>=state.nextAt&&t.Now()==Phase::HerTurn&&(!state.renderer||state.entrance==5))
@@ -1292,13 +1342,15 @@ namespace MikuMikuDesktopPerch
                 t.Step();
                 // A row of hers a stone short of five now and then gets a little word.
                 std::uniform_real_distribution<double> any(0,1);
-                if(t.Now()==Phase::YourMove&&t.ThreatOf(Gomoku::Her)>=0&&any(state.sparkRandom)<0.5&&!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)
-                    SayWords(TakeLine(state.goodLines,{T(L"ふふ、あと一つ。",L"Hehe, just one more."),T(L"ここ、止められるかな？",L"Can you stop this one?"),T(L"いい形になってきた！",L"This is shaping up nicely!")}),2);
+                if(t.Now()==Phase::YourMove&&t.ThreatOf(Gomoku::Her)>=0&&!state.words.waiting&&GetTickCount64()-state.words.since>WordsHold)
+                    Say(L"いい手",2,0.5);
                 if(t.Now()==Phase::GameOver)state.nextAt=now+(state.renderer?EndWait3D:EndWait);
                 else state.nextAt=now+150;
             }
+            UpdateTell();
             Redraw();
             Listen();
+            if(!state.renderer)state.voice.Tick(0.04);   // (at the 3D table the model's frame ticks it)
             NoticeWords();
             if(t.Now()==Phase::GameOver&&!state.gameOverTold)
             {
@@ -1694,27 +1746,8 @@ namespace MikuMikuDesktopPerch
     {
         state.prefetching=false;
         if(!state.window)return;
-        size_t at=0;
-        while(at<answer.size())
-        {
-            size_t end=answer.find(L'\n',at);
-            if(end==std::wstring::npos)end=answer.size();
-            std::wstring line=answer.substr(at,end-at);
-            at=end+1;
-            const size_t colon=line.find_first_of(L":：");
-            if(colon==std::wstring::npos)continue;
-            const std::wstring kind=line.substr(0,colon);
-            std::wstring said=line.substr(colon+1);
-            for(const wchar_t* cut:{L"「",L"」",L"\"",L"*"})
-                for(size_t p;(p=said.find(cut))!=std::wstring::npos;)said.erase(p,wcslen(cut));
-            const size_t a=said.find_first_not_of(L" \t\r　"),b=said.find_last_not_of(L" \t\r　");
-            if(a==std::wstring::npos)continue;
-            said=said.substr(a,b-a+1);
-            if(said.size()>60)continue;
-            if(kind.find(L"いい")!=std::wstring::npos||kind.find(L"ood")!=std::wstring::npos)state.goodLines.push_back(said);
-            else if(kind.find(L"考")!=std::wstring::npos||kind.find(L"hink")!=std::wstring::npos)state.thinkLines.push_back(said);
-        }
-        state.words.told+=L"  lines ready: "+std::to_wstring(state.goodLines.size())+L" for good moves, "+std::to_wstring(state.thinkLines.size())+L" for thinking\n";
+        state.lines.Answered(answer);
+        Prefetch();
     }
 
     bool GomokuAfterword(std::wstring& situation,std::wstring& fallback)
@@ -2020,6 +2053,22 @@ namespace MikuMikuDesktopPerch
             lamp.onModel=false;
             r.SetLights({lamp});
         }
+        {
+            // Her mouth moves while her words are being shown (a vowel or two, opening and
+            // closing about five times a second), and closes after; with a voice file, with it.
+            const auto& w=state.words;
+            const bool saying=!w.text.empty()&&w.text!=L"…"&&w.shown<static_cast<double>(w.text.size());
+            state.voice.Tick(dt);
+            if(state.voice.Playing())model.SetMouth(state.voice.Mouth(),true);
+            else if(saying)
+            {
+                const float u=static_cast<float>(state.clock*10.5);
+                const float open=0.25f+0.75f*std::abs(std::sin(u));
+                const int vowel=static_cast<int>(state.clock*5.3)%3;
+                model.SetMouth({vowel==0?open:0.0f,vowel==1?open*0.6f:0.0f,0,0,vowel==2?open*0.8f:0.0f,0},true);
+            }
+            else model.SetMouth({},false);
+        }
         r.Render(model,state.her.edgeScale);
     }
 
@@ -2124,10 +2173,14 @@ namespace MikuMikuDesktopPerch
         state.stones={};
         state.nextBlack=-1;
         state.quadsSet=false;
-        state.goodLines.clear();
-        state.thinkLines.clear();
+        state.lines.Load(L"GOMOKULINES",L"gomoku",her.ownLinesFile,her.linesFile,her.styleKey,English(),
+                         {L"五目並べ",L"Gomoku",L"",L""});
+        state.voice.Stop();
+        state.tell=Expression::Neutral;
         state.prefetching=false;
         state.words={};
+        state.words.told=state.lines.Report();
+        if(!her.linesFile.empty())ShowLinesProblem(owner,state.lines);   // (none kept: a diagnostic run, which must not stop)
         NewGame();
 
         MONITORINFO info{sizeof(info)};
