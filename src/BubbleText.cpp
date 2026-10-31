@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include <algorithm>
+#include <cmath>
 #include "BubbleText.hpp"
 #include <objidl.h>
 // GDI+ uses min and max unqualified; give it the std ones instead of the windows.h macros.
@@ -123,6 +124,38 @@ namespace MikuMikuDesktopPerch
         body.CloseFigure();
         g.FillPath(&fill,&body);
         g.DrawPath(&edge,&body);
+        SolidBrush ink(Color(255,60,44,36));
+        g.DrawString(shown.c_str(),static_cast<INT>(shown.size()),font.get(),RectF(x+pad,y+pad*0.8f,textWidth+4,textHeight+4),format.get(),&ink);
+    }
+
+    void WordsBubble::DrawPointing(Gdiplus::Graphics& g,float x,float y,float tipX,float tipY,const std::wstring& shown) const
+    {
+        using namespace Gdiplus;
+        const PointF tip(tipX,tipY);
+        const Color paper(240,255,252,246),line(255,214,170,120);
+        // The tail's foot on the top edge, under the tip as far as the corners allow; its point
+        // toward the tip, stopping short of it.
+        const float foot=std::clamp(tip.X,x+24*s,x+width-24*s);
+        const float dx=tip.X-foot,dy=tip.Y-y,dist=std::sqrt(dx*dx+dy*dy);
+        const float reach=std::clamp(dist-10*s,8*s,46*s);
+        const PointF point=dist>1?PointF(foot+dx/dist*reach,y+dy/dist*reach):PointF(foot,y-reach);
+        const PointF tail[3]={PointF(foot-10*s,y+2*s),point,PointF(foot+10*s,y+2*s)};
+        SolidBrush fill(paper);
+        Pen edge(line,1.5f*s);
+        GraphicsPath body;
+        const float d=14*s*2;
+        body.AddArc(x,y,d,d,180,90);
+        body.AddArc(x+width-d,y,d,d,270,90);
+        body.AddArc(x+width-d,y+height-d,d,d,0,90);
+        body.AddArc(x,y+height-d,d,d,90,90);
+        body.CloseFigure();
+        g.FillPolygon(&fill,tail,3);
+        g.DrawLine(&edge,tail[0],tail[1]);
+        g.DrawLine(&edge,tail[1],tail[2]);
+        g.FillPath(&fill,&body);
+        g.DrawPath(&edge,&body);
+        // (The edge under the tail's foot hidden, so the two read as one.)
+        g.FillRectangle(&fill,foot-8.5f*s,y-0.5f*s,17*s,3*s);
         SolidBrush ink(Color(255,60,44,36));
         g.DrawString(shown.c_str(),static_cast<INT>(shown.size()),font.get(),RectF(x+pad,y+pad*0.8f,textWidth+4,textHeight+4),format.get(),&ink);
     }

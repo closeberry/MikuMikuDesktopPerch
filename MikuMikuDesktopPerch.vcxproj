@@ -108,6 +108,9 @@
     <ClCompile Include="src\GomokuWindow.cpp" />
     <ClCompile Include="src\Shogi.cpp" />
     <ClCompile Include="src\ShogiWindow.cpp" />
+    <ClCompile Include="src\HexWar.cpp" />
+    <ClCompile Include="src\HexWarWindow.cpp" />
+    <ClCompile Include="src\HexWarSound.cpp" />
     <ClCompile Include="src\Blackjack.cpp" />
     <ClCompile Include="src\BlackjackWindow.cpp" />
     <ClCompile Include="src\GameLines.cpp" />
@@ -173,6 +176,9 @@
     <ClInclude Include="src\GomokuWindow.hpp" />
     <ClInclude Include="src\Shogi.hpp" />
     <ClInclude Include="src\ShogiWindow.hpp" />
+    <ClInclude Include="src\HexWar.hpp" />
+    <ClInclude Include="src\HexWarWindow.hpp" />
+    <ClInclude Include="src\HexWarSound.hpp" />
     <ClInclude Include="src\Blackjack.hpp" />
     <ClInclude Include="src\BlackjackWindow.hpp" />
     <ClInclude Include="src\GameLines.hpp" />
