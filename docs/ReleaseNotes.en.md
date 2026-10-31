@@ -2,6 +2,23 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.7
+
+### New
+
+- **Shogi**: Mini games > Play shogi, to play shogi (Japanese chess, no handicap) with the character
+  - The board is drawn large, seen from above, with her upper body at the right. Click one of your pieces, then where it goes (pieces in hand from the stand below the board); she asks whether to promote when you may
+  - Illegal moves (two pawns on a file, mate by a dropped pawn and so on) can't be made; a fourfold repetition is a draw (lost by the side giving check every time), and Esc resigns
+  - She reads the board and plays fairly well, and resigns once she sees her own king mated. Details (in Japanese): `docs/Shogi.md`
+- **Hex Front**: Mini games > Play Hex Front, a turn-based tactics game with the character
+  - Move your units (tanks, infantry and, on some maps, scout cars, heavy tanks, self-propelled guns and anti-tank infantry) over a map of hexes and attack the units next to them. Terrain sets how far a unit goes and how well it holds; allies next to the target support the attack, and a surrounded unit is weaker
+  - Every attack opens a battle scene: both sides come in from the screen's edges and fire at once (with sound)
+  - Wipe out her units, or take her headquarters with infantry, to win. Once a turn, as commander, you may give an order (focus fire, barrage, smoke, supply, forced march)
+  - Five maps (river valley, gorge, mountains, ruined city, volcano isle); the next opens once the one before is won or played a few times. Choose your side too (left, right or at random)
+  - Take a factory with infantry to mend and build units there (one taken mid-build goes to the taker). On the first two maps, infantry can bridge a river
+  - Your turn ends itself when no unit is left to move. Details (in Japanese): `docs/HexWar.md`
+- Shogi and Hex Front raise the bond when played to the end, and their scenes are in the lines file (`lines/Example.json`)
+
 ## 1.5.6
 
 ### New
