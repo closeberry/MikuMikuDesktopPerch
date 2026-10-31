@@ -1221,11 +1221,20 @@ namespace MikuMikuDesktopPerch
             int upperBody=-1,leftShoulder=-1,rightShoulder=-1;
             int neck=-1,head=-1,eyes=-1;
             double clock=0;
-            double nextBlink=2.0,blinkStart=-1;
+            double nextBlink=2.0,blinkStart=-1,lastBlink=-10;
             float blinkGate=1;   // 0 while the face is posed (gesture smile/wink, an opened motion)
             bool doubleBlink=false;
             float targetYaw=0,targetPitch=0,yaw=0,pitch=0;
             bool lookActive=false;
+            bool farOff=false;   // the look target is far from where the head points (a blink as it turns)
+            // The gaze wanders: it rests on one spot, then jumps to a near one, and now and then
+            // glances aside and back. The eyes jump (glance, eased fast), the head follows a
+            // little and slowly (headYaw/headPitch); headOffset* is what the head was given last,
+            // so that LookToward does not cancel it.
+            double nextGlance=1.5;
+            bool glancedAway=false;
+            float glanceYaw=0,glancePitch=0,eyeYaw=0,eyePitch=0,headYaw=0,headPitch=0;
+            float headOffsetYaw=0,headOffsetPitch=0;
             // Turning in place (SetTurn): the bones turned, and the leg and toe IK targets set
             // down turned with them about the point between the feet.
             float turnTarget=0,turn=0;
@@ -1350,12 +1359,61 @@ namespace MikuMikuDesktopPerch
             if(t>=Total)
             {
                 proc.blinkStart=-1;
+                proc.lastBlink=proc.clock;
                 if(proc.doubleBlink){proc.doubleBlink=false;proc.nextBlink=proc.clock+0.12;}
                 else{proc.doubleBlink=proc.Random01()<0.15f;proc.nextBlink=proc.clock+2.5+proc.Random01()*3.5;}
                 return 0.0f;
             }
             const double w=t<Close?t/Close:(t<Close+Hold?1.0:1.0-(t-Close-Hold)/Open);
             return static_cast<float>(w*w*(3-2*w));
+        }
+        // People blink as the gaze jumps far: blink now, often, unless one was just done.
+        void BlinkWithGaze(float chance)
+        {
+            if(proc.blinkStart<0&&proc.clock-proc.lastBlink>0.8&&proc.Random01()<chance)
+            {
+                proc.nextBlink=proc.clock;
+                proc.doubleBlink=false;
+            }
+        }
+
+        // Where the gaze rests next (radians; the same way round as SetLookTarget's).
+        void WanderGaze(double dt)
+        {
+            using DirectX::XMConvertToRadians;
+            if(proc.clock>=proc.nextGlance)
+            {
+                const float r=proc.Random01();
+                float yaw=0,pitch=0;
+                double rest=1.2+2.3*proc.Random01();
+                if(proc.glancedAway)proc.glancedAway=false;   // back from a glance aside
+                else if(r<0.12f)
+                {
+                    // A glance aside, held a moment.
+                    yaw=XMConvertToRadians(9.0f+6.0f*proc.Random01())*(proc.Random01()<0.5f?-1.0f:1.0f);
+                    pitch=XMConvertToRadians(-5.0f+6.0f*proc.Random01());
+                    rest=0.5+0.6*proc.Random01();
+                    proc.glancedAway=true;
+                }
+                else if(r<0.75f)
+                {
+                    // Another spot near the one she looks at.
+                    yaw=XMConvertToRadians(4.0f)*(2*proc.Random01()-1);
+                    pitch=XMConvertToRadians(2.5f)*(2*proc.Random01()-1);
+                }
+                const float jump=std::hypot(yaw-proc.glanceYaw,pitch-proc.glancePitch);
+                if(jump>XMConvertToRadians(7.0f))BlinkWithGaze(0.6f);
+                proc.glanceYaw=yaw;
+                proc.glancePitch=pitch;
+                proc.nextGlance=proc.clock+rest;
+            }
+            // The eyes jump in a few hundredths of a second; the head turns a third of the way, slowly.
+            const float eyeFollow=static_cast<float>(1.0-std::exp(-dt/0.035));
+            proc.eyeYaw+=(proc.glanceYaw-proc.eyeYaw)*eyeFollow;
+            proc.eyePitch+=(proc.glancePitch-proc.eyePitch)*eyeFollow;
+            const float headFollow=static_cast<float>(1.0-std::exp(-dt/0.4));
+            proc.headYaw+=(0.35f*proc.glanceYaw-proc.headYaw)*headFollow;
+            proc.headPitch+=(0.35f*proc.glancePitch-proc.headPitch)*headFollow;
         }
 
         // Lower T-stance arms to the A-stance rest that MMD motions assume. The upper arm gets
@@ -1466,18 +1524,41 @@ namespace MikuMikuDesktopPerch
             // Ease toward the target; release to the motion's own pose when inactive.
             const float follow=static_cast<float>(1.0-std::exp(-dt/0.18));
             const bool active=proc.lookAt&&proc.lookActive;
-            proc.yaw+=((active?proc.targetYaw:0.0f)-proc.yaw)*follow;
-            proc.pitch+=((active?proc.targetPitch:0.0f)-proc.pitch)*follow;
-            if(std::abs(proc.yaw)>1e-4f||std::abs(proc.pitch)>1e-4f)
+            const float wantYaw=active?proc.targetYaw:0.0f,wantPitch=active?proc.targetPitch:0.0f;
+            proc.yaw+=(wantYaw-proc.yaw)*follow;
+            proc.pitch+=(wantPitch-proc.pitch)*follow;
+            // A blink as the head sets off to turn far.
+            const bool farOff=std::hypot(wantYaw-proc.yaw,wantPitch-proc.pitch)>DirectX::XMConvertToRadians(15.0f);
+            if(farOff&&!proc.farOff)BlinkWithGaze(0.7f);
+            proc.farOff=farOff;
+            // The wandering gaze and a slow, slight sway of the head, so that she is not fixed
+            // like a doll while she looks at one spot (not while dozing, which sways on its own).
+            float wander=0,swayYaw=0,swayPitch=0,swayRoll=0;
+            if(proc.lookAt)
+            {
+                WanderGaze(dt);
+                wander=1-proc.doze;
+                const double t=proc.clock;
+                swayYaw=DirectX::XMConvertToRadians(1.2f)*static_cast<float>(0.6*std::sin(t*DirectX::XM_2PI/6.3)+0.4*std::sin(t*DirectX::XM_2PI/9.7+1.3));
+                swayPitch=DirectX::XMConvertToRadians(0.8f)*static_cast<float>(0.6*std::sin(t*DirectX::XM_2PI/7.9+0.7)+0.4*std::sin(t*DirectX::XM_2PI/4.3+2.1));
+                swayRoll=DirectX::XMConvertToRadians(1.0f)*static_cast<float>(0.7*std::sin(t*DirectX::XM_2PI/8.6+2.6)+0.3*std::sin(t*DirectX::XM_2PI/5.1));
+            }
+            proc.headOffsetYaw=(proc.headYaw+swayYaw)*wander;
+            proc.headOffsetPitch=(proc.headPitch+swayPitch)*wander;
+            const float lookYaw=proc.yaw+proc.headOffsetYaw,lookPitch=proc.pitch+proc.headOffsetPitch;
+            if(std::abs(lookYaw)>1e-4f||std::abs(lookPitch)>1e-4f||wander>0)
             {
                 // The face points to -Z: +Y rotation turns it toward -X (screen left), +X rotation tilts it up.
-                const float yaw=-proc.yaw,pitch=proc.pitch;
+                const float yaw=-lookYaw,pitch=lookPitch,roll=swayRoll*wander;
                 const bool hasNeck=proc.neck>=0;
-                AddRotation(pose,proc.neck,pitch*0.4f,yaw*0.4f,0);
-                AddRotation(pose,proc.head,pitch*(hasNeck?0.6f:1.0f),yaw*(hasNeck?0.6f:1.0f),0);
+                AddRotation(pose,proc.neck,pitch*0.4f,yaw*0.4f,roll*0.4f);
+                AddRotation(pose,proc.head,pitch*(hasNeck?0.6f:1.0f),yaw*(hasNeck?0.6f:1.0f),roll*(hasNeck?0.6f:1.0f));
                 const float eyeLimit=DirectX::XMConvertToRadians(10.0f);
                 // The eyes turn sideways half as far as they tilt (a full sideways turn looks wall-eyed).
-                AddRotation(pose,proc.eyes,std::clamp(pitch*0.4f,-eyeLimit,eyeLimit),std::clamp(yaw*0.2f,-0.5f*eyeLimit,0.5f*eyeLimit),0);
+                // They carry the rest of the wandering gaze on top of the head's turn.
+                const float eyePitch=pitch*0.4f+(proc.eyePitch-proc.headPitch)*wander;
+                const float eyeYaw=yaw*0.2f-0.5f*(proc.eyeYaw-proc.headYaw)*wander;
+                AddRotation(pose,proc.eyes,std::clamp(eyePitch,-eyeLimit,eyeLimit),std::clamp(eyeYaw,-0.5f*eyeLimit,0.5f*eyeLimit),0);
             }
         }
 
@@ -2339,14 +2420,16 @@ namespace MikuMikuDesktopPerch
         if(!active||!HeadPosition(head)){SetLookTarget(0,0,false);return;}
         // Where the head faces now (the face points to -Z at rest), with the turn last given in
         // it: that turn is put right by how far the face is off the point. So the motion's own
-        // bend of the head, and the body's lean and turn under it, are all counted.
+        // bend of the head, and the body's lean and turn under it, are all counted. The wandering
+        // gaze's and the sway's share of the head's turn is left in.
         const XMVECTOR face=XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0,0,-1,0),XMMatrixTranspose(m.solver->boneMatrices[bone])));
         const float fx=XMVectorGetX(face),fy=XMVectorGetY(face),fz=XMVectorGetZ(face);
         const float dx=point[0]-head[0],dy=point[1]-head[1],dz=point[2]-head[2];
         const float wantYaw=std::atan2(dx,-dz),wantPitch=std::atan2(dy,std::sqrt(dx*dx+dz*dz));
         const float nowYaw=std::atan2(fx,-fz),nowPitch=std::atan2(fy,std::sqrt(fx*fx+fz*fz));
         const float limit=XMConvertToRadians(45.0f);
-        SetLookTarget(std::clamp(m.proc.yaw+wantYaw-nowYaw,-limit,limit),std::clamp(m.proc.pitch+wantPitch-nowPitch,-limit,limit),true);
+        const float yaw=m.proc.yaw+m.proc.headOffsetYaw+wantYaw-nowYaw,pitch=m.proc.pitch+m.proc.headOffsetPitch+wantPitch-nowPitch;
+        SetLookTarget(std::clamp(yaw,-limit,limit),std::clamp(pitch,-limit,limit),true);
     }
 
     namespace
