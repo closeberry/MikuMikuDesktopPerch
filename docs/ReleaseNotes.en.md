@@ -2,6 +2,12 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.9
+
+### Fixed
+
+- **Standing on the chair in the mini games**: a model without a groove (グルーブ) bone stood on the chair at the game tables instead of sitting on it. Such models now sit there, and can also sit on, hang from and lie along a window's edge
+
 ## 1.5.8
 
 ### New
