@@ -831,21 +831,26 @@ namespace MikuMikuDesktopPerch
             case Kind::Scout:return T(L"装甲車",L"Scout car");
             case Kind::Artillery:return T(L"自走砲",L"SP gun");
             case Kind::Heavy:return T(L"重戦車",L"Heavy tank");
+            case Kind::Fighter:return T(L"戦闘機",L"Fighter");
+            case Kind::Attacker:return T(L"攻撃機",L"Attack aircraft");
+            case Kind::AntiAir:return T(L"対空ミサイル車",L"AA missile truck");
             default:return T(L"歩兵",L"Infantry");
             }
         }
         // Its model name, shown with it (as on the battle screen).
         std::wstring KindCode(Kind k)
         {
-            static const wchar_t* code[HexWar::Kinds]={L"T-4",L"I-1",L"AT-2",L"S-7",L"A-3",L"H-9"};
+            static const wchar_t* code[HexWar::Kinds]={L"T-4",L"I-1",L"AT-2",L"S-7",L"A-3",L"H-9",L"F-5",L"B-6",L"AA-8"};
             return code[static_cast<int>(k)];
         }
         bool Vehicle(Kind k){return HexWar::Info(k).armoured;}
         bool MovesOnFoot(Kind k){return k==Kind::Infantry||k==Kind::Bazooka;}
+        bool Flies(Kind k){return HexWar::Info(k).flies;}
         // A unit of members moving: tracks or footsteps, as many at once as its members call for
         // (one for a few, four for a full unit), each a little apart in place and loudness.
         void PlayMoving(Kind k,float pan,float loud,double seconds,int members)
         {
+            if(Flies(k))return;   // (no sound for aircraft yet)
             const int layers=std::clamp((members+2)/3,1,4);
             for(int i=0;i<layers;++i)
                 PlayHexWarSound(MovesOnFoot(k)?HexWarSound::Steps:HexWarSound::Tracks,std::clamp(pan+0.15f*(i-0.5f*(layers-1)),-1.0f,1.0f),loud*0.75f,seconds);
@@ -860,6 +865,12 @@ namespace MikuMikuDesktopPerch
             case Kind::Scout:return T(L"足が速く、平地と道路を一気に進む。守りは弱く、荒地は苦手。",L"Fast over open ground and roads; light, and slow in rough ground.");
             case Kind::Artillery:return T(L"2〜3マス先を撃ち、撃ち返されない。隣は撃てず、動いたターンは撃てない。守りは弱い。",L"Fires two or three hexes off and is never fired back at; not next to it, not after moving. Lightly protected.");
             case Kind::Heavy:return T(L"最も強く固いが遅い。廃墟はさらに遅い。",L"The strongest and toughest, but slow; slower still in ruins.");
+            case Kind::Fighter:return T(L"空を飛び、地形に関係なく進む。飛行機を落とすのが得意で、地上は苦手。対空攻撃のできる味方だけが支援できる。",
+                                        L"Flies over any ground. Made to bring down aircraft, poor against the ground. Only those that can shoot at aircraft support it.");
+            case Kind::Attacker:return T(L"空を飛び、地形に関係なく進む。戦車や歩兵を上から撃つが、飛行機は撃てない。対空攻撃のできる相手にしか撃たれない。",
+                                         L"Flies over any ground. Strikes tanks and men from above, cannot shoot at aircraft; only those that can shoot at aircraft hit it.");
+            case Kind::AntiAir:return T(L"飛行機を撃ち落とすミサイル車。地上への攻撃は弱い。飛行機の戦いを支援できる。",
+                                        L"A missile truck that brings down aircraft; weak against the ground. Supports battles in the air.");
             default:return T(L"弱いが安く早く作れる。工場と司令部を占領でき、山も登れる。",L"Weak but quick to build. Takes factories and bases, climbs mountains.");
             }
         }
@@ -874,6 +885,7 @@ namespace MikuMikuDesktopPerch
             case Terrain::Road:return T(L"道路",L"Road");
             case Terrain::Bridge:return T(L"橋",L"Bridge");
             case Terrain::City:return T(L"廃墟",L"Ruins");
+            case Terrain::Foundation:return T(L"建物跡",L"Foundations");
             case Terrain::Factory:return T(L"工場",L"Factory");
             case Terrain::Base:return T(L"司令部",L"Base");
             default:return T(L"平地",L"Plain");
@@ -1650,6 +1662,7 @@ namespace MikuMikuDesktopPerch
             case Terrain::Forest:FillHex(g,c,r,Color(255,74,122,62));break;
             case Terrain::River:FillHex(g,c,r,Color(255,72,124,196));break;
             case Terrain::City:FillHex(g,c,r,Color(255,128,126,122));break;
+            case Terrain::Foundation:FillHex(g,c,r,Color(255,100,98,96));break;
             default:FillHex(g,c,r,plain);break;
             }
             if(kind==Terrain::Plain||kind==Terrain::Base||kind==Terrain::Road)
@@ -1676,7 +1689,7 @@ namespace MikuMikuDesktopPerch
                 }
             }
             if(kind==Terrain::Road)FillHex(g,c,r*0.45f,Color(255,150,146,138));
-            if(kind==Terrain::City)
+            if(kind==Terrain::City||kind==Terrain::Foundation)
             {
                 // Broken blocks: walls lit from the left.
                 SolidBrush wall(Color(255,170,166,158)),shade(Color(255,88,86,84));
@@ -1774,7 +1787,7 @@ namespace MikuMikuDesktopPerch
             case Terrain::Road:case Terrain::Base:case Terrain::Factory:return Art(L"BACKDROP2");
             case Terrain::Forest:return Art(L"BACKDROP4");
             case Terrain::Rough:return Art(L"BACKDROP5");
-            case Terrain::City:return Art(L"BACKDROP6");
+            case Terrain::City:case Terrain::Foundation:return Art(L"BACKDROP6");
             case Terrain::Bridge:case Terrain::River:return Art(L"BACKDROP8");
             default:return Art(L"BACKDROP3");
             }
@@ -1788,7 +1801,7 @@ namespace MikuMikuDesktopPerch
             case Terrain::Mountain:case Terrain::Rough:return Art(L"FLOOR1");
             case Terrain::Forest:return Art(L"FLOOR3");
             case Terrain::Road:case Terrain::Base:case Terrain::Bridge:case Terrain::Factory:return Art(L"FLOOR4");
-            case Terrain::City:return Art(L"FLOOR5");
+            case Terrain::City:case Terrain::Foundation:return Art(L"FLOOR5");
             default:return Art(L"FLOOR2");
             }
         }
@@ -1841,6 +1854,19 @@ namespace MikuMikuDesktopPerch
                 {
                     g.DrawImage(picture,RectF(0,0,l.mw,l.mh));
                     for(int hex=0;hex<t.Hexes();++hex)EdgeHex(g,HexMiddle(hex,l.r),l.r,Color(60,255,255,240),std::max(1.0f,l.r*0.025f));
+                    // Foundations (closed to vehicles) hatched, as the picture's buildings don't
+                    // keep to the hexes.
+                    HatchBrush hatch(HatchStyleWideUpwardDiagonal,Color(85,255,150,120),Color(0,0,0,0));
+                    for(int hex=0;hex<t.Hexes();++hex)
+                        if(t.At(hex)==Terrain::Foundation)
+                        {
+                            GraphicsPath path;
+                            HexPath(path,HexMiddle(hex,l.r),l.r*0.94f);
+                            SolidBrush dark(Color(110,0,0,0));
+                            g.FillPath(&dark,&path);
+                            g.FillPath(&hatch,&path);
+                            EdgeHex(g,HexMiddle(hex,l.r),l.r*0.94f,Color(150,240,120,90),std::max(1.0f,l.r*0.035f));
+                        }
                     for(int who:{You,Her})PaintBase(g,HexMiddle(t.BaseOf(who),l.r),l.r,who);
                 }
                 else for(int hex=0;hex<t.Hexes();++hex)PaintGround(g,hex,HexMiddle(hex,l.r),l.r);
@@ -1874,8 +1900,8 @@ namespace MikuMikuDesktopPerch
         void DrawSprite(Graphics& g,PointF c,float u,Kind kind,int who,float facing,bool squad,float tilt=0)
         {
             // The pictures when there are (both sides alike; the side shows round the unit).
-            static const wchar_t* names[HexWar::Kinds]={L"TANK",L"INFANTRY",L"BAZOOKA",L"SCOUT",L"ARTILLERY",L"HEAVY"};
-            static const float wide[HexWar::Kinds]={2.3f,0,0,1.9f,2.2f,2.6f};   // a vehicle's width, in u
+            static const wchar_t* names[HexWar::Kinds]={L"TANK",L"INFANTRY",L"BAZOOKA",L"SCOUT",L"ARTILLERY",L"HEAVY",L"FIGHTER",L"ATTACKER",L"ANTIAIR"};
+            static const float wide[HexWar::Kinds]={2.3f,0,0,1.9f,2.2f,2.6f,2.4f,2.6f,1.3f};   // a vehicle's width, in u
             if(Bitmap* art=Art(names[static_cast<int>(kind)]))
             {
                 if(Vehicle(kind))DrawArt(g,art,c,wide[static_cast<int>(kind)]*u,facing,tilt);
@@ -1930,15 +1956,22 @@ namespace MikuMikuDesktopPerch
         // done for this turn darker.
         void DrawUnit(Graphics& g,PointF c,float r,Kind kind,int who,int count,int exp,bool done)
         {
-            // Its side's colour under it.
+            // Its side's colour under it (an aircraft's a ring, with its shadow, as it is above).
+            const bool flies=Flies(kind);
             {
                 const Color side=SideColor(who);
-                SolidBrush plate(Color(170,side.GetR(),side.GetG(),side.GetB()));
-                Pen rim(SideColor(who,2),std::max(1.0f,0.04f*r));
+                SolidBrush plate(Color(flies?60:170,side.GetR(),side.GetG(),side.GetB()));
+                Pen rim(SideColor(who,2),std::max(1.0f,(flies?0.06f:0.04f)*r));
                 g.FillEllipse(&plate,c.X-0.66f*r,c.Y+0.02f*r,1.32f*r,0.56f*r);
                 g.DrawEllipse(&rim,c.X-0.66f*r,c.Y+0.02f*r,1.32f*r,0.56f*r);
+                if(flies)
+                {
+                    SolidBrush shadow(Color(110,0,0,0));
+                    g.FillEllipse(&shadow,c.X-0.42f*r,c.Y+0.2f*r,0.84f*r,0.2f*r);
+                }
             }
-            DrawSprite(g,PointF(c.X,c.Y-0.05f*r),0.56f*r,kind,who,static_cast<float>(state.table.Facing(who)),true);
+            const float above=flies?-0.3f*r+0.04f*r*static_cast<float>(std::sin(Seconds()*2.2+c.X*0.05)):-0.05f*r;
+            DrawSprite(g,PointF(c.X,c.Y+above),(flies?0.5f:0.56f)*r,kind,who,static_cast<float>(state.table.Facing(who)),true);
             if(done)FillHex(g,c,r*0.92f,Color(110,20,20,24));
             const RectF tag(c.X+0.18f*r,c.Y+0.32f*r,0.5f*r,0.4f*r);
             FillRound(g,tag,0.08f*r,Color(230,16,16,24),SideColor(who,2),std::max(1.0f,0.03f*r));
@@ -2033,8 +2066,14 @@ namespace MikuMikuDesktopPerch
         PointF MemberAt(const RectF& field,int side,int m,Kind kind=Kind::Infantry)
         {
             const float f=side==0?1.0f:-1.0f,mid=field.X+field.Width/2;
-            const float sx=field.Width*(kind==Kind::Heavy?0.1f:HexWar::Info(kind).armoured?0.092f:0.075f),sy=field.Height*0.2f;
             const int col=m/4,row=m%4;
+            if(Flies(kind))
+            {
+                // Aircraft: in loose rows across the sky above the field.
+                const float sx=field.Width*0.1f,sy=field.Height*0.13f;
+                return PointF(mid-f*(field.Width*0.13f+col*sx+(row%2)*0.5f*sx),field.Y+field.Height*0.08f+row*sy+col*0.1f*sy);
+            }
+            const float sx=field.Width*(kind==Kind::Heavy?0.1f:HexWar::Info(kind).armoured?0.092f:0.075f),sy=field.Height*0.2f;
             const float x=mid-f*(field.Width*0.12f+col*sx+(row%2)*0.45f*sx);
             const float y=field.Y+field.Height*0.18f+row*sy+col*0.08f*sy;
             return PointF(x,y);
@@ -2066,7 +2105,9 @@ namespace MikuMikuDesktopPerch
                 const bool atLeft=idx==left;
                 const RectF name(atLeft?16*s:W/2+0.17f*W,10*s,W/2-0.17f*W-16*s,topH-14*s);
                 Text(g,KindCode(b.kinds[idx])+L" "+KindName(b.kinds[idx]),RectF(name.X,name.Y,name.Width,name.Height*0.5f),22*s,white,true,atLeft?StringAlignmentNear:StringAlignmentFar,StringAlignmentCenter);
-                Text(g,SideName(b.who[idx])+(idx==0?T(L"（攻撃）",L" (attacking)"):L"")+L"   EXP "+std::to_wstring(b.exp[idx]),
+                // (With what it gains, once the shooting is over.)
+                const bool over=a>=FightLength(b)-FightHold&&b.gained[idx]>0;
+                Text(g,SideName(b.who[idx])+(idx==0?T(L"（攻撃）",L" (attacking)"):L"")+L"   EXP "+std::to_wstring(b.exp[idx])+(over?L" +"+std::to_wstring(b.gained[idx]):L""),
                      RectF(name.X,name.Y+name.Height*0.5f,name.Width,name.Height*0.5f),15*s,soft,false,atLeft?StringAlignmentNear:StringAlignmentFar,StringAlignmentCenter);
                 const float box=topH*0.72f;
                 const RectF count(atLeft?W/2-0.14f*W:W/2+0.14f*W-box,(topH-box)/2+2*s,box,box);
@@ -2157,7 +2198,7 @@ namespace MikuMikuDesktopPerch
             }
             g.DrawImage(groundDrawn.get(),0.0f,0.0f,static_cast<REAL>(groundDrawn->GetWidth()),static_cast<REAL>(groundDrawn->GetHeight()));
             // A member's size (those hit go from the front).
-            auto sizeOf=[&](Kind k){return field.Height*(k==Kind::Heavy?0.08f:Vehicle(k)?0.075f:0.068f);};
+            auto sizeOf=[&](Kind k){return field.Height*(k==Kind::Heavy||Flies(k)?0.08f:Vehicle(k)?0.075f:0.068f);};
             auto memberAt=[&](int side,int m,Kind k){return MemberAt(field,side,m,k);};
             // Each shot: who fires it, from where, at what, and when (as the members are drawn).
             struct Round {int shooter;size_t i;bool hit,supporting;PointF muzzle,aim;double since;};
@@ -2180,8 +2221,8 @@ namespace MikuMikuDesktopPerch
                     // launcher's mouth on the shoulder).
                     const Kind sk=b.kinds[shooter];
                     const bool tank=Vehicle(sk);
-                    const float ahead=sk==Kind::Heavy?1.3f:sk==Kind::Artillery?1.1f:sk==Kind::Scout?0.95f:tank?1.15f:sk==Kind::Bazooka?0.9f:0.7f;
-                    const float up=sk==Kind::Artillery?0.75f:sk==Kind::Bazooka?0.45f:tank?0.42f:0.2f;
+                    const float ahead=sk==Kind::Heavy?1.3f:sk==Kind::Artillery?1.1f:sk==Kind::Scout?0.95f:sk==Kind::AntiAir?0.25f:Flies(sk)?1.2f:tank?1.15f:sk==Kind::Bazooka?0.9f:0.7f;
+                    const float up=sk==Kind::Artillery?0.75f:sk==Kind::AntiAir?1.05f:Flies(sk)?-0.05f:sk==Kind::Bazooka?0.45f:tank?0.42f:0.2f;
                     const PointF muzzle=supporting?from:PointF(from.X+f*ahead*u,from.Y-up*u);
                     const PointF mark=memberAt(ts,hit?victim:static_cast<int>(i%4),b.kinds[target]);
                     const PointF aim=hit?PointF(mark.X,mark.Y-0.1f*ut):PointF(mark.X+f*0.7f*ut,mark.Y+0.55f*ut);
@@ -2219,7 +2260,7 @@ namespace MikuMikuDesktopPerch
             for(const Round& q:rounds)
             {
                 const double burning=q.since-Flight;
-                if(!q.hit||burning<0.25)continue;
+                if(!q.hit||burning<0.25||Flies(b.kinds[q.shooter^1]))continue;
                 const float ut=sizeOf(b.kinds[q.shooter^1]),fade=static_cast<float>(std::clamp((FightLength(b)-q.since-0.1)/0.6,0.0,1.0));
                 const float tt=static_cast<float>(a);
                 const unsigned seed=static_cast<unsigned>(q.shooter*97+q.i*13);
@@ -2264,7 +2305,9 @@ namespace MikuMikuDesktopPerch
                     const float slide=(1-eased)*W*0.55f*(-f);
                     const float moving=1-go,tt=static_cast<float>(a);
                     float dx=0,dy=0,tilt=0;
-                    if(vehicle)
+                    const bool flying=Flies(b.kinds[idx]);
+                    if(flying)dy=std::sin(tt*2.4f+m*0.9f)*0.1f*u;   // aircraft: riding the air
+                    else if(vehicle)
                     {
                         // Shaking the less, the slower it goes (its speed falls as 1 - go).
                         dy=(std::sin(tt*55+m*1.7f)*0.05f+std::sin(tt*91+m)*0.025f)*u*moving;
@@ -2280,7 +2323,7 @@ namespace MikuMikuDesktopPerch
                     else dy=moving>0?-std::abs(std::sin(tt*16+m*1.3f))*0.14f*u:0;
                     const PointF p=memberAt(side,m,b.kinds[idx]);
                     const PointF at(p.X+slide+dx,p.Y+dy);
-                    if(vehicle&&moving>0)
+                    if(vehicle&&!flying&&moving>0)
                         for(int k=0;k<3;++k)
                         {
                             // Dust thrown up behind it.
@@ -2290,7 +2333,7 @@ namespace MikuMikuDesktopPerch
                         }
                     const Color sc=SideColor(b.who[idx]);
                     SolidBrush shadow(Color(120,sc.GetR(),sc.GetG(),sc.GetB()));
-                    g.FillEllipse(&shadow,p.X+slide+dx-1.1f*u,p.Y+(vehicle?0.45f:0.75f)*u,2.2f*u,0.5f*u);
+                    if(!flying)g.FillEllipse(&shadow,p.X+slide+dx-1.1f*u,p.Y+(vehicle?0.45f:0.75f)*u,2.2f*u,0.5f*u);
                     DrawSprite(g,at,u,b.kinds[idx],b.who[idx],f,false,tilt);
                 }
             }
@@ -2655,8 +2698,8 @@ namespace MikuMikuDesktopPerch
                 Text(g,KindCode(k)+L" "+KindName(k)+L"　"+Fmt(T(L"生産 {0}ターン",L"builds in {0} turns"),{std::to_wstring(HexWar::BuildTurns(k))}),RectF(tx,box.Y+10*s,tw,26*s),19*s,white,true);
                 std::wstring more=info.captures?T(L"　占領できる",L"   captures"):L"";
                 if(info.rangeMax>1)more+=Fmt(T(L"　射程{0}〜{1}",L"   range {0}-{1}"),{std::to_wstring(info.rangeMin),std::to_wstring(info.rangeMax)});
-                Text(g,Fmt(T(L"攻撃 対人{0}・対装甲{1}　防御 {2}　移動 {3}{4}",L"Attack {0} on men, {1} on armour   Defence {2}   Move {3}{4}"),
-                           {std::to_wstring(info.attack),std::to_wstring(info.attackArmour),std::to_wstring(info.defence),std::to_wstring(info.move),more}),
+                Text(g,Fmt(T(L"攻撃 対人{0}・対装甲{1}・対空{5}　防御 {2}　移動 {3}{4}",L"Attack {0} on men, {1} on armour, {5} on aircraft   Defence {2}   Move {3}{4}"),
+                           {std::to_wstring(info.attack),std::to_wstring(info.attackArmour),std::to_wstring(info.defence),std::to_wstring(info.move),more,std::to_wstring(info.attackAir)}),
                      RectF(tx,box.Y+40*s,tw,22*s),15*s,gold);
                 Wrapped(g,KindAbout(k),RectF(tx,box.Y+64*s,tw,box.Height-68*s),14*s,soft);
                 return;
@@ -2720,12 +2763,12 @@ namespace MikuMikuDesktopPerch
                 Text(g,Fmt(T(L"数 {0}/10　EXP {1} {2}",L"Members {0}/10   EXP {1} {2}"),{std::to_wstring(shown->count),std::to_wstring(shown->exp),stars}),RectF(tx,box.Y+40*s,tw,22*s),16*s,gold);
                 std::wstring more=k.captures?T(L"　占領できる",L"   captures"):L"";
                 if(k.rangeMax>1)more+=Fmt(T(L"　射程{0}〜{1}（動いたら撃てない・反撃されない）",L"   range {0}-{1} (not after moving; never fired back at)"),{std::to_wstring(k.rangeMin),std::to_wstring(k.rangeMax)});
-                Text(g,Fmt(T(L"攻撃 対人{0}・対装甲{1}　防御 {2}　移動 {3}{4}",L"Attack {0} on men, {1} on armour   Defence {2}   Move {3}{4}"),
-                           {std::to_wstring(k.attack),std::to_wstring(k.attackArmour),std::to_wstring(k.defence),std::to_wstring(k.move),more}),
+                Text(g,Fmt(T(L"攻撃 対人{0}・対装甲{1}・対空{5}　防御 {2}　移動 {3}{4}",L"Attack {0} on men, {1} on armour, {5} on aircraft   Defence {2}   Move {3}{4}"),
+                           {std::to_wstring(k.attack),std::to_wstring(k.attackArmour),std::to_wstring(k.defence),std::to_wstring(k.move),more,std::to_wstring(k.attackAir)}),
                      RectF(tx,box.Y+66*s,tw,22*s),15*s,soft);
                 const Terrain ground=t.At(shown->at);
                 Text(g,Fmt(T(L"地形 {0}（防御 +{1}%）{2}",L"On {0} (defence +{1}%){2}"),
-                           {TerrainName(ground),std::to_wstring(static_cast<int>(std::lround(HexWar::Cover(ground)*100))),
+                           {TerrainName(ground),std::to_wstring(static_cast<int>(std::lround(HexWar::Cover(ground,shown->kind)*100))),
                             shown->done&&shown->who==You&&t.Now()==Phase::YourTurn?T(L"　行動済み",L"   done"):L""}),
                      RectF(tx,box.Y+90*s,tw,22*s),15*s,soft);
                 return;
@@ -2864,11 +2907,26 @@ namespace MikuMikuDesktopPerch
                     std::vector<HexWar::Route> reach;
                     if(acting)reach=t.Reach(acting->id);
                     else if(chosen->who==Her)reach=t.Range(chosen->id);   // hers: where it could go on its turn
+                    if(acting)foes=t.Targets(acting->id);
+                    // Everything it can't go to or strike is dimmed, so the way it may take stands out
+                    // even on a busy picture (the ruined city).
+                    {
+                        GraphicsPath open;
+                        HexPath(open,HexAt(l,chosen->at),r);
+                        for(const auto& q:reach)HexPath(open,HexAt(l,q.to),r);
+                        for(int id:foes)if(const HexWar::Unit* e=t.UnitById(id))HexPath(open,HexAt(l,e->at),r);
+                        if(acting)for(int h:t.BridgeSpots(acting->id))HexPath(open,HexAt(l,h),r);
+                        open.SetFillMode(FillModeWinding);
+                        const GraphicsState dim=g.Save();
+                        g.SetClip(&open,CombineModeExclude);
+                        SolidBrush shade(Color(120,8,10,20));
+                        g.FillRectangle(&shade,l.map);
+                        g.Restore(dim);
+                    }
                     for(const auto& q:reach)
-                        if(q.to!=chosen->at)FillHex(g,HexAt(l,q.to),r*0.94f,chosen->who==You?Color(110,255,255,230):Color(90,255,90,80));
+                        if(q.to!=chosen->at)FillHex(g,HexAt(l,q.to),r*0.94f,chosen->who==You?Color(70,255,255,230):Color(70,255,90,80));
                     if(acting)
                     {
-                        foes=t.Targets(acting->id);
                         for(int h:t.BridgeSpots(acting->id))
                         {
                             FillHex(g,HexAt(l,h),r*0.9f,Color(90,255,220,120));
@@ -3714,12 +3772,13 @@ namespace MikuMikuDesktopPerch
         state.her=HexWarOpponent{L"ミク"};
         std::wstring show=what;
         state.map=0;
-        bool swapped=false,scrolled=false;
+        bool swapped=false,scrolled=false,flying=false;
         if(const size_t colon=show.find(L':');colon!=std::wstring::npos)
         {
             state.map=std::clamp(_wtoi(show.c_str()+colon+1),0,HexWar::Maps()-1);
             swapped=show.find(L'r',colon)!=std::wstring::npos;
             scrolled=show.find(L's',colon)!=std::wstring::npos;   // the map scrolled 333.3 px each way
+            flying=show.find(L'f',colon)!=std::wstring::npos;     // an aircraft of yours attacks, when one can
             show.resize(colon);
         }
         state.table.NewGame(state.map,seed,Care,swapped);
@@ -3729,6 +3788,11 @@ namespace MikuMikuDesktopPerch
         auto& t=state.table;
         // A unit of yours that could attack now (moved next to one of hers when it can be).
         auto attacker=[&]()->int{
+            for(int pass=flying?0:1;pass<2;++pass)
+                for(const auto& u:t.Units())
+                    if(u.who==You&&(pass||Flies(u.kind)))
+                        for(const auto& r:t.Reach(u.id))
+                            if(pass==0&&!t.TargetsFrom(u,r.to,true).empty()){t.Move(u.id,r.to);return u.id;}
             for(const auto& u:t.Units())if(u.who==You&&!t.Targets(u.id).empty())return u.id;
             for(const auto& u:t.Units())
                 if(u.who==You)

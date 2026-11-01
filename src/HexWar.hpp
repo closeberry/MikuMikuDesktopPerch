@@ -14,15 +14,18 @@ namespace MikuMikuDesktopPerch::HexWar
     // than the even ones; a hex is numbered Columns * row + column.
     constexpr int You=0,Her=1;
 
-    // City: ruined buildings. Factory: one of the factories (see Factory).
-    enum class Terrain : std::uint8_t {Plain,Rough,Forest,Mountain,River,Road,Base,Bridge,City,Factory};
-    constexpr int Terrains=10;
+    // City: ruined buildings. Factory: one of the factories (see Factory). Foundation: what is
+    // left standing of a large building, closed to vehicles.
+    enum class Terrain : std::uint8_t {Plain,Rough,Forest,Mountain,River,Road,Base,Bridge,City,Factory,Foundation};
+    constexpr int Terrains=11;
     // Kinds of unit (docs/HexWar.md): the tank, infantry, anti-tank infantry (a launcher on the
     // shoulder: strong against vehicles, weak against men), the scout car (fast, light), the
     // self-propelled gun (fires from two or three hexes off, not after moving, and is never
-    // fired back at) and the heavy tank (slow, strong).
-    enum class Kind : std::uint8_t {Tank,Infantry,Bazooka,Scout,Artillery,Heavy};
-    constexpr int Kinds=6;
+    // fired back at), the heavy tank (slow, strong), and in the air the fighter (made to bring
+    // down aircraft) and the attack aircraft (made to strike the ground), with the anti-aircraft
+    // missile truck against them on the ground.
+    enum class Kind : std::uint8_t {Tank,Infantry,Bazooka,Scout,Artillery,Heavy,Fighter,Attacker,AntiAir};
+    constexpr int Kinds=9;
 
     // How a kind moves: its movement points, and what each terrain costs it (0: it cannot go).
     struct KindInfo
@@ -36,14 +39,19 @@ namespace MikuMikuDesktopPerch::HexWar
         bool armoured;       // a vehicle
         int rangeMin,rangeMax;   // the hexes off it can attack at (1, 1: next to it)
         std::array<int,Terrains> cost;   // by Terrain
+        int attackAir;       // against aircraft (0: it cannot shoot at them)
+        bool flies;          // an aircraft: over any terrain, no cover, shot at only by those
+                             // with an attack against aircraft, supported only by such (held
+                             // back and surrounded by any unit, as one on the ground)
     };
     const KindInfo& Info(Kind k);
-    // a's attack against d.
+    // a's attack against d (0: it cannot attack it).
     int AttackOn(Kind a,Kind d);
     // Whether a kind fires from afar (and so never back at those next to it).
     inline bool Ranged(Kind k){return Info(k).rangeMin>1;}
-    // How much a terrain adds to the defence of a unit on it (0.4: 40%).
+    // How much a terrain adds to the defence of a unit on it (0.4: 40%); an aircraft has none.
     double Cover(Terrain t);
+    inline double Cover(Terrain t,Kind k){return Info(k).flies?0:Cover(t);}
 
     constexpr int FullStrength=10;
 
@@ -75,8 +83,12 @@ namespace MikuMikuDesktopPerch::HexWar
     int RepairPerTurn(Kind k);
     constexpr int MostUnits=14;   // a side builds no more than this many (with those being built)
 
-    // The level its experience gives it (0-3), each worth 10% more attack and defence.
+    // The level its experience gives it (0-3): its attack grows by a third a level (twice at the
+    // top); its defence stays.
     int Level(int exp);
+    // How a unit ranks (its kind's worth, raised by its level): experience from a battle goes
+    // by the other's rank over its own.
+    double Rank(Kind k,int exp);
 
     // A battle, as it went: the members of both shoot at the same time, one shot each (those
     // hit still shoot). Strengths are after support, terrain, level and encirclement.
@@ -97,6 +109,7 @@ namespace MikuMikuDesktopPerch::HexWar
         bool answers=true;                     // the defender fires back (not at a gun's shells)
         std::vector<bool> shots[2];            // each shot: hit or not (the attacker's own, then its support's)
         double expected[2]{};                  // members each would expect to destroy
+        int gained[2]{};                       // experience each gains (none when destroyed)
     };
 
     // One map: its terrain as text (P plain, R rough, F forest, M mountain, W river, = road,
@@ -187,7 +200,7 @@ namespace MikuMikuDesktopPerch::HexWar
         int Next(int hex,int d) const;
         int Distance(int a,int b) const;
         bool Adjacent(int a,int b) const {return Distance(a,b)==1;}
-        // Next to a unit of the other side (it stops there).
+        // Next to a unit of the other side (it stops there; aircraft too, whatever the unit).
         bool HeldBy(int hex,int who) const;
 
         // Where a unit may move now (none when it has moved or is done).

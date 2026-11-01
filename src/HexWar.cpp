@@ -12,15 +12,18 @@ namespace MikuMikuDesktopPerch::HexWar
     namespace
     {
         // Move; attack on men, on armour; defence; worth; takes bases; armoured; range; costs by
-        // terrain: plain, rough, forest, mountain, river, road, base, bridge, ruins, factory
-        // (0: impassable).
+        // terrain: plain, rough, forest, mountain, river, road, base, bridge, ruins, factory,
+        // foundations (0: impassable); attack on aircraft; flies.
         const KindInfo Kinds_[Kinds]={
-            {5,9,9,8,3,false,true,1,1,{1,2,2,0,0,1,1,1,2,1}},     // tank: no mountains, rough, forest and ruins at half speed
-            {3,4,4,4,1,true,false,1,1,{1,2,1,3,0,1,1,1,1,1}},     // infantry: mountains at a third, forest and ruins as plain
-            {3,3,10,4,2,true,false,1,1,{1,2,1,3,0,1,1,1,1,1}},    // anti-tank infantry: as infantry, deadly to vehicles
-            {7,6,4,5,2,false,true,1,1,{1,3,2,0,0,1,1,1,2,1}},     // scout car: fast on open ground and roads, slow off them
-            {4,8,8,3,3,false,true,2,3,{1,2,2,0,0,1,1,1,2,1}},     // self-propelled gun: two or three hexes off
-            {3,12,12,11,5,false,true,1,1,{1,2,2,0,0,1,1,1,3,1}},  // heavy tank: slow, the strongest
+            {5,9,9,8,3,false,true,1,1,{1,2,2,0,0,1,1,1,2,1,0},0,false},   // tank: no mountains, rough, forest and ruins at half speed
+            {3,4,4,4,1,true,false,1,1,{1,2,1,3,0,1,1,1,1,1,2},2,false},   // infantry: mountains at a third, forest and ruins as plain
+            {3,3,10,4,2,true,false,1,1,{1,2,1,3,0,1,1,1,1,1,2},2,false},  // anti-tank infantry: as infantry, deadly to vehicles
+            {7,6,4,5,2,false,true,1,1,{1,3,2,0,0,1,1,1,2,1,0},0,false},   // scout car: fast on open ground and roads, slow off them
+            {4,8,8,3,3,false,true,2,3,{1,2,2,0,0,1,1,1,2,1,0},0,false},   // self-propelled gun: two or three hexes off
+            {3,12,12,11,5,false,true,1,1,{1,2,2,0,0,1,1,1,3,1,0},0,false},  // heavy tank: slow, the strongest
+            {6,3,2,6,3,false,true,1,1,{1,1,1,1,1,1,1,1,1,1,1},10,true},     // fighter: brings down aircraft
+            {5,8,9,5,4,false,true,1,1,{1,1,1,1,1,1,1,1,1,1,1},0,true},      // attack aircraft: strikes the ground
+            {5,3,3,6,3,false,true,1,1,{1,2,2,0,0,1,1,1,2,1,0},11,false},    // anti-aircraft missile truck
         };
 
         // Axial steps of the six directions, going round from straight up: 0 up, 1 upper
@@ -34,7 +37,12 @@ namespace MikuMikuDesktopPerch::HexWar
             return std::clamp(0.9*q*q,0.03,0.9);
         }
 
-        double Grown(double v,int exp){return v*(1+0.1*Level(exp));}
+        // An attack grown by its level.
+        double Grown(double v,int exp){return v*(1+Level(exp)/3.0);}
+
+        // Diagnostics: experience gained by those coming through a battle with an equal.
+        double equalGained=0;
+        int equalBattles=0;
 
         // A strike: this many shots of this attack.
         constexpr int StrikeShots=10;
@@ -43,7 +51,7 @@ namespace MikuMikuDesktopPerch::HexWar
         // The maps, each read off its picture by tools/hexwar/read_map.py and set right by hand.
         // Each brings in other kinds besides tanks and infantry: scout cars to the valley and the
         // isle, heavy tanks to the gorge and the ridge, guns to the ridge and the isle, anti-tank
-        // infantry to the city.
+        // infantry and aircraft (fighters, attack aircraft, missile trucks) to the city.
         // The river valley: a river with one bridge, rocks and peaks to the north-west and
         // south-east, forest along the east. The lone bridge: a river from the north to the
         // south-west, one bridge, peaks and a rocky plateau. The horseshoe ridge (a tall map,
@@ -126,24 +134,26 @@ namespace MikuMikuDesktopPerch::HexWar
                   {Kind::Infantry,9,12,Her},{Kind::Infantry,11,12,Her},
                   {Kind::Artillery,10,25,You},{Kind::Heavy,10,23,You},{Kind::Artillery,10,12,Her},{Kind::Heavy,11,10,Her}},40,L"MAP3"},
                 {L"廃墟の街",L"The Ruined City",20,13,{
-                    "WWWWRCCCCCC==FFCC==C",
-                    "W###WCCCCCC==FFCC=CC",
-                    "WWWW==CCCCR==CCC=CCC",
-                    "WPPCCR==C==R=====CCC",
-                    "FCCFFCCC==FRRRRRK=CC",
-                    "CCBCCCCCC==KRRRR====",
-                    "CCCCCCC===CC==RFC=CC",
-                    "CCCCCC=CCC==CC==C=CF",
-                    "CCCRCC=CPP=C=CCC=bCC",
-                    "CCRRC==CPP=C=CCC=CCC",
-                    "CCRCKCCCCC=CCCFC=CCC",
-                    "CCCC=CCCCCCCCCCC=CCC",
-                    "CCCC=FFCCCCCCCCC=CCC"},false,
+                    "WWWWRHCHHCH==FFHCH=C",
+                    "W#H#WHCCHHH==FFHH=CH",
+                    "WWWW==CCHHHH=CCC=CHH",
+                    "WHHCCR==C==HH====CHH",
+                    "HHCFFCCH==FKRRRK==HC",
+                    "HCBCCCCCC==HRRRR====",
+                    "HCCCCHC==HHHH=RFC=CC",
+                    "HHHHCCHCCCH=HHHHC=CF",
+                    "HHHRCH=CPP=C=HHC=bCH",
+                    "HHRRH==HPP=HHHHC=CCC",
+                    "HCRCKCCCCC=HHHFH=CCC",
+                    "HHCC=CHCCCCCCCCHHCHH",
+                    "HCCC=FFCHCCCCCCC=CHH"},false,
                  {{Kind::Tank,3,5,You},{Kind::Tank,3,6,You},{Kind::Tank,4,5,You},{Kind::Tank,2,6,You},
                   {Kind::Infantry,1,5,You},{Kind::Infantry,2,4,You},
                   {Kind::Tank,16,7,Her},{Kind::Tank,18,8,Her},{Kind::Tank,17,9,Her},{Kind::Tank,16,8,Her},
                   {Kind::Infantry,18,7,Her},{Kind::Infantry,17,7,Her},
-                  {Kind::Bazooka,4,6,You},{Kind::Bazooka,1,6,You},{Kind::Bazooka,15,8,Her},{Kind::Bazooka,18,9,Her}},30,L"MAP4"},
+                  {Kind::Bazooka,4,6,You},{Kind::Bazooka,1,6,You},{Kind::Bazooka,15,8,Her},{Kind::Bazooka,18,9,Her},
+                  {Kind::Fighter,3,4,You},{Kind::Attacker,4,4,You},{Kind::AntiAir,5,5,You},
+                  {Kind::Fighter,16,6,Her},{Kind::Attacker,17,6,Her},{Kind::AntiAir,16,9,Her}},30,L"MAP4"},
                 {L"火山の島",L"The Volcano Isle",37,11,{
                     "WWWWWWWPWWWRWWWWWWWWWWWWMMRWWWWWWMWWW",
                     "WWFWMWWPFFFPWR=FWWWMWMWFWFMFFFWWMMRWW",
@@ -176,26 +186,28 @@ namespace MikuMikuDesktopPerch::HexWar
     }
 
     const KindInfo& Info(Kind k){return Kinds_[static_cast<int>(k)];}
-    int AttackOn(Kind a,Kind d){return Info(d).armoured?Info(a).attackArmour:Info(a).attack;}
+    int AttackOn(Kind a,Kind d){return Info(d).flies?Info(a).attackAir:Info(d).armoured?Info(a).attackArmour:Info(a).attack;}
 
     int BuildTurns(Kind k)
     {
-        static const int turns[Kinds]={3,2,2,2,3,4};   // tank, infantry, anti-tank, scout, gun, heavy
+        static const int turns[Kinds]={3,2,2,2,3,4,3,3,2};   // tank, infantry, anti-tank, scout, gun, heavy, fighter, attacker, anti-aircraft
         return turns[static_cast<int>(k)];
     }
     int RepairPerTurn(Kind k)
     {
-        static const int members[Kinds]={2,3,3,3,2,1};
+        static const int members[Kinds]={2,3,3,3,2,1,2,2,2};
         return members[static_cast<int>(k)];
     }
 
     double Cover(Terrain t)
     {
-        static const double cover[Terrains]={0,0.15,0.25,0.4,0,0,0.3,0,0.35,0.3};
+        static const double cover[Terrains]={0,0.15,0.25,0.4,0,0,0.3,0,0.35,0.3,0.5};
         return cover[static_cast<int>(t)];
     }
 
-    int Level(int exp){return exp>=20?3:exp>=12?2:exp>=5?1:0;}
+    // (Against equals, some four a battle: the top after eight.)
+    int Level(int exp){return exp>=32?3:exp>=21?2:exp>=11?1:0;}
+    double Rank(Kind k,int exp){return Info(k).value*(1+Level(exp)/6.0);}
 
     int Maps(){return static_cast<int>(AllMaps().size());}
     const MapInfo& Map(int index){return AllMaps()[static_cast<size_t>(std::clamp(index,0,Maps()-1))];}
@@ -342,7 +354,8 @@ namespace MikuMikuDesktopPerch::HexWar
         return TargetsFrom(*u,u->at,u->moved);
     }
 
-    // Next to it; for a gun, two or three hexes off and only when it has not moved.
+    // Next to it; for a gun, two or three hexes off and only when it has not moved. Only those
+    // it has an attack against (aircraft: by those with an attack on aircraft).
     std::vector<int> Table::TargetsFrom(const Unit& u,int at,bool moved) const
     {
         std::vector<int> out;
@@ -354,13 +367,13 @@ namespace MikuMikuDesktopPerch::HexWar
                 const int n=Next(at,d);
                 if(n<0)continue;
                 const Unit* o=UnitAt(n);
-                if(o&&o->who!=u.who&&o->id!=u.id)out.push_back(o->id);
+                if(o&&o->who!=u.who&&o->id!=u.id&&AttackOn(u.kind,o->kind)>0)out.push_back(o->id);
             }
             return out;
         }
         if(moved)return out;
         for(const Unit& o:units)
-            if(o.who!=u.who&&o.count>0)
+            if(o.who!=u.who&&o.count>0&&AttackOn(u.kind,o.kind)>0)
                 if(const int d=Distance(at,o.at);d>=k.rangeMin&&d<=k.rangeMax)out.push_back(o.id);
         return out;
     }
@@ -398,8 +411,9 @@ namespace MikuMikuDesktopPerch::HexWar
     // supporting fire: shots of the attacker's own strength, so that even one member left,
     // well supported, can destroy a whole unit. The defender's side next to the attacker adds
     // half its defence. A side surrounded fights at half its attack and defence. Attack is by
-    // what is attacked (armour or men). Fired at from afar, or being a gun, the defender does
-    // not fire back.
+    // what is attacked (armour, men or aircraft). Fired at from afar, being a gun, or having no
+    // attack against the attacker, the defender does not fire back. An aircraft is supported
+    // only by those of its side that can shoot at aircraft.
     Battle Table::Fight(const Unit& a,int aAt,const Unit& d,int movedId,int movedTo) const
     {
         Battle b;
@@ -409,25 +423,26 @@ namespace MikuMikuDesktopPerch::HexWar
         b.at[0]=aAt;b.at[1]=d.at;
         b.before[0]=b.after[0]=a.count;b.before[1]=b.after[1]=d.count;
         b.exp[0]=a.exp;b.exp[1]=d.exp;
-        b.cover[0]=Cover(At(aAt));b.cover[1]=Cover(At(d.at));
+        b.cover[0]=Cover(At(aAt),a.kind);b.cover[1]=Cover(At(d.at),d.kind);
         const double own=Grown(AttackOn(a.kind,d.kind),a.exp);
-        double attack=own,defence=Grown(Info(d.kind).defence,d.exp)*(1+b.cover[1]),support=0;
+        double attack=own,defence=Info(d.kind).defence*(1+b.cover[1]),support=0;
         for(const Unit& o:units)
         {
             if(o.count<=0||o.id==a.id||o.id==d.id)continue;
             const int at=o.id==movedId?movedTo:o.at;
-            if(o.who==a.who&&Adjacent(at,d.at))
+            const bool airCover=Info(o.kind).attackAir>0;
+            if(o.who==a.who&&Adjacent(at,d.at)&&(airCover||!Info(a.kind).flies))
             {
                 const double added=0.5*Grown(AttackOn(o.kind,d.kind),o.exp);
                 attack+=added*o.count/FullStrength;
                 support+=added*o.count/own;   // in shots of the attacker's own
             }
-            if(o.who==d.who&&Adjacent(at,aAt))defence+=0.5*Grown(Info(o.kind).defence,o.exp)*o.count/FullStrength;
+            if(o.who==d.who&&Adjacent(at,aAt)&&(airCover||!Info(d.kind).flies))defence+=0.5*Info(o.kind).defence*o.count/FullStrength;
         }
         b.own[0]=a.count;b.own[1]=d.count;
         b.support=static_cast<int>(std::lround(support));
-        b.answers=Distance(aAt,d.at)<=1&&!Ranged(d.kind);
-        double back=b.answers?Grown(AttackOn(d.kind,a.kind),d.exp):0,guard=Grown(Info(a.kind).defence,a.exp)*(1+b.cover[0]);
+        b.answers=Distance(aAt,d.at)<=1&&!Ranged(d.kind)&&AttackOn(d.kind,a.kind)>0;
+        double back=b.answers?Grown(AttackOn(d.kind,a.kind),d.exp):0,guard=Info(a.kind).defence*(1+b.cover[0]);
         b.surrounded[0]=SurroundedAt(a,aAt,movedId,movedTo);
         b.surrounded[1]=SurroundedAt(d,d.at,movedId,movedTo);
         double aim=own;
@@ -452,7 +467,9 @@ namespace MikuMikuDesktopPerch::HexWar
     }
 
     // Each member of both shoots once, at the same time (those hit still shoot), and the
-    // attacker's supporting fire after its own.
+    // attacker's supporting fire after its own. Then the experience: each side left standing
+    // gains for coming through it and for each member it destroyed, by how the other ranks
+    // against it (a third from one well below it, up to three times from one well above).
     void Table::Shoot(Battle& b)
     {
         std::uniform_real_distribution<double> any(0,1);
@@ -467,6 +484,14 @@ namespace MikuMikuDesktopPerch::HexWar
                 if(hit)--b.after[other];
             }
         }
+        for(int side=0;side<2;++side)
+        {
+            const int other=side^1;
+            if(b.after[side]<=0)continue;
+            const double above=std::clamp(Rank(b.kinds[other],b.exp[other])/Rank(b.kinds[side],b.exp[side]),0.3,3.0);
+            b.gained[side]=static_cast<int>(std::lround(above*(1.5+b.before[other]-b.after[other])));
+            if(above>0.95&&above<1.05){equalGained+=b.gained[side];++equalBattles;}
+        }
     }
 
     void Table::Apply(Battle& b)
@@ -474,8 +499,8 @@ namespace MikuMikuDesktopPerch::HexWar
         Unit* a=Find(b.attacker);
         Unit* d=Find(b.defender);
         const int byA=b.before[1]-b.after[1],byD=b.before[0]-b.after[0];
-        a->exp+=byA;
-        d->exp+=byD;
+        a->exp+=b.gained[0];
+        d->exp+=b.gained[1];
         a->count=b.after[0];
         d->count=b.after[1];
         // The command gauges fill with members destroyed, and lost.
@@ -521,7 +546,7 @@ namespace MikuMikuDesktopPerch::HexWar
     {
         const Unit* d=UnitById(target);
         if(!d)return 0;
-        return ChanceNow(Hit(StrikePower,Grown(Info(d->kind).defence,d->exp)*(1+Cover(At(d->at)))),d->who^1,d->who);
+        return ChanceNow(Hit(StrikePower,Info(d->kind).defence*(1+Cover(At(d->at),d->kind))),d->who^1,d->who);
     }
 
     bool Table::CanCommand(int who,Skill s) const
@@ -646,6 +671,7 @@ namespace MikuMikuDesktopPerch::HexWar
             case '#':t=Terrain::Bridge;break;
             case 'C':t=Terrain::City;break;
             case 'K':t=Terrain::Factory;break;
+            case 'H':t=Terrain::Foundation;break;
             case 'B':t=Terrain::Base;base[You]=Hex(c,r);break;
             case 'b':t=Terrain::Base;base[Her]=Hex(c,r);break;
             }
@@ -886,11 +912,12 @@ namespace MikuMikuDesktopPerch::HexWar
     {
         const auto roster=Roster();
         auto has=[&](Kind k){return std::find(roster.begin(),roster.end(),k)!=roster.end();};
-        int takers=0,guns=0,armour=0;
+        int takers=0,guns=0,armour=0,air=0,against=0;
         for(const Unit& u:units)
         {
             if(u.count<=0)continue;
-            if(u.who==who){takers+=Info(u.kind).captures?1:0;guns+=Ranged(u.kind)?1:0;}
+            if(u.who==who){takers+=Info(u.kind).captures?1:0;guns+=Ranged(u.kind)?1:0;against+=Info(u.kind).attackAir>=10?1:0;}
+            else if(Info(u.kind).flies)++air;
             else armour+=Info(u.kind).armoured?1:0;
         }
         for(const Factory& o:factories)
@@ -901,12 +928,14 @@ namespace MikuMikuDesktopPerch::HexWar
             if(f.owner!=who||f.building>=0)continue;
             Kind k=Kind::Tank;
             if(takers<2)k=has(Kind::Bazooka)&&armour>=3?Kind::Bazooka:Kind::Infantry;
+            else if(air>against&&(has(Kind::AntiAir)||has(Kind::Fighter)))k=has(Kind::AntiAir)&&against%2==0?Kind::AntiAir:has(Kind::Fighter)?Kind::Fighter:Kind::AntiAir;
             else if(has(Kind::Bazooka)&&armour>=4)k=Kind::Bazooka;
+            else if(has(Kind::Attacker)&&armour>=3)k=Kind::Attacker;
             else if(has(Kind::Artillery)&&guns==0)k=Kind::Artillery;
             else if(has(Kind::Heavy))k=Kind::Heavy;
             if(turn+BuildTurns(k)>turns)continue;
             if(!has(k))k=Kind::Tank;
-            if(Build(who,static_cast<int>(i),k)){takers+=Info(k).captures?1:0;guns+=Ranged(k)?1:0;}
+            if(Build(who,static_cast<int>(i),k)){takers+=Info(k).captures?1:0;guns+=Ranged(k)?1:0;against+=Info(k).attackAir>=10?1:0;}
         }
     }
 
@@ -972,10 +1001,10 @@ namespace MikuMikuDesktopPerch::HexWar
     double Table::Danger(const Unit& u,int at) const
     {
         std::vector<double> losses;
-        const double guard=Grown(Info(u.kind).defence,u.exp)*(1+Cover(At(at)));
+        const double guard=Info(u.kind).defence*(1+Cover(At(at),u.kind));
         for(const Unit& e:units)
         {
-            if(e.who==u.who||e.count<=0)continue;
+            if(e.who==u.who||e.count<=0||!AttackOn(e.kind,u.kind))continue;
             const double back=Ranged(u.kind)||Ranged(e.kind)?0:Grown(AttackOn(u.kind,e.kind),u.exp);
             if(Ranged(e.kind))
             {
@@ -994,7 +1023,7 @@ namespace MikuMikuDesktopPerch::HexWar
             }
             if(!reaches)continue;
             const double lost=std::min<double>(u.count,e.count*Hit(Grown(AttackOn(e.kind,u.kind),e.exp),guard));
-            const double hurt=std::min<double>(e.count,u.count*Hit(back,Grown(Info(e.kind).defence,e.exp)));
+            const double hurt=std::min<double>(e.count,u.count*Hit(back,Info(e.kind).defence));
             const double net=lost*Info(u.kind).value-hurt*Info(e.kind).value;
             if(net>0)losses.push_back(net);
         }
@@ -1039,7 +1068,7 @@ namespace MikuMikuDesktopPerch::HexWar
         }
         // Not to be left where the other side can hurt it much.
         if(left>0)s-=0.8*Danger(u,to)*left/std::max(1,u.count);
-        s+=0.3*Cover(At(to))*me.value;
+        s+=0.3*Cover(At(to),u.kind)*me.value;
         // Forward, the more as the turns go by: infantry toward the other's base, everyone
         // toward the other side.
         const double press=std::min(1.6,1+0.05*turn);
@@ -1124,10 +1153,14 @@ namespace MikuMikuDesktopPerch::HexWar
         toFoe.assign(Kinds,{});
         for(int k=0;k<Kinds;++k)
         {
+            // (Toward those it is good against: as good as half its best attack, or any.)
+            const KindInfo& me=Info(static_cast<Kind>(k));
+            const int best=std::max({me.attack,me.attackArmour,me.attackAir});
             std::vector<int> foes;
-            for(const Unit& e:units)
-                if(e.who!=who&&e.count>0)
-                    for(int d=0;d<6;++d)if(const int n=Next(e.at,d);n>=0)foes.push_back(n);
+            for(int pass=0;pass<2&&foes.empty();++pass)
+                for(const Unit& e:units)
+                    if(e.who!=who&&e.count>0&&AttackOn(static_cast<Kind>(k),e.kind)*(pass?1:2)>=(pass?1:best))
+                        for(int d=0;d<6;++d)if(const int n=Next(e.at,d);n>=0)foes.push_back(n);
             toBase[static_cast<size_t>(k)]=Field(static_cast<Kind>(k),{base[static_cast<size_t>(who^1)]});
             toFoe[static_cast<size_t>(k)]=Field(static_cast<Kind>(k),foes);
         }
@@ -1360,6 +1393,62 @@ namespace MikuMikuDesktopPerch::HexWar
             check(!reaches(x,inf,15,2),L"but not two (a third of its movement each)");
             x.terrain[static_cast<size_t>(x.Hex(13,3))]=Terrain::Rough;
             check(reaches(x,inf,13,4)&&!reaches(x,inf,13,5),L"rough costs infantry two");
+            x.terrain[static_cast<size_t>(x.Hex(6,5))]=Terrain::Foundation;
+            x.terrain[static_cast<size_t>(x.Hex(12,2))]=Terrain::Foundation;
+            check(!reaches(x,tank,6,5)&&reaches(x,inf,12,2),L"foundations: closed to a tank, open to infantry");
+        }
+        {
+            // Aircraft: over anything, shot at only by those with an attack on aircraft.
+            Table x;bare(x);
+            const int fighter=put(x,Kind::Fighter,You,3,5);
+            for(int c=4;c<=7;++c)x.terrain[static_cast<size_t>(x.Hex(c,5))]=c%2?Terrain::River:Terrain::Foundation;
+            x.terrain[static_cast<size_t>(x.Hex(8,5))]=Terrain::Mountain;
+            check(reaches(x,fighter,8,5)&&reaches(x,fighter,9,5),L"a fighter flies over rivers, foundations and mountains");
+            const int tank=put(x,Kind::Tank,Her,3,4);
+            bool past=false;
+            for(const Route& q:x.Reach(fighter))if(q.to==x.Hex(5,4))past=true;
+            check(!past,L"a tank holds a fighter back too (no flying on past it)");
+            const int inf=put(x,Kind::Infantry,Her,2,5);
+            const auto byTank=x.TargetsFrom(x.units[1],x.units[1].at,false),byInf=x.TargetsFrom(x.units[2],x.units[2].at,false);
+            check(byTank.empty()&&byInf.size()==1,L"a tank cannot shoot at a fighter; infantry can");
+            check(x.Preview(fighter,inf).answers&&!x.Preview(fighter,tank).answers,L"infantry fires back at a fighter, a tank does not");
+            // Caught between two tanks with no attack on aircraft, it is surrounded all the same.
+            x.units[2].at=x.Hex(3,6);x.units[2].kind=Kind::Tank;
+            check(x.Surrounded(fighter),L"a fighter between two tanks is surrounded");
+        }
+        {
+            // Experience: for coming through a battle, and more against one that ranks above.
+            Table x;bare(x);
+            const int inf=put(x,Kind::Infantry,You,5,5),tank=put(x,Kind::Tank,Her,6,5);
+            bool rule=true;
+            for(int i=0;i<20;++i)
+            {
+                Battle b=x.Preview(inf,tank);
+                x.Shoot(b);
+                for(int side=0;side<2;++side)
+                {
+                    const double above=side?1.0/3:3.0;
+                    const int want=b.after[side]>0?static_cast<int>(std::lround(above*(1.5+b.before[side^1]-b.after[side^1]))):0;
+                    if(b.gained[side]!=want)rule=false;
+                }
+                if(b.after[0]>0&&b.gained[0]<5)rule=false;   // infantry coming through a tank's fire, even with none destroyed
+            }
+            check(rule,L"experience: 1.5 and the members destroyed, times the other's rank over its own (a third to three times)");
+        }
+        {
+            // Support: an aircraft only from those that can shoot at aircraft.
+            Table x;bare(x);
+            const int attacker=put(x,Kind::Attacker,You,5,5),tank=put(x,Kind::Tank,Her,6,5);
+            put(x,Kind::Tank,You,7,5);
+            check(x.Preview(attacker,tank).support==0&&!x.Preview(attacker,tank).answers,L"an attack aircraft: no support from a tank, no fire back from one");
+            put(x,Kind::AntiAir,You,6,4);
+            check(x.Preview(attacker,tank).support>0,L"but support from a missile truck");
+            Table y;bare(y);
+            const int fighter=put(y,Kind::Fighter,You,5,5),other=put(y,Kind::Attacker,Her,6,5);
+            const double alone=y.Preview(fighter,other).defence[1];
+            put(y,Kind::Tank,Her,5,4);
+            check(std::abs(y.Preview(fighter,other).defence[1]-alone)<1e-9,L"a tank adds no defence to an aircraft");
+            check(y.TargetsFrom(y.units[1],y.units[1].at,false).empty(),L"an attack aircraft cannot shoot at a fighter");
         }
         {
             Table x;bare(x);
@@ -1606,6 +1695,7 @@ namespace MikuMikuDesktopPerch::HexWar
                  <<L"; turns on average "<<(count?static_cast<double>(turnsSum)/count:0)<<L" ("<<endings<<L")\n";
         }
         out<<wrong<<L" wrong\n"<<lines.str()<<L"her longest order "<<static_cast<int>(longest*1000)<<L" ms\n";
+        out<<L"experience from a battle with an equal, coming through it: "<<(equalBattles?equalGained/equalBattles:0)<<L" on average ("<<equalBattles<<L" battles)\n";
         return out.str();
     }
 }
