@@ -2,6 +2,23 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.5.8
+
+### New
+
+- **Aircraft in Hex Front**: the ruined city gains fighters, attack aircraft and anti-aircraft missile trucks (one each for both sides at the start; factories there build them too)
+  - Fighters and attack aircraft fly over any hex at a cost of one, rivers, mountains and foundations alike, and get no cover from the ground
+  - Only units with an attack on aircraft can shoot at them (fighters, missile trucks, and weakly infantry and anti-tank infantry). Fighters are made to bring down aircraft; attack aircraft strike the ground from above
+  - Only allies with an attack on aircraft support an aircraft's battle. Aircraft stop next to the other side and are weakened when caught between two, as units on the ground are
+- **Experience in Hex Front**: a unit now gains experience for coming through a battle, attacking or defending, even without destroying anyone; more against one that ranks above it, little against one below
+  - The top level comes after some eight battles with equals, and doubles the unit's attack (its defence stays)
+  - The battle screen shows what was gained ("+N") at its end
+
+### Changed
+
+- **Hex Front's moves**: with a unit chosen, the hexes it can neither reach nor attack are darkened, so where it may go stands out
+- **The ruined city**: hexes such as those where a large building's foundations still stand are now "foundations", closed to vehicles (infantry may enter, +50% defence), marked with dark hatching. Two factories moved
+
 ## 1.5.7
 
 ### New
