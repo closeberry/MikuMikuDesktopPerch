@@ -197,6 +197,7 @@ namespace MikuMikuDesktopPerch
         struct Rig
         {
             int center=-1,lowerBody=-1,upperBody=-1,neck=-1,groove=-1;
+            bool grooveOnCenter=false;   // no グルーブ: groove is a slot of its own, added onto センター
             // Held at rest while a generated activity plays, so the VMD's own lean or weight
             // shift (センター rotation, 上半身2, shoulders, head, wrists, toes) does not leak in.
             std::vector<int> neutral;
@@ -293,6 +294,8 @@ namespace MikuMikuDesktopPerch
         Rig rig;
         std::vector<int> overrides;          // bones this layer writes
         std::vector<int> slot;               // bone index -> position in overrides (-1 if none)
+        // Whether override i is a bone of the pose (not the stand-in groove).
+        bool Posed(const PMX::Pose& pose,size_t i) const {return static_cast<size_t>(overrides[i])<pose.boneKeys.size();}
         std::vector<Key> snapshot,lastOutput;
         Activity activity=Activity::Idle;
         int direction=1;

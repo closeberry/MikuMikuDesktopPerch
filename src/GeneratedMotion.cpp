@@ -429,7 +429,11 @@ namespace MikuMikuDesktopPerch
                               L"左つま先ＩＫ",L"右つま先ＩＫ",L"左つま先IK",L"右つま先IK",L"腰"})
             if(const int bone=Find(pmx,{name});bone>=0)rig.neutral.push_back(bone);
 
-        slot.assign(pmx.bones.size(),-1);
+        // A model without グルーブ lowers its body by センター: groove stands for one past the
+        // last bone, and its key is added onto センター's as the pose is written.
+        rig.grooveOnCenter=rig.groove<0&&rig.center>=0;
+        if(rig.grooveOnCenter)rig.groove=static_cast<int>(pmx.bones.size());
+        slot.assign(pmx.bones.size()+1,-1);
         auto add=[&](int bone){if(bone>=0&&slot[bone]<0){slot[bone]=static_cast<int>(overrides.size());overrides.push_back(bone);}};
         add(rig.lowerBody);add(rig.upperBody);add(rig.neck);add(rig.groove);
         for(int side=0;side<2;++side){add(rig.legIK[side]);add(rig.leg[side]);add(rig.knee[side]);add(rig.arm[side]);add(rig.elbow[side]);add(rig.armTwist[side]);}
@@ -2426,6 +2430,7 @@ namespace MikuMikuDesktopPerch
         {
             for(size_t i=0;i<overrides.size();++i)
             {
+                if(!Posed(pose,i)){target[i]={};continue;}
                 const auto& k=pose.boneKeys[overrides[i]];
                 target[i]={k.rotation,k.position};
             }
@@ -2468,9 +2473,16 @@ namespace MikuMikuDesktopPerch
 
         for(size_t i=0;i<overrides.size();++i)
         {
+            if(!Posed(pose,i))continue;
             auto& k=pose.boneKeys[overrides[i]];
             k.rotation=out[i].rotation;
             k.position=out[i].position;
+        }
+        if(rig.grooveOnCenter&&slot[rig.groove]>=0&&static_cast<size_t>(rig.center)<pose.boneKeys.size())
+        {
+            const auto& g=out[slot[rig.groove]].position;
+            auto& c=pose.boneKeys[rig.center].position;
+            c.x+=g.x;c.y+=g.y;c.z+=g.z;
         }
         // Face morphs of the current gesture (on top of what the pose already has).
         if(activity!=Activity::Idle||!generatedIdle){morphOut.clear();gesture=Gesture::None;gestureWeight=0;}
@@ -2498,6 +2510,7 @@ namespace MikuMikuDesktopPerch
         walkAmount=Approach(walkAmount,turned,static_cast<float>(dt/0.3));
         for(size_t i=0;i<overrides.size();++i)
         {
+            if(!Posed(pose,i)){keys[i]={};continue;}
             const auto& k=pose.boneKeys[overrides[i]];
             keys[i]={k.rotation,k.position};
         }
@@ -2518,6 +2531,7 @@ namespace MikuMikuDesktopPerch
         walkAmount=0;
         for(size_t i=0;i<overrides.size();++i)
         {
+            if(!Posed(pose,i)){keys[i]={};continue;}
             const auto& k=pose.boneKeys[overrides[i]];
             keys[i]={k.rotation,k.position};
         }
