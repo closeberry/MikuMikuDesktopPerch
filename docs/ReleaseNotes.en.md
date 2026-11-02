@@ -2,6 +2,18 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.0
+
+### New
+
+- **Poker**: "Mini games" → "Play poker" starts heads-up Texas hold'em with that character, who plays from the cards they can see and how you bet. See `docs/Poker.md` in the package (Japanese)
+- **Gin rummy**: "Mini games" → "Play gin rummy" starts gin rummy with that character. Build melds, cut your unmatched points, knock or go gin; the first to 100 points wins. See `docs/GinRummy.md` in the package (Japanese)
+- **English lines for the mini games**: when the app's language is English, the characters speak English in every mini game
+
+### Changed
+
+- **Game names**: Othello is now Reversi, and air hockey is now hover hockey. They play the same. The keys in lines files (`lines\<PMX name>.json`) stay `"othello"` and `"airhockey"`, so your files go on working
+
 ## 1.5.9
 
 ### Fixed
