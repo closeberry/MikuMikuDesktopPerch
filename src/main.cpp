@@ -601,11 +601,16 @@ namespace
         // Hanging, everything below the edge is hidden behind the window: no room needed there.
         if(m.model.CurrentActivity()==Activity::Hang)need.bottom=std::max(need.bottom,-0.3f*frame.height);
         const Extent base=BaseExtent(m);
+        // A built-in clip that carries her off: the room for all of it now, before she gets there
+        // (bones alone would leave a long tail or hair cut off at the window's edge).
+        const float reach=m.model.GestureReach();
+        if(reach>0)need.halfWidth=std::max(need.halfWidth,base.halfWidth+reach);
+        const float widest=reach>0?std::max(1.6f*frame.height,need.halfWidth):1.6f*frame.height;
         Extent& e=m.extent;
         if(need.halfWidth>e.halfWidth||need.top>e.top||need.bottom<e.bottom)
         {
             // Grow with headroom so a swinging ponytail does not resize every check.
-            const Extent grown{std::min(std::max(e.halfWidth,need.halfWidth*1.15f),1.6f*frame.height),
+            const Extent grown{std::min(std::max(e.halfWidth,need.halfWidth*1.15f),widest),
                                std::min(std::max(e.top,need.top+0.05f*frame.height),frame.top+0.8f*frame.height),
                                std::max(std::min(e.bottom,need.bottom-0.05f*frame.height),-0.6f*frame.height)};
             ApplyFrame(m,app.settings.scale,grown);
@@ -750,6 +755,8 @@ namespace
         if(m.model.Reacting())return true;   // answering a click
         // An idle motion plays to its end (or its loop's) before she walks off or sits down.
         if(m.model.CurrentActivity()==Activity::Idle&&!m.model.IdleMotionAtBreak())return true;
+        // So does a built-in clip that has carried her off: cut short, she would slide back.
+        if(m.model.GestureReach()>0)return true;
         const bool due=m.model.HasMotion()&&!m.motionClosePending&&(m.motionRequested||app.clock>=m.nextMotionAt);
         return m.model.MotionPlaying()||app.clock<m.motionStartAt||due;
     }

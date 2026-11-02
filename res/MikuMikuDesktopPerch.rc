@@ -65,6 +65,9 @@ KNEEBEND IDLECLIP "idle\\kneebend.vmd"
 SPIN IDLECLIP "idle\\spin.vmd"
 LISTEN IDLECLIP "idle\\listen.vmd"
 
+// Made for this app: a moonwalk, a spin and a pose, then back to where it began.
+MOONWALK IDLECLIP "idle\\moonwalk.vmd"
+
 // The mahjong tiles' faces (see docs/Mahjong.md): 150x200 each, ten across, the 34 kinds in
 // order and then the red fives.
 TILES MAHJONGTILES "mahjong\\tiles.png"

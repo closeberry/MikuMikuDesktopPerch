@@ -104,6 +104,8 @@ namespace MikuMikuDesktopPerch
         void PlayMotion();
         void StopMotion();          // blend out early
         bool MotionPlaying() const; // true until fully blended out
+        // A built-in clip playing that carries her away from where she stands: how far (0 otherwise).
+        float GestureReach() const;
         // A gesture of the generated standing pose leads the head (look-at should pause).
         bool HeadBusy() const;
         // diagnostics; "clip<n>" (or "clip<n>@seconds", frozen there) plays built-in clip n

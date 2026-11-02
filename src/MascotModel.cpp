@@ -740,6 +740,7 @@ namespace MikuMikuDesktopPerch
         // A built-in idle clip playing as a gesture (not the user's opened motion), and the
         // frame it is held at for diagnostics (-1: playing).
         bool shotIsGesture=false;
+        float shotReach=0;   // a built-in clip's: see GestureReach
         double shotFrozen=-1;
         int builtinPlays=0;   // how many built-in clips started (diagnostics)
 
@@ -1053,6 +1054,15 @@ namespace MikuMikuDesktopPerch
             shotLast=builtinClips[n].vmd->lastFrame;
             shotIsClick=false;
             shotIsGesture=true;
+            // How far it carries her along X, when that is more than a shift of weight.
+            shotReach=0;
+            if(const int center=FindBone({L"センター"});center>=0)
+                for(int f=0;f<=shotLast;f+=10)
+                {
+                    shotSource->HiPose(shotPose,static_cast<float>(f),false,false);
+                    if(static_cast<size_t>(center)<shotPose.boneKeys.size())shotReach=std::max(shotReach,std::abs(shotPose.boneKeys[center].position.x));
+                }
+            if(shotReach<2)shotReach=0;
             ++builtinPlays;
             shotFrame=0;
             shotFrozen=frozenAt<0?-1:frozenAt*30.0;
@@ -1703,6 +1713,7 @@ namespace MikuMikuDesktopPerch
 
     void MascotModel::StopMotion(){if(impl->shotActive)impl->shotEnding=true;}
     bool MascotModel::MotionPlaying() const {return impl->shotActive&&!impl->shotIsClick&&!impl->shotIsGesture;}
+    float MascotModel::GestureReach() const {return impl->shotActive&&impl->shotIsGesture&&!impl->shotEnding?impl->shotReach:0.0f;}
 
     bool MascotModel::SetClickMotions(const std::vector<std::wstring>& paths,std::wstring& error)
     {

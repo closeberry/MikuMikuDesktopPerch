@@ -12,3 +12,4 @@ FLOAT	宙に浮く	Floating	結廼	Yuno
 KNEEBEND	屈伸	Knee bends	結廼	Yuno
 SPIN	片足くるりん	Spin on one leg	結廼	Yuno
 LISTEN	きいてきいて	Listen, listen!	結廼	Yuno
+MOONWALK	ムーンウォーク	Moonwalk
