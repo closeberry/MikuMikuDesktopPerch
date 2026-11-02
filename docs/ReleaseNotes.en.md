@@ -2,6 +2,16 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.1
+
+### New
+
+- **Chess**: "Mini games" → "Play chess" starts a game of chess with that character. The men are 3D, white crystal and black metal; their bodies and necks move, they hop along and headbutt the other side's men off the board, and an aura rises from the feet of the man you point at or choose. See `docs/Chess.md` in the package (Japanese)
+
+### Changed
+
+- **A Western room**: chess and the card games (blackjack, Old Maid, poker, gin rummy) now take place in a Western parlour with a fireplace, curtained windows, a bookshelf and a candlelit chandelier
+
 ## 1.6.0
 
 ### New
