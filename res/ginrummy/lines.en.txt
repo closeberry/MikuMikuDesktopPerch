@@ -1,0 +1,128 @@
+# The gin rummy lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+# "They" is the owner of this computer, whom she is talking to.
+
+[始まり] The game is beginning (the first to 100 points wins)
+Let's play gin rummy!
+First to 100, okay?
+I won't lose.
+Let's take our time with it.
+All right, let's start.
+I'll be building melds in no time.
+I wonder who'll go out first.
+Nice to play with you.
+
+[配る] Ten cards each have been dealt (now and then)
+Let's see...
+Now, how should I sort these?
+How about this time?
+Did you get anything good?
+Mm, I see.
+I'll start by watching for a while.
+Heh, I looked.
+What melds can I make, I wonder.
+
+[考える] It is her turn and she is deciding what to do (now and then; to herself, not a question to them)
+Hmm... which one should go?
+Let me think...
+Mmm...
+Which should I keep?
+I probably don't need this one...
+Hmm, this is hard to pick.
+That card still hasn't shown up.
+Just a moment.
+
+[捨て札を取る] She takes the discard (now and then)
+I'll take that.
+Just the one I wanted.
+Thank you, I'll have it.
+Heh, I was waiting for that.
+That helps, I'm taking it.
+You threw away a good one.
+
+[相手が捨て札を取った] They took the discard (now and then)
+Ah, so you wanted that.
+Hmm, that card, huh.
+I see, so that's what you're collecting.
+Oops, I shouldn't have thrown it.
+I'll remember that.
+I think I can see your hand now.
+
+[もうすぐ] She has 10 points or less unmatched and could knock (now and then)
+Heh, this is going well.
+Almost time, maybe.
+It might be over soon, you know?
+My hand's coming together.
+Better not let your guard down.
+Heh, what should I do?
+
+[ノック] She knocked and scored
+Knock! This hand is mine.
+I'll end it right here.
+Heh, knocking was the right call.
+All right, I'll take those points.
+Good thing I ended it early.
+Yes, I win this hand.
+
+[ジン] She went gin
+Gin! Everything matched!
+Yay, it's gin!
+Heh, nothing left over!
+It all came together perfectly!
+Look, every card's in a meld!
+I'll take that bonus!
+
+[相手のノック] They knocked and scored
+Ah, you knocked.
+It's over already?
+Ugh, I didn't make it in time.
+You're so quick.
+You got me. I won't lose next time.
+I was so close.
+
+[相手のジン] They went gin
+What, gin?!
+Amazing, everything matches!
+Wow, nothing left over...
+You really got me.
+What a beautiful hand!
+I can't even lay anything off...
+
+[アンダーカットした] They knocked, but she had fewer points and scored
+Heh, undercut!
+You knocked too soon.
+I've got less than you!
+Sorry, I'll be taking this.
+Glad I waited!
+I'll take it, bonus and all.
+
+[アンダーカットされた] She knocked, but they had fewer points and scored
+What, you have that few?!
+Oh no, you undercut me!
+I knocked too early, huh.
+You got me, you have less.
+That stings. You were waiting.
+Ugh, you even took the bonus...
+
+[流れた] Two cards are left in the stock and the hand does not count
+The stock's run out.
+This hand doesn't count.
+Neither of us went out.
+So close.
+Time to deal again.
+
+[勝って終わる] The game is over and she won
+I win! That was fun!
+Yes, 100 points!
+Good game, thank you.
+I might be pretty good at gin rummy.
+Let's play again sometime.
+Heh, this time the win is mine.
+
+[負けて終わる] The game is over and they won (she lost)
+I lost. You're good!
+I give up!
+That stings. I won't lose next time.
+You read the cards so well.
+Good game, thank you.
+You got to 100 first.

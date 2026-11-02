@@ -114,6 +114,8 @@
     <ClCompile Include="src\Blackjack.cpp" />
     <ClCompile Include="src\BlackjackWindow.cpp" />
     <ClCompile Include="src\GameLines.cpp" />
+    <ClCompile Include="src\GinRummy.cpp" />
+    <ClCompile Include="src\GinRummyWindow.cpp" />
     <ClCompile Include="src\Poker.cpp" />
     <ClCompile Include="src\PokerWindow.cpp" />
     <ClCompile Include="src\OldMaid.cpp" />
@@ -184,6 +186,8 @@
     <ClInclude Include="src\Blackjack.hpp" />
     <ClInclude Include="src\BlackjackWindow.hpp" />
     <ClInclude Include="src\GameLines.hpp" />
+    <ClInclude Include="src\GinRummy.hpp" />
+    <ClInclude Include="src\GinRummyWindow.hpp" />
     <ClInclude Include="src\Poker.hpp" />
     <ClInclude Include="src\PokerWindow.hpp" />
     <ClInclude Include="src\OldMaid.hpp" />

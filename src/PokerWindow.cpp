@@ -888,7 +888,6 @@ namespace MikuMikuDesktopPerch
         }
 
         // ---- The cards and the chips on the table ----
-        // ---- The cards and the chips on the table ----
         // Her two cards before her, yours before you, the board between them, the deck at her
         // left (your right); each one's chips and bet beside their cards, the pot beside the board.
 
@@ -2038,9 +2037,6 @@ namespace MikuMikuDesktopPerch
 
         void Due(double at,MahjongSound sound){state.sounds.push_back({at,sound});}
 
-        // The cards on their way since the table was last seen: those out of the shoe one after
-        // another in the order dealt, her hidden card turned in place, the rest (a split, the
-        // round's cards gathered to the pile) sliding to where they go.
         // The cards on their way since the table was last seen: those out of the deck one after
         // another in the order dealt, her cards turned in place, those of a hand played sliding
         // back into the deck.
