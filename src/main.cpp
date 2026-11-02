@@ -673,11 +673,22 @@ namespace
 
     // The stage covers the work area of the monitor under the frame's centre: not the whole
     // monitor, which would make the taskbar treat it as a full-screen window. Crossing to
-    // another monitor moves the stage (the only window move left).
+    // another monitor moves the stage (the only window move left). A monitor without a taskbar
+    // (or with one that hides itself) has a work area as large as itself: a row less there, or
+    // Windows takes the stage for a full-screen app, and she hides from herself.
+    RECT StageRectAt(POINT point)
+    {
+        MONITORINFO info{sizeof(info)};
+        GetMonitorInfoW(MonitorFromPoint(point,MONITOR_DEFAULTTONEAREST),&info);
+        RECT stage=info.rcWork;
+        if(EqualRect(&stage,&info.rcMonitor))--stage.bottom;
+        return stage;
+    }
+
     void UpdateStage(Mascot& m)
     {
         const RECT frame=FrameRect(m);
-        const RECT work=WorkAreaAt({(frame.left+frame.right)/2,(frame.top+frame.bottom)/2});
+        const RECT work=StageRectAt({(frame.left+frame.right)/2,(frame.top+frame.bottom)/2});
         if(EqualRect(&work,&m.stage))return;
         m.stage=work;
         SetWindowPos(m.hwnd,nullptr,work.left,work.top,work.right-work.left,work.bottom-work.top,SWP_NOZORDER|SWP_NOACTIVATE);
@@ -6082,7 +6093,7 @@ namespace
         // NOREDIRECTIONBITMAP + DirectComposition gives per-pixel alpha;
         // LAYERED is only there so WS_EX_TRANSPARENT can pass clicks through.
         const DWORD exStyle=WS_EX_NOREDIRECTIONBITMAP|WS_EX_LAYERED|WS_EX_TOOLWINDOW|(app.settings.topmost?WS_EX_TOPMOST:0);
-        m.stage=WorkAreaAt({x+size.cx/2,y+size.cy/2});
+        m.stage=StageRectAt({x+size.cx/2,y+size.cy/2});
         const RECT& st=m.stage;
         m.hwnd=CreateWindowExW(exStyle,WindowClass,L"MikuMikuDesktopPerch",WS_POPUP,st.left,st.top,st.right-st.left,st.bottom-st.top,
                                nullptr,nullptr,GetModuleHandleW(nullptr),&m);
@@ -7335,6 +7346,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(fullscreen!=app.paused)
             {
                 app.paused=fullscreen;
+                wchar_t foreground[64]{};
+                if(HWND front=GetForegroundWindow())GetClassNameW(front,foreground,static_cast<int>(std::size(foreground)));
+                Log(L"full-screen app %s: characters %s (foreground window: %s)",fullscreen?L"reported":L"gone",fullscreen?L"hidden":L"shown",foreground);
                 for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inChess&&!m->inRuins)
                 {
                     ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
