@@ -34,7 +34,7 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdGestureOwn,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdBubbleFont,IdBubbleSize,IdTabs
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdGestureOwn,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdBubbleFont,IdBubbleSize,IdTabs,IdStayPut
         };
         // The longest persona (characters, a line break counting as one).
         constexpr size_t MaxPersona=4000;
@@ -205,6 +205,12 @@ namespace MikuMikuDesktopPerch
             EnableWindow(GetDlgItem(state.window,IdBanterMinutes),on);
         }
 
+        // Walking around on her own has no say while she stays put.
+        void UpdateStayPut()
+        {
+            EnableWindow(GetDlgItem(state.window,IdAuto),!Checked(IdStayPut));
+        }
+
         void Build()
         {
             const Settings& s=state.choice.settings;
@@ -218,7 +224,8 @@ namespace MikuMikuDesktopPerch
             Group(T(L"動き",L"Motion"),y,128);
             CheckBox(IdAuto,T(L"おまかせ行動（ひとりで歩き回る）",L"Auto behavior (walks around on her own)"),28,y+22,270,s.autoBehavior);
             Add(L"BUTTON",T(L"しぐさを選ぶ...",L"Gestures..."),BS_PUSHBUTTON|WS_TABSTOP,316,y+18,120,26,IdGestures);
-            CheckBox(IdWindowMode,T(L"アクティブウィンドウに乗る",L"Ride on the active window"),28,y+46,400,s.windowMode);
+            CheckBox(IdWindowMode,T(L"アクティブウィンドウに乗る",L"Ride on the active window"),28,y+46,200,s.windowMode);
+            CheckBox(IdStayPut,T(L"移動しない（つまんで動かす）",L"Stay put (move by dragging)"),250,y+46,190,s.stayPut);
             CheckBox(IdPhysics,T(L"物理演算（髪やスカートの揺れ）",L"Physics (hair and skirt sway)"),28,y+70,228,s.physics);
             Label(T(L"震え止め",L"Smoothing"),262,y+70,60);
             Combo(IdPhysicsFilter,326,y+68,110);
@@ -382,6 +389,7 @@ namespace MikuMikuDesktopPerch
             }
             FillCombo(IdLanguage,{{T(L"自動",L"Auto"),0},{L"日本語",1},{L"English",2}},s.language==L"ja"?1:s.language==L"en"?2:0,L"");
             UpdateInitiative();
+            UpdateStayPut();
             // Down to the tab row, leaving the pane's top line under it.
             RECT row{};
             TabCtrl_GetItemRect(state.tabs,0,&row);
@@ -946,6 +954,7 @@ namespace MikuMikuDesktopPerch
             CharacterSettings& own=c.mascot;
             s.autoBehavior=Checked(IdAuto);
             s.windowMode=Checked(IdWindowMode);
+            s.stayPut=Checked(IdStayPut);
             s.physics=Checked(IdPhysics);
             s.blink=Checked(IdBlink);
             s.breath=Checked(IdBreath);
@@ -1090,6 +1099,9 @@ namespace MikuMikuDesktopPerch
                 case IdChatInitiative:
                     if(HIWORD(wParam)==BN_CLICKED)UpdateInitiative();
                     return 0;
+                case IdStayPut:
+                    if(HIWORD(wParam)==BN_CLICKED)UpdateStayPut();
+                    return 0;
                 case IdVoiceBrowse:
                     BrowseFolder(IdVoiceFolder,T(L"VOICEVOXをインストールしたフォルダ（VOICEVOX.exe のあるフォルダ）",L"The folder VOICEVOX is installed in (where VOICEVOX.exe is)"));
                     return 0;
@@ -1187,7 +1199,7 @@ namespace MikuMikuDesktopPerch
         Build();
         ShowWindow(state.window,SW_SHOWNORMAL);
         SetForegroundWindow(state.window);
-        SetFocus(GetDlgItem(state.window,IdAuto));
+        SetFocus(GetDlgItem(state.window,IdWindowMode));
     }
 
     HWND SettingsWindowHandle(){return state.persona?state.persona:state.memory?state.memory:state.gestures?state.gestures:state.window;}

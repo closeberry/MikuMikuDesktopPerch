@@ -64,6 +64,7 @@ namespace MikuMikuDesktopPerch
         bool lookAtMouse=true;
         bool autoBehavior=true;     // walk around on its own
         bool windowMode=false;      // go to the active window, sit or hang there
+        bool stayPut=false;         // goes nowhere of her own: only dragged, or told to walk
         // Talking: a local LLM server's OpenAI-compatible endpoint (Ollama's by default) and the
         // model it should use (empty until chosen).
         std::wstring chatEndpoint=L"http://127.0.0.1:11434/v1";

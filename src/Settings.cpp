@@ -146,6 +146,7 @@ namespace MikuMikuDesktopPerch
         lightElevation=std::clamp(ReadInt(path,L"LightElevation",lightElevation),5,90);
         autoBehavior=ReadInt(path,L"AutoBehavior",autoBehavior?1:0)!=0;
         windowMode=ReadInt(path,L"WindowMode",windowMode?1:0)!=0;
+        stayPut=ReadInt(path,L"StayPut",stayPut?1:0)!=0;
         chatEndpoint=ReadString(path,L"ChatEndpoint",chatEndpoint);
         chatModel=ReadString(path,L"ChatModel",chatModel);
         userName=ReadString(path,L"UserName",userName);
@@ -238,6 +239,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"LightElevation",std::to_wstring(lightElevation));
         WriteString(path,L"AutoBehavior",autoBehavior?L"1":L"0");
         WriteString(path,L"WindowMode",windowMode?L"1":L"0");
+        WriteString(path,L"StayPut",stayPut?L"1":L"0");
         WriteString(path,L"ChatEndpoint",chatEndpoint);
         WriteString(path,L"ChatModel",chatModel);
         WriteString(path,L"UserName",userName);

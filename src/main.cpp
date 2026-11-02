@@ -82,7 +82,7 @@ namespace
     constexpr wchar_t ControlClass[]=L"MikuMikuDesktopPerchControl";
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
-                      IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
+                      IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdStayPut,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
                       IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdRuins,IdHanafuda,IdOthello,IdGomoku,IdShogi,IdHexWar,IdBlackjack,IdOldMaid,IdPoker,IdGinRummy,IdChess};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
@@ -830,8 +830,9 @@ namespace
         }
         if(app.clock<m.motionStartAt)return;
         // Dance on the ground at the bottom right of the screen: warp there first. One another
-        // program asked for plays where she stands, unless that is on a window.
-        if(!m.apiMotion||m.surfaceWindow)
+        // program asked for plays where she stands, unless that is on a window. Staying put, every
+        // one plays where she stands.
+        if(!app.settings.stayPut&&(!m.apiMotion||m.surfaceWindow))
         {
             const RECT work=WorkAreaOfWindow(m);
             const double edge=work.right-ModelHalfWidthPixels(m)-16;
@@ -856,7 +857,7 @@ namespace
     // edges: on the taskbar the legs would hang off the screen.
     void UpdateAutoBehavior(Mascot& m)
     {
-        if(!app.settings.autoBehavior||m.place!=Place::Ground||m.surfaceWindow||m.travel!=Travel::None||MotionBusy(m))return;
+        if(!app.settings.autoBehavior||app.settings.stayPut||m.place!=Place::Ground||m.surfaceWindow||m.travel!=Travel::None||MotionBusy(m))return;
         if(m.model.CurrentActivity()!=Activity::Idle||app.clock<m.nextDecision)return;
         if(app.Random01()<0.6f)
         {
@@ -878,7 +879,7 @@ namespace
     {
         const Activity a=m.model.CurrentActivity();
         if(m.windowMoving&&a!=Activity::Walk)m.windowMoving=false;   // picked up, or it ended
-        if(!app.settings.autoBehavior||m.place!=Place::Ground||!m.surfaceWindow||m.travel!=Travel::None||m.dozing)return;
+        if(!app.settings.autoBehavior||app.settings.stayPut||m.place!=Place::Ground||!m.surfaceWindow||m.travel!=Travel::None||m.dozing)return;
         if((a!=Activity::Sit&&a!=Activity::Hang)||MotionBusy(m)||app.clock<m.nextWindowMove)return;
         m.nextWindowMove=app.clock+20+app.Random01()*40;
         const int clip=m.model.ChooseMove(m.model.DrawnBehind(),app.Random01());
@@ -902,7 +903,7 @@ namespace
     // later does; one in the middle of something moves once it is done.
     void MakeRoom(Mascot& m)
     {
-        if(m.watchingMahjong||app.clock<m.roomCheckAt)return;   // watchers may stand together
+        if(app.settings.stayPut||m.watchingMahjong||app.clock<m.roomCheckAt)return;   // watchers may stand together
         m.roomCheckAt=app.clock+0.5;
         auto still=[](Mascot& c){
             const Activity a=c.model.CurrentActivity();
@@ -964,7 +965,7 @@ namespace
         if(!watch)return;
         m.nextDecision=std::max(m.nextDecision,app.clock+5);   // no wandering off meanwhile
         if(m.model.CurrentActivity()!=Activity::Idle||m.model.Reacting()||m.model.MotionPlaying())return;
-        if(app.clock>=m.watchCheckAt)
+        if(!app.settings.stayPut&&app.clock>=m.watchCheckAt)
         {
             m.watchCheckAt=app.clock+0.5;
             const double half=ModelHalfWidthPixels(m),x=CenterX(m),feet=FeetLine(m),top=feet-ModelHeightPixels(m);
@@ -1267,7 +1268,7 @@ namespace
     // right-clicked there. Hanging is behind the window, so nothing there is in the way.
     void AvoidCursor(Mascot& m,POINT cursor)
     {
-        if(!m.surfaceWindow||m.place!=Place::Ground||m.travel!=Travel::None||app.clock<m.avoidCooldown||MotionBusy(m))return;
+        if(app.settings.stayPut||!m.surfaceWindow||m.place!=Place::Ground||m.travel!=Travel::None||app.clock<m.avoidCooldown||MotionBusy(m))return;
         const Activity a=m.model.CurrentActivity();
         if(a==Activity::Walk||a==Activity::Run||a==Activity::Jump||a==Activity::Hang)return;
         RECT legs=LegScreenRect(m),covered{};
@@ -1349,6 +1350,16 @@ namespace
                 // Maximized or dragged to the top: the head would leave the screen.
                 if(frame.top-ModelHeightPixels(m)<WorkAreaOfWindow(m).top+8&&m.travel==Travel::None&&!MotionBusy(m))
                 {
+                    if(app.settings.stayPut)
+                    {
+                        // Going nowhere of her own: she just drops straight down.
+                        m.surfaceWindow=nullptr;
+                        m.restPoseAt=-1;
+                        m.place=Place::Falling;
+                        m.fallSpeed=0;
+                        m.model.SetActivity(Activity::Fall);
+                        return;
+                    }
                     BeginTravel(m,m.surfaceWindow);
                     return;
                 }
@@ -1359,7 +1370,7 @@ namespace
 
             // A new foreground window (settled for a moment): go there.
             // (Held back while the opened motion plays; it goes once that has finished.)
-            if(m.travel==Travel::None&&!MotionBusy(m)&&app.clock-m.foregroundSince>0.6&&foreground!=m.surfaceWindow&&
+            if(!app.settings.stayPut&&m.travel==Travel::None&&!MotionBusy(m)&&app.clock-m.foregroundSince>0.6&&foreground!=m.surfaceWindow&&
                foreground!=m.servedForeground&&IsStandableWindow(foreground,m.hwnd,static_cast<int>(ModelFrameOf(m).width*m.pixelsPerUnit)))
             {
                 BeginTravel(m,foreground);
@@ -1677,6 +1688,7 @@ namespace
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         const bool grounded=m.place==Place::Ground;
         AppendMenuW(menu,MF_STRING|(app.settings.windowMode?MF_CHECKED:0),IdWindowMode,T(L"アクティブウィンドウに乗る",L"Ride on the active window"));
+        AppendMenuW(menu,MF_STRING|(app.settings.stayPut?MF_CHECKED:0),IdStayPut,T(L"移動しない（つまんで動かす）",L"Stay put (move by dragging)"));
         AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkLeft,T(L"左へ歩く",L"Walk left"));
         AppendMenuW(menu,MF_STRING|(grounded?0:MF_GRAYED),IdWalkRight,T(L"右へ歩く",L"Walk right"));
         if(tray&&app.mascots.size()>1)
@@ -1757,6 +1769,22 @@ namespace
         }
     }
 
+    // Staying put, she goes nowhere of her own; turned on, one on her way stops where she is.
+    void SetStayPut(bool enabled)
+    {
+        app.settings.stayPut=enabled;
+        if(!enabled)return;
+        for(const auto& owned:app.mascots)
+        {
+            Mascot& m=*owned;
+            const Activity a=m.model.CurrentActivity();
+            if(m.place!=Place::Ground||m.travel!=Travel::None||(a!=Activity::Walk&&a!=Activity::Run))continue;
+            m.windowMoving=false;
+            if(m.surfaceWindow)m.restPoseAt=-2;   // rest again right there
+            StopGroundActivity(m);
+        }
+    }
+
     // Starts, moves or stops the HTTP API as the settings say. Returns why it could not start
     // (empty when it runs, or is off).
     std::wstring ApplyApi()
@@ -1789,6 +1817,7 @@ namespace
         const Settings& s=choice.settings;
         Settings& current=app.settings;
         if(s.windowMode!=current.windowMode)SetWindowMode(s.windowMode);
+        if(s.stayPut!=current.stayPut)SetStayPut(s.stayPut);
         if(s.autoBehavior!=current.autoBehavior)
         {
             current.autoBehavior=s.autoBehavior;
@@ -2671,7 +2700,7 @@ namespace
 
     // Two characters free to talk get together: the second walks over to stand beside the
     // first (on the side she comes from, if there is room), or warps there from another
-    // surface. False when no two can.
+    // surface. Staying put, they talk from where they are. False when no two can.
     bool StartBanter()
     {
         std::vector<Mascot*> free;
@@ -2692,7 +2721,7 @@ namespace
         const double side=CenterX(second)>=CenterX(first)?1:-1;
         double x=CenterX(first)+side*gap;
         if(x<left||x>right)x=CenterX(first)-side*gap;
-        if(x<left||x>right)return false;
+        if(!app.settings.stayPut&&(x<left||x>right))return false;
 
         auto& b=app.banter;
         b=App::Banter{};
@@ -2706,6 +2735,7 @@ namespace
         b.linesLeft=4+static_cast<int>(app.Random01()*3);   // 4 to 6 lines
         Trace(L"%.1f banter: %s and %s, %d lines about %s, starting %s",app.clock,first.character.name.c_str(),second.character.name.c_str(),b.linesLeft,b.topic.c_str(),b.opener.c_str());
         const bool sameSurface=second.surfaceWindow==first.surfaceWindow&&std::abs(FeetLine(second)-FeetLine(first))<4;
+        if(app.settings.stayPut)return true;
         if(sameSurface)
         {
             const double distance=std::abs(x-CenterX(second));
@@ -5445,6 +5475,10 @@ namespace
         }
         case IdWindowMode:
             SetWindowMode(!app.settings.windowMode);
+            app.settings.Save(app.settingsPath);
+            break;
+        case IdStayPut:
+            SetStayPut(!app.settings.stayPut);
             app.settings.Save(app.settingsPath);
             break;
         case IdWalkLeft:
