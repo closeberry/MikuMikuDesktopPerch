@@ -734,11 +734,11 @@ namespace MikuMikuDesktopPerch
             // The stops her arm made reaching out to measure would fence her hand in all game.
             model.ClearArmStops();
             model.ResetPhysics();
-            Log(L"air hockey: hips %.1f, upper body %.1f, table %.1f long at %.1f; her mallet reaches %.2f..%.2f across, to %.2f",
+            Log(L"hover hockey: hips %.1f, upper body %.1f, table %.1f long at %.1f; her mallet reaches %.2f..%.2f across, to %.2f",
                 state.hips,state.upper,rules.length*state.k,state.top,state.reachLeft,state.reachRight,state.reachNear);
         }
 
-        // ---- Her words and the watchers' (docs/AirHockey.md, しゃべる・反応) ----
+        // ---- Her words and the watchers' (docs/HoverHockey.md, しゃべる・反応) ----
 
         constexpr ULONGLONG WordsHold=3000;   // a lighter word does not cut in on a weightier one this soon
 
@@ -821,7 +821,7 @@ namespace MikuMikuDesktopPerch
             {
                 state.started=true;
                 Happened(7,L"始まり",
-                         Fmt(T(L"{0}と、このパソコンの持ち主のエアホッケーの対戦が始まる。",L"An air hockey game between {0} and the owner of this computer is about to begin."),{name}),
+                         Fmt(T(L"{0}と、このパソコンの持ち主のホバーホッケーの対戦が始まる。",L"A hover hockey game between {0} and the owner of this computer is about to begin."),{name}),
                          {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
             }
             for(const Event& e:events)
@@ -832,11 +832,11 @@ namespace MikuMikuDesktopPerch
                 if(g.Now()==Phase::Over)continue;   // the end is spoken of below
                 if(hers)
                     Happened(long_?7:5,long_?L"長い打ち合いで決めた":L"決めた",
-                             Fmt(T(L"エアホッケーで、{0}がゴールを決めた。",L"In the air hockey game, {0} scored."),{name}),
+                             Fmt(T(L"ホバーホッケーで、{0}がゴールを決めた。",L"In the hover hockey game, {0} scored."),{name}),
                              {Fmt(T(L"{0}、ナイス！",L"Nice one, {0}!"),{name}),T(L"おお、入った！",L"Ooh, in!")});
                 else
                     Happened(long_?7:5,long_?L"長い打ち合いで決められた":L"決められた",
-                             T(L"エアホッケーで、持ち主がゴールを決めた。",L"In the air hockey game, the owner scored."),
+                             T(L"ホバーホッケーで、持ち主がゴールを決めた。",L"In the hover hockey game, the owner scored."),
                              {T(L"おお、決まった！",L"Oh, a goal!"),T(L"いいシュート！",L"Nice shot!")});
                 // One more to win.
                 for(int side:{Her,You})
@@ -844,9 +844,9 @@ namespace MikuMikuDesktopPerch
                     {
                         state.matchPoint[side]=true;
                         if(side==Her)Happened(6,L"あと1点で勝ち",
-                                              Fmt(T(L"エアホッケーで、{0}があと1点で勝つ。",L"In the air hockey game, {0} needs one more point to win."),{name}),{T(L"マッチポイントだ！",L"Match point!")});
+                                              Fmt(T(L"ホバーホッケーで、{0}があと1点で勝つ。",L"In the hover hockey game, {0} needs one more point to win."),{name}),{T(L"マッチポイントだ！",L"Match point!")});
                         else Happened(6,L"あと1点で負け",
-                                      T(L"エアホッケーで、持ち主があと1点で勝つ。",L"In the air hockey game, the owner needs one more point to win."),{T(L"マッチポイント！",L"Match point!")});
+                                      T(L"ホバーホッケーで、持ち主があと1点で勝つ。",L"In the hover hockey game, the owner needs one more point to win."),{T(L"マッチポイント！",L"Match point!")});
                     }
             }
             if(g.Now()==Phase::Over&&!state.overSeen)
@@ -855,15 +855,15 @@ namespace MikuMikuDesktopPerch
                 const bool won=g.Winner()==Her;
                 const std::wstring score=Fmt(T(L"あなた{0}点、相手{1}点",L"you {0}, they {1}"),{std::to_wstring(g.Score(Her)),std::to_wstring(g.Score(You))});
                 if(won)Happened(9,L"勝った",
-                                Fmt(T(L"{0}と持ち主のエアホッケーの対戦が終わり、{0}が勝った。",L"The air hockey game between {0} and the owner is over: {0} won."),{name}),
+                                Fmt(T(L"{0}と持ち主のホバーホッケーの対戦が終わり、{0}が勝った。",L"The hover hockey game between {0} and the owner is over: {0} won."),{name}),
                                 {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
                 else Happened(9,L"負けた",
-                              Fmt(T(L"{0}と持ち主のエアホッケーの対戦が終わり、持ち主が勝った。",L"The air hockey game between {0} and the owner is over: the owner won."),{name}),
+                              Fmt(T(L"{0}と持ち主のホバーホッケーの対戦が終わり、持ち主が勝った。",L"The hover hockey game between {0} and the owner is over: the owner won."),{name}),
                               {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"勝った！おめでとう！",L"You won! Congratulations!")});
-                state.afterword=Fmt(T(L"いま、話し相手とエアホッケーを最後までして、デスクトップに戻ってきたところ。結果は{0}（{1}、いちばん長い打ち合いは{2}回）。その感想を、話し相手にひと言（1〜2文）",
-                                      L"You have just played air hockey to the end with them and come back to the desktop. {0} ({1}; the longest rally was {2} hits). Tell them what you thought of it (one or two sentences)"),
+                state.afterword=Fmt(T(L"いま、話し相手とホバーホッケーを最後までして、デスクトップに戻ってきたところ。結果は{0}（{1}、いちばん長い打ち合いは{2}回）。その感想を、話し相手にひと言（1〜2文）",
+                                      L"You have just played hover hockey to the end with them and come back to the desktop. {0} ({1}; the longest rally was {2} hits). Tell them what you thought of it (one or two sentences)"),
                                     {won?T(L"あなたの勝ち",L"You won"):T(L"あなたの負け",L"You lost"),score,std::to_wstring(g.LongestRally())});
-                state.afterwordLine=won?T(L"エアホッケー、楽しかったね！",L"Air hockey was fun!"):T(L"くやしいなあ、次は勝つよ！",L"So close... I'll win next time!");
+                state.afterwordLine=won?T(L"ホバーホッケー、楽しかったね！",L"Hover hockey was fun!"):T(L"くやしいなあ、次は勝つよ！",L"So close... I'll win next time!");
                 state.overAt=g.Clock();
                 state.cheered=false;
             }
@@ -946,13 +946,13 @@ namespace MikuMikuDesktopPerch
             MoveWindow(state.view,0,0,client.right,client.bottom,TRUE);
             std::wstring error;
             if(state.renderer&&!state.renderer->Resize(static_cast<unsigned>(std::max(1L,client.right)),static_cast<unsigned>(std::max(1L,client.bottom)),error))
-                Log(L"air hockey: resize: %s",error.c_str());
+                Log(L"hover hockey: resize: %s",error.c_str());
             state.hudShown.clear();   // the picture over the table, at the new size
         }
 
         void ReleaseView()
         {
-            if(state.renderer){state.renderer->WaitIdle();state.renderer.reset();Log(L"air hockey: 3D view released");}
+            if(state.renderer){state.renderer->WaitIdle();state.renderer.reset();Log(L"hover hockey: 3D view released");}
             state.view=nullptr;
         }
 
@@ -985,7 +985,7 @@ namespace MikuMikuDesktopPerch
             if(!renderer->Initialize(state.view,w,h,state.her.light?1:state.her.msaa,false,error)||
                !renderer->LoadModel(*state.her.model,state.her.toonDir,state.her.light?512:state.her.maxTexture,error))
             {
-                Log(L"air hockey: no 3D view (%s)",error.c_str());
+                Log(L"hover hockey: no 3D view (%s)",error.c_str());
                 renderer->WaitIdle();
                 DestroyWindow(state.view);
                 state.view=nullptr;
@@ -1005,7 +1005,7 @@ namespace MikuMikuDesktopPerch
             state.slideVelocity=0;
             state.sliding=false;
             state.hudShown.clear();
-            Log(L"air hockey: 3D view %ux%u on %s",w,h,state.renderer->AdapterName().c_str());
+            Log(L"hover hockey: 3D view %ux%u on %s",w,h,state.renderer->AdapterName().c_str());
             return true;
         }
 
@@ -1169,8 +1169,8 @@ namespace MikuMikuDesktopPerch
             if(state.afterword.empty()&&state.game&&state.game->Now()!=AirHockey::Phase::Over&&state.game->Clock()>3)
             {
                 const auto& g=*state.game;
-                state.afterword=Fmt(T(L"いま、話し相手とエアホッケーをしていたが、途中でやめてデスクトップに戻ってきたところ（あなた{0}点、相手{1}点だった）。そのことを話し相手にひと言（1〜2文）",
-                                      L"You were playing air hockey with them, but they stopped before the end and you have come back to the desktop (you had {0}, they had {1}). Say a word about it to them (one or two sentences)"),
+                state.afterword=Fmt(T(L"いま、話し相手とホバーホッケーをしていたが、途中でやめてデスクトップに戻ってきたところ（あなた{0}点、相手{1}点だった）。そのことを話し相手にひと言（1〜2文）",
+                                      L"You were playing hover hockey with them, but they stopped before the end and you have come back to the desktop (you had {0}, they had {1}). Say a word about it to them (one or two sentences)"),
                                     {std::to_wstring(g.Score(AirHockey::Her)),std::to_wstring(g.Score(AirHockey::You))});
                 state.afterwordLine=T(L"また今度、続きしようね。",L"Let's play again another time.");
             }
@@ -1394,7 +1394,7 @@ namespace MikuMikuDesktopPerch
         state.her=her;
         state.onEnd=std::move(onEnd);
         state.lines.Load(L"AIRHOCKEYLINES",L"airhockey",her.ownLinesFile,her.linesFile,her.styleKey,English(),
-                         {L"エアホッケー",L"air hockey",L"",L""});
+                         {L"ホバーホッケー",L"hover hockey",L"",L""});
         state.voice.Stop();
         state.prefetching=false;
         state.words={};
@@ -1412,7 +1412,7 @@ namespace MikuMikuDesktopPerch
         const bool wide=her.model!=nullptr;
         const int h=std::min(static_cast<int>(work.bottom-work.top)*9/10,MulDiv(wide?820:900,dpi,96));
         const int w=std::min(static_cast<int>(work.right-work.left)*9/10,wide?h*4/3:h*2/3);
-        const std::wstring title=std::wstring(T(L"エアホッケー",L"Air hockey"))+L" - "+HerName();
+        const std::wstring title=std::wstring(T(L"ホバーホッケー",L"Hover hockey"))+L" - "+HerName();
         state.window=CreateWindowExW(0,ClassName,title.c_str(),WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,
                                      work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,
                                      nullptr,nullptr,instance,nullptr);

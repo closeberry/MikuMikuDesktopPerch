@@ -242,14 +242,14 @@ namespace MikuMikuDesktopPerch
         std::wstring GaitTrace() const;
         static std::wstring GaitTraceBones();
 
-        // Solid things in her way, such as a mini game's table (docs/AirHockey.md, めり込み判定):
+        // Solid things in her way, such as a mini game's table (docs/HoverHockey.md, めり込み判定):
         // boxes in model space (middle, half sizes, turn as a quaternion). Simulated parts (hair,
         // skirt) hit them as static rigid bodies, whatever their collision groups; they start to
         // count once none of those is inside one. The rest of her (the vertices no simulated bone
         // weighs on) is checked after every update, and an arm the generated motion moves
         // (GeneratedMotion::ReachArm) or its lean stops before going further in. Set again
         // whenever they move against her; empty: none.
-        // Hold something on a table (the air hockey mallet): the wrist on side (0: the left) kept
+        // Hold something on a table (the hover hockey mallet): the wrist on side (0: the left) kept
         // at wrist (model space) every update, palm down round a grip; see GeneratedMotion::Hold.
         // style: 0 leaning over it, palm down (the mallet); 1 sitting up, palm down; 2 sitting up,
         // holding something up before her (cards).

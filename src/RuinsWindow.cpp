@@ -1,6 +1,6 @@
 #define NOMINMAX
-#include "MetroidWindow.hpp"
-#include "Metroid.hpp"
+#include "RuinsWindow.hpp"
+#include "Ruins.hpp"
 #include "Log.hpp"
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
@@ -45,24 +45,24 @@ namespace MikuMikuDesktopPerch
         {
             HWND window=nullptr,view=nullptr;
             ULONG_PTR gdiplus=0;
-            MetroidHero her;
+            RuinsHero her;
             std::function<void()> onEnd;
-            Metroid::Map map;
-            std::unique_ptr<Metroid::Game> game;
+            Ruins::Map map;
+            std::unique_ptr<Ruins::Game> game;
             std::unique_ptr<MascotRenderer> renderer;
             std::unique_ptr<Bitmap> canvas;
             LARGE_INTEGER last{};
             bool paused=false,asking=false;
-            Metroid::Input keys;
+            Ruins::Input keys;
             // A gamepad (XInput): the one in use (-1: none found yet), its buttons last time, and
             // when to look for one again while there is none.
             int pad=-1;
             WORD padButtons=0;
             ULONGLONG padLookAt=0;
-            Metroid::Input padHeld;   // what it holds this frame
-            // Diagnostics: keys held in turn instead (PlayMetroidForTest), and how long the one
+            Ruins::Input padHeld;   // what it holds this frame
+            // Diagnostics: keys held in turn instead (PlayRuinsForTest), and how long the one
             // now has left.
-            std::vector<std::pair<Metroid::Input,double>> script;
+            std::vector<std::pair<Ruins::Input,double>> script;
             size_t scriptAt=0;
             double scriptLeft=0;
             bool scripted=false;
@@ -112,7 +112,7 @@ namespace MikuMikuDesktopPerch
 
         std::wstring Lang(const std::array<std::wstring,2>& names){return names[English()?1:0];}
 
-        const Metroid::Room* HereRoom()
+        const Ruins::Room* HereRoom()
         {
             const int r=state.game?state.game->Room():-1;
             return r>=0?&state.map.Rooms()[static_cast<size_t>(r)]:nullptr;
@@ -289,7 +289,7 @@ namespace MikuMikuDesktopPerch
 
         // Where to stand in a room (diagnostics): the first open tile over rock along its middle row
         // of columns, with room for her above.
-        bool StandIn(const Metroid::Room& r,float& x,float& y)
+        bool StandIn(const Ruins::Room& r,float& x,float& y)
         {
             for(int k=0;k<r.width;++k)
             {
@@ -305,7 +305,7 @@ namespace MikuMikuDesktopPerch
         }
 
         // The keys held now: the keyboard's and the gamepad's together, or the test's.
-        Metroid::Input Held(double dt)
+        Ruins::Input Held(double dt)
         {
             if(!state.scripted)
             {
@@ -449,7 +449,7 @@ namespace MikuMikuDesktopPerch
             QueryPerformanceFrequency(&rate);
             const double dt=std::min(0.05,static_cast<double>(now.QuadPart-state.last.QuadPart)/rate.QuadPart);
             state.last=now;
-            if(state.renderer)return;   // the 3D view goes on with her frames (TickMetroidWindow)
+            if(state.renderer)return;   // the 3D view goes on with her frames (TickRuinsWindow)
             PollPad();
             if(!state.window)return;
             StepGame(dt);
@@ -623,7 +623,7 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    void ShowMetroidWindow(HWND owner,const MetroidHero& her,std::function<void()> onEnd)
+    void ShowRuinsWindow(HWND owner,const RuinsHero& her,std::function<void()> onEnd)
     {
         if(state.window)
         {
@@ -654,7 +654,7 @@ namespace MikuMikuDesktopPerch
         }
         state.her=her;
         state.onEnd=std::move(onEnd);
-        state.game=std::make_unique<Metroid::Game>(state.map);
+        state.game=std::make_unique<Ruins::Game>(state.map);
         state.paused=state.asking=false;
         state.keys=state.padHeld={};
         state.pad=-1;
@@ -690,14 +690,14 @@ namespace MikuMikuDesktopPerch
         SetForegroundWindow(state.window);
     }
 
-    bool MetroidWindowOpen(){return state.window!=nullptr;}
-    HWND MetroidWindowHandle(){return state.window;}
-    bool MetroidWindowRect(RECT& r)
+    bool RuinsWindowOpen(){return state.window!=nullptr;}
+    HWND RuinsWindowHandle(){return state.window;}
+    bool RuinsWindowRect(RECT& r)
     {
         return state.window&&IsWindowVisible(state.window)&&!IsIconic(state.window)&&GetWindowRect(state.window,&r);
     }
 
-    void TickMetroidWindow(MascotModel& model,double dt)
+    void TickRuinsWindow(MascotModel& model,double dt)
     {
         if(!state.window||!state.renderer||!state.game)return;
         using namespace DirectX;
@@ -762,14 +762,14 @@ namespace MikuMikuDesktopPerch
         ++state.frames;
     }
 
-    void PlayMetroidForTest(const std::wstring& keys,int room)
+    void PlayRuinsForTest(const std::wstring& keys,int room)
     {
         state.script.clear();
         size_t at=0;
         while(at<keys.size())
         {
             while(at<keys.size()&&keys[at]==L' ')++at;
-            Metroid::Input in;
+            Ruins::Input in;
             bool any=false;
             for(;at<keys.size()&&iswalpha(keys[at]);++at)
             {
@@ -801,13 +801,13 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    bool SaveMetroidView(const std::wstring& path)
+    bool SaveRuinsView(const std::wstring& path)
     {
         if(state.renderer)return state.renderer->SaveLastFrame(path);
         return state.canvas&&SavePng(*state.canvas,path);
     }
 
-    std::wstring DescribeMetroid()
+    std::wstring DescribeRuins()
     {
         if(!state.game)return L"";
         const auto& g=*state.game;
@@ -817,20 +817,20 @@ namespace MikuMikuDesktopPerch
         const auto* room=HereRoom();
         int visited=0;
         for(bool v:g.Visited())visited+=v?1:0;
-        swprintf_s(line,L"metroid: %s, room %d (%s), at %.2f,%.2f, speed %.2f,%.2f, %s, facing %d, motion %d, clock %.1f\n",
+        swprintf_s(line,L"ruins: %s, room %d (%s), at %.2f,%.2f, speed %.2f,%.2f, %s, facing %d, motion %d, clock %.1f\n",
                    state.renderer?L"3D":L"2D",g.Room()+1,room?room->name[0].c_str():L"-",b.x,b.y,b.vx,b.vy,b.ground?L"on the ground":L"in the air",
                    b.facing,static_cast<int>(state.gait),g.Clock());
         text+=line;
-        swprintf_s(line,L"metroid: tile %.2f, jumps %d, landings %d (fastest %.1f tiles/s), rooms visited %d of %zu, frames %d, keys %s\n",
+        swprintf_s(line,L"ruins: tile %.2f, jumps %d, landings %d (fastest %.1f tiles/s), rooms visited %d of %zu, frames %d, keys %s\n",
                    state.T,state.jumps,state.landings,state.steepest,visited,state.map.Rooms().size(),state.frames,
                    state.scripted?(state.scriptAt>=state.script.size()?L"played":L"playing"):L"keyboard");
         text+=line;
         return text;
     }
 
-    std::wstring CheckMetroidMap()
+    std::wstring CheckRuinsMap()
     {
-        Metroid::Map map;
+        Ruins::Map map;
         std::wstring error;
         if(!map.LoadBuiltIn(error))return L"1 wrong\n"+error+L"\n";
         const std::wstring problems=map.Check();
@@ -839,7 +839,7 @@ namespace MikuMikuDesktopPerch
         for(const auto& a:map.Areas())
         {
             int rooms=0,screens=0;
-            for(const auto& r:map.Rooms())if(r.area==a.number){++rooms;screens+=r.width/Metroid::ScreenWidth*(r.height/Metroid::ScreenHeight);}
+            for(const auto& r:map.Rooms())if(r.area==a.number){++rooms;screens+=r.width/Ruins::ScreenWidth*(r.height/Ruins::ScreenHeight);}
             text+=L"area "+std::to_wstring(a.number)+L" "+a.name[0]+L": "+std::to_wstring(rooms)+L" rooms, "+std::to_wstring(screens)+L" screens\n";
         }
         return text;

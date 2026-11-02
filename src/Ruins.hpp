@@ -4,10 +4,10 @@
 #include <string>
 #include <vector>
 
-// The ruins (docs/Metroidvania.md): a fixed map of tiles seen from the side, cut into rooms, and
+// The ruins (docs/Ruins.md): a fixed map of tiles seen from the side, cut into rooms, and
 // her body running and jumping through it. Tiles are a share of her height (she is about 2.5
 // tiles tall); x runs right, y runs down, in tiles.
-namespace MikuMikuDesktopPerch::Metroid
+namespace MikuMikuDesktopPerch::Ruins
 {
     constexpr int ScreenWidth=28,ScreenHeight=16;   // a screen's tiles: rooms are whole screens
 
@@ -30,7 +30,7 @@ namespace MikuMikuDesktopPerch::Metroid
     class Map
     {
     public:
-        // The map's text (res/metroid/map.txt). False with the reason when it is not right.
+        // The map's text (res/ruins/map.txt). False with the reason when it is not right.
         bool Parse(const std::string& utf8,std::wstring& error);
         // The one built into the exe.
         bool LoadBuiltIn(std::wstring& error);

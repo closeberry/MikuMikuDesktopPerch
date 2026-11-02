@@ -1,11 +1,11 @@
 #define NOMINMAX
-#include "Metroid.hpp"
+#include "Ruins.hpp"
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
 #include <sstream>
 
-namespace MikuMikuDesktopPerch::Metroid
+namespace MikuMikuDesktopPerch::Ruins
 {
     namespace
     {
@@ -102,7 +102,7 @@ namespace MikuMikuDesktopPerch::Metroid
 
     bool Map::LoadBuiltIn(std::wstring& error)
     {
-        const HRSRC info=FindResourceW(nullptr,L"MAP",L"METROIDMAP");
+        const HRSRC info=FindResourceW(nullptr,L"MAP",L"RUINSMAP");
         const HGLOBAL data=info?LoadResource(nullptr,info):nullptr;
         const char* text=data?static_cast<const char*>(LockResource(data)):nullptr;
         if(!text){error=L"no map in the exe";return false;}

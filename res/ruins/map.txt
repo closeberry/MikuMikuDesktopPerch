@@ -1,4 +1,4 @@
-# The ruins' map (docs/Metroidvania.md), UTF-8.
+# The ruins' map (docs/Ruins.md), UTF-8.
 #
 # area <number> <look> <name>|<English name>
 #   look: the walls' and floors' look (GeometryPS): 0 old bricks, 1 mossy stone ruins,

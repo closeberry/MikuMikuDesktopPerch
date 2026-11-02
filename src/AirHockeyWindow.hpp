@@ -8,7 +8,7 @@ namespace MikuMikuDesktopPerch
 {
     class MascotModel;
 
-    // The air hockey mini game's window (docs/AirHockey.md): the table seen at a slant from
+    // The hover hockey mini game's window (docs/HoverHockey.md): the table seen at a slant from
     // behind your end, her standing at the far end with her mallet in hand (from above in 2D when
     // there is no 3D). Move the mouse to move your mallet; drag with the right button to turn the
     // camera (the middle one, or Shift and the right, to move it), the wheel to come nearer, a

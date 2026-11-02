@@ -1,4 +1,4 @@
-# The air hockey lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# The hover hockey lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
 # Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
 
 [始まり] The match is beginning

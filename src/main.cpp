@@ -33,7 +33,7 @@
 #include "GinRummyWindow.hpp"
 #include "OldMaid.hpp"
 #include "OldMaidWindow.hpp"
-#include "MetroidWindow.hpp"
+#include "RuinsWindow.hpp"
 #include "TreasureArt.hpp"
 #include <commctrl.h>
 #include "Voice.hpp"
@@ -82,7 +82,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdMetroid,IdHanafuda,IdOthello,IdGomoku,IdShogi,IdHexWar,IdBlackjack,IdOldMaid,IdPoker,IdGinRummy};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdRuins,IdHanafuda,IdOthello,IdGomoku,IdShogi,IdHexWar,IdBlackjack,IdOldMaid,IdPoker,IdGinRummy};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr UINT IdTreasure=600;          // + the treasure's place in Dungeon::TreasureBook: look at it
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
@@ -163,7 +163,7 @@ namespace
         bool inDungeon=false;
         // At the mahjong table (docs/Mahjong.md): the same, her model drawn in its window.
         bool inMahjong=false;
-        bool inAirHockey=false;   // at the air hockey table (off the desktop meanwhile)
+        bool inAirHockey=false;   // at the hover hockey table (off the desktop meanwhile)
         bool inOldMaid=false;     // at the Old Maid table (docs/OldMaid.md), her model drawn in its window
         bool inGinRummy=false;    // at the gin rummy table (docs/GinRummy.md), her model drawn in its window
         bool inPoker=false;       // at the poker table (docs/Poker.md), her model drawn in its window
@@ -173,7 +173,7 @@ namespace
         bool inHexWar=false;      // at the hex war game (docs/HexWar.md), her model drawn in its window
         bool inOthello=false;     // at the Othello table (docs/Reversi.md), her model drawn in its window
         bool inHanafuda=false;    // at the hanafuda table (docs/Hanafuda.md), her model drawn in its window
-        bool inMetroid=false;     // in the ruins (docs/Metroidvania.md; off the desktop meanwhile)
+        bool inRuins=false;     // in the ruins (docs/Ruins.md; off the desktop meanwhile)
         // Watching the game while another one plays (see UpdateWatching): when she next thinks
         // or nods, and next checks she is clear of its window.
         bool watchingMahjong=false;
@@ -772,7 +772,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inMetroid)continue;   // away (room is made again when she is back)
+            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inRuins)continue;   // away (room is made again when she is back)
             const bool going=other.place==Place::Warping||other.place==Place::Jumping||other.travel!=Travel::None;
             if(std::abs((going?other.destinationLine:FeetLine(other))-line)>4)continue;
             const Activity a=other.model.CurrentActivity();
@@ -914,7 +914,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inMetroid||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
+            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inRuins||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
             if(std::abs(CenterX(other)-CenterX(m))>=(ModelHalfWidthPixels(m)+ModelHalfWidthPixels(other))*0.6)continue;
             if(movable(other)&&other.slot>m.slot)continue;   // that one steps aside instead
             double left,right;
@@ -928,23 +928,23 @@ namespace
         }
     }
 
-    // A game the others watch (mahjong, air hockey or the ruins, its window up and not minimized), and where
+    // A game the others watch (mahjong, hover hockey or the ruins, its window up and not minimized), and where
     // its window is.
-    bool GameWindowRect(RECT& r){return MahjongWindowRect(r)||HanafudaWindowRect(r)||OthelloWindowRect(r)||GomokuWindowRect(r)||ShogiWindowRect(r)||HexWarWindowRect(r)||BlackjackWindowRect(r)||OldMaidWindowRect(r)||PokerWindowRect(r)||GinRummyWindowRect(r)||AirHockeyWindowRect(r)||MetroidWindowRect(r);}
+    bool GameWindowRect(RECT& r){return MahjongWindowRect(r)||HanafudaWindowRect(r)||OthelloWindowRect(r)||GomokuWindowRect(r)||ShogiWindowRect(r)||HexWarWindowRect(r)||BlackjackWindowRect(r)||OldMaidWindowRect(r)||PokerWindowRect(r)||GinRummyWindowRect(r)||AirHockeyWindowRect(r)||RuinsWindowRect(r);}
     bool GameWindowForeground()
     {
         const HWND front=GetForegroundWindow();
-        return front&&((MahjongWindowOpen()&&front==MahjongWindowHandle())||(HanafudaWindowOpen()&&front==HanafudaWindowHandle())||(OthelloWindowOpen()&&front==OthelloWindowHandle())||(GomokuWindowOpen()&&front==GomokuWindowHandle())||(ShogiWindowOpen()&&front==ShogiWindowHandle())||(HexWarWindowOpen()&&front==HexWarWindowHandle())||(BlackjackWindowOpen()&&front==BlackjackWindowHandle())||(OldMaidWindowOpen()&&front==OldMaidWindowHandle())||(PokerWindowOpen()&&front==PokerWindowHandle())||(GinRummyWindowOpen()&&front==GinRummyWindowHandle())||(AirHockeyWindowOpen()&&front==AirHockeyWindowHandle())||(MetroidWindowOpen()&&front==MetroidWindowHandle()));
+        return front&&((MahjongWindowOpen()&&front==MahjongWindowHandle())||(HanafudaWindowOpen()&&front==HanafudaWindowHandle())||(OthelloWindowOpen()&&front==OthelloWindowHandle())||(GomokuWindowOpen()&&front==GomokuWindowHandle())||(ShogiWindowOpen()&&front==ShogiWindowHandle())||(HexWarWindowOpen()&&front==HexWarWindowHandle())||(BlackjackWindowOpen()&&front==BlackjackWindowHandle())||(OldMaidWindowOpen()&&front==OldMaidWindowHandle())||(PokerWindowOpen()&&front==PokerWindowHandle())||(GinRummyWindowOpen()&&front==GinRummyWindowHandle())||(AirHockeyWindowOpen()&&front==AirHockeyWindowHandle())||(RuinsWindowOpen()&&front==RuinsWindowHandle()));
     }
 
-    // While another one plays mahjong or air hockey (its window up and not minimized), one standing on the
+    // While another one plays mahjong or hover hockey (its window up and not minimized), one standing on the
     // ground or a window's edge steps aside so she is not in front of the window, and watches:
     // turned toward it, looking at it (see UpdateFacing, UpdateLook), without the gestures and
     // clips of standing about; now and then she thinks over a move or nods.
     void UpdateWatching(Mascot& m)
     {
         RECT r{};
-        const bool watch=!m.inMahjong&&!m.inDungeon&&!m.inAirHockey&&!m.inHanafuda&&!m.inOthello&&!m.inGomoku&&!m.inShogi&&!m.inHexWar&&!m.inBlackjack&&!m.inOldMaid&&!m.inPoker&&!m.inGinRummy&&!m.inMetroid&&m.place==Place::Ground&&m.travel==Travel::None&&!m.dozing&&GameWindowRect(r);
+        const bool watch=!m.inMahjong&&!m.inDungeon&&!m.inAirHockey&&!m.inHanafuda&&!m.inOthello&&!m.inGomoku&&!m.inShogi&&!m.inHexWar&&!m.inBlackjack&&!m.inOldMaid&&!m.inPoker&&!m.inGinRummy&&!m.inRuins&&m.place==Place::Ground&&m.travel==Travel::None&&!m.dozing&&GameWindowRect(r);
         if(watch!=m.watchingMahjong)
         {
             m.watchingMahjong=watch;
@@ -1695,11 +1695,11 @@ namespace
             AppendMenuW(games,MF_STRING,IdOldMaid,T(L"ババ抜きをする",L"Play Old Maid"));
             AppendMenuW(games,MF_STRING,IdPoker,T(L"ポーカーをする",L"Play poker"));
             AppendMenuW(games,MF_STRING,IdGinRummy,T(L"ジンラミーをする",L"Play gin rummy"));
-            AppendMenuW(games,MF_STRING,IdAirHockey,T(L"エアホッケーをする",L"Play air hockey"));
+            AppendMenuW(games,MF_STRING,IdAirHockey,T(L"ホバーホッケーをする",L"Play hover hockey"));
             AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(games),T(L"ミニゲーム",L"Mini games"));
         }
-        // The ruins (IdMetroid, "遺跡を探検する") are left out of the menu while they are on hold
-        // (docs/Metroidvania.md); --snapshot with --metroid still opens them.
+        // The ruins (IdRuins, "遺跡を探検する") are left out of the menu while they are on hold
+        // (docs/Ruins.md); --snapshot with --ruins still opens them.
         // The treasures she brought home from it, each to look at on her palm.
         {
             HMENU treasures=CreatePopupMenu();
@@ -1708,7 +1708,7 @@ namespace
             {
                 std::wstring label=t.name+L"　"+(t.found.date.empty()?std::wstring(T(L"（日付不明）",L"(date unknown)")):DateText(t.found.date));
                 if(t.found.count>1)label+=Fmt(T(L"　×{0}",L"  x{0}"),{std::to_wstring(t.found.count)});
-                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon&&!m.inMahjong&&!m.inAirHockey&&!m.inHanafuda&&!m.inOthello&&!m.inGomoku&&!m.inShogi&&!m.inHexWar&&!m.inBlackjack&&!m.inOldMaid&&!m.inPoker&&!m.inGinRummy&&!m.inMetroid?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
+                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon&&!m.inMahjong&&!m.inAirHockey&&!m.inHanafuda&&!m.inOthello&&!m.inGomoku&&!m.inShogi&&!m.inHexWar&&!m.inBlackjack&&!m.inOldMaid&&!m.inPoker&&!m.inGinRummy&&!m.inRuins?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
             }
             if(owned.empty())AppendMenuW(treasures,MF_STRING|MF_GRAYED,0,T(L"（まだありません。ダンジョンの宝物庫やボスから持ち帰れます）",L"(None yet: bring some home from the dungeon's vaults and bosses)"));
             AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(treasures),T(L"お宝を眺める",L"Look at a treasure"));
@@ -2237,7 +2237,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             const Mascot& each=*owned;
-            if(each.inDungeon||each.inMahjong||each.inAirHockey||each.inHanafuda||each.inOthello||each.inGomoku||each.inShogi||each.inHexWar||each.inBlackjack||each.inOldMaid||each.inPoker||each.inGinRummy||each.inMetroid)continue;   // she is away; the others may still speak first
+            if(each.inDungeon||each.inMahjong||each.inAirHockey||each.inHanafuda||each.inOthello||each.inGomoku||each.inShogi||each.inHexWar||each.inBlackjack||each.inOldMaid||each.inPoker||each.inGinRummy||each.inRuins)continue;   // she is away; the others may still speak first
             if((each.chat&&each.chat->Busy())||each.bubble.Visible()||each.chatInput.IsOpen()||each.speech.Speaking())return;
             if(each.place==Place::Ground&&each.model.CurrentActivity()!=Activity::Grabbed&&each.travel==Travel::None)free.push_back(owned.get());
         }
@@ -2387,7 +2387,7 @@ namespace
             {
                 m.replyFeelingSet=true;
                 // No gesture with it in a game (her arms are the game's there).
-                m.model.SetExpression(feeling->expression,!(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid));
+                m.model.SetExpression(feeling->expression,!(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins));
                 // Eases out a while after (UpdateFeeling holds it on while she talks). Not
                 // left unset: a quick answer can end before a frame sees the chat busy, and
                 // her face then kept the feeling for good (smiling eyes through a whole game).
@@ -2573,7 +2573,7 @@ namespace
     {
         // One in the dungeon talks there, not over the ones on the desktop.
         return std::any_of(app.mascots.begin(),app.mascots.end(),[](const auto& m){
-            return !m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inMetroid&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
+            return !m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inRuins&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
     }
 
     void EndBanter(const wchar_t* why)
@@ -2627,7 +2627,7 @@ namespace
     // Free to talk: standing on a surface with nothing else to do.
     bool FreeToTalk(Mascot& c)
     {
-        return !c.inDungeon&&!c.inMahjong&&!c.inAirHockey&&!c.inHanafuda&&!c.inOthello&&!c.inGomoku&&!c.inShogi&&!c.inHexWar&&!c.inBlackjack&&!c.inOldMaid&&!c.inPoker&&!c.inGinRummy&&!c.inMetroid&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
+        return !c.inDungeon&&!c.inMahjong&&!c.inAirHockey&&!c.inHanafuda&&!c.inOthello&&!c.inGomoku&&!c.inShogi&&!c.inHexWar&&!c.inBlackjack&&!c.inOldMaid&&!c.inPoker&&!c.inGinRummy&&!c.inRuins&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
                !MotionBusy(c)&&!c.dozing&&!c.chatInput.IsOpen();
     }
 
@@ -3388,7 +3388,7 @@ namespace
         {
             Mascot& c=*owned;
             if(!model.empty()&&c.modelPath!=model)continue;
-            if(c.inDungeon||c.inMahjong||c.inAirHockey||c.inHanafuda||c.inOthello||c.inGomoku||c.inShogi||c.inHexWar||c.inBlackjack||c.inOldMaid||c.inPoker||c.inGinRummy||c.inMetroid)continue;
+            if(c.inDungeon||c.inMahjong||c.inAirHockey||c.inHanafuda||c.inOthello||c.inGomoku||c.inShogi||c.inHexWar||c.inBlackjack||c.inOldMaid||c.inPoker||c.inGinRummy||c.inRuins)continue;
             if((&c==app.asker||&c==app.alarmTeller)&&waited<30)continue;
             const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
             if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
@@ -3612,7 +3612,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if((only&&only!=&m)||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)continue;
+            if((only&&only!=&m)||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)continue;
             AlbumLayer character;
             UINT width=0,height=0;
             if(!m.renderer.ReadLastFrame(character.pixels,width,height))continue;
@@ -3751,7 +3751,7 @@ namespace
     {
         const auto owned=TreasuresOf(m.modelPath);
         const auto t=std::find_if(owned.begin(),owned.end(),[&](const OwnedTreasure& o){return o.index==index;});
-        if(t==owned.end()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid||m.place!=Place::Ground)return;
+        if(t==owned.end()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins||m.place!=Place::Ground)return;
         if(!app.showing.model.empty()){app.picture.Hide();app.showing={};}
         StopGroundActivity(m);
         const RECT work=WorkAreaOfWindow(m);
@@ -3804,7 +3804,7 @@ namespace
         const bool talking=m.speech.Active()||m.speech.Speaking()||m.bubble.Talking()||(m.chat&&m.chat->Busy());
         if(talking)s.quietSince=-1;
         else if(s.quietSince<0)s.quietSince=app.clock;
-        const bool away=m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
+        const bool away=m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
         if(s.endAt<0&&(away||age>30||(age>7&&s.quietSince>=0&&app.clock-s.quietSince>3)))
         {
             s.endAt=app.clock;
@@ -3830,7 +3830,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.place!=Place::Ground||other.inDungeon||other.inMahjong||other.inAirHockey||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inMetroid)continue;
+            if(&other==&m||other.place!=Place::Ground||other.inDungeon||other.inMahjong||other.inAirHockey||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inRuins)continue;
             other.nextDecision=std::max(other.nextDecision,app.clock+5);
             if(!s.peeked&&age>=1.3&&FreeToTalk(other)&&!InBanter(other))other.model.Emote(L"peek");
         }
@@ -3881,7 +3881,7 @@ namespace
     // The mini games at a table she plays with the user (her words there, the watchers').
     enum class TableGame {Mahjong,AirHockey,Hanafuda,Othello,Gomoku,Shogi,HexWar,Blackjack,OldMaid,Poker,GinRummy};
 
-    // docs/Mahjong.md (しゃべる麻雀), docs/AirHockey.md: a word of hers at the table about
+    // docs/Mahjong.md (しゃべる麻雀), docs/HoverHockey.md: a word of hers at the table about
     // situation (a stage direction), in her own voice, streamed to the table's bubble
     // (MahjongHeard, AirHockeyHeard).
     bool GameTalk(Mascot& m,TableGame game,const std::wstring& situation)
@@ -3896,7 +3896,7 @@ namespace
         if(English())
             messages.push_back({L"system",
                 L"You are \""+m.character.name+L"\".\n"+m.character.persona+L"\n"+bond+L"\n"
-                L"You are now playing "+(mahjong?L"two-player mahjong":game==TableGame::Hanafuda?L"hanafuda (koi-koi)":game==TableGame::Othello?L"Reversi":game==TableGame::Gomoku?L"gomoku":game==TableGame::Shogi?L"shogi":game==TableGame::HexWar?L"Hex Front (a war game of moving units on a map of hexagons)":game==TableGame::Blackjack?L"blackjack (you are the dealer)":game==TableGame::GinRummy?L"gin rummy":game==TableGame::Poker?L"poker (Texas hold'em)":game==TableGame::OldMaid?L"Old Maid (babanuki)":L"air hockey")+L" at a table against "+(user.empty()?std::wstring(L"the person you talk with"):L"\""+user+L"\"")+
+                L"You are now playing "+(mahjong?L"two-player mahjong":game==TableGame::Hanafuda?L"hanafuda (koi-koi)":game==TableGame::Othello?L"Reversi":game==TableGame::Gomoku?L"gomoku":game==TableGame::Shogi?L"shogi":game==TableGame::HexWar?L"Hex Front (a war game of moving units on a map of hexagons)":game==TableGame::Blackjack?L"blackjack (you are the dealer)":game==TableGame::GinRummy?L"gin rummy":game==TableGame::Poker?L"poker (Texas hold'em)":game==TableGame::OldMaid?L"Old Maid (babanuki)":L"hover hockey")+L" at a table against "+(user.empty()?std::wstring(L"the person you talk with"):L"\""+user+L"\"")+
                 L", in a little game on their computer. Your words appear in a speech bubble at the table. "
                 L"Write only your own line, in English, as short casual speech. No names, stage directions, anything in ( ), Markdown, lists, emoji or emoticons."+
                 (mahjong?L" Never tell what tiles you hold or wait on.":game==TableGame::Hanafuda?L" Never tell what cards you hold.":L"")+L"\n"
@@ -3904,7 +3904,7 @@ namespace
         else
             messages.push_back({L"system",
                 L"あなたは「"+m.character.name+L"」です。\n"+m.character.persona+L"\n"+bond+L"\n"
-                L"いま、"+(user.empty()?std::wstring(L"話し相手"):L"話し相手の「"+user+L"」")+L"と、パソコンのミニゲームで"+(mahjong?L"2人打ちの麻雀を打っています。":game==TableGame::Hanafuda?L"花札（こいこい）をしています。":game==TableGame::Othello?L"リバーシをしています。":game==TableGame::Gomoku?L"五目並べをしています。":game==TableGame::Shogi?L"将棋を指しています。":game==TableGame::HexWar?L"ヘックス戦線（ヘックスの地図でユニットを動かして戦う戦術ゲーム）をしています。":game==TableGame::Blackjack?L"ブラックジャックをしています（あなたがディーラー）。":game==TableGame::GinRummy?L"ジンラミーをしています。":game==TableGame::Poker?L"ポーカー（テキサスホールデム）をしています。":game==TableGame::OldMaid?L"ババ抜きをしています。":L"エアホッケーをしています。")+
+                L"いま、"+(user.empty()?std::wstring(L"話し相手"):L"話し相手の「"+user+L"」")+L"と、パソコンのミニゲームで"+(mahjong?L"2人打ちの麻雀を打っています。":game==TableGame::Hanafuda?L"花札（こいこい）をしています。":game==TableGame::Othello?L"リバーシをしています。":game==TableGame::Gomoku?L"五目並べをしています。":game==TableGame::Shogi?L"将棋を指しています。":game==TableGame::HexWar?L"ヘックス戦線（ヘックスの地図でユニットを動かして戦う戦術ゲーム）をしています。":game==TableGame::Blackjack?L"ブラックジャックをしています（あなたがディーラー）。":game==TableGame::GinRummy?L"ジンラミーをしています。":game==TableGame::Poker?L"ポーカー（テキサスホールデム）をしています。":game==TableGame::OldMaid?L"ババ抜きをしています。":L"ホバーホッケーをしています。")+
                 L"あなたのセリフは、台の上の吹き出しに表示されます。"
                 L"あなたのセリフだけを、短い話し言葉で書いてください。名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。"+
                 (mahjong?L"自分の手牌や待ちは言わないでください。":game==TableGame::Hanafuda?L"自分の手札は言わないでください。":L"")+L"\n"
@@ -3932,7 +3932,7 @@ namespace
         {
             messages.push_back({L"system",
                 L"You are \""+c.character.name+L"\".\n"+c.character.persona+L"\n\n"
-                L"You are standing on the desktop beside "+(mahjong?L"a mahjong":game==TableGame::Hanafuda?L"a hanafuda":game==TableGame::Othello?L"a Reversi":game==TableGame::Gomoku?L"a gomoku":game==TableGame::Shogi?L"a shogi":game==TableGame::HexWar?L"a war game's":game==TableGame::Blackjack?L"a blackjack":game==TableGame::GinRummy?L"a gin rummy":game==TableGame::Poker?L"a poker":game==TableGame::OldMaid?L"an Old Maid":L"an air hockey")+L" game's window, watching the game between another character and the owner of this computer"+
+                L"You are standing on the desktop beside "+(mahjong?L"a mahjong":game==TableGame::Hanafuda?L"a hanafuda":game==TableGame::Othello?L"a Reversi":game==TableGame::Gomoku?L"a gomoku":game==TableGame::Shogi?L"a shogi":game==TableGame::HexWar?L"a war game's":game==TableGame::Blackjack?L"a blackjack":game==TableGame::GinRummy?L"a gin rummy":game==TableGame::Poker?L"a poker":game==TableGame::OldMaid?L"an Old Maid":L"a hover hockey")+L" game's window, watching the game between another character and the owner of this computer"+
                 (user.empty()?std::wstring():L" (\""+user+L"\")")+L". Your word appears in a speech bubble over your head. "
                 L"Write only your own line, in English: one short, casual spoken line, like a friend watching and cheering or commenting. "
                 L"No names in front, stage directions, anything in ( ), Markdown, lists, emoji or emoticons.\n"
@@ -3943,7 +3943,7 @@ namespace
         {
             messages.push_back({L"system",
                 L"あなたは「"+c.character.name+L"」です。\n"+c.character.persona+L"\n\n"
-                L"いま、デスクトップの上で"+(mahjong?L"麻雀":game==TableGame::Hanafuda?L"花札":game==TableGame::Othello?L"リバーシ":game==TableGame::Gomoku?L"五目並べ":game==TableGame::Shogi?L"将棋":game==TableGame::HexWar?L"戦術ゲーム":game==TableGame::Blackjack?L"ブラックジャック":game==TableGame::GinRummy?L"ジンラミー":game==TableGame::Poker?L"ポーカー":game==TableGame::OldMaid?L"ババ抜き":L"エアホッケー")+L"のウィンドウの横に立って、ほかのキャラクターとこのパソコンの持ち主"+
+                L"いま、デスクトップの上で"+(mahjong?L"麻雀":game==TableGame::Hanafuda?L"花札":game==TableGame::Othello?L"リバーシ":game==TableGame::Gomoku?L"五目並べ":game==TableGame::Shogi?L"将棋":game==TableGame::HexWar?L"戦術ゲーム":game==TableGame::Blackjack?L"ブラックジャック":game==TableGame::GinRummy?L"ジンラミー":game==TableGame::Poker?L"ポーカー":game==TableGame::OldMaid?L"ババ抜き":L"ホバーホッケー")+L"のウィンドウの横に立って、ほかのキャラクターとこのパソコンの持ち主"+
                 (user.empty()?std::wstring():L"（「"+user+L"」）")+L"の対戦を観戦しています。あなたのセリフは、あなたの頭上の吹き出しに表示されます。"
                 L"観戦している友だちとして、応援や実況・解説のひと言を、短い話し言葉で1つだけ書いてください。"
                 L"名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
@@ -3957,7 +3957,7 @@ namespace
         c.commentFallback=fallback;
     }
 
-    // Something happened at a table (mahjong, air hockey): one of those watching it (now and
+    // Something happened at a table (mahjong, hover hockey): one of those watching it (now and
     // then, more often the more it matters) says a word on it.
     void WatchersHear(TableGame game,const std::wstring& facts,int weight,const std::wstring& fallback)
     {
@@ -3968,7 +3968,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& c=*owned;
-            if(!c.watchingMahjong||c.inMahjong||c.inAirHockey||c.inHanafuda||c.inOthello||c.inGomoku||c.inShogi||c.inHexWar||c.inBlackjack||c.inOldMaid||c.inPoker||c.inGinRummy||c.inMetroid||c.dozing||c.chatInput.IsOpen()||InBanter(c)||c.bubble.Visible())continue;
+            if(!c.watchingMahjong||c.inMahjong||c.inAirHockey||c.inHanafuda||c.inOthello||c.inGomoku||c.inShogi||c.inHexWar||c.inBlackjack||c.inOldMaid||c.inPoker||c.inGinRummy||c.inRuins||c.dozing||c.chatInput.IsOpen()||InBanter(c)||c.bubble.Visible())continue;
             if(c.chat&&c.chat->Busy())continue;
             free.push_back(&c);
         }
@@ -4056,7 +4056,7 @@ namespace
         m.bubble.Hide();
     }
 
-    // docs/AirHockey.md: a game against her in its own window, where she stands at the far end
+    // docs/HoverHockey.md: a game against her in its own window, where she stands at the far end
     // of the table and holds her mallet (off the desktop meanwhile, as at mahjong).
     // Into a game's window: what she was doing on the desktop stops, and she comes in at ease,
     // as she stands: no gesture or clip still playing (an arm held up would be where the game
@@ -4099,9 +4099,9 @@ namespace
     void OpenAirHockey(Mascot& m)
     {
         if(AirHockeyWindowOpen()){ShowAirHockeyWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||RuinsWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
-        Trace(L"%.1f air hockey: start (%s)",app.clock,model.c_str());
+        Trace(L"%.1f hover hockey: start (%s)",app.clock,model.c_str());
         AirHockeyOpponent her;
         her.name=DungeonHeroOf(m).name;
         her.puckSpeed=app.settings.airHockeyPuck;
@@ -4152,19 +4152,19 @@ namespace
                     m.model.TakeRootDelta();
                     if(!app.paused)ShowWindow(m.hwnd,SW_SHOWNOACTIVATE);
                 }
-            Trace(L"%.1f air hockey: end",app.clock);
+            Trace(L"%.1f hover hockey: end",app.clock);
         });
     }
 
-    // docs/Metroidvania.md: she explores the ruins in their own window, running and jumping
+    // docs/Ruins.md: she explores the ruins in their own window, running and jumping
     // through them (off the desktop meanwhile, as in the dungeon).
-    void OpenMetroid(Mascot& m)
+    void OpenRuins(Mascot& m)
     {
-        if(MetroidWindowOpen()){ShowMetroidWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(RuinsWindowOpen()){ShowRuinsWindow(m.hwnd,{},{});return;}
+        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f ruins: start (%s)",app.clock,model.c_str());
-        MetroidHero her;
+        RuinsHero her;
         her.name=DungeonHeroOf(m).name;
         her.model=&m.model;
         her.toonDir=app.settings.toonDir;
@@ -4173,14 +4173,14 @@ namespace
         her.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
         her.light=app.settings.dungeonLight;
         EnterGame(m);
-        m.inMetroid=true;
+        m.inRuins=true;
         ShowWindow(m.hwnd,SW_HIDE);
-        ShowMetroidWindow(m.hwnd,her,[model]{
+        ShowRuinsWindow(m.hwnd,her,[model]{
             for(const auto& owned:app.mascots)
-                if(owned->modelPath==model&&owned->inMetroid)
+                if(owned->modelPath==model&&owned->inRuins)
                 {
                     Mascot& m=*owned;
-                    m.inMetroid=false;
+                    m.inRuins=false;
                     // Back from the ruins, standing where she was on the desktop.
                     m.model.SetActivity(Activity::Idle);
                     m.model.TakeRootDelta();
@@ -4194,7 +4194,7 @@ namespace
     // the desktop meanwhile, as in the dungeon).
     void OpenMahjong(Mascot& m)
     {
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMetroid){if(MahjongWindowOpen())ShowMahjongWindow(m.hwnd,{},{});return;}
+        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inDungeon||m.inRuins){if(MahjongWindowOpen())ShowMahjongWindow(m.hwnd,{},{});return;}
         const std::wstring model=m.modelPath;
         Trace(L"%.1f mahjong: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4260,7 +4260,7 @@ namespace
     void OpenHanafuda(Mascot& m)
     {
         if(HanafudaWindowOpen()){ShowHanafudaWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f hanafuda: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4323,7 +4323,7 @@ namespace
     void OpenOthello(Mascot& m)
     {
         if(OthelloWindowOpen()){ShowOthelloWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||HanafudaWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f othello: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4386,7 +4386,7 @@ namespace
     void OpenGomoku(Mascot& m)
     {
         if(GomokuWindowOpen()){ShowGomokuWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inShogi||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inShogi||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f gomoku: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4449,7 +4449,7 @@ namespace
     void OpenShogi(Mascot& m)
     {
         if(ShogiWindowOpen()){ShowShogiWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||GomokuWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inGomoku||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||GomokuWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inGomoku||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f shogi: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4512,7 +4512,7 @@ namespace
     void OpenHexWar(Mascot& m)
     {
         if(HexWarWindowOpen()){ShowHexWarWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inGomoku||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inGomoku||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f hexwar: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4576,7 +4576,7 @@ namespace
     void OpenBlackjack(Mascot& m)
     {
         if(BlackjackWindowOpen()){ShowBlackjackWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f blackjack: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4639,7 +4639,7 @@ namespace
     void OpenPoker(Mascot& m)
     {
         if(PokerWindowOpen()){ShowPokerWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f poker: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4702,7 +4702,7 @@ namespace
     void OpenGinRummy(Mascot& m)
     {
         if(GinRummyWindowOpen()){ShowGinRummyWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inMetroid)return;
+        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f ginrummy: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4765,7 +4765,7 @@ namespace
     void OpenOldMaid(Mascot& m)
     {
         if(OldMaidWindowOpen()){ShowOldMaidWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||MetroidWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inPoker||m.inGinRummy||m.inMetroid)return;
+        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||RuinsWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inPoker||m.inGinRummy||m.inRuins)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f oldmaid: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4825,7 +4825,7 @@ namespace
 
     void OpenDungeon(Mascot& m)
     {
-        if(m.inMahjong||MahjongWindowOpen()||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||AirHockeyWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||m.inMetroid||MetroidWindowOpen())return;
+        if(m.inMahjong||MahjongWindowOpen()||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||AirHockeyWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||m.inRuins||RuinsWindowOpen())return;
         if(DungeonWindowOpen()||app.diagnostic){ShowDungeonWindow(m.hwnd,{},{});return;}
         const std::wstring model=m.modelPath;
         Trace(L"%.1f dungeon: start (%s)",app.clock,model.c_str());
@@ -5229,7 +5229,7 @@ namespace
             break;
         }
         case IdOpenModel:
-            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)break;   // her model is in use in the dungeon or at a table
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)break;   // her model is in use in the dungeon or at a table
         {
             auto path=OpenFileDialog(m.hwnd,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),Own(m).modelPath);
             if(path.empty()||!ModelUsable(path))break;
@@ -5252,7 +5252,7 @@ namespace
             break;
         }
         case IdRemoveCharacter:
-            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)break;   // her model is in use in the dungeon or at a table
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)break;   // her model is in use in the dungeon or at a table
             if(app.mascots.size()>1)app.changes.push_back({Change::Remove,m.slot});
             break;
         case IdOpenMotion:
@@ -5426,8 +5426,8 @@ namespace
         case IdAirHockey:
             OpenAirHockey(m);
             break;
-        case IdMetroid:
-            OpenMetroid(m);
+        case IdRuins:
+            OpenRuins(m);
             break;
         case IdDungeon:
             OpenDungeon(m);
@@ -6136,7 +6136,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     std::wstring snapshotPath;
     bool snapshotMahjong=false;   // --mahjong [moves]: the snapshot is the mahjong table's 3D view
     int snapshotMahjongLater=0;   // --mahjong-later n: n more moves played 20 seconds in (the watchers in place by then)
-    bool snapshotAirHockey=false; // --airhockey: the snapshot is the air hockey window, your side played for you
+    bool snapshotAirHockey=false; // --airhockey: the snapshot is the hover hockey window, your side played for you
     bool snapshotHanafuda=false;  // --hanafuda [moves]: the snapshot is the hanafuda table's 3D view
     int snapshotHanafudaMoves=0;
     bool snapshotOthello=false;   // --othello [moves]: the snapshot is the Othello table's 3D view
@@ -6158,9 +6158,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     std::wstring snapshotAirHockeyCamera;   // --airhockey-camera pitch,distance,yaw
     int snapshotAirHockeySize=0;            // --airhockey-size 1-4: the pieces' size (the ini's otherwise)
     double snapshotAirHockeyAt=0;           // --airhockey-at <seconds>: the table opens then (a gesture under way first)
-    bool snapshotMetroid=false;   // --metroid [room]: the snapshot is the ruins' window, she starts in that room
-    int snapshotMetroidRoom=0;
-    std::wstring snapshotMetroidKeys;   // --metroid-play "R1.0 RZ0.3": the keys held in turn (PlayMetroidForTest)
+    bool snapshotRuins=false;   // --ruins [room]: the snapshot is the ruins' window, she starts in that room
+    int snapshotRuinsRoom=0;
+    std::wstring snapshotRuinsKeys;   // --ruins-play "R1.0 RZ0.3": the keys held in turn (PlayRuinsForTest)
     int snapshotMahjongMoves=0;   // after this many moves of a simple player
     std::wstring snapshotMahjongCamera;   // --mahjong-camera pitch,distance,y,z[,yaw]
     bool snapshotMahjongReach=false;      // --mahjong-reach [far]: she reaches for her river once seated
@@ -6222,12 +6222,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--airhockey-camera"&&i+1<argc)snapshotAirHockeyCamera=argv[++i];
             else if(arg==L"--airhockey-size"&&i+1<argc)snapshotAirHockeySize=_wtoi(argv[++i]);
             else if(arg==L"--airhockey-at"&&i+1<argc)snapshotAirHockeyAt=_wtof(argv[++i]);
-            else if(arg==L"--metroid")
+            else if(arg==L"--ruins")
             {
-                snapshotMetroid=true;
-                if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotMetroidRoom=_wtoi(argv[++i]);
+                snapshotRuins=true;
+                if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotRuinsRoom=_wtoi(argv[++i]);
             }
-            else if(arg==L"--metroid-play"&&i+1<argc)snapshotMetroidKeys=argv[++i];
+            else if(arg==L"--ruins-play"&&i+1<argc)snapshotRuinsKeys=argv[++i];
             else if(arg==L"--own-lines"&&i+1<argc)app.ownLines=argv[++i];
             else if(arg==L"--oldmaid")
             {
@@ -6820,7 +6820,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             return saved?0:1;
         }
         // --airhockey-sim <out.txt> [games] [seed] [speed 1-4] [size 1-4]: games between two of the
-        // air hockey opponent's players, checked throughout (AirHockey::Game's counts).
+        // hover hockey opponent's players, checked throughout (AirHockey::Game's counts).
         if(argc>=3&&std::wstring(argv[1])==L"--airhockey-sim")
         {
             const std::wstring report=RunAirHockeySim(argc>=4?_wtoi(argv[3]):50,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1,argc>=6?_wtoi(argv[5]):0,argc>=7?_wtoi(argv[6]):0);
@@ -6832,10 +6832,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return report.starts_with(L"0 wrong")?0:1;
         }
-        // --metroid-check <out.txt>: what is wrong with the ruins' map ("0 wrong" first when nothing).
-        if(argc>=3&&std::wstring(argv[1])==L"--metroid-check")
+        // --ruins-check <out.txt>: what is wrong with the ruins' map ("0 wrong" first when nothing).
+        if(argc>=3&&std::wstring(argv[1])==L"--ruins-check")
         {
-            const std::wstring report=CheckMetroidMap();
+            const std::wstring report=CheckRuinsMap();
             if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
             {
                 fputws(report.c_str(),out);
@@ -6844,7 +6844,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return report.starts_with(L"0 wrong")?0:1;
         }
-        // --airhockey-shot <out.png> [seconds] [seed]: the air hockey table after some play.
+        // --airhockey-shot <out.png> [seconds] [seed]: the hover hockey table after some play.
         if(argc>=3&&std::wstring(argv[1])==L"--airhockey-shot")
         {
             const bool saved=SaveAirHockeyShot(argv[2],argc>=4?_wtof(argv[3]):8,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
@@ -7177,7 +7177,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(fullscreen!=app.paused)
             {
                 app.paused=fullscreen;
-                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inMetroid)
+                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inRuins)
                 {
                     ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
                     // Her bubble goes too (nothing ticks it while paused); the next draw after
@@ -7201,7 +7201,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inMetroid)
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inRuins)
             {
                 m.model.Update(dt);
                 m.model.TakeRootDelta();
@@ -7213,7 +7213,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 m.bubble.Tick(dt,{},0,WorkAreaOfWindow(m),true);
                 if(m.inDungeon)TickDungeonWindow(m.model,dt);
                 else if(m.inAirHockey)TickAirHockeyWindow(m.model,dt);
-                else if(m.inMetroid)TickMetroidWindow(m.model,dt);
+                else if(m.inRuins)TickRuinsWindow(m.model,dt);
                 else if(m.inHanafuda)TickHanafudaWindow(m.model,dt);
                 else if(m.inOthello)TickOthelloWindow(m.model,dt);
                 else if(m.inGomoku)TickGomokuWindow(m.model,dt);
@@ -7564,21 +7564,21 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(swscanf_s(snapshotAirHockeyCamera.c_str(),L"%f,%f,%f",&c[0],&c[1],&c[2])==3)SetAirHockeyCamera(c[0],c[1],c[2]);
             }
         }
-        if(app.diagnostic&&snapshotMetroid)
+        if(app.diagnostic&&snapshotRuins)
         {
             static bool opened=false;
             if(!opened)
             {
                 opened=true;
-                OpenMetroid(*app.mascots.front());
-                PlayMetroidForTest(snapshotMetroidKeys,snapshotMetroidRoom);
+                OpenRuins(*app.mascots.front());
+                PlayRuinsForTest(snapshotRuinsKeys,snapshotRuinsRoom);
             }
         }
         if(app.diagnostic&&--snapshotFrames<=0)
         {
             Mascot& m=*app.mascots.front();
             if(snapshotAirHockey)SaveAirHockeyView(snapshotPath);
-            else if(snapshotMetroid)SaveMetroidView(snapshotPath);
+            else if(snapshotRuins)SaveRuinsView(snapshotPath);
             else if(snapshotMahjong)SaveMahjongView(snapshotPath);
             else if(snapshotHanafuda)SaveHanafudaView(snapshotPath);
             else if(snapshotOthello)SaveOthelloView(snapshotPath);
@@ -7613,7 +7613,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 fwprintf(info,L"%s",m.model.DescribePenetration().c_str());
                 fwprintf(info,L"%s",m.model.DescribeFace().c_str());
                 if(snapshotAirHockey)fwprintf(info,L"%s",DescribeAirHockey().c_str());
-                if(snapshotMetroid)fwprintf(info,L"%s",DescribeMetroid().c_str());
+                if(snapshotRuins)fwprintf(info,L"%s",DescribeRuins().c_str());
                 if(snapshotHanafuda)fwprintf(info,L"%s",DescribeHanafuda().c_str());
                 if(snapshotOthello)fwprintf(info,L"%s",DescribeOthello().c_str());
                 if(snapshotGomoku)fwprintf(info,L"%s",DescribeGomoku().c_str());

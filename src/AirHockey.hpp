@@ -5,7 +5,7 @@
 
 namespace MikuMikuDesktopPerch::AirHockey
 {
-    // The air hockey game itself (docs/AirHockey.md), without the window: the table, the puck,
+    // The hover hockey game itself (docs/HoverHockey.md), without the window: the table, the puck,
     // the two mallets and the score, and how the other side plays. In table units: x across
     // (-width/2 .. width/2, to your right), y along it (-length/2 your end .. length/2 hers).
     struct Vec
@@ -113,7 +113,7 @@ namespace MikuMikuDesktopPerch::AirHockey
         Vec Home(int side) const;
     };
 
-    // How the other side plays (docs/AirHockey.md, キャラクターの打ち方), from what it sees of the
+    // How the other side plays (docs/HoverHockey.md, キャラクターの打ち方), from what it sees of the
     // puck a moment late: in front of its goal when the puck comes, a strike at it when it is
     // in reach and slow enough, back to its goal while the puck is away.
     struct Style

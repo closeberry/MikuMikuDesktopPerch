@@ -164,5 +164,5 @@ PON MAHJONGSOUND "mahjong\\sounds\\pon.wav"
 KAN MAHJONGSOUND "mahjong\\sounds\\kan.wav"
 DEAL MAHJONGSOUND "mahjong\\sounds\\deal.wav"
 
-// The ruins' map (docs/Metroidvania.md, src/Metroid.cpp): UTF-8 text, rooms of tiles.
-MAP METROIDMAP "metroid\\map.txt"
+// The ruins' map (docs/Ruins.md, src/Ruins.cpp): UTF-8 text, rooms of tiles.
+MAP RUINSMAP "ruins\\map.txt"

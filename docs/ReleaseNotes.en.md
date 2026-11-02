@@ -65,7 +65,7 @@
 
 ### New
 
-- **A Mini games menu**: with more games, the right-click menu's games are now under "Mini games" (the dungeon, mahjong, hanafuda, Reversi, gomoku, blackjack, Old Maid, air hockey)
+- **A Mini games menu**: with more games, the right-click menu's games are now under "Mini games" (the dungeon, mahjong, hanafuda, Reversi, gomoku, blackjack, Old Maid, hover hockey)
 - **Gomoku**: "Mini games" → "Play gomoku" to play gomoku against that character (15 by 15, the first to make five in a row wins)
   - Black, who moves first, may not make a double three, a double four or six or more in a row (white may); such a point is refused
   - Click where the lines cross (or the arrow keys and Enter). Who has black is drawn by lot for the first game, then goes back and forth
@@ -121,7 +121,7 @@
 
 ### Fixed
 
-- In the games (mahjong, air hockey and the others), the expression of a line she said (smiling eyes and the like) stayed on her face for good
+- In the games (mahjong, hover hockey and the others), the expression of a line she said (smiling eyes and the like) stayed on her face for good
 - Her lines in the games are voiced too, as the voice settings say
 - Her lines through the LLM in the games fit the moment better (she no longer congratulates you on her own win, for one)
 
@@ -131,36 +131,36 @@
 
 - **More natural walking and running**: remade after the way people walk and run. The knee straightens as the foot lands, and the feet land on a narrow track under the hips. The run has a real flight and bounce, and the arms swing as people's do. It is fitted to each model's legs, shins, feet and stance, so it looks alike on every model (the knees point the same way on knock-kneed and bow-legged models too)
 - **Natural standing, sitting and jumping**: the stance and the way the toes turn out, the hanging arms and the head's tilt when standing, the posture and arms when sitting, and the arm swing and knee bend of a jump follow how people stand, sit and jump, alike on every model
-- Entering air hockey, mahjong and the other games stops her gestures, expression and talk, and she starts standing with a plain face
+- Entering hover hockey, mahjong and the other games stops her gestures, expression and talk, and she starts standing with a plain face
 
 ### Fixed
 
-- At air hockey, her hand could reach only one side of the table when the game began after she had walked or during a gesture
+- At hover hockey, her hand could reach only one side of the table when the game began after she had walked or during a gesture
 - At mahjong, an eye morph from her expression before the game could stay
 - At mahjong she looks across at you as she talks, not up at the ceiling
-- At air hockey, mahjong and the dungeon, "Stop" and "Continue" after Esc can be clicked with the mouse
+- At hover hockey, mahjong and the dungeon, "Stop" and "Continue" after Esc can be clicked with the mouse
 
 ## 1.5.0
 
 ### New
 
-- **Air hockey**: "Play air hockey" in the right-click menu opens a window where you play air hockey against that character (first to 7)
+- **Hover hockey**: "Play hover hockey" in the right-click menu opens a window where you play hover hockey against that character (first to 7)
   - She comes from the desktop and stands across the table, bent over it with her mallet in her hand, guarding and striking forward. Her upper body turns toward her hand, and her eyes follow the puck
   - The mouse moves your mallet; the cursor stays over your half while you play
   - Keys 1-4 choose the puck's speed and 5-8 the size of the puck and mallets (kept for the next time). Space pauses, Esc stops, and Enter plays again once a game is over
   - Drag with the right button to turn the camera (the middle button or Shift and the right button to move it, the wheel to come nearer, a right double-click or F1 to put it back)
   - At the start, a goal, match point and the end she speaks in a bubble just right of her head. With an LLM, she says lines of her own asked for all at once as the window opens, with no wait. Her face changes at each goal, and at the end she claps or goes "oops"
   - The room is a playroom with a plank floor and a rug, a wainscot and wallpaper, windows and framed pictures
-  - See `docs/AirHockey.md` (in Japanese)
+  - See `docs/HoverHockey.md` (in Japanese)
 - **She talks at mahjong**: at the game's start, a riichi, a win, a draw and the game's end she says something in a bubble just right of her head, looking at you (in her own words with an LLM, otherwise a line of her own). Her words for a pon and as she stops to think are asked for ahead, all at once
-- **Those watching comment**: the characters watching mahjong or air hockey now and then cheer or comment in their own bubbles
-- **A word afterwards**: back on the desktop from mahjong or air hockey, she says what she thought of the game (stopped midway too)
+- **Those watching comment**: the characters watching mahjong or hover hockey now and then cheer or comment in their own bubbles
+- **A word afterwards**: back on the desktop from mahjong or hover hockey, she says what she thought of the game (stopped midway too)
 - **Nothing through the table**: hair and skirt fall on the table, and her arms and her lean stop short of it
 
 ### Changed
 
 - The mahjong camera no longer moves with the left button; drag with the right button to turn it (the middle button or Shift and the right button to move it, a right double-click or F1 to put it back)
-- At mahjong and air hockey, her words come out a character at a time, as on the desktop
+- At mahjong and hover hockey, her words come out a character at a time, as on the desktop
 
 ## 1.4.0
 
