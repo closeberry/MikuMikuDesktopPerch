@@ -2,6 +2,16 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.2
+
+### New
+
+- **Stay put**: when enabled in the settings or the right-click menu, she no longer moves of her own accord and stays where you drag her. Gestures and idle motions still play on the spot. If let go off the screen, she runs back
+
+### Fixed
+
+- Taking a character to a monitor with no taskbar, or with a taskbar that hides itself, could be mistaken for a full-screen app running, and all the characters disappeared
+
 ## 1.6.1
 
 ### New
