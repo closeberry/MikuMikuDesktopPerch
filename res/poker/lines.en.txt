@@ -1,0 +1,169 @@
+# The poker lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+# "They" is the owner of this computer, whom she is talking to.
+
+[始まり] The game is beginning (heads-up Texas hold'em)
+Let's play some poker!
+Lose all your chips and you're out.
+I'd better keep this off my face.
+Go ahead, watch my face all you like.
+A battle of bluffs, then. I won't lose.
+All right, let's begin.
+Don't fall for my bluffs, okay?
+My heart's pounding already.
+
+[配る] Two cards each have been dealt (now and then)
+Let's see...
+Hmm, what have we here?
+Heh, I looked.
+What should I do this time?
+Have you checked your cards?
+Get anything good?
+Mm, I see.
+So, how will you play this one?
+
+[考える] It is her turn and she is torn over a big bet (to herself, not a question to them)
+Hmm...
+Are they serious, or is it a bluff...
+Give me a second.
+What should I do...
+This is a tough one.
+Let me see your face...
+Ugh, that's expensive.
+Stay calm, stay calm...
+
+[チェック] She passes without betting (now and then)
+Check.
+I'll wait and see for now.
+I'll pass this time.
+Maybe I won't bet.
+Go ahead, your move.
+Still watching.
+
+[コール] She matches their bet (now and then)
+Call.
+I'll take you on.
+I'm staying with you.
+I can go along with that.
+Let's see what you've got.
+Okay, the same from me.
+I'm not running away.
+
+[レイズ] She bets or raises (now and then)
+I raise.
+How about this?
+I'll bet a little more.
+Can you keep up?
+Let's push it up.
+I'm going in strong here.
+So, what will you do?
+Heh, your move.
+
+[オールイン] She bets all her chips
+All in!
+Everything I've got!
+This decides it!
+Well, can you take it?
+I'm betting it all. I mean it.
+Let's settle this right now.
+
+[降りる] She folds
+Hmm, I fold.
+No way, I'm out.
+You can have this one.
+I'll be patient this time.
+Sigh, I'll pass on this.
+I won't lose the next one.
+It hurts, but I fold.
+
+[相手のレイズ] They raised (now and then)
+Oh, you raised.
+So that's how it is.
+You're feeling bold.
+Do you really have it?
+Wow, you went there.
+That surprised me a little.
+
+[相手のオールイン] They bet all their chips
+What, all of it?!
+All in?! Are you serious?
+You can't be serious!
+You're that confident?
+Oh no, what do I do...
+That took some nerve!
+
+[相手が降りた] They folded and she took the chips
+I'll take these, then.
+You're folding?
+Thank you very much.
+Heh, these are mine now.
+Maybe that was the smart choice.
+Want to know what I had? It's a secret.
+
+[ブラフ成功] They folded to her bet on a weak hand (she does not show it, and grins)
+Hehehe...
+I'm not showing you.
+Glad you folded... just kidding.
+What do you think I had?
+That got my heart racing.
+That's my secret.
+Glad it didn't show on my face.
+
+[勝負に勝った] The hands were shown and she won
+Yes, I win!
+Heh, thanks for the chips.
+Look, mine's better!
+All right, got it!
+This hand's mine.
+Good hand, right?
+
+[勝負に負けた] The hands were shown and she lost
+Ah, I lost!
+Yours is better, huh.
+Ugh, there go my chips.
+That was a good hand.
+That stings.
+I'll win it back next time.
+
+[分けた] The hands were shown, equal, and the chips were split
+They're the same! Half each, then.
+We split it.
+A tie, how rare.
+We both have the same, huh.
+Let's share this one nicely.
+
+[大きく勝った] She won a big pot
+Yay! I took a big one!
+Wow, look at all these chips!
+Sorry, I'm taking all of it!
+This pot belongs to me!
+That was scary, but I won!
+
+[大きく負けた] She lost a big pot
+Oh no, not that!
+All those chips...!
+Ugh, you got me...
+You got me. What a hand that was.
+What a shock... but I'll win it back.
+
+[勝って終わる] The game is over and she won
+I win! Thanks, that was fun!
+Yes! That was a good game.
+I might be pretty good at poker.
+Let's play again sometime.
+I'm the one with the chips today.
+You couldn't read my face, could you?
+
+[負けて終わる] The game is over and they won (she lost)
+I lost. You're good!
+I give up!
+I couldn't read your face at all.
+That stings. I won't lose next time.
+Good game, thank you.
+Sigh, there go all my chips.
+
+[引き分けで終わる] The game is over, the chips even
+A draw! I didn't know that could happen.
+The same chips, how surprising.
+We'll settle this another time.
+That was a good game.

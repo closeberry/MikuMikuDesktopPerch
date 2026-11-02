@@ -1,0 +1,122 @@
+# The gomoku lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The game of gomoku is beginning
+Nice to play you! I won't lose.
+All right, a gomoku match!
+Go easy on me, okay?
+Let's play. I wonder who'll win today.
+Come on, let's start.
+I really like gomoku.
+I'm playing for real today.
+First to five in a row wins.
+Okay, let's do it.
+This is exciting.
+No hard feelings if I win.
+Where should I play? This'll be fun.
+Are you ready?
+
+[危ない] They are one stone from five in a row and she must block (flustered)
+Ah, that's dangerous!
+I have to block that...
+I can't let my guard down.
+Whoa, one more and that's five.
+If I don't block here, I lose.
+Close call, I need to stop that.
+Letting you line up there would be bad.
+Wait, that spot makes five?
+Hold on, I have to stop this.
+One more makes five, what do I do?
+I can't overlook this.
+You're hitting me right where it hurts.
+
+[いい手] She is one stone from five in a row and it is their turn (smiling)
+Heh, just one more.
+Can you stop this?
+This is shaping up nicely!
+Heh, one more and that's five.
+Can you block it?
+They're lining up nicely.
+I think this one will work.
+So, what will you do?
+One more and I win.
+Nice shape, right?
+Heh, go on, try to stop me.
+Can you hold this spot?
+That lined up well.
+
+[考える] It is her turn and she is deciding where to play (to herself)
+Hmm... where should I go?
+Let me think...
+Mmm...
+Where should I play?
+Hmm, this is hard to pick.
+Maybe here, or no, maybe there.
+Where's the strong point?
+That spot bothers me too...
+Just a moment.
+This takes some thought.
+Let me look closely.
+Hmm, what should I do?
+
+[勝ち確定] She can surely make five next and they cannot stop it (smiling, triumphant)
+This ends it.
+Heh, you can't stop me now.
+Hehehe, I think that settles it.
+Block either one, the other still lines up.
+Look, two lines at once.
+This is decided.
+Whichever you block, I win.
+Heh, too bad.
+This win is mine.
+So, where does the fifth one go?
+
+[負け確定] They can surely make five next and she cannot stop it (downcast)
+Oh well, I can't stop that.
+Whoa, I can't block two at once...
+Ah, this is a loss...
+So I can't stop it anymore.
+Ugh, I've lost...
+There's nothing I can do...
+Oh well, you got me.
+So this is as far as I go...
+Whichever I block, I lose.
+It stings, but I have to admit defeat.
+It's no use...
+
+[勝った] She made five in a row and won
+Five in a row! I win!
+Yay, I won!
+Yes, I did it!
+Heh, I win.
+Five lined up, hooray.
+Good game, and I'm glad I won.
+Look at that, I won.
+I'm so happy, I won!
+Good game. The win is mine.
+That was fun to the very end.
+Want to play again?
+
+[負けた] They made five in a row and she lost
+I lost... but I won't next time!
+Ugh, I never thought you'd line up there...
+That stings, I lost.
+Oh well, you got your five.
+Ugh, I'll block it next time.
+You're strong, congratulations.
+I didn't think you'd aim there.
+Grr, I've been beaten.
+Congratulations, that was a good game.
+Next time I'm winning.
+Ah, you got there first.
+It stings, but it was fun.
+
+[引き分け] The board filled up with no five in a row: a draw
+A draw. That was a good game.
+It never got settled.
+Hmm, a draw, huh.
+So close, but it's a draw.
+The board is completely full.
+Neither of us gave an inch.
+If it's a draw, let's play again.
+Phew, no winner this time.

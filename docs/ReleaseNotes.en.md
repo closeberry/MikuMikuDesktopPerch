@@ -65,7 +65,7 @@
 
 ### New
 
-- **A Mini games menu**: with more games, the right-click menu's games are now under "Mini games" (the dungeon, mahjong, hanafuda, Othello, gomoku, blackjack, Old Maid, air hockey)
+- **A Mini games menu**: with more games, the right-click menu's games are now under "Mini games" (the dungeon, mahjong, hanafuda, Reversi, gomoku, blackjack, Old Maid, air hockey)
 - **Gomoku**: "Mini games" → "Play gomoku" to play gomoku against that character (15 by 15, the first to make five in a row wins)
   - Black, who moves first, may not make a double three, a double four or six or more in a row (white may); such a point is refused
   - Click where the lines cross (or the arrow keys and Enter). Who has black is drawn by lot for the first game, then goes back and forth
@@ -97,14 +97,14 @@
 
 ### New
 
-- **Othello**: "Play Othello" in the right-click menu opens a window where you play Othello against that character
+- **Reversi**: "Play Reversi" in the right-click menu opens a window where you play Reversi against that character
   - She comes to the same Japanese-style room as for mahjong and hanafuda, sits at the table and reads ahead (the ending she reads through to the last disc)
   - The squares you can lay on are marked in gold; pointing at one puts a gold dot on the discs that would turn over. Click (or the arrow keys and Enter) to lay your disc; with nowhere to go, you pass by yourself
   - Discs are laid on the board, and those caught turn over one after another outward from the one laid (with the sounds of discs laid and turned). The last disc laid has a red dot
   - Who has black (and moves first) is drawn by lot for the first game, then goes back and forth
   - She talks when you take a corner, at a pass and at the game's end, those watching now and then comment, and she says what she thought back on the desktop. The camera turns as at mahjong
   - Playing a game to its end raises bond by 3 (up to 9 a day)
-  - The design (in Japanese): `docs/Othello.md`
+  - The design (in Japanese): `docs/Reversi.md`
 
 ## 1.5.2
 

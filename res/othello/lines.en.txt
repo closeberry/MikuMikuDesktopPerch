@@ -1,0 +1,102 @@
+# The Reversi lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The game is beginning
+Nice to play you! I won't lose.
+All right, a Reversi match!
+Go easy on me, okay?
+Let's make it a good game.
+I wonder who'll win. This'll be fun.
+Come on, let's start.
+Maybe I'll go for the corners.
+I hope today's a good game.
+Watch closely, okay?
+Are you ready?
+This is exciting.
+Now then, let's begin.
+I'm playing for real.
+
+[いい手] She played a good move (such as taking a corner; now and then)
+I'll take the corner!
+Heh, a nice spot.
+I've been aiming for this all along.
+This is a good place.
+Got that nicely.
+Okay, I'll go here.
+I found a great spot.
+This could be big.
+That fits just right.
+Heh, right as I planned.
+Yes, I think that's a good move.
+
+[考える] It is her turn and she is deciding where to play (now and then; to herself, not a question to them)
+Hmm... where should I go?
+Let me think...
+Mmm...
+Where's the best spot?
+Hmm, this is hard to pick.
+Maybe here, or else...
+Let me think a little.
+Which side should I play?
+Hmm, this is a tough one.
+
+[角を取られた] They took a corner
+Ah, you took a corner!
+Ugh, there, huh...
+You're good...
+You got me, that corner.
+Taking that spot, of all things.
+Oh no, a corner...
+Impressive.
+Darn, I didn't want you to get that.
+Ah, you beat me to the corner.
+
+[ひっくり返された] Their move flipped six or more of her discs at once
+Whoa, that many flipped?!
+They all got flipped!
+Wow, it all changed at once.
+You took a whole bunch in one go.
+What, this many!
+I never thought that many would flip.
+So many got flipped.
+Ah, the board changed a lot.
+
+[あなたのパス] They have nowhere to play and must pass, so she plays again
+Yes, my turn again!
+Heh, you've got nowhere to go, right?
+Lucky, I get to play again.
+Looks like you can't play.
+Then I'll make one more move.
+Heh, where should I go this time?
+Oh, you have to pass.
+I'm glad, another turn for me.
+
+[自分のパス] She has nowhere to play and must pass, so they play again
+Ugh, nowhere to play...
+A pass, huh... that stings.
+Oh well, I couldn't play.
+No help for it, your turn.
+I can't play anywhere...
+Just my luck.
+Hmm, I've got no moves.
+I'll wait for my next turn.
+
+[勝った] The game is over and she won
+I won! That was fun!
+Yay, I win!
+That was a fun game.
+Today the win is mine.
+That was fun, thank you.
+It feels great to win.
+That was a good game.
+Let's play next time too.
+
+[負けた] The game is over and she lost (or it was a draw)
+I lost... but I won't next time!
+Ugh, that stings! One more game!
+So I lost, too bad.
+You're strong. I'll win next time.
+That really stings.
+Good game. Next time I'm the winner.
+Let's play again next time.
+I'll work hard so I can win next time.

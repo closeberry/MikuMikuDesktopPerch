@@ -166,6 +166,25 @@ namespace MikuMikuDesktopPerch
                 else if(!scenes.empty())scenes.back().draft.push_back(line);
             }
         }
+        // The drafts in English, where the game has them (the resource named with EN after it):
+        // the same scenes, each with what it is about and its lines.
+        if(english)
+            if(const HRSRC infoEn=FindResourceW(nullptr,(std::wstring(resource)+L"EN").c_str(),L"LINES"))
+                if(const HGLOBAL dataEn=LoadResource(nullptr,infoEn))
+                {
+                    std::wstringstream lines(Net::Wide(std::string_view(static_cast<const char*>(LockResource(dataEn)),SizeofResource(nullptr,infoEn))));
+                    std::wstring line;
+                    Scene* at=nullptr;
+                    while(std::getline(lines,line))
+                    {
+                        if(!line.empty()&&line.back()==L'\r')line.pop_back();
+                        if(line.empty()||line[0]==L'#')continue;
+                        if(line[0]!=L'['){if(at)at->draftEn.push_back(line);continue;}
+                        const size_t close=line.find(L']');
+                        at=close==std::wstring::npos?nullptr:Named(line.substr(1,close-1));
+                        if(const size_t about=line.find_first_not_of(L" \t",close+1);at&&about!=std::wstring::npos)at->about=line.substr(about);
+                    }
+                }
         LoadStyled();
         if(!ownFile.empty())LoadOwn(game,ownFile);
     }
@@ -270,7 +289,7 @@ namespace MikuMikuDesktopPerch
         if(!scene)return false;
         std::vector<GameLine> pool=scene->own;
         if(pool.empty())
-            for(const auto& l:!scene->styled.empty()?scene->styled:english?scene->styled:scene->draft)pool.push_back({l,{}});
+            for(const auto& l:!scene->styled.empty()?scene->styled:english?scene->draftEn:scene->draft)pool.push_back({l,{}});
         if(pool.empty())return false;
         std::vector<const GameLine*> fresh;
         for(const auto& l:pool)
@@ -294,7 +313,7 @@ namespace MikuMikuDesktopPerch
     std::wstring GameLines::Key() const
     {
         std::wstring all=styleKey+(english?L"\nen":L"\nja");
-        for(const auto& scene:scenes){all+=L"\n["+scene.name+L"]";for(const auto& l:scene.draft)all+=L"\n"+l;}
+        for(const auto& scene:scenes){all+=L"\n["+scene.name+L"]";for(const auto& l:scene.draft)all+=L"\n"+l;for(const auto& l:scene.draftEn)all+=L"\n"+l;}
         unsigned long long hash=1469598103934665603ull;
         for(const wchar_t c:all){hash^=static_cast<unsigned long long>(c);hash*=1099511628211ull;}
         wchar_t hex[20]{};
@@ -351,15 +370,17 @@ namespace MikuMikuDesktopPerch
         if(!want)return {};
         want->asked=true;
         askingFor=static_cast<int>(want-scenes.data());
+        const bool fromEnglish=english&&!want->draftEn.empty();
+        const auto& source=fromEnglish?want->draftEn:want->draft;
         std::wstring numbered;
-        for(size_t i=0;i<want->draft.size();++i)numbered+=std::to_wstring(i+1)+(english?L": ":L"：")+want->draft[i]+L"\n";
-        const std::wstring count=std::to_wstring(want->draft.size());
+        for(size_t i=0;i<source.size();++i)numbered+=std::to_wstring(i+1)+(english?L": ":L"：")+source[i]+L"\n";
+        const std::wstring count=std::to_wstring(source.size());
         if(english)
             return Fmt(L"You are playing {3} with them. The moment: {0}.\n"
-                       L"Say each of these {1} lines (Japanese) in English, the way you yourself talk to them (your way of speaking in every line). "
+                       L"Say each of these {1} lines{5} in English, the way you yourself talk to them (your way of speaking in every line). "
                        L"Keep what each says; add nothing, one sentence each.\n{2}"
                        L"Answer in {1} lines, numbered as these, in the form \"1: the line\". {4}"
-                       L"Write nothing else. No feeling tags, names, anything in ( ) or emoji.",{want->about,count,numbered,asking.gameEn,asking.ruleEn});
+                       L"Write nothing else. No feeling tags, names, anything in ( ) or emoji.",{want->about,count,numbered,asking.gameEn,asking.ruleEn,fromEnglish?L"":L" (Japanese)"});
         return Fmt(L"話し相手と{3}をしています。場面：{0}。台詞はどれも、あなたが話し相手に向かって言うものです。\n"
                    L"次の{1}個の台詞を、それぞれ、あなたがふだん話すときの口調に言い換えてください（一人称、語尾、口ぐせなど、あなたらしい話し方をどの行にも必ず入れる。元のままの行は作らない）。"
                    L"言っていることは変えず、言葉を足したり、2文にしたりしません。\n{2}"
@@ -401,7 +422,7 @@ namespace MikuMikuDesktopPerch
             got.push_back(said);
         }
         // Kept when most came back (a few short is fine; a stray answer is not).
-        if(got.size()*2>=scene.draft.size())
+        if(got.size()*2>=(english&&!scene.draftEn.empty()?scene.draftEn:scene.draft).size())
         {
             scene.styled=std::move(got);
             SaveStyled();

@@ -1,0 +1,122 @@
+# The Hex Front lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The war game is beginning
+Nice to play you. I won't lose.
+All right, operation start!
+Go easy on me, okay?
+I wonder who'll win today.
+My units are strong, you know.
+Okay, let's begin.
+This is exciting.
+Let's take our time.
+Are you ready?
+Where will you attack from, I wonder.
+
+[危ない] They wiped out one of her units, or their infantry is closing on her base (flustered)
+Ah, you got me!
+Ouch, that hurts...
+I can't let my guard down.
+Hold on, I need to defend.
+That was close.
+Stay away from my base!
+What, from over there?
+This could be bad.
+Oops, I missed that.
+You're good.
+
+[いい手] She wiped out one of their units (smiling)
+Heh, destroyed!
+So, what will you do?
+Nice attack, right?
+Surrounding them makes me strong.
+Heh, that one's mine.
+I'm pressing forward.
+This is going well.
+I think I came out ahead there.
+Don't let your guard down.
+Now it really begins.
+
+[作戦] She uses an order (focus fire, artillery support, smoke, resupply or forced march; proudly)
+Order issued!
+I'm using an order here.
+Here it comes, my secret move!
+Heh, how about this?
+Order, go!
+This is the turning point.
+
+[あなたの作戦] They used an order (surprised, or bracing herself)
+Whoa, you used an order!
+So that's your move...
+Oh, that's going to be trouble.
+You're pretty good.
+I won't lose either.
+
+[考える] It is her turn and she is deciding how to move (to herself)
+Hmm... how should I move?
+Let me think...
+Mmm...
+This is a tricky spot.
+Hmm, this is hard to pick.
+Maybe here, or no, over there.
+Which unit should go first?
+The mountains might help...
+Just a moment.
+This takes some thought.
+
+[勝ち確定] She has far more strength left than they do (smiling, triumphant)
+Heh, I can see the win now.
+I think this is decided.
+Hehehe, there's no escape now.
+I think that settles it.
+Heh, too bad.
+Want to play it out?
+My attack went just right.
+This win is mine.
+
+[苦しい] She has far less strength left than they do (downcast)
+Ugh, this is tough...
+This is a little bad...
+I might be losing this...
+Hmm, you're pushing me back.
+I have to hang on somehow.
+I'm not giving up yet.
+You're so strong...
+Where did I go wrong?
+Can I still turn this around...
+It's getting pretty hard.
+
+[勝った] She won (their units wiped out, their base taken, more strength at the last turn, or they surrendered)
+Yay, I won!
+I win!
+Heh, the plan worked.
+Good game, and I'm glad I won.
+I'm so happy, I won!
+Good game. The win is mine.
+That was fun to the very end.
+Want another battle?
+
+[負けた] They won and she lost
+I lost... but I won't next time!
+Ugh, you got me.
+That stings, I lost.
+You're strong, congratulations.
+I didn't expect an attack from there.
+Grr, I've been beaten.
+Congratulations, that was a good game.
+Next time I'm winning.
+
+[投了] She sees no way to win and surrenders (admits defeat with a bow)
+I surrender...
+Ugh... you win.
+This is as far as I go. I surrender.
+I've got no units left. You win.
+It stings, but I surrender.
+I can't win this. You win.
+
+[引き分け] The turns ran out with equal strength left: a draw
+It's a draw.
+Hmm, no winner this time.
+Neither of us gave an inch.
+If it's a draw, let's have another battle.
+Phew, that was a good game.

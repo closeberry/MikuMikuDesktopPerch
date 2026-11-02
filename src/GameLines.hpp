@@ -32,7 +32,7 @@ namespace MikuMikuDesktopPerch
         struct Scene
         {
             std::wstring name,about;
-            std::vector<std::wstring> draft,styled;
+            std::vector<std::wstring> draft,styled,draftEn;   // (draftEn: the draft in English, if the game has one)
             bool asked=false;
             std::vector<GameLine> own;
             double chance=-1;   // from the user's file (-1: the game's own)
@@ -48,7 +48,7 @@ namespace MikuMikuDesktopPerch
                   const std::wstring& stylesFile,const std::wstring& styleKey,bool english,const Asking& asking);
 
         // A line of the scene: the user's own, else in her own words when there are, else the
-        // draft (none in English until they come); not one of the recent few if it can be helped.
+        // draft (in English, the English draft; with none, nothing until they come); not one of the recent few if it can be helped.
         bool Pick(const wchar_t* scene,const std::vector<std::wstring>& recent,std::mt19937& random,GameLine& out) const;
         // Whether to speak in the scene now: the user's chance for it, else the game's.
         bool Roll(const wchar_t* scene,double chance,std::mt19937& random) const;

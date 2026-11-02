@@ -959,8 +959,8 @@ namespace MikuMikuDesktopPerch
             if(state.afterword.empty()&&state.seen.started&&state.table.Now()!=Phase::GameOver)
             {
                 const auto& t=state.table;
-                state.afterword=Fmt(T(L"いま、話し相手とオセロをしていたが、途中でやめてデスクトップに戻ってきたところ（石はあなた{0}枚、話し相手{1}枚だった）。そのことを話し相手にひと言（1〜2文）",
-                                      L"You were playing Othello with them, but they stopped midway and you have come back to the desktop (you had {0} discs, they had {1}). Say a word about it to them (one or two sentences)"),
+                state.afterword=Fmt(T(L"いま、話し相手とリバーシをしていたが、途中でやめてデスクトップに戻ってきたところ（石はあなた{0}枚、話し相手{1}枚だった）。そのことを話し相手にひと言（1〜2文）",
+                                      L"You were playing Reversi with them, but they stopped midway and you have come back to the desktop (you had {0} discs, they had {1}). Say a word about it to them (one or two sentences)"),
                                     {std::to_wstring(t.Count(Othello::Her)),std::to_wstring(t.Count(Othello::You))});
                 state.afterwordLine=T(L"また続き、やろうね。",L"Let's finish it another time.");
             }
@@ -1134,11 +1134,11 @@ namespace MikuMikuDesktopPerch
             {
                 seen.started=true;
                 const bool first=t.Black()==Othello::Her;
-                Happened(6,Fmt(T(L"これから話し相手とオセロの対局が始まる。あなたは{0}で、{1}。",L"A game of Othello with them is about to begin. You have {0} and {1}. "),
+                Happened(6,Fmt(T(L"これから話し相手とリバーシの対局が始まる。あなたは{0}で、{1}。",L"A game of Reversi with them is about to begin. You have {0} and {1}. "),
                                {ColourOf(Othello::Her),first?T(L"先に打つ",L"move first"):T(L"後から打つ",L"move second")}),
                          T(L"わくわくする気持ち",L"how you look forward to it"),
                          L"始まり",
-                         Fmt(T(L"{0}と、このパソコンの持ち主のオセロの対局が始まる。",L"A game of Othello between {0} and the owner of this computer is about to begin."),{name}),
+                         Fmt(T(L"{0}と、このパソコンの持ち主のリバーシの対局が始まる。",L"A game of Reversi between {0} and the owner of this computer is about to begin."),{name}),
                          {T(L"がんばれー！",L"Good luck, you two!"),T(L"どっちが勝つかな？",L"Who's going to win?")});
             }
             if(t.Moves()!=seen.moves)
@@ -1146,36 +1146,36 @@ namespace MikuMikuDesktopPerch
                 seen.moves=t.Moves();
                 const auto& m=t.LastMove();
                 if(m.who==Othello::You&&Corner(m.square))
-                    Happened(4,T(L"オセロで、話し相手に盤のすみ（角）を取られた。",L"At Othello, they took a corner from you."),
+                    Happened(4,T(L"リバーシで、話し相手に盤のすみ（角）を取られた。",L"At Reversi, they took a corner from you."),
                              T(L"しまったという気持ち",L"that you wish you had seen it coming"),
                              L"角を取られた",
-                             Fmt(T(L"オセロで、持ち主が角を取った（{0}との対局）。",L"At Othello, the owner took a corner (against {0})."),{name}),
+                             Fmt(T(L"リバーシで、持ち主が角を取った（{0}との対局）。",L"At Reversi, the owner took a corner (against {0})."),{name}),
                              {T(L"おっ、角だ！",L"Ooh, a corner!"),T(L"いいところ取ったね！",L"Nice spot!")});
                 else if(m.who==Othello::Her&&Corner(m.square))
                     Happened(3,L"",L"",nullptr,
-                             Fmt(T(L"オセロで、{0}が角を取った。",L"At Othello, {0} took a corner."),{name}),
+                             Fmt(T(L"リバーシで、{0}が角を取った。",L"At Reversi, {0} took a corner."),{name}),
                              {Fmt(T(L"{0}、角を取った！",L"{0} got a corner!"),{name}),T(L"これは大きいね。",L"That's a big one.")});
                 else if(m.who==Othello::You&&m.flipped.size()>=6)
-                    Happened(3,Fmt(T(L"オセロで、話し相手の一手で、あなたの石が{0}枚まとめてひっくり返された。",L"At Othello, their move turned over {0} of your discs at once."),{std::to_wstring(m.flipped.size())}),
+                    Happened(3,Fmt(T(L"リバーシで、話し相手の一手で、あなたの石が{0}枚まとめてひっくり返された。",L"At Reversi, their move turned over {0} of your discs at once."),{std::to_wstring(m.flipped.size())}),
                              T(L"驚く気持ち",L"your surprise"),
                              L"ひっくり返された",
-                             Fmt(T(L"オセロで、持ち主が{0}の石を{1}枚まとめてひっくり返した。",L"At Othello, the owner turned over {1} of {0}'s discs at once."),{name,std::to_wstring(m.flipped.size())}),
+                             Fmt(T(L"リバーシで、持ち主が{0}の石を{1}枚まとめてひっくり返した。",L"At Reversi, the owner turned over {1} of {0}'s discs at once."),{name,std::to_wstring(m.flipped.size())}),
                              {T(L"おお、いっぱい返した！",L"Wow, a lot of them!")});
             }
             if(t.Passes()!=seen.passes)
             {
                 seen.passes=t.Passes();
                 if(t.LastPass()==Othello::You)
-                    Happened(4,T(L"オセロで、話し相手は石を置ける場所がなくてパスになり、あなたがもう一度打つ。",L"At Othello, they have nowhere to lay a disc and must pass: you move again."),
+                    Happened(4,T(L"リバーシで、話し相手は石を置ける場所がなくてパスになり、あなたがもう一度打つ。",L"At Reversi, they have nowhere to lay a disc and must pass: you move again."),
                              T(L"うれしい気持ち",L"how pleased you are"),
                              L"あなたのパス",
-                             Fmt(T(L"オセロで、持ち主が置ける場所がなくてパスした（{0}との対局）。",L"At Othello, the owner had to pass (against {0})."),{name}),
+                             Fmt(T(L"リバーシで、持ち主が置ける場所がなくてパスした（{0}との対局）。",L"At Reversi, the owner had to pass (against {0})."),{name}),
                              {T(L"パスだ！",L"A pass!")});
                 else if(t.LastPass()==Othello::Her)
-                    Happened(4,T(L"オセロで、あなたは石を置ける場所がなくてパスになり、話し相手がもう一度打つ。",L"At Othello, you have nowhere to lay a disc and must pass: they move again."),
+                    Happened(4,T(L"リバーシで、あなたは石を置ける場所がなくてパスになり、話し相手がもう一度打つ。",L"At Reversi, you have nowhere to lay a disc and must pass: they move again."),
                              T(L"困った気持ち",L"how stuck you feel"),
                              L"自分のパス",
-                             Fmt(T(L"オセロで、{0}が置ける場所がなくてパスした。",L"At Othello, {0} had to pass."),{name}),
+                             Fmt(T(L"リバーシで、{0}が置ける場所がなくてパスした。",L"At Reversi, {0} had to pass."),{name}),
                              {Fmt(T(L"{0}、パスだって！",L"{0} has to pass!"),{name})});
             }
             const bool over=t.Now()==Phase::GameOver;
@@ -1184,19 +1184,19 @@ namespace MikuMikuDesktopPerch
                 const int you=t.Count(Othello::You),her=t.Count(Othello::Her);
                 const bool won=her>you,tie=her==you;
                 const std::wstring count=Fmt(T(L"あなた{0}枚、話し相手{1}枚",L"you have {0} discs, they have {1}"),{std::to_wstring(her),std::to_wstring(you)});
-                state.afterword=Fmt(T(L"いま、話し相手とオセロを最後まで打って、デスクトップに戻ってきたところ。結果は{0}（{1}）。その対局の感想を、話し相手にひと言（1〜2文）",
-                                      L"You have just played a game of Othello to its end with them and come back to the desktop. {0} ({1}). Tell them what you thought of the game (one or two sentences)"),
+                state.afterword=Fmt(T(L"いま、話し相手とリバーシを最後まで打って、デスクトップに戻ってきたところ。結果は{0}（{1}）。その対局の感想を、話し相手にひと言（1〜2文）",
+                                      L"You have just played a game of Reversi to its end with them and come back to the desktop. {0} ({1}). Tell them what you thought of the game (one or two sentences)"),
                                     {won?T(L"あなたの勝ち",L"You won"):tie?T(L"引き分け",L"A tie"):T(L"あなたの負け",L"You lost"),count});
-                state.afterwordLine=won?T(L"オセロ、楽しかったね！またやろう。",L"That was fun! Let's play again sometime."):T(L"くやしいなあ…次は勝つからね！",L"So close... I'll win next time!");
-                if(won)Happened(9,T(L"オセロの対局が終わって、あなたの勝ち（",L"The game of Othello is over, and you won (")+count+T(L"）。",L")."),
+                state.afterwordLine=won?T(L"リバーシ、楽しかったね！またやろう。",L"That was fun! Let's play again sometime."):T(L"くやしいなあ…次は勝つからね！",L"So close... I'll win next time!");
+                if(won)Happened(9,T(L"リバーシの対局が終わって、あなたの勝ち（",L"The game of Reversi is over, and you won (")+count+T(L"）。",L")."),
                                 T(L"勝ってうれしい気持ち",L"how glad you are to have won"),
                                 L"勝った",
-                                Fmt(T(L"{0}と持ち主のオセロの対局が終わり、{0}が勝った。",L"The Othello game between {0} and the owner is over: {0} won."),{name}),
+                                Fmt(T(L"{0}と持ち主のリバーシの対局が終わり、{0}が勝った。",L"The Reversi game between {0} and the owner is over: {0} won."),{name}),
                                 {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),Fmt(T(L"{0}の勝ちだ！",L"{0} wins!"),{name})});
-                else Happened(9,(tie?T(L"オセロの対局が終わって、引き分け（",L"The game of Othello is over: a tie ("):T(L"オセロの対局が終わって、あなたの負け（",L"The game of Othello is over, and you lost ("))+count+T(L"）。",L")."),
+                else Happened(9,(tie?T(L"リバーシの対局が終わって、引き分け（",L"The game of Reversi is over: a tie ("):T(L"リバーシの対局が終わって、あなたの負け（",L"The game of Reversi is over, and you lost ("))+count+T(L"）。",L")."),
                               tie?T(L"引き分けの気持ち",L"how you feel about a tie"):T(L"負けて悔しい気持ち",L"how sorry you are to have lost"),
                               L"負けた",
-                              Fmt(T(L"{0}と持ち主のオセロの対局が終わった。",L"The Othello game between {0} and the owner is over."),{name}),
+                              Fmt(T(L"{0}と持ち主のリバーシの対局が終わった。",L"The Reversi game between {0} and the owner is over."),{name}),
                               {T(L"おつかれさま！いい勝負だったね。",L"Well played, both of you!"),T(L"おめでとう！",L"Congratulations!")});
             }
             seen.over=over;
@@ -1358,7 +1358,7 @@ namespace MikuMikuDesktopPerch
             {
                 const RectF info(W-254*s,12*s,240*s,64*s);
                 FillRound(g,info,10*s,Color(hud?215:200,40,18,16),edge,1.2f*s);
-                Text(g,T(L"オセロ",L"Othello"),RectF(info.X+12*s,info.Y+6*s,220*s,26*s),18*s,white,true);
+                Text(g,T(L"リバーシ",L"Reversi"),RectF(info.X+12*s,info.Y+6*s,220*s,26*s),18*s,white,true);
                 Text(g,Fmt(T(L"あき {0}マス",L"{0} squares empty"),{std::to_wstring(t.Empties())}),RectF(info.X+12*s,info.Y+34*s,220*s,24*s),15*s,soft);
             }
 
@@ -1447,7 +1447,7 @@ namespace MikuMikuDesktopPerch
                 g.FillRectangle(&shade,0.0f,0.0f,W,H);
                 const RectF box(mid-220*s,ch/2.0f-70*s,440*s,140*s);
                 FillRound(g,box,14*s,Color(250,40,22,22),Color(255,200,170,90),2*s);
-                Text(g,T(L"オセロをやめますか？",L"Stop playing?"),RectF(box.X,box.Y+22*s,box.Width,36*s),24*s,white,true,StringAlignmentCenter);
+                Text(g,T(L"リバーシをやめますか？",L"Stop playing?"),RectF(box.X,box.Y+22*s,box.Width,36*s),24*s,white,true,StringAlignmentCenter);
                 const float gap=20*s,width=(box.Width-3*gap)/2;
                 const std::wstring labels[2]={T(L"やめる（Y）",L"Stop (Y)"),T(L"続ける（N）",L"Keep playing (N)")};
                 for(int i=0;i<2;++i)
@@ -2124,7 +2124,7 @@ namespace MikuMikuDesktopPerch
         state.nextBlack=-1;
         state.quadsSet=false;
         state.lines.Load(L"OTHELLOLINES",L"othello",her.ownLinesFile,her.linesFile,her.styleKey,English(),
-                         {L"オセロ",L"Othello",L"",L""});
+                         {L"リバーシ",L"Reversi",L"",L""});
         state.voice.Stop();
         state.prefetching=false;
         state.words={};
@@ -2138,7 +2138,7 @@ namespace MikuMikuDesktopPerch
         const int dpi=static_cast<int>(GetDpiForSystem());
         const int w=std::min(static_cast<int>(work.right-work.left)*9/10,MulDiv(static_cast<int>(BaseWidth)+16,dpi,96));
         const int h=std::min(static_cast<int>(work.bottom-work.top)*9/10,MulDiv(static_cast<int>(BaseHeight)+39,dpi,96));
-        const std::wstring title=std::wstring(T(L"オセロ",L"Othello"))+L" - "+HerName();
+        const std::wstring title=std::wstring(T(L"リバーシ",L"Reversi"))+L" - "+HerName();
         state.window=CreateWindowExW(0,ClassName,title.c_str(),WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,
                                      work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,
                                      nullptr,nullptr,instance,nullptr);

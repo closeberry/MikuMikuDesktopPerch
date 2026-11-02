@@ -81,10 +81,17 @@ CARDS BLACKJACKCARDS "blackjack\\cards.jpg"
 // The mini games' lines, plain (said again in each character's own words by the LLM; see
 // docs/GameLines.md).
 OLDMAIDLINES LINES "oldmaid\\lines.txt"
+OLDMAIDLINESEN LINES "oldmaid\\lines.en.txt"
+POKERLINES LINES "poker\\lines.txt"
+POKERLINESEN LINES "poker\\lines.en.txt"
 OTHELLOLINES LINES "othello\\lines.txt"
+OTHELLOLINESEN LINES "othello\\lines.en.txt"
 GOMOKULINES LINES "gomoku\\lines.txt"
+GOMOKULINESEN LINES "gomoku\\lines.en.txt"
 SHOGILINES LINES "shogi\\lines.txt"
+SHOGILINESEN LINES "shogi\\lines.en.txt"
 HEXWARLINES LINES "hexwar\\lines.txt"
+HEXWARLINESEN LINES "hexwar\\lines.en.txt"
 // The hex war game's pictures (docs/HexWar.md): the maps, the units, a base, the battle's views.
 MAP1 HEXWARART "hexwar\\map1.jpg"
 TANK HEXWARART "hexwar\\tank.png"
@@ -133,9 +140,13 @@ BACKDROP6 HEXWARART "hexwar\\backdrop6.jpg"
 BACKDROP7 HEXWARART "hexwar\\backdrop7.jpg"
 BACKDROP8 HEXWARART "hexwar\\backdrop8.jpg"
 BLACKJACKLINES LINES "blackjack\\lines.txt"
+BLACKJACKLINESEN LINES "blackjack\\lines.en.txt"
 MAHJONGLINES LINES "mahjong\\lines.txt"
+MAHJONGLINESEN LINES "mahjong\\lines.en.txt"
 HANAFUDALINES LINES "hanafuda\\lines.txt"
+HANAFUDALINESEN LINES "hanafuda\\lines.en.txt"
 AIRHOCKEYLINES LINES "airhockey\\lines.txt"
+AIRHOCKEYLINESEN LINES "airhockey\\lines.en.txt"
 
 // The mahjong table's tile sounds (src/MahjongSound.cpp): 44.1 kHz, mono, 16-bit WAV files.
 // A tile set down (three of them, taken by turns), softly (hers, appearing in her river) and

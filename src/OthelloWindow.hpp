@@ -9,7 +9,7 @@ namespace MikuMikuDesktopPerch
 {
     class MascotModel;
 
-    // The Othello mini game's window (docs/Othello.md): you against her, she sitting across the
+    // The Othello mini game's window (docs/Reversi.md): you against her, she sitting across the
     // table in 3D (the mahjong room's), the board between you. Click a square (or the arrow keys
     // and Enter) to lay your disc; the squares you can lay on are marked. Esc gives up. One at
     // a time.

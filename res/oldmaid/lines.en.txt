@@ -1,0 +1,267 @@
+# The Old Maid lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The game is beginning
+Let's play Old Maid.
+All right, let's have a match.
+I won't lose.
+I wonder who'll win today.
+I won't go easy on you.
+Careful not to draw the joker.
+I'm looking forward to this. Let's start.
+The cards are all dealt.
+So, how will the first card go?
+I really want to win this time.
+I wonder which of us will be left holding it.
+Are you ready?
+Then here I go.
+Let's take it easy.
+My heart's racing.
+Nice to play with you.
+
+[揃えて捨てる] After the deal, as she throws out her pairs
+First I'll throw out my pairs.
+I got rid of quite a few.
+Not many pairs here.
+That's a little tidier.
+That cut it down nicely.
+Did you throw out a lot?
+I had lots of pairs.
+More left than I thought.
+
+[あなたの番] At the start of their draw (she does not hold the joker)
+Here you go.
+Draw whichever you like.
+Any one is fine.
+It's your turn.
+Take your time choosing.
+Go on, take a card.
+Which one will it be?
+Think it over.
+You can draw now.
+Here, pick one.
+
+[揺さぶる] At the start of their draw (she holds the joker)
+So, which one will it be?
+Think carefully before you choose.
+I wonder which one's the good one.
+Heh, which do you think?
+Careful now.
+Hmm, which will you draw?
+Having trouble deciding?
+Now, let's test your luck.
+No hard feelings, whichever you pick.
+You won't learn anything from my face.
+Why not go with your gut?
+So, what will you do?
+This is thrilling.
+You can pick any time.
+I can't wait.
+I hope you draw a good one.
+
+[誘う] She wants them to draw the card they point at (smiling, urging)
+That one looks good to me.
+Go on, take that one.
+Yeah, isn't that the one?
+I recommend that one.
+I'd take it without a second thought.
+Come on, go with that.
+That's bound to be a good card.
+You should draw that one.
+You've got a good eye.
+Why not that one?
+That one seems just right.
+Heh, are you sure about that?
+Yes, that's the one.
+You can take that one.
+Then it's settled.
+Yeah, I think that's good.
+
+[焦る] She does not want them to draw the card they point at (a little flustered)
+What, you want that one?
+W-wait a second.
+Maybe leave that one alone?
+Hmm, I'm not so sure about that.
+Ah, that one's...
+Won't you pick another?
+It doesn't have to be that one, does it?
+Why not look at the others?
+I don't really recommend that one.
+Huh, that one?
+Think again for a moment.
+Well, I guess that's fine too...
+There's no need to rush.
+Th-that one's a little...
+I think another would be better.
+Are you really sure about that one?
+
+[余裕] They are pointing at a card (she does not hold the joker)
+Any one is fine.
+Take whichever you like.
+You're fine with any of them.
+Choose at your own pace.
+I'm not worried, go ahead.
+That one's fine too.
+No need to hesitate.
+They're all about the same.
+I'm feeling relaxed right now.
+Pick without worrying.
+
+[取られた] They drew from her hand and made a pair
+Ah, you made a pair.
+Another pair for you.
+You're doing well.
+You're good at this.
+It's going smoothly for you.
+Hmm, not bad.
+Your cards keep going down.
+You're leaving me behind.
+You draw all the right ones.
+That's annoying.
+You're lucky.
+And I wanted that card.
+Another pair, huh.
+I'm getting a little nervous.
+
+[引かれた] The card they drew made no pair (not the joker)
+Too bad, no pair.
+That one was a miss.
+It's not that easy.
+Heh, how about next time?
+There's still a long way to go.
+
+[迷う] Before she draws from their hand (hesitating, to herself)
+Which one should I take?
+Hmm, this is hard.
+Maybe this... no, that one.
+Which is best, I wonder.
+What a tough choice.
+Maybe I'll go with this one.
+They all look suspicious.
+Is it written on their face?
+Maybe I'll go with my gut.
+I'm curious about that hand.
+Okay, decided.
+This one, probably.
+This one looks better.
+Just a moment.
+Now, what should I do?
+Which one's the good one?
+
+[そろった] She drew and made a pair
+Yes, a pair!
+That makes a pair.
+Looking good.
+All right, one pair gone.
+Heh, it matched.
+Going smoothly.
+That's a few less.
+Just as I planned.
+Lucky.
+I'm so glad.
+Another pair.
+Thanks for the good card.
+That one's big.
+My hand's getting smaller.
+
+[外れた] The card she drew made no pair (not the joker)
+Huh, no pair.
+Hmm, a miss.
+It doesn't always work out.
+Well, these things happen.
+Next time for sure.
+Too bad.
+So close.
+I'll hang on to this one.
+
+[ジョーカーを引かせた] They drew the joker from her
+You drew it.
+Heh, so that went over to you.
+Yes, thank you.
+What a relief.
+You drew a fine card.
+Now it's your turn to worry.
+Take good care of it.
+Hehehe, too bad.
+Didn't you notice?
+I feel so much better.
+That's a nice thing you've got.
+You don't need to give it back.
+
+[ジョーカーを引いた] She drew the joker from them
+Yikes, I drew it.
+Huh, this is...
+You got me.
+Oh no.
+Of all the cards, this one.
+That stings. I'll pass it back soon.
+I let my guard down.
+That's so mean.
+This is bad.
+Ugh, why did I pick this one?
+I'm definitely giving this back.
+Did it show on my face?
+
+[混ぜる] She shuffles her hand
+I'll mix these up a bit.
+Let me mix them well.
+Shuffle, shuffle.
+Now you can't tell.
+There, all mixed.
+I'll change the order.
+
+[残りわずか] One of them is down to two or three cards
+It's almost time.
+Just a little more.
+My heart's starting to race.
+It'll be settled soon.
+This is where it counts.
+Anything could still happen.
+I'm getting nervous.
+I wonder who'll win.
+Just one more step.
+I really don't want to draw it now.
+
+[最後の1枚] She draws their last card (so she has lost; downcast)
+Oh well, I lost.
+What, it's over already?
+Ugh, so I lose.
+Oh well, you're out.
+What, you're out already?
+So my loss is certain...
+That stings, I lost.
+I was left until the end.
+
+[勝ち確定] She has one card left and they are to draw it (she wins once it is drawn; smiling, triumphant)
+This ends it.
+Hehehe.
+Heh, and that makes me out.
+Now, take my last card.
+I think that settles it.
+Hehehe, go ahead and draw.
+Draw this and it's all over.
+Too bad, heh.
+
+[勝った] She won
+Yes, I won!
+I'm out!
+Heh, I won.
+That was a good game.
+This time the win is mine.
+I'm so happy.
+That was fun.
+Want to play again?
+I was on edge until the very end.
+So the joker stayed with you.
+
+[負けた] She lost
+I lost.
+That stings.
+So I held it to the end.
+I'll win next time.
+Let's play again.
+You're so strong.
+You got away nicely.
+This is what I'm left with.
+That was a good game.
+Congratulations.

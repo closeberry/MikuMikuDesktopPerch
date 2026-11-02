@@ -1,0 +1,145 @@
+# The hanafuda lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The game is beginning
+Nice to play you! I won't lose.
+All right, a game of koi-koi!
+Go easy on me, okay?
+Let's play hanafuda.
+I wonder who'll win today.
+Come on, let's play.
+I'm looking forward to this. Let's start.
+The cards are all dealt.
+Are you ready?
+Then here I go.
+I wonder who'll score first.
+Let's take it easy.
+I really want to win this time.
+My heart's racing.
+
+[最後の月] The twelfth and last month (December) is beginning
+At last, the final month.
+The last month. How will it go?
+It's the last one, I won't slack off!
+This is where it all gets decided.
+The last month, how exciting.
+I'll settle it here.
+Only this month is left.
+Let's do our best to the end.
+No telling who wins until the very end.
+Since it's the last, I'm going for it.
+
+[こいこいされた] They called koi-koi and play goes on (they made a set but did not stop)
+Koi-koi?! You're feeling bold...
+All right, I'll stop you!
+Koi-koi, huh. How exciting.
+So that's how you're playing it.
+I accept the challenge!
+That's pretty bold of you.
+So you mean to keep going.
+Heh, fine, come at me.
+You're really pushing.
+If it's koi-koi, I won't lose either.
+This is getting close.
+Then I'll stop you next.
+
+[月に勝った] She won this month
+Yes, I'm out!
+Hehe, I'll take that!
+All right, that's game!
+That worked out!
+Yay, this month is mine.
+Heh, I'm calling it.
+I've got a set!
+I win this one.
+Thank goodness, I made it!
+I took this month.
+It went just as I thought.
+That's a nice set I made.
+What a relief to score that.
+
+[月に負けた] They won this month and she lost
+Oh no, you got me!
+Ugh, you're strong...
+You were going for that set?!
+Hmm, you got me.
+Oh, you went out first.
+It stings, but that's a nice set.
+I'll win it back next month!
+Nicely done, this month is yours.
+Grr, you scored first.
+Impressive, you got me.
+I'm a little annoyed.
+Your finish was beautiful.
+
+[月が流れた] This month ended with neither scoring
+It came to nothing.
+A draw, huh.
+Nobody scored.
+No score this month.
+So close, for both of us.
+Let's hope for next month.
+It washed out, too bad.
+No sets for either of us.
+I'm relieved and disappointed at once.
+Let's score next time.
+
+[勝負に勝った] The twelve months are over and she won
+I won! That was fun, let's play again!
+Yay, I win!
+That was a good game, and I win!
+Let's play together again.
+I'm so happy I won!
+That was fun, thank you.
+The game goes to me.
+Today I'm the winner!
+Good game, that was a close one.
+It feels great to win.
+
+[勝負に負けた] The twelve months are over and they won
+I lost... but I won't next time!
+Ugh, that stings! One more game!
+Ah, I lost.
+Next time I'm winning!
+You really got me.
+You were strong, congratulations.
+It stings, but it was fun.
+Today you're the winner.
+Be ready for the next game.
+I lost, but it was a good game.
+
+[勝負が引き分け] The twelve months are over: a draw
+A draw. That was a good game.
+Tied, huh. Let's settle it next time.
+We both played well.
+We were almost exactly the same.
+A draw, and it was fun.
+Next time let's get a winner.
+Good game, well played.
+The same score, how surprising.
+
+[考える] It is her turn and she is deciding which card to play (now and then, to herself)
+Hmm... which one should I play?
+Let me think...
+Mmm...
+Which card should I play?
+Hmm, this is hard.
+Maybe this one... no, that one.
+Which is best, I wonder.
+Okay, decided.
+Now, what should I do?
+Which of these two should I play?
+Just a moment.
+Maybe I'll go with this one.
+
+[取る] She took a bright card from the table (now and then)
+I'll take this!
+A good card!
+Heh, a bright card for me.
+Yes, a nice one!
+I'm taking this one.
+Just the one I wanted.
+Thank you very much.
+Heh, this card is mine now.
+That's a tasty card.
+Nice card, I'll have it.

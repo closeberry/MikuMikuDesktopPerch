@@ -1,0 +1,106 @@
+# The mahjong lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The game is beginning
+Nice to play you! I won't lose.
+All right, I'll do my best!
+Go easy on me, okay?
+I wonder how today's game will go.
+Let's make it a good game.
+Come on, let's start.
+I won't hold back.
+I'm nervous, but nice to play you.
+My tiles are here, let's go.
+Let's enjoy this one too.
+No hard feelings if you lose.
+Thanks for playing with me.
+
+[オーラス] The last hand of the game is beginning
+The last hand. I won't slack off!
+The last hand at last... how exciting!
+It's the final hand, how will it go?
+This could decide everything.
+The next hand settles the game.
+I'm going all out to the end.
+Anything can happen in the last hand.
+This is where it really counts.
+
+[リーチされた] They declared riichi
+What, riichi?! I have to be careful...
+Ugh, riichi, huh.
+Riichi... what are you waiting on?
+Riichi, so that's how it is.
+You're feeling bold. That's a little scary.
+You called riichi on me, what now?
+I have to play this carefully.
+Eek, riichi.
+
+[和了った] She won the hand
+Yes, I win the hand!
+Hehe, I'll take that!
+All right, that's it!
+Yay, I got a good hand.
+Heh, I managed to win.
+Okay, I'll take those points.
+That worked out!
+Thank you very much.
+
+[和了られた] They won the hand (off her discard, or by their own draw)
+Oh no, you got me!
+Ugh, you're strong...
+You were waiting on that?!
+You got me, that stings.
+I didn't think you'd win there.
+Nicely played, I'm beaten.
+Ah, so that was it.
+I'll get it back next hand.
+
+[流局] The wall ran out with no winner
+No winner, huh.
+It's a draw.
+The hand's a draw.
+Nobody won.
+The wall's all gone.
+Let's both hope for next time.
+It carries over this time.
+Neither of us could win it.
+
+[勝った] The game is over and she won
+I won! That was fun, let's play again!
+Yay, I win!
+I'm so happy I won, thank you.
+That was a good game, let's play again.
+Yes, the win is mine!
+Heh, I'll take the win this time.
+That was a fun game, thank you.
+A game's a game, so sorry about that.
+
+[負けた] The game is over and she lost
+I lost... but I won't next time!
+Ugh, that stings! One more game!
+Congratulations, you were strong.
+I lost, but it was fun.
+Ah, I lost... what a shame.
+Next time I'm winning!
+It stings, but let's play again.
+I'm completely beaten. Teach me sometime.
+
+[ポン] She calls pon or kan and takes a tile (now and then)
+I'll take that!
+Thank you, I'll have it.
+That came out at a good spot!
+Just the one I wanted.
+That one's mine!
+That helps, I'll take it.
+Oh, that's a nice tile.
+Ah, I'll have that one.
+
+[考える] She is deciding which tile to discard
+Hmm... which one should it be?
+Let me think...
+Mmm...
+Which tile should I discard?
+Hmm, this is hard to pick.
+I'll play this carefully.
+Umm, what should I do...
+Is this one okay? Hmm.

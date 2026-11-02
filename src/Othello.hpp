@@ -6,7 +6,7 @@
 
 namespace MikuMikuDesktopPerch::Othello
 {
-    // The rules of the Othello mini game (docs/Othello.md): you against her on an 8 by 8 board.
+    // The rules of the Othello mini game (docs/Reversi.md): you against her on an 8 by 8 board.
     // Squares are numbered row by row, 8 * row + column; row 0 is her side of the board, row 7
     // yours, column 0 on your left.
     constexpr int You=0,Her=1;

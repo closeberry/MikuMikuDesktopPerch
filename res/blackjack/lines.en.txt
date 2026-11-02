@@ -1,0 +1,159 @@
+# The blackjack lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+# "The dealer" is this character; "they" are the owner of this computer.
+
+[始まり] The game is beginning (ten hands)
+Welcome, I'm your dealer!
+All right, time to deal!
+Go easy on me, okay?
+Ten hands today.
+Come on, let's play blackjack.
+Let's have fun and make it a good game.
+Closest to 21 wins.
+I'll deal strictly by the rules.
+Ready? Then let's start.
+My heart's pounding. Here we go.
+
+[配る] Their first two cards have been dealt (now and then)
+Here you go.
+So, what will you do?
+Did you get a good card?
+I wonder what comes next.
+They're dealt, take a look.
+Look carefully before you decide.
+That's your two cards.
+How about this time?
+Take your time.
+All right, your turn.
+
+[引く] The dealer draws another card (now and then)
+One more...!
+What's next, I wonder.
+Here goes.
+Hmm, one more for me.
+I draw until I reach 17.
+Not enough yet, so I draw.
+Please let it be a good card.
+Okay, once more.
+I'll take one more.
+How will the next card be?
+
+[相手のブラックジャック] They were dealt 21 in two cards (a blackjack)
+Whoa, blackjack!
+You got me, 21 right away!
+Amazing, 21 from the start!
+21 in two cards? I'm surprised.
+Oh, there's a blackjack.
+Lucky you, 21 in your first two.
+That's a strong one, a blackjack.
+Dealt straight into 21, wow.
+Nice, settled in your first two cards.
+Oh my, it's a blackjack.
+
+[ディーラーのブラックジャック] The dealer has 21 in two cards (a blackjack)
+Heh, blackjack!
+Sorry, that's 21.
+Oh, I got 21 right away.
+Heh, 21 in my first two.
+This one's my blackjack.
+Oops, it turned out to be a blackjack.
+21 from the start, I'm in luck.
+It's 21, so I'll take this one.
+21 in two, so I win.
+Sorry, blackjack settles it.
+
+[相手のバースト] They went over 21 and lost
+Oh dear, that's a bust.
+You drew too many.
+Ah, you went over 21.
+Looks like you drew a bit too far.
+Too bad, you're bust.
+Over 21, so I win.
+Hmm, that was one draw too many.
+So close, but you went bust.
+A shame, but that's over 21.
+Careful not to overdraw next time.
+
+[ディーラーのバースト] The dealer went over 21 and they won
+Oh, I went bust!
+Ugh, I drew too far...
+Oh dear, that's over 21.
+Oops, one card too many.
+Oh no, a bust.
+This time I'm the one over 21.
+Sorry, this hand goes to you.
+Oh well, I blew it.
+I only drew to 17, and I still went over.
+It stings, but I'm bust.
+
+[相手の勝ち] They won a hand (she lost)
+Hmm, not bad.
+I lost, but I'll get it back!
+Ugh, you took this one.
+You got me, this hand is yours.
+I won't lose the next one.
+Ah, I lost this one.
+That was well played.
+It stings, but this one's yours.
+I'll try harder next hand.
+Impressive, you took this one.
+
+[ディーラーの勝ち] The dealer won a hand
+Heh, I'll take that.
+This hand is mine!
+Yes, this one's mine.
+Heh, I win.
+Thank you, I'll take these.
+This time luck favored me.
+All right, I won this hand.
+Heh, I'll take your chips.
+That went nicely.
+That's the hand, and I win it.
+
+[負けて終わる] The ten hands are over and they came out ahead (she lost)
+I lost... but I won't next time!
+Ugh, you took too many of my chips.
+This time, you win.
+Ten hands done, and I lost.
+I'll get stronger and win next time.
+You really beat me at blackjack.
+Congratulations, you win.
+It stings, but your chips went up.
+That was a good game to the end.
+Next time I'm the one winning.
+
+[勝って終わる] The ten hands are over and the dealer won (or they came out even)
+Heh, the dealer wins! That was fun.
+Yay, I win!
+Those ten hands were fun.
+Heh, I'll keep the chips.
+That was a good game, thank you.
+I win this time. Let's play again.
+Good game, and I win.
+Heh, that went well for me.
+We had fun right to the end.
+Even if it's a tie, it was fun.
+
+[勝ち確定] Before her hidden card is turned, this hand is sure to go to the dealer (a grin)
+Heh, this hand is mine.
+I've got this one.
+It's as good as won.
+Heh, I don't need to see my hidden card.
+If this holds, I win.
+See, it's already settled.
+Heh, your hand can't beat this.
+Got it, this one's mine.
+I know I've won without even looking.
+This win is locked in, hehe.
+
+[負け確定] Before her hidden card is turned, this hand is sure to go against the dealer (downcast)
+Ah, I'm going to lose this...
+Ugh, I can't win anymore.
+Looks like this hand is already lost.
+I lose...
+There's nothing I can do with this.
+Oh well, you're taking this one.
+Sadly, this hand is a loss.
+Even if I draw, I can't win now.
+No turning this around. Too bad.
+Hmm, this hand goes to you.
