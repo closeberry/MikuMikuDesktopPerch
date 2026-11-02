@@ -3,7 +3,7 @@
 // colour's alpha picks the pattern. 1: plain, 0.75: floor stones (one a tile of 10 units),
 // 0.5: wall bricks, 0.25: glowing (unlit), 0: a thing's own surface (patterned from where on
 // the thing, so it moves with it): by the steps of 0.02 above it, a monster's skin with grime,
-// wood, metal (with a shine) or stone. The floors and walls also carry the look of the
+// wood, metal (with a shine) or stone; look 6: the Western parlour's surfaces (Parlour, Gilt, CutGlass). The floors and walls also carry the look of the
 // stretch of floors they belong to (Theme, added to the alpha in steps of 0.02): 0 old bricks,
 // 1 mossy stone ruins, 2 an ice cave, 3 a lava cave, 4 an amethyst abyss. Lit half by the
 // scene's light, half ambient, and by a torch around the hero (TorchXZ, TorchRadius) that fades
@@ -314,6 +314,152 @@ float Seigaiha(float2 p)
     return ring;
 }
 
+// The Western parlour's surfaces (WesternRoom.cpp; the kind in minus uv's z): at (q.x, q.y).
+float3 Damask(float3 rgb, float3 q)
+{
+    // Damask: a half-drop repeat of flowers in ogee frames, tone on tone.
+    float2 c = q.xy * float2(3.4, 2.5);
+    c.x += 0.5 * floor(c.y);
+    float2 p = frac(c) - 0.5;
+    p.x = abs(p.x);
+    const float r = length(p * float2(1.5, 1.0));
+    const float a = atan2(p.x, p.y);
+    const float petals = 0.5 + 0.5 * cos(a * 5);
+    const float flower = smoothstep(0.27, 0.25, r * (0.75 + 0.5 * petals)) * smoothstep(0.07, 0.09, r);
+    const float frame = 1 - smoothstep(0.0, 0.035, abs(p.x + 0.72 * abs(p.y) * abs(p.y) * 2 - 0.46));
+    const float aa = saturate(0.5 / (0.001 + 40 * fwidth(q.y)));
+    return rgb * (0.88 + aa * (0.22 * flower + 0.18 * frame)) * (0.96 + 0.08 * Noise(q.xy * 24));
+}
+
+float3 ParquetFloor(float3 rgb, float3 q)
+{
+    // Parquet: chevrons of oak strips, each strip its own shade with a grain along it.
+    const float2 c = q.xy * 2.4;
+    const float col = floor(c.x);
+    const float x = frac(c.x) - 0.5;
+    const float way = fmod(abs(col), 2) < 0.5 ? 1.0 : -1.0;
+    const float y = (c.y + way * x * 0.9) * 5;
+    const float strip = floor(y);
+    const float across = frac(y);
+    const float seam = smoothstep(0.0, 0.06, min(across, 1 - across)) * smoothstep(0.0, 0.025, 0.5 - abs(x));
+    const float shade = 0.80 + 0.36 * Hash(float2(col, strip));
+    const float grain_ = 0.88 + 0.24 * Noise(float2((c.x - way * c.y) * 2.0 + strip * 3.1, y * 8.0));
+    return rgb * shade * grain_ * lerp(0.42, 1, seam);
+}
+
+float3 RugPattern(float3 rgb, float3 q)
+{
+    // A rug: a dark red field and a medallion inside a navy border with pale lines.
+    const float2 p = q.xy;
+    const float edge = max(abs(p.x), abs(p.y));
+    const float3 red = float3(0.34, 0.055, 0.06), navy = float3(0.055, 0.075, 0.17), gold = float3(0.56, 0.42, 0.20);
+    float3 c = red;
+    const float small_ = 0.5 + 0.5 * cos(p.x * 46) * cos(p.y * 46);
+    c = lerp(c, c * 1.35 + gold * 0.05, 0.6 * small_);
+    const float r = length(p * float2(1.15, 1.0));
+    const float a = atan2(p.y, p.x);
+    const float rim = 0.40 + 0.045 * cos(a * 16);
+    c = lerp(c, navy, smoothstep(rim + 0.008, rim, r));
+    c = lerp(c, gold, 1 - smoothstep(0.0, 0.012, abs(r - rim)));
+    c = lerp(c, red * 1.3, smoothstep(0.23, 0.22, r + 0.02 * cos(a * 8)));
+    c = lerp(c, gold, 1 - smoothstep(0.0, 0.012, abs(r - 0.12)));
+    if (edge > 0.74)
+    {
+        c = navy * (0.8 + 0.5 * step(0.5, frac((abs(p.x) + abs(p.y)) * 14)));
+        c = lerp(c, gold, 1 - smoothstep(0.0, 0.010, abs(edge - 0.86)));
+    }
+    c = lerp(c, gold, 1 - smoothstep(0.0, 0.009, abs(edge - 0.74)));
+    c = lerp(c, float3(0.62, 0.56, 0.44), smoothstep(0.975, 0.98, edge));
+    return c * (0.88 + 0.22 * Noise(p * 90));
+}
+
+float3 PaintingPattern(float3 rgb, float3 q)
+{
+    // A painting: hills under an evening sky, in dabs of oil.
+    const float2 p = q.xy + 0.012 * (float2(Noise(q.xy * 40), Noise(q.yx * 37)) - 0.5);
+    float3 c = lerp(float3(0.92, 0.60, 0.32), float3(0.24, 0.32, 0.50), smoothstep(0.42, 0.95, p.y));
+    c = lerp(c, float3(1.0, 0.86, 0.60), smoothstep(0.34, 0.0, length((p - float2(0.68, 0.56)) * float2(1.0, 1.7))));
+    c = lerp(c, float3(0.70, 0.46, 0.42), 0.55 * smoothstep(0.52, 0.72, Noise(p * float2(5, 16) + 3)) * smoothstep(0.45, 0.6, p.y));
+    const float far_ = 0.50 + 0.07 * Noise(float2(p.x * 5, 1.5));
+    c = lerp(c, float3(0.30, 0.31, 0.42), step(p.y, far_));
+    const float mid = 0.37 + 0.09 * Noise(float2(p.x * 4 + 7, 2.5));
+    c = lerp(c, float3(0.20, 0.27, 0.17) * (0.8 + 0.5 * Noise(p * 22)), step(p.y, mid));
+    const float near_ = 0.19 + 0.07 * Noise(float2(p.x * 7 + 3, 4.5));
+    c = lerp(c, float3(0.11, 0.14, 0.07) * (0.7 + 0.8 * Noise(p * 30)), step(p.y, near_));
+    const float tree = smoothstep(0.17, 0.15, length((p - float2(0.2, 0.42)) * float2(1.3, 1.0)) + 0.06 * Noise(p * 26));
+    c = lerp(c, float3(0.08, 0.12, 0.06) * (0.7 + 0.8 * Noise(p * 44)), tree);
+    return c * (0.92 + 0.16 * Noise(p * 120));
+}
+
+float3 Curtains(float3 rgb, float3 q)
+{
+    // Curtains: heavy folds, velvet at their edges.
+    const float folds = 0.5 + 0.5 * cos(q.x * 34 + 0.7 * sin(q.y * 1.5));
+    return rgb * (0.42 + 0.9 * pow(folds, 1.4)) * (0.95 + 0.1 * Noise(q.xy * 30));
+}
+
+float3 Parlour(int kind, float3 rgb, float3 q)
+{
+    float3 c;
+    if (kind == 1)
+        c = Damask(rgb, q);
+    else if (kind == 2)
+        c = ParquetFloor(rgb, q);
+    else if (kind == 3)
+        c = RugPattern(rgb, q);
+    else if (kind == 4)
+        c = PaintingPattern(rgb, q);
+    else
+        c = Curtains(rgb, q);
+    return c;
+}
+
+// The parlour as a polished thing mirrors it in direction r: the dark floor, warm walls with the
+// windows and flames as bright patches, the pale ceiling.
+float3 ParlourMirrored(float3 r)
+{
+    float3 c = r.y < 0 ? lerp(float3(0.30, 0.16, 0.09), float3(0.09, 0.05, 0.03), saturate(-r.y * 1.8))
+                       : lerp(float3(0.40, 0.28, 0.19), float3(0.95, 0.85, 0.66), saturate(r.y * 1.5));
+    const float around = atan2(r.x, r.z);
+    c += float3(1.25, 1.0, 0.68) * pow(saturate(0.5 + 0.5 * cos(around * 6)), 24) * smoothstep(0.6, 0.1, abs(r.y - 0.15));
+    return c;
+}
+
+float3 FacetNormal(float3 world, float3 n)
+{
+    const float3 f = normalize(cross(ddx(world), ddy(world)));
+    return dot(f, n) < 0 ? -f : f;
+}
+
+// Polished gold: nearly all mirror, its colour being what it mirrors of each light.
+float3 Gilt(float3 rgb, float3 world, float3 smoothNormal)
+{
+    const float3 forward = normalize(cross(CameraRight.xyz, CameraUp.xyz));
+    const float3 n = normalize(lerp(smoothNormal, FacetNormal(world, smoothNormal), 0.35));
+    const float facing = saturate(dot(n, -forward));
+    const float3 mirror = rgb + (1 - rgb) * 0.45 * pow(1 - facing, 5);
+    const float3 half_ = normalize(-normalize(LightDir) - forward);
+    return min(ParlourMirrored(reflect(forward, n)), 1.15) * mirror + float3(1.0, 0.93, 0.78) * pow(saturate(dot(n, half_)), 90) * 1.2;
+}
+
+// Cut glass: dark and clear inside with what is bright round it bent into streaks, bright at its
+// edges, and each facet its own: some catch the light whole, split into colours.
+float3 CutGlass(float3 rgb, float3 world, float3 smoothNormal)
+{
+    const float3 forward = normalize(cross(CameraRight.xyz, CameraUp.xyz));
+    const float3 n = FacetNormal(world, smoothNormal);
+    const float facing = saturate(dot(n, -forward));
+    const float3 r = reflect(forward, n), bent = refract(forward, n, 0.67);
+    const float3 cell = floor(n * 7);
+    const float own = Hash(cell.xy + cell.z * 17.0);
+    const float streak = pow(saturate(0.5 + 0.5 * sin(dot(bent, float3(9.0, 13.0, 6.0)))), 6);
+    float3 c = float3(0.09, 0.14, 0.18) + rgb * 0.22 + float3(0.85, 0.92, 1.0) * streak * 0.5;
+    c += min(ParlourMirrored(r), 1.2) * (0.08 + 0.4 * pow(1 - facing, 3));
+    const float3 colours = 0.5 + 0.5 * cos(6.2831853 * (dot(r, float3(2.0, 3.0, 1.0)) + float3(0.0, 0.33, 0.67)));
+    c += lerp(colours, float3(1, 1, 1), 0.55) * step(0.72, own) * (0.3 + 1.2 * (own - 0.72) / 0.28);
+    return c;
+}
+
 float4 main(VSOutput i) : SV_Target
 {
     // See-through (a mahjong tile fading in as it falls): pixels left out in a 4x4 ordered
@@ -326,6 +472,8 @@ float4 main(VSOutput i) : SV_Target
     }
     const int pattern = (int)round(i.color.a * 4);
     const int theme = (int)round((i.color.a * 4 - pattern) / 0.08);
+    if (pattern == 0 && theme == 6 && i.uv.z < -5.5)
+        return float4(i.uv.z < -6.5 ? CutGlass(i.color.rgb, i.world, normalize(i.normal)) : Gilt(i.color.rgb, i.world, normalize(i.normal)), 1);
     float3 rgb = i.color.rgb, glow = 0;
     if (i.uv.z > 0)
         rgb *= Picture.Sample(ClampSampler, i.uv.xy).rgb;
@@ -358,6 +506,8 @@ float4 main(VSOutput i) : SV_Target
         rgb *= 0.94 + 0.08 * Noise(q.xy * 9.0) + 0.04 * Noise(float2(q.x * 30.0, q.y * 3.0));
         rgb *= 1 - 0.10 * Seigaiha(q.xy);
     }
+    else if (pattern == 0 && theme == 6)
+        rgb = Parlour((int)round(-i.uv.z), rgb, i.local);
     else if (pattern == 0 && theme == 3)
     {
         // Stone: rough, mottled, with darker hollows.

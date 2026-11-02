@@ -10,7 +10,7 @@ namespace MikuMikuDesktopPerch
     class MascotModel;
 
     // The blackjack mini game's window (docs/Blackjack.md): she deals, sitting across the table
-    // in 3D (the mahjong room's); you bet chips and play with the buttons (or the keys: the
+    // in 3D (the Western parlour); you bet chips and play with the buttons (or the keys: the
     // arrows and Enter to bet and deal, H, S, D and P). Esc gives up. One at a time.
     struct BlackjackOpponent
     {

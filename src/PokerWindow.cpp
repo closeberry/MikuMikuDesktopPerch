@@ -8,6 +8,7 @@
 #include "Text.hpp"
 #include "BubbleText.hpp"
 #include "GameLines.hpp"
+#include "WesternRoom.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -433,7 +434,6 @@ namespace MikuMikuDesktopPerch
         // The cards' faces (res/poker/cards.jpg): CardSide by CardTop each, eight across,
         // card n at column n%8, row n/8 (the back at Poker::Back).
         constexpr int CardSide=176,CardTop=324,AtlasColumns=8;
-        constexpr int ScrollW=320,ScrollH=768;   // the hanging scroll's painting, under the faces in the 3D table's texture
 
         Bitmap* Faces()
         {
@@ -500,73 +500,18 @@ namespace MikuMikuDesktopPerch
 
         float FloorY(){return state.floorY;}
 
-        void ScrollSpan(float& h0,float& h1,float& width)
-        {
-            const float D=state.upper,floor=FloorY(),ceiling=floor+1.9f*(state.hips+state.upper),wain=floor+0.55f*state.hips;
-            h0=wain+0.25f*D;h1=ceiling-0.6f*D;width=1.0f*D;
-        }
-
-        // The hanging scroll's painting: an ink moon over autumn grass, susuki bending, a red
-        // seal at the bottom right.
-        void PaintScroll(Graphics& g,int w,int h)
-        {
-            g.SetSmoothingMode(SmoothingModeAntiAlias);
-            const float W=static_cast<float>(w),H=static_cast<float>(h);
-            LinearGradientBrush paper(PointF(0,0),PointF(0,H),Color(255,236,231,218),Color(255,224,218,202));
-            g.FillRectangle(&paper,0.0f,0.0f,W,H);
-            SolidBrush moon(Color(150,214,200,150));
-            g.FillEllipse(&moon,W*0.38f,H*0.12f,W*0.42f,W*0.42f);
-            // A low hill of ink fading upward, the grass rising out of it.
-            GraphicsPath hill;
-            hill.AddBezier(PointF(0,H*0.78f),PointF(W*0.3f,H*0.66f),PointF(W*0.7f,H*0.70f),PointF(W,H*0.64f));
-            hill.AddLine(PointF(W,H),PointF(0,H));
-            hill.CloseFigure();
-            LinearGradientBrush ink(PointF(0,H*0.62f),PointF(0,H*0.95f),Color(200,40,40,44),Color(60,40,40,44));
-            g.FillPath(&ink,&hill);
-            std::mt19937 grass(17);
-            std::uniform_real_distribution<float> any(0,1);
-            for(int i=0;i<34;++i)
-            {
-                const float x=W*(0.03f+0.94f*any(grass)),base=H*(0.74f+0.06f*any(grass)),tall=H*(0.18f+0.22f*any(grass)),bend=W*(0.08f+0.2f*any(grass));
-                Pen blade(Color(static_cast<BYTE>(150+80*any(grass)),36,34,30),W*(0.006f+0.006f*any(grass)));
-                blade.SetEndCap(LineCapRound);
-                g.DrawBezier(&blade,PointF(x,base),PointF(x+bend*0.2f,base-tall*0.5f),PointF(x+bend*0.6f,base-tall*0.85f),PointF(x+bend,base-tall*0.95f));
-                if(i%3==0)
-                {
-                    Pen plume(Color(120,150,130,110),W*0.02f);
-                    plume.SetEndCap(LineCapRound);
-                    g.DrawLine(&plume,PointF(x+bend*0.85f,base-tall*0.93f),PointF(x+bend*1.1f,base-tall*0.82f));
-                }
-            }
-            SolidBrush seal(Color(200,150,72,62));
-            g.FillRectangle(&seal,W*0.78f,H*0.88f,W*0.09f,W*0.09f);
-            Pen cut(Color(150,240,220,200),W*0.008f);
-            g.DrawRectangle(&cut,W*0.795f,H*0.88f+W*0.015f,W*0.06f,W*0.06f);
-        }
-
-
-        // The faces for the 3D table, with the scroll's painting under them, and their mipmaps.
+        // The faces for the 3D table, with their mipmaps.
         ImageRgba8 CardsImage()
         {
             ImageRgba8 image;
             Bitmap* faces=Faces();
             if(!faces)return image;
-            const int w=static_cast<int>(faces->GetWidth()),facesH=static_cast<int>(faces->GetHeight()),h=facesH+ScrollH;
+            const int w=static_cast<int>(faces->GetWidth()),facesH=static_cast<int>(faces->GetHeight()),h=facesH;
             Bitmap atlas(w,h,PixelFormat32bppARGB);
             {
                 Graphics g(&atlas);
                 g.Clear(Color(255,236,231,218));
                 g.DrawImage(faces,0,0,w,facesH);
-                Bitmap painting(ScrollW,ScrollH,PixelFormat32bppARGB);
-                {
-                    Graphics p(&painting);
-                    float h0,h1,width;
-                    ScrollSpan(h0,h1,width);
-                    const int tall=std::max(ScrollW,static_cast<int>(std::lround(ScrollW*(h1-h0)/std::max(width,0.001f))));
-                    p.ScaleTransform(1.0f,static_cast<float>(ScrollH)/tall);
-                    PaintScroll(p,ScrollW,tall);
-                }
-                g.DrawImage(&painting,0,facesH,ScrollW,ScrollH);
             }
             BitmapData bits{};
             Rect whole(0,0,w,h);
@@ -585,6 +530,8 @@ namespace MikuMikuDesktopPerch
             GenerateMips(image);
             return image;
         }
+
+        float FieldZ();
 
         bool CreateView()
         {
@@ -642,6 +589,11 @@ namespace MikuMikuDesktopPerch
                 model.ResetPhysics();
             }
             Log(L"poker: 3D view %ux%u on %s (hips %.1f, upper body %.1f, floor %.1f)",w,h,renderer->AdapterName().c_str(),state.hips,state.upper,state.floorY);
+            {
+                std::vector<MascotRenderer::GeometryVertex> room;
+                BuildWesternRoom(room,state.roomGlows,{state.upper,state.hips,state.floorY,0.12f*state.hips+0.30f*state.upper,FieldZ()});
+                if(!renderer->SetRoomGeometry(room))Log(L"poker: no room");
+            }
             if(!renderer->SetGeometryTexture(CardsImage()))Log(L"poker: no card faces on the 3D table");
             state.renderer=std::move(renderer);
             state.entrance=0;
@@ -700,21 +652,12 @@ namespace MikuMikuDesktopPerch
         float SeatZ(){return 0.15f*state.upper+SeatDepth();}
 
 
-        void ScrollUv(float (&uv)[8])
-        {
-            Bitmap* faces=Faces();
-            const float aw=faces?static_cast<float>(faces->GetWidth()):1,facesH=faces?static_cast<float>(faces->GetHeight()):0;
-            const float u0=1/aw,u1=(ScrollW-1)/aw,v0=(facesH+1)/(facesH+ScrollH),v1=(facesH+ScrollH-1)/(facesH+ScrollH);
-            const float corners[8]={u0,v0,u1,v0,u1,v1,u0,v1};
-            std::copy(std::begin(corners),std::end(corners),uv);
-        }
-
         // A card's face on the atlas (u, v at its corners: top left, top right, bottom right,
         // bottom left).
         void CardUv(int card,float (&uv)[8])
         {
             Bitmap* faces=Faces();
-            const float aw=faces?static_cast<float>(faces->GetWidth()):1,ah=faces?static_cast<float>(faces->GetHeight()+ScrollH):1;
+            const float aw=faces?static_cast<float>(faces->GetWidth()):1,ah=faces?static_cast<float>(faces->GetHeight()):1;
             const float u0=(card%AtlasColumns*CardSide+2)/aw,u1=((card%AtlasColumns+1)*CardSide-2)/aw;
             const float v0=(card/AtlasColumns*CardTop+2)/ah,v1=((card/AtlasColumns+1)*CardTop-2)/ah;
             const float corners[8]={u0,v0,u1,v0,u1,v1,u0,v1};
@@ -750,20 +693,14 @@ namespace MikuMikuDesktopPerch
             return std::move(m.out);
         }
 
-        // The table's wood and the room round it, as at the mahjong table (the chair is
-        // BuildChair's).
-        void BuildRoom(Mesh& m,float zc)
+        // The table's wood (the chair is BuildChair's; the room round it, made once, is WesternRoom's).
+        void BuildRoom(Mesh& m)
         {
-            using V=std::array<float,3>;
             auto box=[&](float x0,float y0,float z0,float x1,float y1,float z1,const float (&c)[4]){m.Box(x0,y0,z0,x1,y1,z1,c);};
-            auto quad=[&](const V& a,const V& b,const V& c,const V& d,const V& n,const float (&col)[4],const float* uv=nullptr){m.Quad(a,b,c,d,n,col,uv);};
             int& grain=m.grain;
             float& grainScale=m.grainScale;
-            const float D=state.upper,top=0.12f*state.hips+0.30f*D,floor=FloorY();
-            const float frame[4]={0.34f,0.19f,0.10f,Wood},skirt[4]={0.26f,0.14f,0.07f,Wood},planks[4]={0.46f,0.32f,0.20f,Wood};
-            const float trim[4]={0.30f,0.18f,0.10f,Wood},beams[4]={0.20f,0.12f,0.07f,Wood};
-            const float plaster[4]={0.80f,0.74f,0.62f,Washi},paper[4]={1.0f,0.93f,0.78f,0.25f};
-            const float brass[4]={0.80f,0.62f,0.30f,1};
+            const float D=state.upper,floor=FloorY();
+            const float frame[4]={0.20f,0.09f,0.05f,Wood},skirt[4]={0.15f,0.07f,0.04f,Wood};
             const TableShape t=Table3D();
             const float x0=t.x0,x1=t.x1,zNear=t.zNear,zFar=t.zFar;
             grainScale=0.35f;
@@ -778,113 +715,6 @@ namespace MikuMikuDesktopPerch
             for(float lx:{x0-rw+0.02f*D,x1+rw-0.02f*D-leg})
                 for(float lz:{zFar-rw+0.02f*D,zNear+rw-0.02f*D-leg})
                     box(lx,floor,lz,lx+leg,frameBottom,lz+leg,skirt);
-
-            const float rx=6.0f*D,zBack=5.0f*D,zFront=-7.5f*D,ceiling=floor+1.9f*(state.hips+state.upper);
-            grain=0;grainScale=1;
-            quad({-rx,floor,zBack},{rx,floor,zBack},{rx,floor,zFront},{-rx,floor,zFront},{0,1,0},planks);
-            quad({-rx,ceiling,zBack},{rx,ceiling,zBack},{rx,ceiling,zFront},{-rx,ceiling,zFront},{0,-1,0},beams);
-            const float wain=floor+0.55f*state.hips,proud=0.04f*D;
-            auto wall=[&](const V& a,const V& b,const V& n){
-                const bool alongX=std::abs(a[0]-b[0])>std::abs(a[2]-b[2]);
-                grain=alongX?0:1;grainScale=0.22f*D;
-                quad({a[0],wain,a[2]},{b[0],wain,b[2]},{b[0],ceiling,b[2]},{a[0],ceiling,a[2]},n,plaster);
-                grainScale=0.6f;
-                const V in{n[0]*proud,0,n[2]*proud};
-                quad({a[0]+in[0],floor,a[2]+in[2]},{b[0]+in[0],floor,b[2]+in[2]},{b[0]+in[0],wain,b[2]+in[2]},{a[0]+in[0],wain,a[2]+in[2]},n,trim);
-                const float lo[3]={std::min(a[0],b[0]),0,std::min(a[2],b[2])},hi[3]={std::max(a[0],b[0]),0,std::max(a[2],b[2])};
-                const float ox=n[0]*proud*1.6f,oz=n[2]*proud*1.6f;
-                box(lo[0]+std::min(0.0f,ox),wain-0.02f*D,lo[2]+std::min(0.0f,oz),hi[0]+std::max(0.0f,ox),wain+0.04f*D,hi[2]+std::max(0.0f,oz),beams);
-                box(lo[0]+std::min(0.0f,ox),floor,lo[2]+std::min(0.0f,oz),hi[0]+std::max(0.0f,ox),floor+0.10f*D,hi[2]+std::max(0.0f,oz),beams);
-                box(lo[0]+std::min(0.0f,ox),ceiling-0.12f*D,lo[2]+std::min(0.0f,oz),hi[0]+std::max(0.0f,ox),ceiling,hi[2]+std::max(0.0f,oz),beams);
-            };
-            wall({-rx,floor,zBack},{rx,floor,zBack},{0,0,-1});
-            wall({rx,floor,zFront},{-rx,floor,zFront},{0,0,1});
-            wall({-rx,floor,zFront},{-rx,floor,zBack},{1,0,0});
-            wall({rx,floor,zBack},{rx,floor,zFront},{-1,0,0});
-            grain=2;grainScale=0.5f;
-            const float pw=0.22f*D;
-            for(float px:{-rx,-rx/3,rx/3,rx})
-            {
-                box(px-pw/2,floor,zBack-pw,px+pw/2,ceiling,zBack,trim);
-                box(px-pw/2,floor,zFront,px+pw/2,ceiling,zFront+pw,trim);
-            }
-            for(float pz:{zFront+(zBack-zFront)/3,zFront+2*(zBack-zFront)/3})
-            {
-                box(-rx,floor,pz-pw/2,-rx+pw,ceiling,pz+pw/2,trim);
-                box(rx-pw,floor,pz-pw/2,rx,ceiling,pz+pw/2,trim);
-            }
-            state.roomGlows.clear();
-            for(float side:{-1.0f,1.0f})
-            {
-                const float cx=side*2*rx/3,sx=0.62f*(rx/3-pw/2),sy0=wain+0.08f*D,sy1=ceiling-0.5f*D,sz=zBack-0.06f*D;
-                quad({cx-sx,sy0,sz},{cx+sx,sy0,sz},{cx+sx,sy1,sz},{cx-sx,sy1,sz},{0,0,-1},paper);
-                grain=0;grainScale=0.4f;
-                const float bar=0.025f*D,edge=0.07f*D;
-                for(int i=0;i<=4;++i)
-                {
-                    const float y=sy0+(sy1-sy0)*i/4,b=i==0||i==4?edge:bar;
-                    box(cx-sx-edge,y-b,sz-0.06f*D,cx+sx+edge,y+b,sz-0.005f*D,trim);
-                }
-                grain=2;
-                for(int i=0;i<=6;++i)
-                {
-                    const float x=cx-sx+2*sx*i/6,b=i==0||i==6?edge:bar;
-                    box(x-b,sy0,sz-0.06f*D,x+b,sy1,sz-0.005f*D,trim);
-                }
-                for(int j=0;j<2;++j)
-                {
-                    MascotRenderer::Particle g;
-                    g.position={cx,sy0+(sy1-sy0)*(0.3f+0.4f*j),sz-0.1f*D};
-                    g.size=1.9f*sx;
-                    g.color={1.0f,0.88f,0.66f,0.38f};
-                    g.glow=true;
-                    state.roomGlows.push_back(g);
-                }
-            }
-            {
-                float h0,h1,paperWidth;
-                ScrollSpan(h0,h1,paperWidth);
-                const float wx=-rx+0.05f*D,sz=-0.6f*D;
-                const float scroll[4]={1,1,1,1},cloth[4]={0.30f,0.36f,0.30f,1};
-                quad({wx,h0-0.1f*D,sz-0.62f*D},{wx,h0-0.1f*D,sz+0.62f*D},{wx,h1+0.1f*D,sz+0.62f*D},{wx,h1+0.1f*D,sz-0.62f*D},{1,0,0},cloth);
-                float uv[8];
-                ScrollUv(uv);
-                const float ruv[8]={uv[6],uv[7],uv[4],uv[5],uv[2],uv[3],uv[0],uv[1]};
-                quad({wx+0.005f*D,h0,sz-0.5f*D},{wx+0.005f*D,h0,sz+0.5f*D},{wx+0.005f*D,h1,sz+0.5f*D},{wx+0.005f*D,h1,sz-0.5f*D},{1,0,0},scroll,ruv);
-                grain=1;grainScale=0.35f;
-                box(wx-0.04f*D,h0-0.16f*D,sz-0.7f*D,wx+0.08f*D,h0-0.08f*D,sz+0.7f*D,beams);
-                box(wx-0.04f*D,h1+0.08f*D,sz-0.7f*D,wx+0.08f*D,h1+0.16f*D,sz+0.7f*D,beams);
-
-                const float bx=rx-0.75f*D,bz0=-2.2f*D,bz1=0.2f*D,bt=floor+0.85f*state.hips;
-                grain=1;
-                box(bx,floor+0.08f*D,bz0,rx-0.02f*D,bt,bz1,skirt);
-                box(bx-0.04f*D,bt,bz0-0.04f*D,rx-0.02f*D,bt+0.06f*D,bz1+0.04f*D,frame);
-                for(int i=0;i<3;++i)
-                {
-                    const float z=bz0+(bz1-bz0)*(i+0.5f)/3;
-                    box(bx-0.03f*D,bt-0.32f*D,z-0.03f*D,bx,bt-0.26f*D,z+0.03f*D,brass);
-                }
-            }
-            {
-                const float ly=top+2.4f*D,half=0.28f*D;
-                grain=2;grainScale=0.35f;
-                box(-0.012f*D,ly+0.36f*D,zc-0.012f*D,0.012f*D,ceiling,zc+0.012f*D,beams);
-                const float glow[4]={1.0f,0.86f,0.60f,0.25f};
-                box(-half,ly,zc-half,half,ly+0.36f*D,zc+half,glow);
-                quad({-half,ly,zc-half},{half,ly,zc-half},{half,ly,zc+half},{-half,ly,zc+half},{0,-1,0},glow);
-                grain=0;
-                box(-half-0.02f*D,ly+0.33f*D,zc-half-0.02f*D,half+0.02f*D,ly+0.38f*D,zc+half+0.02f*D,frame);
-                box(-half-0.02f*D,ly-0.02f*D,zc-half-0.02f*D,half+0.02f*D,ly+0.02f*D,zc+half+0.02f*D,frame);
-                for(const auto& [size,alpha]:{std::pair{1.1f,0.95f},std::pair{2.0f,0.30f}})
-                {
-                    MascotRenderer::Particle g;
-                    g.position={0,ly+0.18f*D,zc};
-                    g.size=size*D;
-                    g.color={1.0f,0.85f,0.58f,alpha};
-                    g.glow=true;
-                    state.roomGlows.push_back(g);
-                }
-            }
         }
 
         // ---- The cards and the chips on the table ----
@@ -1095,7 +925,7 @@ namespace MikuMikuDesktopPerch
             const float D=state.upper;
             const float felt[4]={0.09f,0.33f,0.22f,1};
             const TableShape t=Table3D();
-            BuildRoom(mesh,FieldZ());
+            BuildRoom(mesh);
             mesh.Box(t.x0,t.top-0.05f*D,t.zFar,t.x1,t.top,t.zNear,felt);
             PlaceCards();
             auto& table=state.table;
@@ -2245,7 +2075,7 @@ namespace MikuMikuDesktopPerch
                 p.glow=k.glow;
                 shown.push_back(p);
             }
-            shown.insert(shown.end(),state.roomGlows.begin(),state.roomGlows.end());
+            ShowRoomGlows(shown,state.roomGlows,state.clock);
             r.SetParticles(shown);
         }
         const float hip=0.12f*state.hips;

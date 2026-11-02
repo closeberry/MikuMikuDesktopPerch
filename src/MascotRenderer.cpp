@@ -21,6 +21,8 @@
 #include "UpscalePS.h"
 #include "GeometryVS.h"
 #include "GeometryPS.h"
+#include "PieceVS.h"
+#include "PiecePS.h"
 #include "OverlayPS.h"
 
 namespace MikuMikuDesktopPerch
@@ -64,7 +66,7 @@ namespace MikuMikuDesktopPerch
         {
             XMFLOAT3 position; float size;
             XMFLOAT4 color;
-            float angle,glow; float pad[2];
+            float angle,glow,nearer,pad;
         };
         struct MaterialConstants
         {
@@ -616,6 +618,111 @@ namespace MikuMikuDesktopPerch
         return ok;
     }
 
+    bool MascotRenderer::SetRoomGeometry(const std::vector<GeometryVertex>& vertices)
+    {
+        // (the pipeline is SetGeometry's, made on its first call)
+        if(!geometryPso&&!SetGeometry({}))return false;
+        WaitIdle();
+        roomBuffer.Reset();
+        roomCount=0;
+        if(vertices.empty())return true;
+        BeginUploads();
+        const bool ok=UploadBuffer(vertices.data(),vertices.size()*sizeof(GeometryVertex),roomBuffer,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        FinishUploads();
+        if(ok)roomCount=static_cast<UINT>(vertices.size());
+        return ok;
+    }
+
+    bool MascotRenderer::SetPieceMesh(const std::vector<PieceVertex>& vertices,const std::vector<std::uint32_t>& indices)
+    {
+        if(!device||!rootSignature)return false;
+        if(!piecePso)
+        {
+            constexpr auto PerVertex=D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+            constexpr auto PerInstance=D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA;
+            const D3D12_INPUT_ELEMENT_DESC layout[]={
+                {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,PerVertex,0},
+                {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT,0,12,PerVertex,0},
+                {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,24,PerVertex,0},
+                {"TEXCOORD",1,DXGI_FORMAT_R32_FLOAT,0,40,PerVertex,0},
+                {"TEXCOORD",3,DXGI_FORMAT_R32G32B32A32_FLOAT,1,0,PerInstance,1},
+                {"TEXCOORD",4,DXGI_FORMAT_R32G32B32A32_FLOAT,1,16,PerInstance,1},
+                {"TEXCOORD",5,DXGI_FORMAT_R32G32B32A32_FLOAT,1,32,PerInstance,1},
+                {"TEXCOORD",6,DXGI_FORMAT_R32G32B32A32_FLOAT,1,48,PerInstance,1},
+                {"TEXCOORD",7,DXGI_FORMAT_R32G32B32A32_FLOAT,1,64,PerInstance,1},
+                {"TEXCOORD",8,DXGI_FORMAT_R32G32B32A32_FLOAT,1,80,PerInstance,1},
+                {"TEXCOORD",9,DXGI_FORMAT_R32G32B32A32_FLOAT,1,96,PerInstance,1},
+            };
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
+            pso.pRootSignature=rootSignature.Get();
+            pso.InputLayout={layout,static_cast<UINT>(std::size(layout))};
+            pso.VS={g_PieceVS,sizeof(g_PieceVS)};
+            pso.PS={g_PiecePS,sizeof(g_PiecePS)};
+            pso.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            pso.NumRenderTargets=motionBlur?2:1;
+            pso.RTVFormats[0]=ColorFormat;
+            if(motionBlur)pso.RTVFormats[1]=MotionFormat;
+            pso.BlendState.IndependentBlendEnable=TRUE;
+            pso.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+            pso.DSVFormat=DepthFormat;
+            pso.SampleDesc.Count=sampleCount;
+            pso.SampleMask=UINT_MAX;
+            pso.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;
+            pso.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
+            pso.RasterizerState.DepthClipEnable=TRUE;
+            pso.RasterizerState.MultisampleEnable=sampleCount>1;
+            pso.DepthStencilState.DepthEnable=TRUE;
+            pso.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ALL;
+            pso.DepthStencilState.DepthFunc=D3D12_COMPARISON_FUNC_LESS_EQUAL;
+            HRESULT hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&piecePso));
+            if(SUCCEEDED(hr))
+            {
+                // The soft shadows: over what is drawn, leaving the depth and the frame's alpha alone.
+                auto& blend=pso.BlendState.RenderTarget[0];
+                blend.BlendEnable=TRUE;
+                blend.SrcBlend=D3D12_BLEND_SRC_ALPHA;
+                blend.DestBlend=D3D12_BLEND_INV_SRC_ALPHA;
+                blend.BlendOp=D3D12_BLEND_OP_ADD;
+                blend.SrcBlendAlpha=D3D12_BLEND_ZERO;
+                blend.DestBlendAlpha=D3D12_BLEND_ONE;
+                blend.BlendOpAlpha=D3D12_BLEND_OP_ADD;
+                pso.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ZERO;
+                hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&pieceBlobPso));
+                // The clear ones: premultiplied, the far faces and then the near.
+                blend.SrcBlend=D3D12_BLEND_ONE;
+                pso.RasterizerState.CullMode=D3D12_CULL_MODE_FRONT;
+                if(SUCCEEDED(hr))hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&pieceClearBackPso));
+                pso.RasterizerState.CullMode=D3D12_CULL_MODE_BACK;
+                if(SUCCEEDED(hr))hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&pieceClearFrontPso));
+                // The glowing ones: added, both faces.
+                blend.DestBlend=D3D12_BLEND_ONE;
+                pso.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;
+                if(SUCCEEDED(hr))hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&pieceGlowPso));
+            }
+            if(FAILED(hr))
+            {
+                piecePso.Reset();
+                Log(L"  piece pipeline: 0x%08X",static_cast<unsigned>(hr));
+                return false;
+            }
+        }
+        WaitIdle();
+        pieceVertexBuffer.Reset();
+        pieceIndexBuffer.Reset();
+        pieceVertexCount=pieceIndexCount=0;
+        if(vertices.empty()||indices.empty())return true;
+        BeginUploads();
+        const bool ok=UploadBuffer(vertices.data(),vertices.size()*sizeof(PieceVertex),pieceVertexBuffer,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)&&
+                      UploadBuffer(indices.data(),indices.size()*sizeof(std::uint32_t),pieceIndexBuffer,D3D12_RESOURCE_STATE_INDEX_BUFFER);
+        FinishUploads();
+        if(ok)
+        {
+            pieceVertexCount=static_cast<UINT>(vertices.size());
+            pieceIndexCount=static_cast<UINT>(indices.size());
+        }
+        return ok;
+    }
+
     bool MascotRenderer::SetGeometryTexture(const ImageRgba8& image)
     {
         if(!device||!srvHeap)return false;
@@ -1160,10 +1267,33 @@ namespace MikuMikuDesktopPerch
                 movingCount=static_cast<UINT>(moving.size());
             }
         }
+        // SetPieces' list this frame, in this frame's own buffer.
+        struct PieceInstance {float world[12],neck[12],tint[4];};
+        const size_t pieceCount=pieceIndexCount?std::min(pieces.size(),MaxPieces):0;
+        if(pieceCount&&!f.pieceInstances)
+        {
+            auto heap=HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+            auto desc=BufferDesc(MaxPieces*sizeof(PieceInstance));
+            if(FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&f.pieceInstances)))||
+               FAILED(f.pieceInstances->Map(0,nullptr,reinterpret_cast<void**>(&f.pieceInstancesMapped))))
+            {
+                f.pieceInstances.Reset();
+                f.pieceInstancesMapped=nullptr;
+            }
+        }
+        if(f.pieceInstancesMapped)
+            for(size_t i=0;i<pieceCount;++i)
+            {
+                PieceInstance g;
+                std::memcpy(g.world,pieces[i].world,sizeof(g.world));
+                std::memcpy(g.neck,pieces[i].neck,sizeof(g.neck));
+                std::memcpy(g.tint,pieces[i].tint,sizeof(g.tint));
+                std::memcpy(f.pieceInstancesMapped+i*sizeof(PieceInstance),&g,sizeof(g));
+            }
         for(size_t i=0;i<particles.size();++i)
         {
             const auto& q=particles[i];
-            const GpuParticle g{{q.position[0],q.position[1],q.position[2]},q.size,{q.color[0],q.color[1],q.color[2],q.color[3]},q.angle,q.glow?1.0f:0.0f,{}};
+            const GpuParticle g{{q.position[0],q.position[1],q.position[2]},q.size,{q.color[0],q.color[1],q.color[2],q.color[3]},q.angle,q.glow?1.0f:0.0f,q.nearer?1.0f:0.0f,0};
             std::memcpy(f.mapped+particleOffset+i*sizeof(GpuParticle),&g,sizeof(g));
         }
         if(f.dynamicRevision!=model.DynamicRevision())
@@ -1245,10 +1375,16 @@ namespace MikuMikuDesktopPerch
         commandList->RSSetViewports(1,&viewport);
         commandList->RSSetScissorRects(1,&scissor);
 
-        if(geometryCount||movingCount)
+        if(geometryCount||movingCount||roomCount)
         {
             commandList->SetPipelineState(geometryPso.Get());
             commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+(materialCount*3+10)*srvStride});
+            if(roomCount)
+            {
+                const D3D12_VERTEX_BUFFER_VIEW room{roomBuffer->GetGPUVirtualAddress(),roomCount*static_cast<UINT>(sizeof(GeometryVertex)),sizeof(GeometryVertex)};
+                commandList->IASetVertexBuffers(0,1,&room);
+                commandList->DrawInstanced(roomCount,1,0,0);
+            }
             if(geometryCount)
             {
                 const D3D12_VERTEX_BUFFER_VIEW geometry{geometryBuffer->GetGPUVirtualAddress(),geometryCount*static_cast<UINT>(sizeof(GeometryVertex)),sizeof(GeometryVertex)};
@@ -1262,6 +1398,25 @@ namespace MikuMikuDesktopPerch
                 commandList->DrawInstanced(movingCount,1,0,0);
             }
             commandList->IASetVertexBuffers(0,2,vbs);
+            commandList->SetPipelineState(modelCullPso.Get());
+        }
+        if(pieceCount&&f.pieceInstancesMapped)
+        {
+            const D3D12_VERTEX_BUFFER_VIEW pieceVbs[2]={
+                {pieceVertexBuffer->GetGPUVirtualAddress(),pieceVertexCount*static_cast<UINT>(sizeof(PieceVertex)),sizeof(PieceVertex)},
+                {f.pieceInstances->GetGPUVirtualAddress(),static_cast<UINT>(MaxPieces*sizeof(PieceInstance)),sizeof(PieceInstance)}};
+            const D3D12_INDEX_BUFFER_VIEW pieceIb{pieceIndexBuffer->GetGPUVirtualAddress(),pieceIndexCount*static_cast<UINT>(sizeof(std::uint32_t)),DXGI_FORMAT_R32_UINT};
+            commandList->IASetVertexBuffers(0,2,pieceVbs);
+            commandList->IASetIndexBuffer(&pieceIb);
+            for(const bool blobs:{true,false})
+            {
+                commandList->SetPipelineState(blobs?pieceBlobPso.Get():piecePso.Get());
+                for(size_t i=0;i<pieceCount;++i)
+                    if(pieces[i].blob==blobs&&!pieces[i].clear&&!pieces[i].glow&&pieces[i].indexCount)
+                        commandList->DrawIndexedInstanced(pieces[i].indexCount,1,pieces[i].indexStart,pieces[i].baseVertex,static_cast<UINT>(i));
+            }
+            commandList->IASetVertexBuffers(0,2,vbs);
+            commandList->IASetIndexBuffer(&ib);
             commandList->SetPipelineState(modelCullPso.Get());
         }
         ID3D12PipelineState* current=modelCullPso.Get();
@@ -1285,6 +1440,29 @@ namespace MikuMikuDesktopPerch
                 commandList->SetGraphicsRootConstantBufferView(1,uploadVa+materialOffset+i*256);
                 commandList->DrawIndexedInstanced(m.indexCount,1,m.indexStart,0,0);
             }
+        }
+        if(pieceCount&&f.pieceInstancesMapped&&std::any_of(pieces.begin(),pieces.begin()+static_cast<std::ptrdiff_t>(pieceCount),[](const PieceDraw& p){return p.clear||p.glow;}))
+        {
+            const D3D12_VERTEX_BUFFER_VIEW pieceVbs[2]={
+                {pieceVertexBuffer->GetGPUVirtualAddress(),pieceVertexCount*static_cast<UINT>(sizeof(PieceVertex)),sizeof(PieceVertex)},
+                {f.pieceInstances->GetGPUVirtualAddress(),static_cast<UINT>(MaxPieces*sizeof(PieceInstance)),sizeof(PieceInstance)}};
+            const D3D12_INDEX_BUFFER_VIEW pieceIb{pieceIndexBuffer->GetGPUVirtualAddress(),pieceIndexCount*static_cast<UINT>(sizeof(std::uint32_t)),DXGI_FORMAT_R32_UINT};
+            commandList->IASetVertexBuffers(0,2,pieceVbs);
+            commandList->IASetIndexBuffer(&pieceIb);
+            for(size_t i=0;i<pieceCount;++i)
+            {
+                if(!pieces[i].clear||!pieces[i].indexCount)continue;
+                commandList->SetPipelineState(pieceClearBackPso.Get());
+                commandList->DrawIndexedInstanced(pieces[i].indexCount,1,pieces[i].indexStart,pieces[i].baseVertex,static_cast<UINT>(i));
+                commandList->SetPipelineState(pieceClearFrontPso.Get());
+                commandList->DrawIndexedInstanced(pieces[i].indexCount,1,pieces[i].indexStart,pieces[i].baseVertex,static_cast<UINT>(i));
+            }
+            commandList->SetPipelineState(pieceGlowPso.Get());
+            for(size_t i=0;i<pieceCount;++i)
+                if(pieces[i].glow&&pieces[i].indexCount)
+                    commandList->DrawIndexedInstanced(pieces[i].indexCount,1,pieces[i].indexStart,pieces[i].baseVertex,static_cast<UINT>(i));
+            commandList->IASetVertexBuffers(0,2,vbs);
+            commandList->IASetIndexBuffer(&ib);
         }
         if(!particles.empty())
         {

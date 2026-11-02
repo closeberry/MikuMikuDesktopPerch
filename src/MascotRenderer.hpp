@@ -29,6 +29,7 @@ namespace MikuMikuDesktopPerch
             std::array<float,4> color{};     // straight alpha
             float angle=0;
             bool glow=false;                 // a soft round halo instead of a star (fire, magic)
+            bool nearer=false;               // a star not cut by the thing it stands in (a halo never is)
         };
         static constexpr size_t MaxParticles=512;
         // A light of fire or magic at a point (world units), fading out at radius: on the
@@ -87,6 +88,9 @@ namespace MikuMikuDesktopPerch
         // Its pipeline is made on the first call, so renderers that never use it pay nothing.
         // Waits for the GPU; an empty list draws none.
         bool SetGeometry(const std::vector<GeometryVertex>& vertices);
+        // Geometry that stays as it is while SetGeometry's changes (the room round a table), drawn
+        // as that is. Waits for the GPU.
+        bool SetRoomGeometry(const std::vector<GeometryVertex>& vertices);
         // The picture drawn on the geometry where its vertices ask for it (the mahjong tiles'
         // faces), with its mipmaps made here. Waits for the GPU.
         bool SetGeometryTexture(const ImageRgba8& image);
@@ -105,6 +109,34 @@ namespace MikuMikuDesktopPerch
         // Geometry that changes every frame (the dungeon's monsters as they walk and strike),
         // drawn as SetGeometry's is, copied to the GPU each frame.
         void SetMovingGeometry(std::vector<GeometryVertex> vertices){moving=std::move(vertices);}
+        // Shaped pieces (the chess men): one mesh holds every shape (SetPieceMesh), and each frame
+        // gives the list of what is drawn of it (SetPieces): a stretch of the mesh, where it stands,
+        // and its neck. A vertex follows the neck by its weight, as a PMX vertex two bones. Colour
+        // alpha below 1 makes a soft shadow on what is under it (a blob, drawn before the rest).
+        // Clear ones (crystal) are drawn after the model, in the list's order: far ones first;
+        // glowing ones (an aura) after those, added to what is there.
+        struct PieceVertex
+        {
+            float position[3];
+            float normal[3];
+            float color[4];
+            float neck;
+        };
+        struct PieceDraw
+        {
+            UINT indexStart=0,indexCount=0;
+            INT baseVertex=0;
+            float world[12]{1,0,0,0, 0,1,0,0, 0,0,1,0};   // rows of a 3 by 4 matrix (column vectors)
+            float neck[12]{1,0,0,0, 0,1,0,0, 0,0,1,0};    // applied before world
+            float tint[4]{};                              // rgb glows; a: how strong a blob
+            bool blob=false;
+            bool clear=false;
+            bool glow=false;
+        };
+        static constexpr size_t MaxPieces=128;
+        // Its pipelines are made on the first call. Waits for the GPU.
+        bool SetPieceMesh(const std::vector<PieceVertex>& vertices,const std::vector<std::uint32_t>& indices);
+        void SetPieces(std::vector<PieceDraw> list){pieces=std::move(list);}
         // The model left out of the frame (the geometry still drawn): the camera is where she
         // stands (the dungeon's first-person view).
         void SetModelHidden(bool hidden){modelHidden=hidden;}
@@ -171,6 +203,9 @@ namespace MikuMikuDesktopPerch
             Microsoft::WRL::ComPtr<ID3D12Resource> moving;
             std::uint8_t* movingMapped=nullptr;
             size_t movingCapacity=0;   // vertices
+            // SetPieces' list this frame (made on first use).
+            Microsoft::WRL::ComPtr<ID3D12Resource> pieceInstances;
+            std::uint8_t* pieceInstancesMapped=nullptr;
         };
 
         bool CreatePipelines(std::wstring& error);
@@ -194,6 +229,7 @@ namespace MikuMikuDesktopPerch
         HRESULT deviceLost=S_OK;
         bool modelHidden=false;
         std::vector<GeometryVertex> moving;
+        std::vector<PieceDraw> pieces;
 
         // The GPU device, shared by every renderer in the process (one per character): each
         // character's own device would hold its own copy of the driver's state.
@@ -260,7 +296,12 @@ namespace MikuMikuDesktopPerch
         Microsoft::WRL::ComPtr<ID3D12Resource> staticVertexBuffer,indexBuffer;
         // SetGeometry's.
         Microsoft::WRL::ComPtr<ID3D12PipelineState> geometryPso;
-        Microsoft::WRL::ComPtr<ID3D12Resource> geometryBuffer;
+        Microsoft::WRL::ComPtr<ID3D12Resource> geometryBuffer,roomBuffer;
+        UINT roomCount=0;
+        // SetPieceMesh's.
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> piecePso,pieceBlobPso,pieceClearBackPso,pieceClearFrontPso,pieceGlowPso;
+        Microsoft::WRL::ComPtr<ID3D12Resource> pieceVertexBuffer,pieceIndexBuffer;
+        UINT pieceVertexCount=0,pieceIndexCount=0;
         Microsoft::WRL::ComPtr<ID3D12PipelineState> overlayPso;
         bool WriteGeometryDescriptors();
         UINT geometryCount=0;

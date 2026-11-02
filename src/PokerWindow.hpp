@@ -10,7 +10,7 @@ namespace MikuMikuDesktopPerch
     class MascotModel;
 
     // The poker mini game's window (docs/Poker.md): she plays you at Texas hold'em, sitting across
-    // the table in 3D (the mahjong room's); you play with the buttons (or the keys: F, C, 1 to 4,
+    // the table in 3D (the Western parlour); you play with the buttons (or the keys: F, C, 1 to 4,
     // Enter; Tab lists the hands). Esc gives up. One at a time.
     struct PokerOpponent
     {

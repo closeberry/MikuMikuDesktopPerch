@@ -10,7 +10,7 @@ namespace MikuMikuDesktopPerch
     class MascotModel;
 
     // The gin rummy mini game's window (docs/GinRummy.md): she plays you, sitting across the table
-    // in 3D (the mahjong room's); your cards lie along the bottom of the window, a click discards
+    // in 3D (the Western parlour); your cards lie along the bottom of the window, a click discards
     // (the keys: D, T, P, K, the arrows and Enter; Tab tells how to play). Esc gives up. One at a time.
     struct GinRummyOpponent
     {

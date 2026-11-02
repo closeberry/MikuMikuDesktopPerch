@@ -84,6 +84,7 @@
     <ResourceCompile Include="res\MikuMikuDesktopPerch.rc" />
     <ClCompile Include="src\third_party\PMXLoader.ixx" />
     <ClCompile Include="src\third_party\TgaLoader.cpp" />
+    <ClCompile Include="src\WesternRoom.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\ApiServer.cpp" />
     <ClCompile Include="src\AudioDecode.cpp" />
@@ -114,6 +115,8 @@
     <ClCompile Include="src\Blackjack.cpp" />
     <ClCompile Include="src\BlackjackWindow.cpp" />
     <ClCompile Include="src\GameLines.cpp" />
+    <ClCompile Include="src\Chess.cpp" />
+    <ClCompile Include="src\ChessWindow.cpp" />
     <ClCompile Include="src\GinRummy.cpp" />
     <ClCompile Include="src\GinRummyWindow.cpp" />
     <ClCompile Include="src\Poker.cpp" />
@@ -161,6 +164,7 @@
     <ClInclude Include="src\ChatWindows.hpp" />
     <ClInclude Include="src\LocalChat.hpp" />
     <ClInclude Include="src\HttpJson.hpp" />
+    <ClInclude Include="src\WesternRoom.hpp" />
     <ClInclude Include="src\Voice.hpp" />
     <ClInclude Include="src\VoicevoxCore.hpp" />
     <ClInclude Include="src\Memory.hpp" />
@@ -186,6 +190,8 @@
     <ClInclude Include="src\Blackjack.hpp" />
     <ClInclude Include="src\BlackjackWindow.hpp" />
     <ClInclude Include="src\GameLines.hpp" />
+    <ClInclude Include="src\Chess.hpp" />
+    <ClInclude Include="src\ChessWindow.hpp" />
     <ClInclude Include="src\GinRummy.hpp" />
     <ClInclude Include="src\GinRummyWindow.hpp" />
     <ClInclude Include="src\Poker.hpp" />
@@ -226,6 +232,8 @@
     <FxCompile Include="shaders\GeometryVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
     <FxCompile Include="shaders\GeometryPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
     <FxCompile Include="shaders\OverlayPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
+    <FxCompile Include="shaders\PieceVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
+    <FxCompile Include="shaders\PiecePS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

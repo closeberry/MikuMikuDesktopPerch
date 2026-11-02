@@ -76,6 +76,11 @@ BRUSH MAHJONGFONT "mahjong\\brush.ttf"
 // The hanafuda cards' faces (see docs/Hanafuda.md): 192x320 each, eight across, card n (month
 // n/4, the highest first) at column n%8, row n/8.
 CARDS HANAFUDACARDS "hanafuda\\cards.jpg"
+// The bookshelf in the Western room (src/WesternRoom.cpp).
+BOOKSHELF ROOMMODEL "room\\bookshelf.bin"
+CHANDELIER ROOMMODEL "room\\chandelier.bin"
+// The chess men's shapes (docs/Chess.md): six meshes, with their necks' weights.
+PIECES CHESSMODEL "chess\\pieces.bin"
 // The blackjack mini game's card faces (docs/Blackjack.md).
 CARDS BLACKJACKCARDS "blackjack\\cards.jpg"
 // The mini games' lines, plain (said again in each character's own words by the LLM; see
@@ -86,6 +91,8 @@ POKERLINES LINES "poker\\lines.txt"
 POKERLINESEN LINES "poker\\lines.en.txt"
 GINRUMMYLINES LINES "ginrummy\\lines.txt"
 GINRUMMYLINESEN LINES "ginrummy\\lines.en.txt"
+CHESSLINES LINES "chess\\lines.txt"
+CHESSLINESEN LINES "chess\\lines.en.txt"
 OTHELLOLINES LINES "othello\\lines.txt"
 OTHELLOLINESEN LINES "othello\\lines.en.txt"
 GOMOKULINES LINES "gomoku\\lines.txt"

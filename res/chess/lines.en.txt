@@ -1,0 +1,116 @@
+# The chess lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The game is beginning
+Nice to play you! I won't lose.
+All right, a chess match!
+Go easy on me, okay?
+Let's make it a good game.
+I wonder who'll win. This'll be fun.
+Come on, let's start.
+The pieces look eager too.
+I hope today's a good game.
+Watch closely, okay?
+Are you ready?
+I'm so excited.
+I'm going all out.
+
+[考える] It is her turn and she cannot decide (a mutter to herself, not asked of you)
+Hmm, what should I do?
+Careful here.
+How will this play out?
+Let me think a moment.
+Which piece should I move?
+Hmm, this is hard.
+Let me read a little further.
+This might be the key moment.
+
+[チェック] She gives check
+Check!
+That's check.
+Your king's in danger!
+So, where will you run?
+Heh, check.
+How about this? Check!
+Is there a way out?
+I'm coming for your king.
+
+[チェックされた] You give her check
+Whoa, you've got me in check.
+Oh no, my king!
+So that's your plan.
+Yikes, that was close.
+Hold on, I have to get away.
+You're good.
+I let my guard down.
+My king is shaking.
+
+[取った] She takes a big piece of yours (a rook or the queen)
+Thank you very much!
+I'll take that.
+I got a big one!
+Heh, thanks.
+That's a big one.
+Sorry, this one's mine.
+Yes, got it!
+That should make things easier.
+
+[取られた] You take a big piece of hers (a rook or the queen)
+Ah, you took it!
+Oops, I didn't see that.
+Ouch, that hurts.
+Were you after that all along?
+You got me!
+I was counting on that piece.
+Hmm, that's a heavy loss.
+It's not over yet.
+
+[自分の昇格] Her pawn reaches the last rank and is promoted
+Yes, a promotion!
+Well done, little pawn.
+It made it all the way.
+A new power is born.
+Heh, what a rise in the world.
+That's reassuring.
+It walked all the way here.
+Now the fun begins.
+
+[相手の昇格] Your pawn reaches the last rank and is promoted
+Oh, you got a promotion.
+I couldn't stop it.
+I missed that pawn.
+Uh-oh, this is bad.
+You got it all the way there.
+This just got tougher.
+Well, this is awkward.
+Hmm, I'd better try harder.
+
+[勝った] The game is over and she won
+Checkmate! Yes!
+Yay, I won!
+That was a good game.
+That was fun! Thank you.
+Today's win is mine.
+The pieces are happy too.
+I read it right to the end!
+Heh, how about another game?
+
+[負けた] The game is over and she lost
+Ugh, you've beaten me.
+I lost... you're strong.
+So frustrating! Next time I'll win.
+Good moves. You got me.
+My king has fallen.
+Congratulations. Well played.
+Where did I go wrong?
+I'd love another game.
+
+[引き分け] The game ended in a draw
+A draw. It was a good game.
+Nobody won that one.
+Hmm, so close.
+Let's call that even.
+I couldn't quite finish it.
+We both did well.
+The kings can shake hands.
+Let's settle it next time.

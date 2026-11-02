@@ -10,7 +10,7 @@ namespace MikuMikuDesktopPerch
     class MascotModel;
 
     // The Old Maid (babanuki) mini game's window (docs/OldMaid.md): you and she, sitting across
-    // the table in 3D (the mahjong room's), draw from each other's hand in turn; click a card of
+    // the table in 3D (the Western parlour), draw from each other's hand in turn; click a card of
     // hers (or the arrow keys and Enter) to draw it. Esc gives up. One at a time.
     struct OldMaidOpponent
     {
