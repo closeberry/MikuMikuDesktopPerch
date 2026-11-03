@@ -374,6 +374,7 @@ namespace MikuMikuDesktopPerch
         std::array<float,3> boundsMin{},boundsMax{};
         float soleFrontZ=0;   // front-most z of the soles (the face points to -Z)
         std::vector<int> legBones;   // 下半身 and both legs down to the toes
+        std::vector<int> standardBones;   // the standard and semi-standard ones, by name
 
         // Physics bones, each with the nearest non-physics ancestor that carries it, for
         // spotting a skirt or hair stuck up against gravity (for example flipped up after a
@@ -2019,6 +2020,18 @@ namespace MikuMikuDesktopPerch
         for(size_t i=0;i<pmx.bones.size();++i)
             if(pmx.bones[i].name==L"下半身"){next->legBones.push_back(static_cast<int>(i));break;}
         {
+            std::vector<std::wstring> names{L"全ての親",L"操作中心",L"センター",L"グルーブ",L"腰",L"上半身",L"上半身2",L"下半身",L"首",L"頭",L"両目",L"腰キャンセル左",L"腰キャンセル右"};
+            for(const wchar_t* side:{L"左",L"右"})
+                for(const wchar_t* part:{L"目",L"肩",L"肩P",L"肩C",L"腕",L"腕捩",L"ひじ",L"手捩",L"手首",L"ダミー",
+                                         L"親指０",L"親指１",L"親指２",L"人指１",L"人指２",L"人指３",L"中指１",L"中指２",L"中指３",
+                                         L"薬指１",L"薬指２",L"薬指３",L"小指１",L"小指２",L"小指３",
+                                         L"足",L"ひざ",L"足首",L"つま先",L"足D",L"ひざD",L"足首D",L"足先EX",
+                                         L"足ＩＫ",L"つま先ＩＫ",L"足IK親",L"足ＩＫ親"})
+                    names.push_back(std::wstring(side)+part);
+            for(size_t i=0;i<pmx.bones.size();++i)
+                if(std::find(names.begin(),names.end(),pmx.bones[i].name)!=names.end())next->standardBones.push_back(static_cast<int>(i));
+        }
+        {
             std::vector<bool> simulated(pmx.bones.size(),false);
             for(const auto& body:pmx.bodies)
                 if(body.mode!=0&&body.bone>=0&&static_cast<size_t>(body.bone)<pmx.bones.size())simulated[body.bone]=true;
@@ -2473,6 +2486,11 @@ namespace MikuMikuDesktopPerch
     bool MascotModel::BoneBounds(std::array<float,3>& lo,std::array<float,3>& hi) const
     {
         return impl->pmx&&PosedBounds(*impl->pmx,impl->solver.get(),nullptr,lo,hi);
+    }
+
+    bool MascotModel::StandardBoneBounds(std::array<float,3>& lo,std::array<float,3>& hi) const
+    {
+        return impl->pmx&&PosedBounds(*impl->pmx,impl->solver.get(),&impl->standardBones,lo,hi);
     }
 
     bool MascotModel::LegBounds(std::array<float,3>& lo,std::array<float,3>& hi) const

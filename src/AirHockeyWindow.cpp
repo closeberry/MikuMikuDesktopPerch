@@ -695,7 +695,7 @@ namespace MikuMikuDesktopPerch
         void MeasureHer(MascotModel& model)
         {
             std::array<float,3> lo{},hi{},legLo{},legHi{},head{};
-            if(model.BoneBounds(lo,hi)&&model.LegBounds(legLo,legHi)&&model.HeadPosition(head)&&head[1]>legHi[1])
+            if(model.StandardBoneBounds(lo,hi)&&model.LegBounds(legLo,legHi)&&model.HeadPosition(head)&&head[1]>legHi[1])
             {
                 state.hips=std::max(legHi[1]-lo[1],0.1f);
                 state.upper=head[1]-legHi[1];

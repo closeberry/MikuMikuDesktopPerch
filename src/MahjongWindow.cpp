@@ -700,7 +700,7 @@ namespace MikuMikuDesktopPerch
             renderer->SetLight(20,45);
             // Her size, standing as she came from the desktop: the table is made to fit her.
             std::array<float,3> lo{},hi{},legLo{},legHi{},head{};
-            if(state.her.model->BoneBounds(lo,hi)&&state.her.model->LegBounds(legLo,legHi)&&state.her.model->HeadPosition(head)&&head[1]>legHi[1])
+            if(state.her.model->StandardBoneBounds(lo,hi)&&state.her.model->LegBounds(legLo,legHi)&&state.her.model->HeadPosition(head)&&head[1]>legHi[1])
             {
                 state.hips=std::max(legHi[1]-lo[1],0.1f);
                 state.upper=head[1]-legHi[1];

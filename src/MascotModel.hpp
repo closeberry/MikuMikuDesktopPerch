@@ -196,6 +196,9 @@ namespace MikuMikuDesktopPerch
         bool EyePosition(std::array<float,3>& position) const;
         // World-space bounds of all bone origins from the latest solve (hair bones included).
         bool BoneBounds(std::array<float,3>& lo,std::array<float,3>& hi) const;
+        // The same for the standard and semi-standard bones only: a model's own extra bones can
+        // sit anywhere (one was parked 955 units below the floor), so measure her body by these.
+        bool StandardBoneBounds(std::array<float,3>& lo,std::array<float,3>& hi) const;
         // The same for 下半身 and the leg bones only (what covers a window when sitting on it).
         bool LegBounds(std::array<float,3>& lo,std::array<float,3>& hi) const;
         // Ease the simulated bones (hair, skirt) back to the animated pose with physics off,
