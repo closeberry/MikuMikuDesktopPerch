@@ -2,6 +2,19 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.3
+
+### New
+
+- **Moonwalk**: a new built-in idle motion
+- **Her hands when seated in the mini games**: they now rest on her thighs. While moving the chair in, she holds the sides of the seat with both hands
+
+### Fixed
+
+- With some models, the character could not be seen once a mini game started
+- As a mini game began, the character could come in from a position shifted toward the viewer
+- Starting mahjong or hover hockey during a conversation could leave her mouth open
+
 ## 1.6.2
 
 ### New
