@@ -303,6 +303,44 @@ namespace MikuMikuDesktopPerch
         float filterMoving=0;   // 0 holding still .. 1 moving, eased
         std::vector<DirectX::XMMATRIX> filteredMatrices;
 
+        // A bone whose body is "physics + bone alignment" takes only its turn from physics; where
+        // it stands comes from the animation, as in MMD. The loader leaves the body's middle in
+        // its animated place and turns the bone about that, which swings the bone's origin away
+        // (the longer the body, the further: cords and sashes stretch and shrink). So its place
+        // before the step is kept, and after the step the origin goes back there, with the bones
+        // that hang from it. Bones simulated on their own stay where physics put them.
+        std::vector<DirectX::XMMATRIX> alignedToParent;
+
+        void RememberAlignedBones()
+        {
+            alignedToParent.resize(pmx->bones.size());
+            for(size_t i=0;i<pmx->bones.size();++i)
+                if(pmx->bones[i].physicsMode==2)alignedToParent[i]=solver->bones[i]->toParent;
+        }
+
+        void PinAlignedBones()
+        {
+            using namespace DirectX;
+            const auto& keys=solver->solvedPose.boneKeys;
+            for(const auto& f:filteredBones)
+            {
+                auto* bone=solver->bones[f.bone];
+                const XMMATRIX parent=f.parent>=0?solver->bones[f.parent]->transform:XMMatrixIdentity();
+                if(f.simulated&&keys[f.bone].physics)
+                {
+                    if(pmx->bones[f.bone].physicsMode!=2)continue;
+                    const XMVECTOR origin=XMLoadFloat3(&bone->origin);
+                    const XMVECTOR shift=XMVectorSubtract(XMVector3Transform(origin,XMMatrixMultiply(alignedToParent[f.bone],parent)),XMVector3Transform(origin,bone->transform));
+                    bone->transform.r[3]=XMVectorAdd(bone->transform.r[3],XMVectorAndInt(shift,g_XMSelect1110));
+                    // (A smooth reset starts from this pose.)
+                    const XMVECTOR local=XMVector3Transform(origin,XMMatrixMultiply(bone->transform,XMMatrixInverse(nullptr,parent)));
+                    XMStoreFloat3(&solver->physPose.boneKeys[f.bone].position,XMVectorSubtract(local,origin));
+                }
+                else if(f.parent>=0)bone->transform=XMMatrixMultiply(bone->toParent,parent);
+                solver->boneMatrices[f.bone]=XMMatrixTranspose(bone->transform);
+            }
+        }
+
         void FilterPhysicsBones(double dt)
         {
             using namespace DirectX;
@@ -2706,7 +2744,9 @@ namespace MikuMikuDesktopPerch
                 m.physics->fps=steps/m.framePeriod;
                 m.physics->maxSubsteps=steps+1;
                 // (A hair over, so rounding never drops a step; the rare extra one is allowed for.)
+                m.RememberAlignedBones();
                 m.physics->Update(m.framePeriod*(1+1e-4));
+                m.PinAlignedBones();
                 m.FilterPhysicsBones(dt);
                 m.WatchPhysics(dt);
             }
