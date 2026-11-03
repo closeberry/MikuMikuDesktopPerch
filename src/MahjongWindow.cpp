@@ -719,6 +719,8 @@ namespace MikuMikuDesktopPerch
                 // Stood up again all the way, or she would come in rising out of the floor.
                 model.SetActivity(Activity::Idle);
                 for(int i=0;i<90;++i)model.Update(1/30.0);
+                model.SettlePose();   // nothing begun meanwhile comes along
+                model.Update(1/30.0);
                 model.ResetPhysics();
             }
             Log(L"mahjong: 3D view %ux%u on %s (hips %.1f, upper body %.1f, floor %.1f)",w,h,renderer->AdapterName().c_str(),state.hips,state.upper,state.floorY);
@@ -2332,7 +2334,7 @@ namespace MikuMikuDesktopPerch
             model.SetMouth(state.voice.Mouth(),true);
             state.mouthOn=true;
         }
-        else if(state.mouthOn){model.SetMouth({},false);state.mouthOn=false;}
+        else{model.SetMouth({},false);state.mouthOn=false;}   // also a mouth left open by talk before the game
         // The deal waits for a few frames drawn, then its sound and the tiles' drop start together.
         if(state.dealing&&++state.frames>3)
         {
@@ -2350,6 +2352,8 @@ namespace MikuMikuDesktopPerch
         auto ease=[](float u){return u*u*(3-2*u);};
         if(state.entrance==0)
         {
+            // A built-in motion begun while she stood up again must not come along (one that travels would carry her aside).
+            model.SettlePose();
             model.SetFacingWalk(true);
             model.SetActivity(Activity::Walk,1);
             state.herX=startX;
@@ -2364,7 +2368,7 @@ namespace MikuMikuDesktopPerch
             const float go=std::min(left,std::max(model.GroundSpeed(),0.25f*D)*step);
             if(left>0){state.herX+=dx/left*go;state.herZ+=dz/left*go;}
             lift=-seatHeight;
-            if(left-go<=0.001f*D){state.herX=standX;state.herZ=standZ;model.SetActivity(Activity::Idle);state.entrance=2;state.entranceTime=0;}
+            if(left-go<=0.001f*D){state.herX=standX;state.herZ=standZ;model.SetActivity(Activity::Idle);model.EndGestures();state.entrance=2;state.entranceTime=0;}
         }
         else if(state.entrance==2)
         {
@@ -2376,6 +2380,8 @@ namespace MikuMikuDesktopPerch
                 if(model.CanSit())model.SetActivity(Activity::Sit,0);
                 state.herAngle=0;
                 state.entrance=3;
+                // As she sits she reaches down for the seat's sides, for moving in with it.
+                model.SetChairGrip(true,0.34f*state.upper,-0.055f*state.upper,0.12f*state.upper-SeatFront());
                 state.entranceTime=0;
             }
         }
@@ -2398,7 +2404,7 @@ namespace MikuMikuDesktopPerch
             lean=0.22f*bump;
             standing=0;
             state.herZ=state.chairZ=pulled+(seatZ-pulled)*u;
-            if(u>=1)state.entrance=5;
+            if(u>=1){state.entrance=5;model.SetChairGrip(false);}
         }
         else if(state.entrance==5){standing=0;state.herX=0;state.herZ=state.chairZ=seatZ;}
         const auto& her=state.table.Of(Mahjong::Her);
@@ -2594,8 +2600,8 @@ namespace MikuMikuDesktopPerch
     {
         std::array<float,3> lo{},hi{};
         if(!state.renderer||!state.her.model||!state.her.model->LegBounds(lo,hi))return L"";
-        wchar_t text[160];
-        swprintf_s(text,L"mahjong: entrance %d, lowest leg bone %.2f, floor %.2f, hips %.2f, upper %.2f\n",state.entrance,lo[1],FloorY(),state.hips,state.upper);
+        wchar_t text[240];
+        swprintf_s(text,L"mahjong: entrance %d, lowest leg bone %.2f, floor %.2f, hips %.2f, upper %.2f, at %.2f %.2f, angle %.2f, root offset %.2f\n",state.entrance,lo[1],FloorY(),state.hips,state.upper,state.herX,state.herZ,state.herAngle,state.her.model->RootOffset());
         return text+(state.words.told.empty()?std::wstring():L"mahjong words:\n"+state.words.told);
     }
 

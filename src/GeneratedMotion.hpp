@@ -170,6 +170,10 @@ namespace MikuMikuDesktopPerch
         // pace: walking's steps that much quicker (1: as on the desktop). runSpeed: running's
         // steps timed so the planted foot keeps pace with this ground speed (0: her own).
         void SetFacingWalk(bool on,float pace=1,float runSpeed=0){facingWalk=on;facingPace=pace;facingRunSpeed=runSpeed;}
+        // Seated, the hands take the seat's sides (halfWidth across, at height y, z along; where
+        // the model stands) instead of resting on the thighs.
+        // Taken from the start of sitting (not from the thighs, which it would pass through).
+        void SetChairGrip(bool on,float halfWidth=0,float y=0,float z=0){if(on&&!chairGrip)chairGripAmount=1;chairGrip=on;if(on)chairGripAt={halfWidth,y,z};}
         float GroundSpeed() const {return groundSpeed;}
         bool ClipGait() const {return (activity==Activity::Walk&&clipSpeed[0]>0)||(activity==Activity::Run&&clipSpeed[1]>0);}
         // A window motion (resting on a window's top edge, or moving along it) played instead of
@@ -246,6 +250,7 @@ namespace MikuMikuDesktopPerch
             std::array<std::vector<Finger>,2> fingers{};
             std::array<DirectX::XMFLOAT3,2> fingerCurlAxis{};
             float legLength=8,thigh=4,shin=4;
+            std::array<float,2> lapHeight{};   // a hand on the thigh, above the thigh's middle line
             std::array<DirectX::XMFLOAT3,2> shoulderPos{};   // 腕 rest position
             float forearm=3;                                 // elbow to wrist
             // Face morphs for gestures (-1 when the model lacks them).
@@ -356,6 +361,9 @@ namespace MikuMikuDesktopPerch
         DirectX::XMFLOAT3 reachOffset{};            // Reach's point, from the head
         bool reachTap=false;                        // Reach: only a fingertip's touch toward it
         bool reactionSlow=false;                    // the reaction eases in and out slowly (EmoteSeated)
+        bool chairGrip=false;                       // SetChairGrip
+        float chairGripAmount=0;
+        DirectX::XMFLOAT3 chairGripAt{};
         // StopArm's stops: per side, a few half-spaces the wrist is kept in (dot(wrist, normal)
         // >= offset), each made where the arm went into a solid that way.
         struct ArmStop

@@ -1586,7 +1586,7 @@ namespace MikuMikuDesktopPerch
         // Her mouth follows a line's voice file while it plays.
         state.voice.Tick(dt);
         if(state.voice.Playing()){model.SetMouth(state.voice.Mouth(),true);state.mouthOn=true;}
-        else if(state.mouthOn){model.SetMouth({},false);state.mouthOn=false;}
+        else{model.SetMouth({},false);state.mouthOn=false;}   // also a mouth left open by talk before the game
         UpdateOverlay();
         r.Render(model,state.her.edgeScale);
         ++state.frames;

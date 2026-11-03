@@ -6259,6 +6259,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     // --look <x> <y> pins the look-at cursor to that client-area point (for snapshot checks).
     std::wstring snapshotPath;
     bool snapshotMahjong=false;   // --mahjong [moves]: the snapshot is the mahjong table's 3D view
+    double snapshotMahjongAfter=0;   // --mahjong-after <seconds>: on the desktop that long first, as when asked for from the menu
     int snapshotMahjongLater=0;   // --mahjong-later n: n more moves played 20 seconds in (the watchers in place by then)
     bool snapshotAirHockey=false; // --airhockey: the snapshot is the hover hockey window, your side played for you
     bool snapshotHanafuda=false;  // --hanafuda [moves]: the snapshot is the hanafuda table's 3D view
@@ -6341,6 +6342,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotFrames=std::max(1,_wtoi(argv[++i]));
             }
             else if(arg==L"--mahjong-camera"&&i+1<argc)snapshotMahjongCamera=argv[++i];
+            else if(arg==L"--mahjong-after"&&i+1<argc)snapshotMahjongAfter=_wtof(argv[++i]);
             else if(arg==L"--mahjong-reach")
             {
                 snapshotMahjongReach=true;
@@ -7654,7 +7656,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         {
             // The first character sits down at the table on the first frame.
             static bool opened=false;
-            if(!opened)
+            if(!opened&&app.clock>=snapshotMahjongAfter)
             {
                 opened=true;
                 OpenMahjong(*app.mascots.front());

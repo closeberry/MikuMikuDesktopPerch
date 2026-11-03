@@ -548,6 +548,8 @@ namespace MikuMikuDesktopPerch
                     state.floorY=std::min(state.floorY,legLo[1]-0.03f*state.hips);
                 model.SetActivity(Activity::Idle);
                 for(int i=0;i<90;++i)model.Update(1/30.0);
+                model.SettlePose();   // nothing begun meanwhile comes along
+                model.Update(1/30.0);
                 model.ResetPhysics();
             }
             Log(L"blackjack: 3D view %ux%u on %s (hips %.1f, upper body %.1f, floor %.1f)",w,h,renderer->AdapterName().c_str(),state.hips,state.upper,state.floorY);
@@ -1881,6 +1883,8 @@ namespace MikuMikuDesktopPerch
         auto ease=[](float u){return u*u*(3-2*u);};
         if(state.entrance==0)
         {
+            // A built-in motion begun while she stood up again must not come along (one that travels would carry her aside).
+            model.SettlePose();
             model.SetFacingWalk(true);
             model.SetActivity(Activity::Walk,1);
             state.herX=startX;
@@ -1895,7 +1899,7 @@ namespace MikuMikuDesktopPerch
             const float go=std::min(left,std::max(model.GroundSpeed(),0.25f*D)*step);
             if(left>0){state.herX+=dx/left*go;state.herZ+=dz/left*go;}
             lift=-seatHeight;
-            if(left-go<=0.001f*D){state.herX=standX;state.herZ=standZ;model.SetActivity(Activity::Idle);state.entrance=2;state.entranceTime=0;}
+            if(left-go<=0.001f*D){state.herX=standX;state.herZ=standZ;model.SetActivity(Activity::Idle);model.EndGestures();state.entrance=2;state.entranceTime=0;}
         }
         else if(state.entrance==2)
         {
@@ -1907,6 +1911,8 @@ namespace MikuMikuDesktopPerch
                 if(model.CanSit())model.SetActivity(Activity::Sit,0);
                 state.herAngle=0;
                 state.entrance=3;
+                // As she sits she reaches down for the seat's sides, for moving in with it.
+                model.SetChairGrip(true,0.34f*state.upper,-0.055f*state.upper,0.12f*state.upper-SeatFront());
                 state.entranceTime=0;
             }
         }
@@ -1926,7 +1932,7 @@ namespace MikuMikuDesktopPerch
             lean=0.22f*bump;
             standing=0;
             state.herZ=state.chairZ=pulled+(seatZ-pulled)*u;
-            if(u>=1)state.entrance=5;
+            if(u>=1){state.entrance=5;model.SetChairGrip(false);}
         }
         else if(state.entrance==5){standing=0;state.herX=0;state.herZ=state.chairZ=seatZ;}
         state.clock+=dt;

@@ -2512,6 +2512,7 @@ namespace MikuMikuDesktopPerch
 
     void MascotModel::SetTurn(float yaw){impl->proc.turnTarget=yaw;}
     void MascotModel::SetFacingWalk(bool on,float pace,float runSpeed){impl->motion.SetFacingWalk(on,pace,runSpeed);}
+    void MascotModel::SetChairGrip(bool on,float halfWidth,float y,float z){impl->motion.SetChairGrip(on,halfWidth,y,z);}
     float MascotModel::GroundSpeed() const {return impl->motion.GroundSpeed();}
 
     bool MascotModel::EyePosition(std::array<float,3>& position) const

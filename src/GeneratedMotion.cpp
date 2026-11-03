@@ -316,6 +316,16 @@ namespace MikuMikuDesktopPerch
             // Kept (a few thousand of them) to keep hands out of the body in gestures.
             const size_t step=std::max<size_t>(1,body.size()/6000);
             for(size_t i=0;i<body.size();i+=step)rig.body.push_back(body[i]);
+            // How far a hand laid on the thigh is from the thigh's middle line: its (or the
+            // skirt's) front, a little below the hip joint.
+            for(int side=0;side<2;++side)
+            {
+                const XMFLOAT3& hip=rig.hipRest[side];
+                float front=hip.z-0.09f*L;
+                for(const XMFLOAT3& b:body)
+                    if(std::abs(b.x-hip.x)<0.05f*L&&b.y<hip.y-0.08f*L&&b.y>hip.y-0.2f*L&&b.z<front)front=b.z;
+                rig.lapHeight[side]=std::min(hip.z-front,0.08f*L)+0.005f*L;
+            }
             for(int side=0;side<2;++side)
             {
                 rig.hangDegrees[side]=HangAngle/Deg;
@@ -457,6 +467,7 @@ namespace MikuMikuDesktopPerch
 
     void GeneratedMotion::SetActivity(Activity next,int dir)
     {
+        if(next!=Activity::Sit)chairGrip=false;
         const bool edgePose=next==Activity::Sit||next==Activity::Lie||next==Activity::Hang;
         if(edgePose&&!CanSit())next=Activity::Idle;   // lowering the body needs グルーブ
         const bool gait=next==Activity::Walk||next==Activity::Run;
@@ -657,6 +668,10 @@ namespace MikuMikuDesktopPerch
 
     void GeneratedMotion::ReachArm(std::vector<Key>& keys,int side,FXMVECTOR wristTarget,FXMVECTOR pole,float shoulderAmount,bool clear)
     {
+        // Off the lap: the hand comes from lying on the thigh, its wrist turned for that.
+        if(activity==Activity::Sit)
+            for(const int bone:{rig.wrist[side],rig.handTwist[side]})
+                if(bone>=0&&slot[bone]>=0)SetRotation(keys,bone,XMQuaternionIdentity());
         // Kept clear of the body: the forearm (and the hand beyond the wrist) is checked against
         // the body's front, and the wrist moved forward by the most any of it is in; twice, as
         // moving the wrist moves the elbow too.
@@ -1738,6 +1753,8 @@ namespace MikuMikuDesktopPerch
                 SetRotation(g,rig.arm[o],XMQuaternionRotationRollPitchYaw(0,0,rig.armLower[o]));
                 if(rig.elbow[o]>=0)SetRotation(g,rig.elbow[o],Rotation(rig.elbowBendAxis[o],10.0f*Deg));
                 if(rig.armTwist[o]>=0)SetRotation(g,rig.armTwist[o],XMQuaternionIdentity());
+                for(const int bone:{rig.wrist[o],rig.handTwist[o]})
+                    if(bone>=0&&slot[bone]>=0)SetRotation(g,bone,XMQuaternionIdentity());
             }
             const XMVECTOR shoulder=XMLoadFloat3(&rig.shoulderPos[s]);
             const float hipY=(rig.hipRest[0].y+rig.hipRest[1].y)*0.5f,hipZ=(rig.hipRest[0].z+rig.hipRest[1].z)*0.5f;
@@ -2298,6 +2315,7 @@ namespace MikuMikuDesktopPerch
             KeyOf(keys,rig.groove).position={0,seat-hipY,0};
             const XMMATRIX turn=XMMatrixRotationY(yaw);
             const XMVECTOR pivot=XMVectorSet(rig.lowerPivot.x,0,rig.lowerPivot.z,0);
+            XMVECTOR thighLine[2];   // from the hip joint to the knee, as the foot's IK bends it
             for(int side=0;side<2;++side)
             {
                 const auto& rest=rig.ankleRest[side];
@@ -2311,15 +2329,76 @@ namespace MikuMikuDesktopPerch
                 const XMVECTOR hipTurned=XMVectorAdd(pivot,XMVector3TransformNormal(XMVectorSet(hip.x-rig.lowerPivot.x,0,hip.z-rig.lowerPivot.z,0),turn));
                 const XMVECTOR target=XMVectorAdd(XMVectorAdd(hipTurned,XMVectorSet(0,seat,0,0)),XMVector3TransformNormal(ankle,turn));
                 footKey(side,target,-25.0f*Deg,yaw);
+                const float reach=XMVectorGetX(XMVector3Length(ankle));
+                const XMVECTOR toAnkle=XMVectorScale(ankle,1/std::max(reach,1e-4f)),forward=XMVectorSet(0,0,-1,0);
+                const XMVECTOR bendWay=XMVector3Normalize(XMVectorSubtract(forward,XMVectorScale(toAnkle,XMVectorGetX(XMVector3Dot(forward,toAnkle)))));
+                const float cosHip=std::clamp((rig.thigh*rig.thigh+reach*reach-rig.shin*rig.shin)/(2*rig.thigh*reach),-1.0f,1.0f);
+                thighLine[side]=XMVector3TransformNormal(XMVectorAdd(XMVectorScale(toAnkle,cosHip),XMVectorScale(bendWay,std::sqrt(1-cosHip*cosHip))),turn);
             }
             SetRotation(keys,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,yaw,0));
             // As people sit (measured): the head a little ahead of the hips (the chest tips
             // forward as far as the model stands with it behind), the hands resting forward on
             // the lap, the elbows bent.
             const float lean=std::clamp((2.3f*Deg-rig.headLean)*1.25f,-5.0f*Deg,8.0f*Deg);
-            SetRotation(keys,rig.upperBody,Then(XMQuaternionRotationRollPitchYaw(-lean,0,0),XMQuaternionRotationRollPitchYaw(0,yaw*0.5f,0)));
+            // Moving in with the chair she bends down to its sides, and goes back to the thighs.
+            chairGripAmount=Approach(chairGripAmount,chairGrip?1.0f:0.0f,static_cast<float>(dt/0.4));
+            const float grip=Smooth(chairGripAmount);
+            // The palms down just above the line from the hip joint to the knee, fingers toward
+            // the knee, as far along as the arm goes. Long legs and short arms may not get there
+            // sitting straight: she does not lean for it, the hand stops short over the thigh
+            // (from the front it still looks to lie there).
+            const XMVECTOR tilt=XMVectorSet(0,hipY,(rig.hipRest[0].z+rig.hipRest[1].z)*0.5f,0);
+            const float armReach=0.97f*(rig.upperArm+rig.forearm);
+            auto lapHand=[&](int side,float f,FXMVECTOR chest,XMVECTOR& fingers,XMVECTOR& palm){
+                const float o=side==0?1.0f:-1.0f;
+                const auto& hip=rig.hipRest[side];
+                const XMVECTOR along=thighLine[side],up=XMVectorSet(0,1,0,0);
+                const XMVECTOR above=XMVector3Normalize(XMVectorSubtract(up,XMVectorScale(along,XMVectorGetX(XMVector3Dot(up,along)))));
+                const XMVECTOR root=XMVectorAdd(XMVectorAdd(pivot,XMVector3TransformNormal(XMVectorSet(o*std::max(o*hip.x,0.06f*L)-rig.lowerPivot.x,0,hip.z-rig.lowerPivot.z,0),turn)),XMVectorSet(0,hipY,0,0));
+                fingers=XMVectorAdd(along,XMVector3TransformNormal(XMVectorSet(-o*0.18f,0,0,0),turn));
+                palm=XMVectorNegate(above);
+                const XMVECTOR on=XMVectorAdd(XMVectorAdd(root,XMVectorScale(along,f*rig.thigh)),XMVectorScale(above,rig.lapHeight[side]));
+                return XMVectorAdd(tilt,XMVector3Rotate(XMVectorSubtract(XMVectorSubtract(on,PalmOffset(side,fingers,palm)),tilt),XMQuaternionConjugate(chest)));
+            };
+            auto chestAt=[&](float forward){return Then(XMQuaternionRotationRollPitchYaw(-forward,0,0),XMQuaternionRotationRollPitchYaw(0,yaw*0.5f,0));};
+            const XMVECTOR chest=chestAt(lean+18.0f*Deg*grip);
+            SetRotation(keys,rig.upperBody,chest);
             SetRotation(keys,rig.neck,XMQuaternionRotationRollPitchYaw(0,-yaw*0.4f,0));
             arms(19.0f*Deg,19.0f*Deg,rig.armLower[0],rig.armLower[1],54.0f*Deg,54.0f*Deg);
+            auto chestSees=[&](FXMVECTOR at){return XMVectorAdd(tilt,XMVector3Rotate(XMVectorSubtract(at,tilt),XMQuaternionConjugate(chest)));};
+            for(int side=0;side<2&&rig.upperBody>=0;++side)
+            {
+                if(rig.arm[side]<0||rig.elbow[side]<0)continue;
+                const float o=side==0?1.0f:-1.0f;
+                XMVECTOR fingers,palm,wrist=XMVectorZero();
+                for(float f=0.55f;f>=0.15f;f-=0.05f)
+                {
+                    wrist=lapHand(side,f,chest,fingers,palm);
+                    if(XMVectorGetX(XMVector3Length(XMVectorSubtract(wrist,XMLoadFloat3(&rig.shoulderPos[side]))))<=armReach)break;
+                }
+                {
+                    const XMVECTOR shoulderAt=XMLoadFloat3(&rig.shoulderPos[side]),to=XMVectorSubtract(wrist,shoulderAt);
+                    const float far=XMVectorGetX(XMVector3Length(to));
+                    if(far>armReach)wrist=XMVectorAdd(shoulderAt,XMVectorScale(to,armReach/far));
+                }
+                std::array<float,4> curl{0.12f,0.14f,0.16f,0.18f};
+                if(grip>0)
+                {
+                    // The palm against the seat's side, fingers down over its edge.
+                    const XMVECTOR gripFingers=XMVectorSet(o*0.1f,-1,-0.2f,0),gripPalm=XMVectorSet(-o,0,0,0);
+                    const XMVECTOR on=XMVectorSet(o*(chairGripAt.x+0.012f*L),chairGripAt.y+hipY-seat,chairGripAt.z,0);
+                    wrist=XMVectorLerp(wrist,chestSees(XMVectorSubtract(on,PalmOffset(side,gripFingers,gripPalm))),grip);
+                    // Between the two, up and over the thigh rather than through it.
+                    wrist=XMVectorAdd(wrist,XMVectorScale(XMVectorSet(o*0.05f,0.14f,0,0),L*std::sin(XM_PI*grip)));
+                    fingers=XMVectorLerp(XMVector3Normalize(fingers),XMVector3Normalize(gripFingers),grip);
+                    palm=XMVectorLerp(palm,gripPalm,grip);
+                    for(float& c:curl)c+=(0.75f-c)*grip;
+                }
+                // Not kept off the body as it stands: its skirt or coat front lies under the hand here.
+                ReachArm(keys,side,wrist,XMVectorSet(o,-0.3f,0.5f,0),grip,false);
+                AimHand(keys,side,fingers,palm);
+                CurlFingers(keys,side,curl);
+            }
             break;
         }
         case Activity::Grabbed:

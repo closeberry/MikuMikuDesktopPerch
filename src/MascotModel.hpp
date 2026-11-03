@@ -164,6 +164,7 @@ namespace MikuMikuDesktopPerch
         // (units per second; the dungeon). Off: she turns to the side and travels (the desktop).
         // runSpeed: running's steps timed for this ground speed (units per second; 0: her own).
         void SetFacingWalk(bool on,float pace=1,float runSpeed=0);
+        void SetChairGrip(bool on,float halfWidth=0,float y=0,float z=0);
         float GroundSpeed() const;
         // World position of the head bone from the latest solve; false if the model has none.
         bool HeadPosition(std::array<float,3>& position) const;
