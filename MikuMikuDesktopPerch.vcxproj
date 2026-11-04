@@ -105,6 +105,8 @@
     <ClCompile Include="src\HanafudaWindow.cpp" />
     <ClCompile Include="src\Othello.cpp" />
     <ClCompile Include="src\OthelloWindow.cpp" />
+    <ClCompile Include="src\Solitaire.cpp" />
+    <ClCompile Include="src\SolitaireWindow.cpp" />
     <ClCompile Include="src\Gomoku.cpp" />
     <ClCompile Include="src\GomokuWindow.cpp" />
     <ClCompile Include="src\Shogi.cpp" />
@@ -180,6 +182,8 @@
     <ClInclude Include="src\HanafudaWindow.hpp" />
     <ClInclude Include="src\Othello.hpp" />
     <ClInclude Include="src\OthelloWindow.hpp" />
+    <ClInclude Include="src\Solitaire.hpp" />
+    <ClInclude Include="src\SolitaireWindow.hpp" />
     <ClInclude Include="src\Gomoku.hpp" />
     <ClInclude Include="src\GomokuWindow.hpp" />
     <ClInclude Include="src\Shogi.hpp" />

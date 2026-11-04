@@ -1,0 +1,154 @@
+# The mahjong solitaire lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] They start mahjong solitaire on their own, and she looks on from across the table
+I'll be watching. Good luck!
+Think you can clear them all?
+Take your time looking.
+I'll help you look, too.
+I wonder which tile to start with.
+Maybe start from the top of the stack.
+Okay, here we go.
+What pretty tiles.
+
+[対局の始まり] They and she begin taking tiles in turn, as a contest
+A contest, then. I won't lose.
+Whoever can't take a pair loses, right?
+Nice to play you!
+I wonder who'll last to the end.
+We'll have to watch the number of pairs.
+Heh, it's all about reading ahead.
+Go easy on me, okay?
+Okay, here we go.
+
+[見ている] Alone, they have been thinking a while without taking any (a quiet word)
+Which one looks free?
+Hmm, this is hard.
+No rush at all.
+Take a good look at the ends.
+I can't spot one either.
+Those hidden tiles worry me.
+You don't have to hurry.
+There's always the hint, too.
+
+[いい流れ] Alone, they are taking tiles steadily
+You're doing great!
+They're really going down fast.
+That's it, keep going.
+Wow, you spot them so well.
+You're so quick at this.
+Nice, nice!
+
+[半分] Alone, half the tiles have gone
+Halfway already!
+That's half of them gone.
+It's much easier to see now.
+Maybe the real game starts here.
+Halfway there, keep it up.
+They're coming down nicely.
+
+[あと少し] Alone, 16 tiles or fewer are left
+Just a little more!
+You're almost through them all!
+You've come this far, finish it.
+This is getting exciting!
+Careful right to the end.
+Can't you see the end from here?
+
+[ヒント] They asked for a hint (she points out the lit tiles)
+How about here?
+You can take these.
+I'd go for this one.
+Look over here.
+It's the ones lit up.
+This should open things up.
+
+[行き止まり] Alone, no pair is left to take
+Oh, I think that's all we can take...
+Oh dear, a dead end.
+Hmm, we're stuck.
+Undo or shuffle, what'll it be?
+So close.
+It's okay, you can still go on.
+
+[混ぜ直し] They shuffled the tiles that are left
+All right, a shuffle!
+A fresh start for these.
+Now you can take some again.
+Let's see how this goes.
+One more push now.
+Everything has moved around.
+
+[クリア] They cleared all the tiles
+You got them all! Congratulations!
+Amazing! Not one left!
+You did it, all cleared away!
+I watched the whole way. Well done!
+Beautifully done!
+I'm so happy for you!
+
+[考える] In a contest, it is her turn and she is deciding which to take (to herself)
+Hmm, which one should I take?
+Counting the pairs left...
+Give me a moment.
+If I take this, then what?
+This is a tough choice.
+Carefully, now.
+Will the numbers work out...
+Let me take a good look.
+
+[残りわずか] In a contest, only a few pairs are left to take
+There aren't many left now...
+I wonder who'll get stuck first.
+This is where it counts.
+I can almost count it out.
+My heart's starting to race.
+The next take really matters.
+
+[塞いだ] In a contest, she took a pair and left them few to take (smiling, as if on purpose)
+Heh, I've thinned those out for you.
+So, which can you take now?
+Oops, I blocked that.
+Getting a little tight, isn't it?
+Won't you get stuck for me?
+Heh, I did that on purpose.
+
+[勝ち確定] In a contest, she has read it to the end and knows she wins (smiling)
+Heh, I can see it now.
+I think the numbers work for me.
+I've read it right to the end.
+Heh heh, looks like I can win.
+That last pair will be mine, I think.
+Sorry, I think this one's mine.
+
+[負け確定] In a contest, she has read it to the end and knows she loses (downcast)
+Oh, the numbers don't work...
+I think I'm going to lose this...
+Hmm, you got me there.
+However I take them, it's not enough...
+I think you read further than me.
+I won't give up, but still...
+
+[勝った] In a contest, she won
+Yes, I win!
+Heh, you've got nothing to take.
+That was a good contest!
+I read that one right!
+Want to go again?
+Thank you, that was fun!
+
+[負けた] In a contest, she lost
+Ah, nothing left to take... I lost!
+That's so annoying. I'll win next time.
+You out-counted me.
+You're good. Congratulations.
+You beat me completely...
+One more, please!
+
+[引き分け] In a contest, all the tiles were taken and it is a draw
+We took them all. It's a draw.
+Oh, I couldn't stop you after all.
+A good contest, and a draw!
+I can't believe we cleared the lot.
+Next time I'll stop you.
+We'll settle it next time.
