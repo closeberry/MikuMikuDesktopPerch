@@ -2,6 +2,20 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.4
+
+### New
+
+- **Mahjong solitaire**: a new game under "Mini games" in the right-click menu. From 144 stacked tiles, seasons and flowers among them, take pairs of matching tiles that have nothing on them and their left or right side open
+  - **Alone**: clear them all to win, with hints, undo and shuffle. Every deal can be cleared (though how you take them can leave you stuck)
+  - **Against the character**: take one pair each in turn. Whoever has no pair to take loses, and all taken is a draw. She will try to stop you
+  - The tiles stack in eleven ways, such as a turtle, a castle or a butterfly, or leave it to chance
+  - The design (in Japanese): `docs/MahjongSolitaire.md`
+
+### Fixed
+
+- With some models, cords and sashes could look as if they stretched and shrank as the character moved
+
 ## 1.6.3
 
 ### New
