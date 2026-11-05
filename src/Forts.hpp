@@ -56,9 +56,20 @@ namespace MikuMikuDesktopPerch::Forts
     constexpr int DeckKinds=3;           // 0 knights, 1 forest, 2 mages
     int CardKinds();
     const Card& CardOf(int id);
+    // The magic a card gives when given up: by what it costs, 1 to 3.
+    int GivesMagic(const Card& card);
     // The deck of a kind (DeckSize cards), and its name.
     std::vector<int> DeckOf(int kind);
     const wchar_t* DeckName(int kind,bool english);
+    // One deck is collected: a card of its own for each game you win, and yours to play from
+    // UnlockAt of them on, with those and the common cards, which you always have.
+    constexpr int CollectedDeck=2,UnlockAt=10;
+    // Those to be collected.
+    std::vector<int> CollectableCards();
+    // Your deck with the ones you have.
+    std::vector<int> CollectedDeckCards(const std::vector<int>& owned);
+    // Which card a win brings, added to owned (-1: you have them all).
+    int Collect(std::vector<int>& owned,std::mt19937& dice);
     Needs NeedsOf(const Card& card);
 
     struct Unit
@@ -136,7 +147,8 @@ namespace MikuMikuDesktopPerch::Forts
     {
     public:
         // level: how hard she plays (Levels-1: her best). Style 0 for you is always at her best.
-        void NewGame(std::uint32_t seed,int yourDeck,int herDeck,int level=Levels-1,int first=You);
+        // yourCards: the cards of your deck, when not the whole of it.
+        void NewGame(std::uint32_t seed,int yourDeck,int herDeck,int level=Levels-1,int first=You,const std::vector<int>* yourCards=nullptr);
 
         Phase Now() const;
         const State& Board() const {return state;}

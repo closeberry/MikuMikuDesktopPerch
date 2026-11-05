@@ -66,8 +66,8 @@ namespace MikuMikuDesktopPerch
 
         // Over a card or a fort: a number or a word rising, a frame of light, a flash, a cut.
         struct Fx {std::wstring text;RectF at;Color color;ULONGLONG start=0,life=1100;bool frame=false,flash=false,slash=false;};
-        // A soldier fallen, sinking and fading where it stood.
-        struct Ghost {int card=-1;RectF at;ULONGLONG start=0;};
+        // A soldier fallen, sinking and fading where it stood (leanX, leanY: it fell striking).
+        struct Ghost {int card=-1;RectF at;ULONGLONG start=0,leanAt=0;float leanX=0,leanY=0;};
         // A speck of light on its way: where it began, its speed and fall in pixels a second.
         struct Spark {float x=0,y=0,vx=0,vy=0,size=0,fall=0;ULONGLONG start=0,life=600;Color color;};
         // A shot or a spell crossing the board, with its trail.
@@ -87,6 +87,11 @@ namespace MikuMikuDesktopPerch
             RectF deckBoxes[Forts::DeckKinds];
             int hoverDeck=-1;
             Forts::Strength strength;  // how hard she plays, from how your games have ended
+            std::vector<int> owned;    // the cards collected
+            int earned=-1;             // the card this game's win brought
+            bool unlockedNow=false;    // and with it the deck can be played
+            bool album=false;          // the cards collected are shown
+            RectF albumBox;
             bool gameOverTold=false;
             bool confirmQuit=false;
             bool help=false;
@@ -347,14 +352,183 @@ namespace MikuMikuDesktopPerch
             return faction==1?Color(255,50,74,124):faction==2?Color(255,44,100,58):faction==3?Color(255,92,56,128):Color(255,104,88,70);
         }
 
-        // A round mark with a number in it.
-        void Mark(Graphics& g,float x,float y,float d,const std::wstring& number,Color fill,Color ink=Color(255,255,255,255))
+        // The marks on a card: what it costs a cut gem, its attack a pair of crossed blades behind a
+        // crest, its health a shield. Each made once for its size, colour and number.
+        enum class MarkShape {Gem,Blades,Shield};
+
+        Color Lighter(Color c,float k){const auto m=[&](BYTE v){return static_cast<BYTE>(v+(255-v)*k);};return Color(c.GetA(),m(c.GetR()),m(c.GetG()),m(c.GetB()));}
+        Color Darker(Color c,float k){const auto m=[&](BYTE v){return static_cast<BYTE>(v*(1-k));};return Color(c.GetA(),m(c.GetR()),m(c.GetG()),m(c.GetB()));}
+
+        void DrawMarkShape(Graphics& g,MarkShape shape,float d,Color fill)
         {
-            SolidBrush paint(fill);
-            g.FillEllipse(&paint,x,y,d,d);
-            Pen rim(Color(230,250,240,210),std::max(1.0f,d*0.06f));
-            g.DrawEllipse(&rim,x,y,d,d);
-            Text(g,number,RectF(x-d,y,d*3,d),d*0.72f,ink,true,StringAlignmentCenter,StringAlignmentCenter);
+            const Color gold(255,246,214,130),goldDark(255,120,84,30);
+            const float c=d/2;
+            const auto at=[&](float x,float y){return PointF(c+x*d,c+y*d);};
+            LinearGradientBrush body(RectF(0,-1,d,d+2),Lighter(fill,0.30f),Darker(fill,0.42f),LinearGradientModeVertical);
+            LinearGradientBrush rim(RectF(0,-1,d,d+2),gold,goldDark,LinearGradientModeVertical);
+            Pen edge(&rim,std::max(1.2f,d*0.075f));
+            edge.SetLineJoin(LineJoinMiter);
+            GraphicsPath path;
+            if(shape==MarkShape::Gem)
+            {
+                // Six sides, point up, with facets of light.
+                const PointF six[6]={at(0,-0.47f),at(0.41f,-0.235f),at(0.41f,0.235f),at(0,0.47f),at(-0.41f,0.235f),at(-0.41f,-0.235f)};
+                path.AddPolygon(six,6);
+                g.FillPath(&body,&path);
+                SolidBrush top(Color(90,255,255,255)),left(Color(38,255,255,255)),low(Color(70,0,0,20));
+                const PointF a[4]={six[5],six[0],six[1],at(0,-0.05f)};
+                const PointF b[3]={six[5],at(0,-0.05f),six[4]};
+                const PointF e[4]={six[4],at(0,-0.05f),six[2],six[3]};
+                g.FillPolygon(&top,a,4);
+                g.FillPolygon(&left,b,3);
+                g.FillPolygon(&low,e,4);
+                g.DrawPath(&edge,&path);
+            }
+            else if(shape==MarkShape::Blades)
+            {
+                // Two blades crossed behind a pointed crest.
+                SolidBrush steel(Color(255,226,232,240));
+                Pen dark(Color(255,50,50,60),std::max(0.8f,d*0.03f));
+                for(int side=-1;side<=1;side+=2)
+                {
+                    const float k=static_cast<float>(side);
+                    const PointF blade[4]={at(k*0.53f,-0.53f),at(k*0.41f,-0.50f),at(-k*0.20f,0.10f),at(-k*0.10f,0.20f)};
+                    g.FillPolygon(&steel,blade,4);
+                    g.DrawPolygon(&dark,blade,4);
+                }
+                const PointF crest[4]={at(0,-0.43f),at(0.45f,0),at(0,0.50f),at(-0.45f,0)};
+                path.AddPolygon(crest,4);
+                g.FillPath(&body,&path);
+                SolidBrush light(Color(70,255,255,255));
+                const PointF upper[3]={crest[3],crest[0],crest[1]};
+                g.FillPolygon(&light,upper,3);
+                g.DrawPath(&edge,&path);
+            }
+            else
+            {
+                // A heater shield.
+                path.AddLine(at(-0.42f,-0.42f),at(0.42f,-0.42f));
+                path.AddBezier(at(0.42f,-0.42f),at(0.44f,0.05f),at(0.30f,0.30f),at(0,0.49f));
+                path.AddBezier(at(0,0.49f),at(-0.30f,0.30f),at(-0.44f,0.05f),at(-0.42f,-0.42f));
+                path.CloseFigure();
+                g.FillPath(&body,&path);
+                SolidBrush light(Color(60,255,255,255));
+                g.FillRectangle(&light,c-0.42f*d,c-0.42f*d,0.42f*d,0.30f*d);
+                g.DrawPath(&edge,&path);
+            }
+        }
+
+        void Mark(Graphics& g,float x,float y,float d,const std::wstring& number,Color fill,MarkShape shape)
+        {
+            struct Key
+            {
+                int shape,size;
+                ARGB color;
+                std::wstring number;
+                bool operator<(const Key& o) const {return std::tie(shape,size,color,number)<std::tie(o.shape,o.size,o.color,o.number);}
+            };
+            static std::map<Key,std::unique_ptr<Bitmap>> made;
+            if(made.size()>500)made.clear();
+            const int size=std::max(4,static_cast<int>(std::lround(d)));
+            auto& mark=made[Key{static_cast<int>(shape),size,fill.GetValue(),number}];
+            if(!mark)
+            {
+                const int pad=std::max(2,size/8);
+                mark=std::make_unique<Bitmap>(size+2*pad,size+2*pad,PixelFormat32bppPARGB);
+                Graphics m(mark.get());
+                m.SetSmoothingMode(SmoothingModeAntiAlias);
+                m.SetTextRenderingHint(TextRenderingHintAntiAlias);
+                m.TranslateTransform(static_cast<REAL>(pad),static_cast<REAL>(pad));
+                DrawMarkShape(m,shape,static_cast<float>(size),fill);
+                const float box=static_cast<float>(size),big=box*(number.size()>1?0.56f:0.66f);
+                const float low=shape==MarkShape::Shield?-box*0.03f:0.0f;
+                // The number, dark round its edge so that it stands out on any colour.
+                for(int k=0;k<8;k++)
+                {
+                    const float o=std::max(0.8f,box*0.035f),a=k*0.7854f;
+                    Text(m,number,RectF(-box+std::cos(a)*o,low+std::sin(a)*o,box*3,box),big,Color(235,16,10,14),true,StringAlignmentCenter,StringAlignmentCenter);
+                }
+                Text(m,number,RectF(-box,low,box*3,box),big,Color(255,255,252,238),true,StringAlignmentCenter,StringAlignmentCenter);
+            }
+            const float pad=(mark->GetWidth()-size)/2.0f,k=d/size;
+            g.DrawImage(mark.get(),x-pad*k,y-pad*k,mark->GetWidth()*k,mark->GetHeight()*k);
+        }
+
+        // The costly cards are foil: rainbow over the picture and round the edge, with stars in it.
+        constexpr int HoloCost=5;
+        bool IsHolo(const Forts::Card& card){return card.faction>=0&&card.cost>=HoloCost;}
+
+        // A four-pointed star of light.
+        void DrawStar(Graphics& g,float x,float y,float r,float strength)
+        {
+            if(strength<=0||r<=0)return;
+            const float t=r*0.13f;
+            const PointF star[8]={PointF(x,y-r),PointF(x+t,y-t),PointF(x+r,y),PointF(x+t,y+t),PointF(x,y+r),PointF(x-t,y+t),PointF(x-r,y),PointF(x-t,y-t)};
+            SolidBrush white(Color(static_cast<BYTE>(std::clamp(strength,0.0f,1.0f)*255),255,255,255));
+            g.FillPolygon(&white,star,8);
+        }
+
+        void DrawFoil(Graphics& g,const RectF& art,int id)
+        {
+            LinearGradientBrush rainbow(RectF(art.X,art.Y,std::max(1.0f,art.Width*0.5f),std::max(1.0f,art.Height*0.7f)),Color(0,0,0,0),Color(0,0,0,0),32.0f,TRUE);
+            const BYTE a=62;
+            const Color colours[7]={Color(a,255,90,150),Color(a,255,190,70),Color(a,240,255,110),Color(a,90,255,170),Color(a,80,210,255),Color(a,150,120,255),Color(a,255,90,150)};
+            const REAL at[7]={0,0.17f,0.33f,0.5f,0.67f,0.83f,1};
+            rainbow.SetInterpolationColors(colours,at,7);
+            rainbow.SetWrapMode(WrapModeTileFlipXY);
+            g.FillRectangle(&rainbow,art);
+            std::mt19937 dice(static_cast<std::uint32_t>(id)*2654435761u);
+            std::uniform_real_distribution<float> place(0.04f,0.96f),size(0.018f,0.05f),how(0.45f,1.0f);
+            for(int i=0;i<11;i++)
+            {
+                const float x=art.X+place(dice)*art.Width,y=art.Y+place(dice)*art.Height;
+                DrawStar(g,x,y,size(dice)*art.Width,how(dice));
+            }
+        }
+
+        // The margins of the card: under its name, picture and words.
+        void DrawFoilBody(Graphics& g,float W,float H,float r)
+        {
+            LinearGradientBrush rainbow(RectF(0,0,std::max(1.0f,W*0.6f),std::max(1.0f,H*0.5f)),Color(0,0,0,0),Color(0,0,0,0),40.0f,TRUE);
+            const Color colours[7]={Color(255,255,140,185),Color(255,255,215,120),Color(255,225,250,140),Color(255,135,240,190),Color(255,130,215,255),Color(255,185,160,255),Color(255,255,140,185)};
+            const REAL at[7]={0,0.17f,0.33f,0.5f,0.67f,0.83f,1};
+            rainbow.SetInterpolationColors(colours,at,7);
+            rainbow.SetWrapMode(WrapModeTileFlipXY);
+            GraphicsPath path;
+            RoundRect(path,0,0,W,H,r);
+            g.FillPath(&rainbow,&path);
+        }
+
+        void DrawFoilRim(Graphics& g,float W,float H,float r)
+        {
+            LinearGradientBrush rainbow(RectF(0,0,std::max(1.0f,W),std::max(1.0f,H)),Color(0,0,0,0),Color(0,0,0,0),45.0f,TRUE);
+            const Color colours[6]={Color(255,255,120,170),Color(255,255,226,120),Color(255,130,255,190),Color(255,120,220,255),Color(255,180,150,255),Color(255,255,120,170)};
+            const REAL at[6]={0,0.2f,0.4f,0.6f,0.8f,1};
+            rainbow.SetInterpolationColors(colours,at,6);
+            const float width=std::max(1.5f,W*0.026f);
+            Pen pen(&rainbow,width);
+            GraphicsPath path;
+            RoundRect(path,width/2,width/2,W-width,H-width,r);
+            g.DrawPath(&pen,&path);
+        }
+
+        // How much magic it gives up for: that many little gems at the top right of its picture.
+        void DrawGives(Graphics& g,const RectF& art,int gives)
+        {
+            const float w=art.Width*0.075f,h=w*1.25f,gap=w*0.22f,m=w*0.3f;
+            const float room=gives*w+(gives-1)*gap+2*m;
+            const RectF back(art.GetRight()-room-m*0.5f,art.Y+m*0.5f,room,h+2*m*0.7f);
+            SolidBrush dark(Color(165,10,12,30));
+            g.FillRectangle(&dark,back);
+            for(int i=0;i<gives;i++)
+            {
+                const float x=back.X+m+i*(w+gap),y=back.Y+m*0.7f;
+                const PointF gem[4]={PointF(x+w/2,y),PointF(x+w,y+h/2),PointF(x+w/2,y+h),PointF(x,y+h/2)};
+                LinearGradientBrush body(RectF(x,y-1,w,h+2),Color(255,170,226,255),Color(255,40,96,210),LinearGradientModeVertical);
+                g.FillPolygon(&body,gem,4);
+                Pen edge(Color(255,240,250,255),std::max(0.7f,w*0.09f));
+                g.DrawPolygon(&edge,gem,4);
+            }
         }
 
         // The cards' pictures (res/forts/cards.jpg): ArtW by ArtH each, card n at (n%8, n/8).
@@ -413,6 +587,7 @@ namespace MikuMikuDesktopPerch
             const float W=static_cast<float>(w),H=static_cast<float>(h),r=W*0.08f,m=W*0.045f;
             const Color side=SideColor(card.faction);
             FillRound(g,RectF(0,0,W,H),r,side,Color(255,20,14,12),std::max(1.0f,W*0.012f));
+            if(IsHolo(card))DrawFoilBody(g,W,H,r);
             const bool mini=h<140*Scale();
             const float nameH=H*(mini?0.17f:0.135f),nameTop=m;
             // The name.
@@ -432,6 +607,12 @@ namespace MikuMikuDesktopPerch
                     g.FillRectangle(&shade,art);
                     Text(g,name.substr(0,1),art,artH*0.62f,Color(90,255,250,230),true,StringAlignmentCenter,StringAlignmentCenter);
                 }
+                if(IsHolo(card))
+                {
+                    DrawFoil(g,art,id);
+                    DrawFoilRim(g,W,H,r);
+                }
+                if(card.faction>=0)DrawGives(g,art,Forts::GivesMagic(card));
                 if(card.spell)
                 {
                     const RectF band(art.X,art.GetBottom()-artH*0.34f,art.Width,artH*0.34f);
@@ -464,22 +645,28 @@ namespace MikuMikuDesktopPerch
             const Forts::Card& card=Forts::CardOf(id);
             const bool mini=box.Height<140*Scale();
             const float d=box.Height*(mini?0.22f:0.14f);
-            if(card.faction>=0)Mark(g,box.X-d*0.08f,box.Y-d*0.08f,d*(mini?0.86f:1.0f),std::to_wstring(card.cost),Color(255,40,84,170));
+            if(card.faction>=0)Mark(g,box.X-d*0.08f,box.Y-d*0.08f,d*(mini?0.86f:1.0f),std::to_wstring(card.cost),Color(255,40,84,170),MarkShape::Gem);
             if(dim)FillRound(g,box,r,Color(130,20,20,30));
         }
 
         void DrawStats(Graphics& g,const RectF& box,int attack,int health,bool hurt,bool raised)
         {
             const float d=box.Height*(box.Height<140*Scale()?0.22f:0.14f);
-            Mark(g,box.X+box.Width*0.02f,box.GetBottom()-d*1.02f,d,std::to_wstring(attack),raised?Color(255,214,120,20):Color(255,150,60,30));
-            Mark(g,box.GetRight()-d*1.02f,box.GetBottom()-d*1.02f,d,std::to_wstring(health),hurt?Color(255,190,30,40):Color(255,40,120,70));
+            Mark(g,box.X+box.Width*0.02f,box.GetBottom()-d*1.02f,d,std::to_wstring(attack),raised?Color(255,214,120,20):Color(255,168,52,30),MarkShape::Blades);
+            Mark(g,box.GetRight()-d*1.02f,box.GetBottom()-d*1.02f,d,std::to_wstring(health),hurt?Color(255,190,30,40):Color(255,40,120,70),MarkShape::Shield);
         }
 
-        void DrawLarge(Graphics& g,const RectF& box,int id)
+        // now: the soldier it is, as it stands now (none: the card as printed).
+        void DrawLarge(Graphics& g,const RectF& box,int id,const Forts::Unit* now=nullptr)
         {
             DrawCard(g,box,id);
             const Forts::Card& card=Forts::CardOf(id);
-            if(!card.spell)DrawStats(g,box,card.attack,card.health,false,false);
+            if(now)
+            {
+                DrawStats(g,box,now->attack+now->rally,now->health,now->health<now->maxHealth,now->rally>0||now->attack>card.attack);
+                if(now->frozen)FillRound(g,box,box.Width*0.08f,Color(90,120,190,255));
+            }
+            else if(!card.spell)DrawStats(g,box,card.attack,card.health,false,false);
         }
 
         // ---- What you may do next, from the moves there are ----
@@ -840,6 +1027,37 @@ namespace MikuMikuDesktopPerch
             }
         }
 
+        void LoadCollection()
+        {
+            state.owned.clear();
+            if(state.her.collectionFile.empty())return;
+            if(FILE* in=nullptr;_wfopen_s(&in,state.her.collectionFile.c_str(),L"r")==0&&in)
+            {
+                // Only what can be collected, however the file came to be.
+                std::vector<int> left=Forts::CollectableCards();
+                int id=0;
+                while(fscanf_s(in,"%d",&id)==1)
+                    if(const auto k=std::find(left.begin(),left.end(),id);k!=left.end())
+                    {
+                        left.erase(k);
+                        state.owned.push_back(id);
+                    }
+                fclose(in);
+            }
+        }
+
+        void SaveCollection()
+        {
+            if(state.her.collectionFile.empty())return;
+            if(FILE* out=nullptr;_wfopen_s(&out,state.her.collectionFile.c_str(),L"w")==0&&out)
+            {
+                for(int id:state.owned)fprintf(out,"%d\n",id);
+                fclose(out);
+            }
+        }
+
+        bool DeckLocked(int deck){return deck==Forts::CollectedDeck&&static_cast<int>(state.owned.size())<Forts::UnlockAt;}
+
         void SaveStrength()
         {
             if(state.her.strengthFile.empty())return;
@@ -916,10 +1134,14 @@ namespace MikuMikuDesktopPerch
 
         void StartGame(int deck)
         {
+            if(DeckLocked(deck))return;
             std::random_device device;
             const std::uint32_t seed=device();
             const int herDeck=static_cast<int>(seed%Forts::DeckKinds);
-            state.table.NewGame(seed,deck,herDeck,state.strength.Level(),static_cast<int>((seed>>8)%2));
+            const std::vector<int> collected=Forts::CollectedDeckCards(state.owned);
+            state.table.NewGame(seed,deck,herDeck,state.strength.Level(),static_cast<int>((seed>>8)%2),deck==Forts::CollectedDeck?&collected:nullptr);
+            state.earned=-1;
+            state.unlockedNow=false;
             state.choosing=false;
             state.nextAt=GetTickCount64()+200;
             Redraw();
@@ -1138,6 +1360,10 @@ namespace MikuMikuDesktopPerch
             const Color fire(255,255,150,50),ember(255,255,90,30),pale(255,225,235,255),violet(255,200,150,255);
             if(!events.empty())Redraw();
             ULONGLONG wait=0;          // how long what follows waits for what has just been shot
+            // A strike that brings both down.
+            const auto fell=[&](int uid){return std::any_of(events.begin(),events.end(),[&](const Forts::Event& e){return e.kind==Forts::EventKind::Fell&&e.unit==uid;});};
+            int bothStriker=-1;
+            float bothX=0,bothY=0;
             for(const Forts::Event& e:events)
             {
                 switch(e.kind)
@@ -1278,6 +1504,22 @@ namespace MikuMikuDesktopPerch
                     AddFx(e.amount>0?L"-"+std::to_wstring(e.amount):std::wstring(L"0"),target,red,true,hit,e.amount>0);
                     if(target.Width>0)Burst(to.X,to.Y,e.amount>0?22:8,spark,330*s,6*s,430,160*s,hit);
                     if(e.unit>=0&&e.back>0)AddFx(L"-"+std::to_wstring(e.back),UnitBox(e.unit),red,false,hit+60,true);
+                    if(e.unit>=0&&fell(e.unit)&&fell(e.target))
+                    {
+                        // Both fall: a clash of light between them, and a cut on each.
+                        const RectF striker=UnitBox(e.unit);
+                        const PointF from=Middle(striker),mid((from.X+to.X)/2,(from.Y+to.Y)/2);
+                        bothStriker=e.unit;
+                        bothX=state.lungeX;
+                        bothY=state.lungeY;
+                        AddFx(L"",striker,Color(255,255,246,220),false,hit,false,true);
+                        Burst(mid.X,mid.Y,8,Color(255,255,240,190),90*s,34*s,420,0,hit);
+                        Burst(mid.X,mid.Y,46,gold,520*s,7*s,620,240*s,hit);
+                        Burst(mid.X,mid.Y,26,ember,360*s,6*s,560,200*s,hit+40);
+                        const float w=220*s,h=44*s;
+                        AddFx(T(L"相打ち！",L"Both fall!"),RectF(mid.X-w/2,mid.Y-h/2,w,h),gold,false,hit+40);
+                        wait=std::max<ULONGLONG>(wait,LungeFor-90);
+                    }
                     wait=std::max(wait,hit);
                     PlayMahjongSound(MahjongSound::CardTake);
                     break;
@@ -1288,6 +1530,12 @@ namespace MikuMikuDesktopPerch
                     ghost.card=e.card;
                     ghost.at=UnitBox(e.unit);
                     ghost.start=now+wait+90;
+                    if(e.unit==bothStriker)
+                    {
+                        ghost.leanAt=now;
+                        ghost.leanX=bothX;
+                        ghost.leanY=bothY;
+                    }
                     if(ghost.at.Width>0)
                     {
                         state.ghosts.push_back(ghost);
@@ -1332,6 +1580,15 @@ namespace MikuMikuDesktopPerch
                     break;
                 }
                 case Forts::EventKind::Offered:
+                {
+                    const PointF from=Caster(e.who),to=state.scoreSpot[e.who];
+                    const PointF spot(to.X+(e.who==You?0:110*s),to.Y+(e.who==You?30*s:0));
+                    AddBolt(from,spot,blue,10*s,320);
+                    Burst(spot.X,spot.Y,14+6*e.amount,blue,130*s,5*s,500,0,300);
+                    AddFx(Fmt(T(L"魔力+{0}",L"Magic +{0}"),{std::to_wstring(e.amount)}),RectF(spot.X-40*s,spot.Y-20*s,80*s,40*s),blue,false,300);
+                    PlayMahjongSound(MahjongSound::CardPlace);
+                    break;
+                }
                 case Forts::EventKind::Spare:
                     break;
                 }
@@ -1382,6 +1639,16 @@ namespace MikuMikuDesktopPerch
                 // How hard she plays next game comes from how this one ended.
                 Forts::AfterGame(state.strength,t.Board().winner==You?1:t.Board().winner==Her?-1:0,std::abs(you-her));
                 SaveStrength();
+                // A win brings a card.
+                if(t.Board().winner==You)
+                {
+                    const bool locked=DeckLocked(Forts::CollectedDeck);
+                    std::random_device device;
+                    std::mt19937 dice(device());
+                    state.earned=Forts::Collect(state.owned,dice);
+                    state.unlockedNow=locked&&!DeckLocked(Forts::CollectedDeck);
+                    if(state.earned>=0)SaveCollection();
+                }
                 const std::wstring result=Fmt(T(L"話し相手は{0}点、あなたは{1}点",L"they have {0} points, you {1}"),{std::to_wstring(you),std::to_wstring(her)});
                 state.afterword=Fmt(T(L"いま、話し相手と三つの砦というカードゲームをして、デスクトップに戻ってきたところ。結果は{0}。その勝負の感想を、話し相手にひと言（1〜2文）",
                                       L"You have just played a card game called Three Forts with them and come back to the desktop. In the end {0}. Tell them what you thought of the game (one or two sentences)"),{result});
@@ -1485,11 +1752,21 @@ namespace MikuMikuDesktopPerch
             auto& t=state.table;
             SolidBrush shade(Color(150,0,0,0));
             g.FillRectangle(&shade,0.0f,0.0f,cw,ch);
-            const float w=std::min(cw-40*s,600*s),h=std::min(ch-40*s,320*s);
-            const RectF box((cw-w)/2,(ch-h)/2,w,h);
+            const bool earned=state.earned>=0;
+            const float full=std::min(cw-40*s,(earned?840:600)*s),h=std::min(ch-40*s,320*s);
+            const RectF box((cw-full)/2,(ch-h)/2,full,h);
             FillRound(g,box,14*s,Color(255,40,22,22),Color(255,200,170,90),2*s);
             float y=box.Y+22*s;
             const Color gold(255,240,206,120),white(255,240,240,236),soft(255,200,190,186);
+            // The card a win brought, at the right.
+            const float w=earned?full-240*s:full;
+            if(earned)
+            {
+                const float cardW=156*s,cardH=cardW*PreviewH/PreviewW,x=box.GetRight()-236*s;
+                Text(g,T(L"カードを手に入れた！",L"A new card!"),RectF(x,box.Y+10*s,226*s,28*s),17*s,gold,true,StringAlignmentCenter,StringAlignmentCenter);
+                DrawLarge(g,RectF(x+35*s,box.Y+42*s,cardW,cardH),state.earned);
+                Text(g,Fmt(T(L"{0} {1}/{2}枚",L"{0}: {1} of {2}"),{Forts::DeckName(Forts::CollectedDeck,English()),std::to_wstring(state.owned.size()),std::to_wstring(Forts::CollectableCards().size())}),RectF(x,box.Y+42*s+cardH+4*s,226*s,24*s),14*s,soft,false,StringAlignmentCenter,StringAlignmentCenter);
+            }
             Text(g,T(L"勝負あり",L"Game over"),RectF(box.X,y,w,44*s),32*s,gold,true,StringAlignmentCenter,StringAlignmentNear,true);
             y+=66*s;
             const int you=t.Board().side[You].score,her=t.Board().side[Her].score,winner=t.Board().winner;
@@ -1498,6 +1775,7 @@ namespace MikuMikuDesktopPerch
             if(winner==You)Runs(g,{{T(L"あなたの勝ち！",L"You win!")}},RectF(box.X,y,w,48*s),32*s,gold);
             else if(winner==Her)Runs(g,{{HerName()},{T(L"の勝ち",L" wins")}},RectF(box.X,y,w,48*s),32*s,gold);
             else Runs(g,{{T(L"引き分け",L"A draw")}},RectF(box.X,y,w,48*s),32*s,gold);
+            if(state.unlockedNow)Text(g,Fmt(T(L"{0}のデッキが使えるようになりました！",L"You can now play the {0} deck!"),{Forts::DeckName(Forts::CollectedDeck,English())}),RectF(box.X,box.GetBottom()-76*s,w,28*s),17*s,gold,true,StringAlignmentCenter);
             Text(g,T(L"Enter：もう一度　Esc：閉じる",L"Enter: play again   Esc: close"),RectF(box.X,box.GetBottom()-44*s,w,30*s),17*s,soft,false,StringAlignmentCenter);
         }
 
@@ -1518,7 +1796,8 @@ namespace MikuMikuDesktopPerch
                 {T(L"砦の点",L"Forts"),T(L"中央2点、左右1点。各砦に自分の兵は3体まで",L"The centre 2, the sides 1. Up to 3 of your soldiers at each")},
                 {T(L"魔力",L"Magic"),T(L"毎番、上限が1増えて満タンに（最大8）",L"Each turn its limit rises by 1 and it fills up (at most 8)")},
                 {T(L"カード",L"Cards"),T(L"カードをクリックし、光った場所をクリック",L"Click a card, then click where it lights up")},
-                {T(L"魔力に変える",L"For magic"),T(L"番に1回、手札1枚を捨てて魔力+1",L"Once a turn, give up a card for 1 magic")},
+                {T(L"集める",L"Collecting"),T(L"勝つと魔術院のカードが1枚もらえる。10枚で使える（デッキ選びでCを押すと見られる）",L"Each win brings a Mage College card; at 10 you can play them (C when choosing a deck)")},
+                {T(L"魔力に変える",L"For magic"),T(L"番に1回、手札1枚を捨てて魔力を得る（絵の右上の◆の数、1〜3）",L"Once a turn, give up a card for magic (the gems on its picture, 1 to 3)")},
                 {T(L"兵",L"Soldiers"),T(L"置いた番は動けない。次から移動（隣の砦）か攻撃のどちらか1回",L"Wait a turn. Then each may move next door or attack, once")},
                 {T(L"攻撃",L"Attacks"),T(L"同じ砦の敵に。お互いに攻撃力ぶん体力が減る",L"An enemy at the same fort. Each takes the other's attack")},
                 {T(L"守護",L"Guard"),T(L"同じ砦の敵は、まずこの兵を攻撃する",L"Enemies at its fort must attack it first")},
@@ -1531,15 +1810,15 @@ namespace MikuMikuDesktopPerch
             // The numbers on a card, in their own colours.
             {
                 Text(g,T(L"カードの数字",L"The numbers"),RectF(box.X+24*s,y,150*s,30*s),17*s,white,true);
-                struct Number {const wchar_t* mark;Color color;const wchar_t* about;float width;};
+                struct Number {const wchar_t* mark;Color color;MarkShape shape;const wchar_t* about;float width;};
                 const Number numbers[]={
-                    {L"2",Color(255,40,84,170),T(L"左上：コスト（使う魔力）",L"Top left: cost (magic)"),200},
-                    {L"3",Color(255,150,60,30),T(L"左下：攻撃力",L"Bottom left: attack"),140},
-                    {L"2",Color(255,40,120,70),T(L"右下：体力（0で倒れる。傷つくと赤）",L"Bottom right: health (0: it falls; red: hurt)"),280}};
+                    {L"2",Color(255,40,84,170),MarkShape::Gem,T(L"左上：コスト（使う魔力）",L"Top left: cost (magic)"),200},
+                    {L"3",Color(255,168,52,30),MarkShape::Blades,T(L"左下：攻撃力",L"Bottom left: attack"),140},
+                    {L"2",Color(255,40,120,70),MarkShape::Shield,T(L"右下：体力（0で倒れる。傷つくと赤）",L"Bottom right: health (0: it falls; red: hurt)"),280}};
                 float x=box.X+172*s;
                 for(const Number& n:numbers)
                 {
-                    Mark(g,x,y,24*s,n.mark,n.color);
+                    Mark(g,x,y,24*s,n.mark,n.color,n.shape);
                     Text(g,n.about,RectF(x+28*s,y+1*s,n.width*s,30*s),14*s,soft);
                     x+=(n.width+18)*s;
                 }
@@ -1579,12 +1858,67 @@ namespace MikuMikuDesktopPerch
                 const std::vector<int> deck=Forts::DeckOf(d);
                 const float cw=74*s,ch=cw*1.28f;
                 const int shown[3]={deck[10],deck[18],deck[28]};
+                const bool locked=DeckLocked(d);
                 for(int i=0;i<3;i++)
                 {
                     const RectF card(x+(bw-(cw*3+8*s*2))/2+i*(cw+8*s),top+100*s,cw,ch);
-                    DrawLarge(g,card,shown[i]);
+                    if(!locked)DrawLarge(g,card,shown[i]);
+                    else
+                    {
+                        FillRound(g,card,cw*0.08f,Color(255,28,20,40),Color(255,150,120,190),1.5f*s);
+                        Text(g,L"?",card,cw*0.6f,Color(255,150,120,190),true,StringAlignmentCenter,StringAlignmentCenter);
+                    }
                 }
+                // A collected deck says how far it has come.
+                if(d==Forts::CollectedDeck)
+                {
+                    const std::wstring have=std::to_wstring(state.owned.size());
+                    const std::wstring about2=locked?Fmt(T(L"勝つと1枚もらえます　あと{0}枚で使えます（{1}/{2}）",L"A card for each win: {0} more to play it ({1}/{2})"),{std::to_wstring(Forts::UnlockAt-static_cast<int>(state.owned.size())),have,std::to_wstring(Forts::UnlockAt)}):
+                                                      Fmt(T(L"持っている{0}枚で戦います（全{1}枚）",L"You play the {0} you have (of {1})"),{std::to_wstring(Forts::CollectedDeckCards(state.owned).size()),std::to_wstring(Forts::DeckSize)});
+                    FillRound(g,RectF(x,top+bh+6*s,bw,30*s),8*s,Color(215,40,18,16),Color(220,170,120,100),1.2f*s);
+                    Text(g,about2,RectF(x,top+bh+6*s,bw,30*s),13*s,locked?soft:gold,false,StringAlignmentCenter,StringAlignmentCenter);
+                }
+                if(locked)FillRound(g,box,12*s,Color(120,10,8,16));
             }
+            // The cards collected.
+            state.albumBox=RectF(W/2-130*s,top+bh+46*s,260*s,36*s);
+            FillRound(g,state.albumBox,8*s,Color(225,40,18,16),Color(255,200,170,90),1.5f*s);
+            Text(g,T(L"集めたカードを見る（C）",L"Cards collected (C)"),state.albumBox,15*s,white,true,StringAlignmentCenter,StringAlignmentCenter);
+        }
+
+        // Every card to collect: those you have, how many, and those you haven't.
+        void PaintAlbum(Graphics& g,float W,float H,float s)
+        {
+            SolidBrush shade(Color(170,0,0,0));
+            g.FillRectangle(&shade,0.0f,0.0f,W,H);
+            const float w=std::min(W-30*s,780*s),h=std::min(H-30*s,620*s);
+            const RectF box((W-w)/2,(H-h)/2,w,h);
+            FillRound(g,box,14*s,Color(250,40,22,22),Color(255,200,170,90),2*s);
+            const Color gold(255,240,206,120),soft(255,200,190,186);
+            Text(g,Fmt(T(L"{0}のカード　{1}/{2}枚",L"{0}: {1} of {2}"),{Forts::DeckName(Forts::CollectedDeck,English()),std::to_wstring(state.owned.size()),std::to_wstring(Forts::CollectableCards().size())}),RectF(box.X,box.Y+12*s,w,36*s),24*s,gold,true,StringAlignmentCenter,StringAlignmentCenter);
+            std::vector<int> kinds=Forts::CollectableCards();
+            kinds.erase(std::unique(kinds.begin(),kinds.end()),kinds.end());
+            const int columns=5,rows=(static_cast<int>(kinds.size())+columns-1)/columns;
+            const float top=box.Y+56*s,bottom=box.GetBottom()-44*s;
+            const float cellH=(bottom-top)/rows,cardH=cellH-8*s,cardW=std::min(cardH/1.28f,(w-30*s)/columns-10*s),rowW=columns*(cardW+10*s);
+            for(size_t i=0;i<kinds.size();i++)
+            {
+                const float x=box.X+(w-rowW)/2+5*s+(i%columns)*(cardW+10*s),y=top+(i/columns)*cellH;
+                const RectF card(x,y,cardW,std::min(cardH,cardW*1.28f));
+                const auto have=std::count(state.owned.begin(),state.owned.end(),kinds[i]);
+                if(have==0)
+                {
+                    FillRound(g,card,cardW*0.08f,Color(255,28,20,40),Color(255,110,90,140),1.5f*s);
+                    Text(g,L"?",card,cardW*0.5f,Color(255,110,90,140),true,StringAlignmentCenter,StringAlignmentCenter);
+                    continue;
+                }
+                DrawLarge(g,card,kinds[i]);
+                const float d=cardW*0.3f;
+                const RectF tag(card.GetRight()-d*1.15f,card.Y+card.Height*0.5f-d*0.45f,d*1.15f,d*0.9f);
+                FillRound(g,tag,d*0.2f,Color(235,20,14,12),Color(255,240,206,120),1.0f*s);
+                Text(g,L"×"+std::to_wstring(have),tag,d*0.5f,gold,true,StringAlignmentCenter,StringAlignmentCenter);
+            }
+            Text(g,T(L"どこかをクリックすると閉じます",L"Click anywhere to close"),RectF(box.X,box.GetBottom()-38*s,w,30*s),15*s,soft,false,StringAlignmentCenter,StringAlignmentCenter);
         }
 
         void LayButtons(Graphics& g,float W,float H,float s)
@@ -1597,7 +1931,8 @@ namespace MikuMikuDesktopPerch
                 const bool yours=YourTurnNow();
                 const auto& mine=t.Board().side[You];
                 if(mine.spare)b.push_back({Act::Spare,T(L"一度だけの魔力（M）",L"The extra magic (M)"),RectF(),yours});
-                if(state.choice.hand>=0&&!mine.offered)b.push_back({Act::Offer,T(L"魔力に変える（G）",L"Give up for magic (G)"),RectF(),yours});
+                if(state.choice.hand>=0&&state.choice.hand<mine.handSize&&!mine.offered)
+                    b.push_back({Act::Offer,Fmt(T(L"魔力+{0}に変える（G）",L"Give up for magic +{0} (G)"),{std::to_wstring(Forts::GivesMagic(Forts::CardOf(mine.hand[state.choice.hand])))}),RectF(),yours});
                 b.push_back({Act::End,T(L"番を終える（E）",L"End turn (E)"),RectF(),yours,true});
             }
             float y=H-(HandH+16+50)*s;
@@ -1855,7 +2190,8 @@ namespace MikuMikuDesktopPerch
                 const float u=now>k.start?static_cast<float>(now-k.start)/700.0f:0;
                 if(u>=1)continue;
                 const float sink=u*u*20*s;
-                DrawFaded(g,RectF(k.at.X,k.at.Y+sink,k.at.Width,k.at.Height),k.at,k.card,std::clamp(1-u*1.15f,0.0f,1.0f));
+                const float lean=k.leanAt&&now-k.leanAt<LungeFor?std::sin(static_cast<float>(now-k.leanAt)/LungeFor*3.14159f):0;
+                DrawFaded(g,RectF(k.at.X+k.leanX*lean,k.at.Y+sink+k.leanY*lean,k.at.Width,k.at.Height),k.at,k.card,std::clamp(1-u*1.15f,0.0f,1.0f));
             }
             for(const Bolt& b:state.bolts)
             {
@@ -2039,20 +2375,23 @@ namespace MikuMikuDesktopPerch
                 // A card shown large: the one she has just played, or the one under the mouse.
                 {
                     int large=-1;
+                    const Forts::Unit* standing=nullptr;
                     if(state.hoverHand>=0&&state.hoverHand<t.Board().side[You].handSize)large=t.Board().side[You].hand[state.hoverHand];
                     else if(state.hoverUnit>=0)
                     {
-                        if(const Forts::Unit* u=Forts::FindUnit(t.Board(),state.hoverUnit))large=u->card;
+                        standing=Forts::FindUnit(t.Board(),state.hoverUnit);
+                        if(standing)large=standing->card;
                     }
                     else if(state.shownCard>=0&&GetTickCount64()<state.shownUntil)large=state.shownCard;
                     if(large>=0)
                     {
                         const float pw=PreviewW*s,ph=PreviewH*s;
-                        DrawLarge(g,RectF(W-pw-14*s,std::max(118*s,(H-HandH*s)/2-ph/2-30*s),pw,ph),large);
+                        DrawLarge(g,RectF(W-pw-14*s,std::max(118*s,(H-HandH*s)/2-ph/2-30*s),pw,ph),large,standing);
                     }
                 }
             }
             if(EndShown())PaintEnd(g,W,H,s);
+            if(state.album)PaintAlbum(g,W,H,s);
             if(state.help)PaintHelp(g,W,H,s);
             if(state.confirmQuit)
             {
@@ -2201,10 +2540,12 @@ namespace MikuMikuDesktopPerch
                 else if(key=='N'||key==VK_ESCAPE){state.confirmQuit=false;Redraw();}
                 return;
             }
+            if(state.album){state.album=false;Redraw();return;}
             if(key==VK_TAB){state.help=!state.help;Redraw();return;}
             if(state.help){if(key==VK_ESCAPE){state.help=false;Redraw();}return;}
             if(state.choosing)
             {
+                if(key=='C'){state.album=true;Redraw();return;}
                 if(key>='1'&&key<'1'+Forts::DeckKinds)StartGame(static_cast<int>(key-'1'));
                 else if(key==VK_ESCAPE)Finish();
                 return;
@@ -2275,10 +2616,12 @@ namespace MikuMikuDesktopPerch
                     else if(state.quitButtons[1].Contains(x,y)){state.confirmQuit=false;Redraw();}
                     return 0;
                 }
+                if(state.album){state.album=false;Redraw();return 0;}
                 if(state.help){state.help=false;Redraw();return 0;}
                 if(state.helpBox.Contains(x,y)){state.help=true;Redraw();return 0;}
                 if(state.choosing)
                 {
+                    if(state.albumBox.Contains(x,y)){state.album=true;Redraw();return 0;}
                     for(int d=0;d<Forts::DeckKinds;d++)if(state.deckBoxes[d].Contains(x,y)){StartGame(d);break;}
                     return 0;
                 }
@@ -2636,6 +2979,7 @@ namespace MikuMikuDesktopPerch
                               std::to_wstring(b.side[You].score),std::to_wstring(b.side[Her].score),std::to_wstring(b.side[You].magic),std::to_wstring(b.side[Her].magic),
                               std::to_wstring(b.side[You].handSize),std::to_wstring(b.side[Her].handSize),std::to_wstring(static_cast<int>(state.tell)),std::to_wstring(t.HerAim())});
         out+=L"forts level: "+std::to_wstring(state.strength.level)+L" after "+std::to_wstring(state.strength.games)+L" games\n";
+        out+=L"forts collected: "+std::to_wstring(state.owned.size())+L", this game brought "+std::to_wstring(state.earned)+L"\n";
         wchar_t speed[160];
         RECT client{};
         GetClientRect(state.window,&client);
@@ -2664,12 +3008,29 @@ namespace MikuMikuDesktopPerch
                                      nullptr,nullptr,wc.hInstance,nullptr);
         state.her=FortsOpponent{L"ミク"};
         std::mt19937 dice(seed);
-        state.choosing=mode==L"choose";
+        state.choosing=mode==L"choose"||mode==L"unlocked"||mode==L"album";
+        if(mode==L"unlocked"||mode==L"album")
+        {
+            std::mt19937 some(seed);
+            for(int i=0;i<(mode==L"album"?17:12);i++)Forts::Collect(state.owned,some);
+            state.album=mode==L"album";
+        }
         if(!state.choosing)
         {
             state.table.NewGame(seed,seed%Forts::DeckKinds,(seed/7)%Forts::DeckKinds,Forts::Levels-1,seed%2);
             if(mode!=L"redraw")PlaySimply(moves);
             state.help=mode==L"help";
+            if(mode==L"earned")
+            {
+                auto& over=state.table.Edit();
+                over.over=true;
+                over.winner=You;
+                over.side[You].score=8;
+                for(int i=0;i<Forts::UnlockAt-1;i++)state.owned.push_back(Forts::CollectableCards()[static_cast<size_t>(i)]);
+                state.owned.push_back(35);
+                state.earned=35;
+                state.unlockedNow=true;
+            }
             // Your move, so that what you may do shows.
             while(mode!=L"redraw"&&state.table.Now()==Phase::Hers)state.table.HerStep();
             state.table.TakeEvents();
@@ -2719,7 +3080,56 @@ namespace MikuMikuDesktopPerch
             };
             const int card=mine>=0?Forts::FindUnit(b,mine)->card:0,theirs=hers>=0?Forts::FindUnit(b,hers)->card:0;
             using K=Forts::EventKind;
-            if(kind==L"hit"){add(K::Hit,You,card,mine,hers,2,1);add(K::Fell,Her,theirs,hers,-1,0);}
+            if(kind==L"holo")
+            {
+                auto& edit=state.table.Edit();
+                edit.who=You;
+                auto& mine2=edit.side[You];
+                mine2.handSize=4;
+                mine2.hand[0]=35;
+                mine2.hand[1]=34;
+                mine2.hand[2]=15;
+                mine2.hand[3]=0;
+                mine2.count[1]=1;
+                Forts::Unit u;
+                u.uid=950;
+                u.card=25;
+                u.attack=6;
+                u.health=2;
+                u.maxHealth=5;
+                u.rally=1;
+                mine2.units[1][0]=u;
+                state.hoverHand=-1;
+                state.hoverUnit=950;
+                draw();
+                draw();
+            }
+            else if(kind==L"both")
+            {
+                auto& edit=state.table.Edit();
+                edit.who=You;
+                for(int who=0;who<2;who++)
+                {
+                    edit.side[who].count[0]=1;
+                    Forts::Unit u;
+                    u.uid=static_cast<std::int16_t>(900+who);
+                    u.card=2;
+                    u.attack=3;
+                    u.health=u.maxHealth=2;
+                    u.ready=true;
+                    edit.side[who].units[0][0]=u;
+                }
+                draw();
+                draw();
+                Forts::Action a;
+                a.kind=Forts::ActionKind::Attack;
+                a.unit=900;
+                a.target=901;
+                state.table.Do(a);
+                events=state.table.TakeEvents();
+            }
+            else if(kind==L"magic")add(K::Offered,You,5,-1,-1,3);
+            else if(kind==L"hit"){add(K::Hit,You,card,mine,hers,2,1);add(K::Fell,Her,theirs,hers,-1,0);}
             else if(kind==L"arrow")add(K::Hit,You,9,mine,hers,2);
             else if(kind==L"fire"){add(K::Spell,You,27,-1,hers,0,0,fort);add(K::Hit,You,27,-1,hers,2,0,fort);}
             else if(kind==L"storm"){add(K::Spell,You,34,-1,-1,0,0,fort);add(K::Hit,You,34,-1,hers,3,0,fort);add(K::Fell,Her,theirs,hers,-1,0);}
@@ -2789,6 +3199,8 @@ namespace MikuMikuDesktopPerch
         }
         state.tableBuilt=false;
         LoadStrength();
+        LoadCollection();
+        state.album=false;
         state.lines.Load(L"FORTSLINES",L"forts",her.ownLinesFile,her.linesFile,her.styleKey,English(),
                          {L"三つの砦というカードゲーム",L"a card game called Three Forts",L"",L""});
         state.voice.Stop();

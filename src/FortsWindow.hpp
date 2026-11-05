@@ -41,6 +41,8 @@ namespace MikuMikuDesktopPerch
         std::wstring linesFile,styleKey;
         // How hard she plays against this user, kept here (empty: not kept).
         std::wstring strengthFile;
+        // The cards collected, kept here (empty: not kept).
+        std::wstring collectionFile;
         // The user's own lines (JSON; docs/GameLines.md), when there is such a file.
         std::wstring ownLinesFile;
         // Her line said aloud in her voice (the voice engine), when speaking aloud is on; an empty

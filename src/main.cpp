@@ -378,6 +378,7 @@ namespace
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         std::wstring ownLines;    // --own-lines: the user's lines file to use in its place (diagnostics)
         std::wstring fortsStrength;   // --forts-strength: Three Forts' strength file to use (diagnostics)
+        std::wstring fortsCollection; // --forts-collection: its collected cards' file to use (diagnostics)
         bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -4858,10 +4859,14 @@ namespace
         };
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Forts,facts,weight,fallback);};
         her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".forts.lines.txt",true);
-        // How hard she plays follows the user, not the character.
+        // How hard she plays and the cards collected follow the user, not the character.
         if(wchar_t base[MAX_PATH];!app.diagnostic&&GetEnvironmentVariableW(L"LOCALAPPDATA",base,MAX_PATH))
+        {
             her.strengthFile=(std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"forts.strength.txt").wstring();
+            her.collectionFile=(std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"forts.collection.txt").wstring();
+        }
         if(!app.fortsStrength.empty())her.strengthFile=app.fortsStrength;
+        if(!app.fortsCollection.empty())her.collectionFile=app.fortsCollection;
         her.styleKey=m.character.name+L"\n"+m.character.persona;
         her.ownLinesFile=OwnLinesFile(m.modelPath);
         her.speak=[model](const std::wstring& line){
@@ -6541,6 +6546,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--ruins-play"&&i+1<argc)snapshotRuinsKeys=argv[++i];
             else if(arg==L"--own-lines"&&i+1<argc)app.ownLines=argv[++i];
             else if(arg==L"--forts-strength"&&i+1<argc)app.fortsStrength=argv[++i];
+            else if(arg==L"--forts-collection"&&i+1<argc)app.fortsCollection=argv[++i];
             else if(arg==L"--oldmaid")
             {
                 snapshotOldMaid=true;

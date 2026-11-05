@@ -267,6 +267,11 @@ namespace MikuMikuDesktopPerch::Forts
     int CardKinds(){return KindCount;}
     const Card& CardOf(int id){return Cards[id];}
 
+    int GivesMagic(const Card& card)
+    {
+        return card.cost<=2?1:card.cost<=4?2:3;
+    }
+
     const wchar_t* DeckName(int kind,bool english)
     {
         static const wchar_t* const names[DeckKinds][2]={{L"騎士団",L"Knights"},{L"森の民",L"Forest Folk"},{L"魔術院",L"Mage College"}};
@@ -282,6 +287,32 @@ namespace MikuMikuDesktopPerch::Forts
         for(int id=0;id<KindCount;id++)
             if(Cards[id].faction==kind+1){deck.push_back(id);deck.push_back(id);}
         return deck;
+    }
+
+    std::vector<int> CollectableCards()
+    {
+        std::vector<int> out=DeckOf(CollectedDeck);
+        out.erase(std::remove_if(out.begin(),out.end(),[](int id){return Cards[id].faction!=CollectedDeck+1;}),out.end());
+        return out;
+    }
+
+    std::vector<int> CollectedDeckCards(const std::vector<int>& owned)
+    {
+        std::vector<int> out=DeckOf(CollectedDeck);
+        out.erase(std::remove_if(out.begin(),out.end(),[](int id){return Cards[id].faction==CollectedDeck+1;}),out.end());
+        out.insert(out.end(),owned.begin(),owned.end());
+        return out;
+    }
+
+    int Collect(std::vector<int>& owned,std::mt19937& dice)
+    {
+        std::vector<int> left=CollectableCards();
+        for(int id:owned)
+            if(const auto k=std::find(left.begin(),left.end(),id);k!=left.end())left.erase(k);
+        if(left.empty())return -1;
+        const int id=left[dice()%left.size()];
+        owned.push_back(id);
+        return id;
     }
 
     Needs NeedsOf(const Card& card)
@@ -509,7 +540,8 @@ namespace MikuMikuDesktopPerch::Forts
             const int id=a.hand[action.hand];
             for(int i=action.hand;i+1<a.handSize;i++)a.hand[i]=a.hand[i+1];
             a.handSize--;
-            a.magic++;
+            e.amount=static_cast<std::int8_t>(GivesMagic(CardOf(id)));
+            a.magic=static_cast<std::int8_t>(a.magic+e.amount);
             a.offered=true;
             e.kind=EventKind::Offered;
             e.card=static_cast<std::int8_t>(id);
@@ -916,7 +948,7 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
 
     // ---- the table ----
 
-    void Table::NewGame(std::uint32_t seed,int yourDeck,int herDeck,int levelNow,int firstOne)
+    void Table::NewGame(std::uint32_t seed,int yourDeck,int herDeck,int levelNow,int firstOne,const std::vector<int>* yourCards)
     {
         rng.seed(seed);
         think.seed(seed^0x5bd1e995u);
@@ -934,7 +966,7 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
         deckKind={yourDeck,herDeck};
         for(int who=0;who<2;who++)
         {
-            decks[who]=DeckOf(deckKind[who]);
+            decks[who]=who==You&&yourCards?*yourCards:DeckOf(deckKind[who]);
             std::shuffle(decks[who].begin(),decks[who].end(),rng);
             seen[who].clear();
             state.side[who].deckLeft=static_cast<std::int8_t>(decks[who].size());
@@ -1122,7 +1154,7 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
         {
             const Side& side=state.side[who];
             if(side.deckLeft!=static_cast<int>(decks[who].size())||side.pending!=0)return false;
-            if(side.handSize<0||side.handSize>MaxHand||side.magic<0||side.magic>MaxMagic+2)return false;
+            if(side.handSize<0||side.handSize>MaxHand||side.magic<0||side.magic>MaxMagic+4)return false;
             for(int f=0;f<FortCount;f++)
             {
                 if(side.count[f]<0||side.count[f]>PerFort)return false;
@@ -1316,6 +1348,43 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
             Apply(s,a);
             check(s.side[You].magic==1&&s.side[You].handSize==1,L"offer: a card for a magic");
             check(!LegalHas(s,a),L"offer: once a turn");
+            for(int id=0;id<KindCount;id++)
+            {
+                const int gives=GivesMagic(Cards[id]);
+                check(gives>=1&&gives<=3,L"offer: 1 to 3 magic");
+            }
+        }
+        {   // Collecting: every card of the deck once each, and a game with few of them.
+            std::mt19937 dice(3);
+            std::vector<int> owned;
+            int got=0;
+            while(Collect(owned,dice)>=0)got++;
+            std::vector<int> all=CollectableCards(),have=owned;
+            check(got==static_cast<int>(all.size()),L"collect: every card to be collected");
+            check(std::none_of(all.begin(),all.end(),[](int id){return Cards[id].faction==0;}),L"collect: none of the common cards");
+            std::sort(all.begin(),all.end());
+            std::sort(have.begin(),have.end());
+            check(all==have,L"collect: each as many times as the deck holds it");
+            {
+                std::vector<int> whole=CollectedDeckCards(owned),deck=DeckOf(CollectedDeck);
+                std::sort(whole.begin(),whole.end());
+                std::sort(deck.begin(),deck.end());
+                check(whole==deck,L"collect: all collected makes the whole deck");
+            }
+            owned.resize(UnlockAt);
+            const std::vector<int> cards=CollectedDeckCards(owned);
+            check(static_cast<int>(cards.size())==DeckSize-static_cast<int>(all.size())+UnlockAt,L"collect: the common cards and those you have");
+            Table t;
+            t.NewGame(9,CollectedDeck,0,Levels-1,You,&cards);
+            check(t.Board().side[You].deckLeft==static_cast<int>(cards.size())-StartHand,L"collect: a game with only what you have");
+            t.Redraw(0);
+            int guard=0;
+            while(t.Now()!=Phase::Over&&guard++<4000)
+            {
+                t.StepAs(t.Board().who,0);
+                t.TakeEvents();
+            }
+            check(t.Now()==Phase::Over&&t.Consistent(),L"collect: a game with few cards ends");
         }
         {   // The turn limit.
             State s;
@@ -1356,7 +1425,7 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
         const auto game=[&](int deckA,int deckB,int styleA,int styleB,std::uint32_t s,int firstOne,Tally& tally,bool cards)
         {
             Table t;
-            t.NewGame(s,deckA,deckB,1,firstOne);
+            t.NewGame(s,deckA,deckB,Levels-1,firstOne);
             t.Redraw(styleA==2?0:t.SuggestRedraw(You));
             int guard=0;
             while(t.Now()!=Phase::Over&&guard<4000)
