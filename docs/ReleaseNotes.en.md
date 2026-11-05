@@ -2,6 +2,22 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.5
+
+### New
+
+- **Three Forts**: an original card game under "Mini games" in the right-click menu. You and the character fight over three forts, and the first to 8 points wins
+  - A fort with only your soldiers at it scores at the start of your turn (left 1, centre 2, right 1)
+  - There are three decks: Knights, Forest Folk and Mage College. Mage College opens once you have 10 of its cards, one for each game you win; the deck choice shows the ones you have
+  - A card you don't need can be given up for magic (the gems on its picture, 1 to 3). Cards costing 5 or more are in rainbow colours
+  - The character hints at the fort she wants next with a glance or a word, though it may be a bluff
+  - Tab shows how to play during the game. The design (in Japanese): `docs/Forts.md`
+- **Usual face**: the morphs on a VMD's first frame can be kept on, per character ("Open usual face...")
+
+### Fixed
+
+- Maximizing some mini games (gin rummy, shogi, mahjong solitaire and others) could make them very heavy and nearly stop the characters
+
 ## 1.6.4
 
 ### New
