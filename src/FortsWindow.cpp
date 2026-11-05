@@ -60,10 +60,20 @@ namespace MikuMikuDesktopPerch
         };
         enum class Need {Nothing,Fort,Target,Dest,UnitAct};
 
-        // Numbers rising from a card or a fort, and a ring round it.
-        struct Fx {std::wstring text;RectF at;Color color;ULONGLONG start=0,life=1100;bool ring=false;};
-        // A soldier fallen, fading where it stood.
+        // What moves over the board starts at start, which may be still to come (a number waits for
+        // the shot that brings it). Past: over by now.
+        bool Past(ULONGLONG now,ULONGLONG start,ULONGLONG life){return now>start&&now-start>life;}
+
+        // Over a card or a fort: a number or a word rising, a frame of light, a flash, a cut.
+        struct Fx {std::wstring text;RectF at;Color color;ULONGLONG start=0,life=1100;bool frame=false,flash=false,slash=false;};
+        // A soldier fallen, sinking and fading where it stood.
         struct Ghost {int card=-1;RectF at;ULONGLONG start=0;};
+        // A speck of light on its way: where it began, its speed and fall in pixels a second.
+        struct Spark {float x=0,y=0,vx=0,vy=0,size=0,fall=0;ULONGLONG start=0,life=600;Color color;};
+        // A shot or a spell crossing the board, with its trail.
+        struct Bolt {PointF from,to;ULONGLONG start=0,life=240;Color color;float size=0;};
+        constexpr ULONGLONG LungeFor=300;
+        constexpr size_t MostSparks=300;
 
         struct State
         {
@@ -96,6 +106,14 @@ namespace MikuMikuDesktopPerch
             int hoverHand=-1,hoverUnit=-1;
             std::vector<Fx> fx;
             std::vector<Ghost> ghosts;
+            std::vector<Spark> sparks;
+            std::vector<Bolt> bolts;
+            std::vector<int> burstDue;     // soldiers just come: their light, once they have a place
+            PointF scoreSpot[2];
+            ULONGLONG endAt=0;
+            RectF lungeBox;            // where the one striking stands
+            int lungeLeftOut=-1;       // who the board was last drawn without (PaintTop draws it)
+            float lungeX=0,lungeY=0;
             std::map<int,ULONGLONG> fresh;                 // soldiers just come or moved, since when
             int lungeUnit=-1;          // a soldier striking
             ULONGLONG lungeAt=0;
@@ -885,6 +903,11 @@ namespace MikuMikuDesktopPerch
             state.redrawMask=0;
             state.fx.clear();
             state.ghosts.clear();
+            state.sparks.clear();
+            state.bolts.clear();
+            state.burstDue.clear();
+            state.endAt=0;
+            state.lungeAt=0;
             state.fresh.clear();
             state.unitBoxes.clear();
             state.shownCard=-1;
@@ -1039,14 +1062,16 @@ namespace MikuMikuDesktopPerch
             if(state.her.model&&state.renderer)state.her.model->SetExpression(e,false);
         }
 
-        void AddFx(const std::wstring& text,const RectF& at,Color color,bool ring=false)
+        void AddFx(const std::wstring& text,const RectF& at,Color color,bool frame=false,ULONGLONG wait=0,bool flash=false,bool slash=false)
         {
             Fx f;
             f.text=text;
             f.at=at;
             f.color=color;
-            f.start=GetTickCount64();
-            f.ring=ring;
+            f.start=GetTickCount64()+wait;
+            f.frame=frame;
+            f.flash=flash;
+            f.slash=slash;
             state.fx.push_back(std::move(f));
         }
 
@@ -1056,13 +1081,63 @@ namespace MikuMikuDesktopPerch
             return k==state.unitBoxes.end()?RectF():k->second;
         }
 
-        // What has happened on the table: numbers and rings, her words.
-        void HandleEvents()
+        PointF Middle(const RectF& box){return PointF(box.X+box.Width/2,box.Y+box.Height/2);}
+
+        float Rand(float from,float to){return std::uniform_real_distribution<float>(from,to)(state.sparkRandom);}
+
+        // Specks flying out from (x, y). fall: downward pull (less than zero, they rise).
+        void Burst(float x,float y,int count,Color color,float speed,float size,ULONGLONG life,float fall=0,ULONGLONG wait=0,float spread=0)
         {
             const ULONGLONG now=GetTickCount64();
+            for(int i=0;i<count&&state.sparks.size()<MostSparks;i++)
+            {
+                Spark p;
+                const float angle=Rand(0,6.2832f),v=speed*Rand(0.25f,1.0f);
+                p.x=x+Rand(-spread,spread);
+                p.y=y+Rand(-spread,spread);
+                p.vx=std::cos(angle)*v;
+                p.vy=std::sin(angle)*v;
+                p.size=size*Rand(0.6f,1.2f);
+                p.fall=fall;
+                p.start=now+wait;
+                p.life=static_cast<ULONGLONG>(life*Rand(0.7f,1.1f));
+                p.color=color;
+                state.sparks.push_back(p);
+            }
+        }
+
+        void AddBolt(const PointF& from,const PointF& to,Color color,float size,ULONGLONG life,ULONGLONG wait=0)
+        {
+            Bolt b;
+            b.from=from;
+            b.to=to;
+            b.color=color;
+            b.size=size;
+            b.life=life;
+            b.start=GetTickCount64()+wait;
+            state.bolts.push_back(b);
+        }
+
+        // Where a spell of theirs comes from: your hand, her.
+        PointF Caster(int who)
+        {
+            RECT client{};
+            GetClientRect(state.window,&client);
+            const float W=static_cast<float>(client.right),H=static_cast<float>(client.bottom),s=Scale();
+            if(who==You)return PointF(std::max(W*0.3f,300*s),H-(HandH/2+10)*s);
+            if(state.headScreen.x>=0)return PointF(static_cast<float>(state.headScreen.x),static_cast<float>(state.headScreen.y));
+            return PointF(W/2,60*s);
+        }
+
+        // What has happened on the table: numbers and light, her words.
+        void HandleEvents(const std::vector<Forts::Event>& events)
+        {
+            const ULONGLONG now=GetTickCount64();
+            const float s=Scale();
             const Color red(255,255,110,90),gold(255,255,214,110),green(255,130,240,150),blue(255,150,210,255);
-            const std::vector<Forts::Event> events=state.table.TakeEvents();
+            const Color fire(255,255,150,50),ember(255,255,90,30),pale(255,225,235,255),violet(255,200,150,255);
             if(!events.empty())Redraw();
+            ULONGLONG wait=0;          // how long what follows waits for what has just been shot
             for(const Forts::Event& e:events)
             {
                 switch(e.kind)
@@ -1080,16 +1155,25 @@ namespace MikuMikuDesktopPerch
                     }
                     break;
                 case Forts::EventKind::Scored:
+                {
                     AddFx(L"+"+std::to_wstring(e.amount),state.bannerBoxes[e.fort],gold,true);
+                    // The points go up to the score.
+                    const PointF from=Middle(state.bannerBoxes[e.fort]);
+                    const PointF to=state.scoreSpot[e.who];
+                    Burst(from.X,from.Y,18,gold,150*s,5*s,600,-40*s,0,state.bannerBoxes[e.fort].Width*0.2f);
+                    for(int i=0;i<5;i++)AddBolt(PointF(from.X+Rand(-40*s,40*s),from.Y),to,gold,9*s,420,120+i*60);
+                    Burst(to.X,to.Y,20,gold,120*s,5*s,500,0,120+4*60+420);
                     PlayMahjongSound(MahjongSound::CardTake);
                     if(e.who==Her)Say(L"砦を取った",3,0.35);
                     else Say(L"砦を取られた",3,0.3);
                     break;
+                }
                 case Forts::EventKind::Drew:
                     if(e.who==You&&e.amount)AddFx(T(L"手札がいっぱい",L"Hand full"),RectF(state.fortBoxes[1].X,state.fortBoxes[1].GetBottom()-20,state.fortBoxes[1].Width,20),red);
                     break;
                 case Forts::EventKind::Placed:
                     state.fresh[e.unit]=now;
+                    state.burstDue.push_back(e.unit);
                     PlayMahjongSound(MahjongSound::CardPlace);
                     if(e.who==Her)
                     {
@@ -1099,6 +1183,53 @@ namespace MikuMikuDesktopPerch
                     }
                     break;
                 case Forts::EventKind::Spell:
+                {
+                    const PointF from=Caster(e.who);
+                    const Forts::Effect effect=Forts::CardOf(e.card).effect;
+                    if(effect==Forts::Effect::Storm&&e.fort>=0)
+                    {
+                        // Fire comes down over the whole fort.
+                        const RectF fort=state.fortBoxes[e.fort];
+                        for(int i=0;i<70&&state.sparks.size()<MostSparks;i++)
+                        {
+                            Spark p;
+                            p.x=fort.X+Rand(0,fort.Width);
+                            p.y=fort.Y+Rand(-60*s,fort.Height*0.3f);
+                            p.vx=Rand(-40*s,40*s);
+                            p.vy=Rand(180*s,420*s);
+                            p.size=Rand(7*s,17*s);
+                            p.fall=300*s;
+                            p.start=now+static_cast<ULONGLONG>(Rand(0,350));
+                            p.life=static_cast<ULONGLONG>(Rand(450,800));
+                            p.color=i%3?fire:ember;
+                            state.sparks.push_back(p);
+                        }
+                        wait=std::max<ULONGLONG>(wait,320);
+                    }
+                    else if(effect==Forts::Effect::RallyFort&&e.fort>=0)
+                    {
+                        const RectF fort=state.fortBoxes[e.fort];
+                        for(int i=0;i<36&&state.sparks.size()<MostSparks;i++)
+                        {
+                            Spark p;
+                            p.x=fort.X+Rand(0,fort.Width);
+                            p.y=fort.GetBottom()-Rand(0,fort.Height*0.5f);
+                            p.vy=Rand(-260*s,-110*s);
+                            p.size=Rand(4*s,9*s);
+                            p.start=now+static_cast<ULONGLONG>(Rand(0,300));
+                            p.life=static_cast<ULONGLONG>(Rand(400,750));
+                            p.color=gold;
+                            state.sparks.push_back(p);
+                        }
+                    }
+                    else if(effect==Forts::Effect::DrawOnPlay)Burst(from.X,from.Y,26,violet,170*s,6*s,650,-60*s);
+                    else if(effect==Forts::Effect::Ambush)Burst(from.X,from.Y,22,green,190*s,6*s,600);
+                    else if(effect==Forts::Effect::Push)
+                    {
+                        const PointF to=Middle(UnitBox(e.target));
+                        AddBolt(from,to,pale,12*s,240);
+                        Burst(to.X,to.Y,26,pale,300*s,5*s,450,0,220);
+                    }
                     PlayMahjongSound(MahjongSound::CardPlace);
                     if(e.who==Her)
                     {
@@ -1106,46 +1237,109 @@ namespace MikuMikuDesktopPerch
                         state.shownUntil=now+ShowCardFor;
                     }
                     break;
+                }
                 case Forts::EventKind::Moved:
                     state.fresh[e.unit]=now;
                     PlayMahjongSound(MahjongSound::CardPlace);
                     break;
                 case Forts::EventKind::Hit:
-                    if(e.unit>=0){state.lungeUnit=e.unit;state.lungeAt=now;}
-                    AddFx(e.amount>0?L"-"+std::to_wstring(e.amount):std::wstring(L"0"),UnitBox(e.target),red,true);
-                    if(e.unit>=0&&e.back>0)AddFx(L"-"+std::to_wstring(e.back),UnitBox(e.unit),red);
+                {
+                    const RectF target=UnitBox(e.target);
+                    const PointF to=Middle(target);
+                    const Forts::Card& card=Forts::CardOf(e.card);
+                    ULONGLONG hit=wait;
+                    Color spark=gold;
+                    if(e.unit>=0)
+                    {
+                        // A soldier striking leans toward the other, and back. They do not touch.
+                        const PointF from=Middle(UnitBox(e.unit));
+                        const float dx=to.X-from.X,dy=to.Y-from.Y,length=std::max(1.0f,std::sqrt(dx*dx+dy*dy));
+                        state.lungeUnit=e.unit;
+                        state.lungeAt=now;
+                        state.lungeX=dx/length*24*s;
+                        state.lungeY=dy/length*24*s;
+                        if(card.keywords&Forts::Ranged)
+                        {
+                            AddBolt(from,to,pale,9*s,220,70);
+                            hit=std::max<ULONGLONG>(hit,270);
+                            spark=pale;
+                        }
+                        else hit=std::max<ULONGLONG>(hit,120);
+                        AddFx(L"",target,Color(255,255,246,220),false,hit,false,!(card.keywords&Forts::Ranged));
+                    }
+                    else if(card.effect!=Forts::Effect::Storm)
+                    {
+                        // A spell's shot, or a soldier's on arrival: from whoever played it.
+                        AddBolt(Caster(e.who),to,fire,15*s,280);
+                        hit=std::max<ULONGLONG>(hit,260);
+                        spark=fire;
+                    }
+                    else spark=fire;
+                    AddFx(e.amount>0?L"-"+std::to_wstring(e.amount):std::wstring(L"0"),target,red,true,hit,e.amount>0);
+                    if(target.Width>0)Burst(to.X,to.Y,e.amount>0?22:8,spark,330*s,6*s,430,160*s,hit);
+                    if(e.unit>=0&&e.back>0)AddFx(L"-"+std::to_wstring(e.back),UnitBox(e.unit),red,false,hit+60,true);
+                    wait=std::max(wait,hit);
                     PlayMahjongSound(MahjongSound::CardTake);
                     break;
+                }
                 case Forts::EventKind::Fell:
                 {
                     Ghost ghost;
                     ghost.card=e.card;
                     ghost.at=UnitBox(e.unit);
-                    ghost.start=now;
-                    if(ghost.at.Width>0)state.ghosts.push_back(ghost);
+                    ghost.start=now+wait+90;
+                    if(ghost.at.Width>0)
+                    {
+                        state.ghosts.push_back(ghost);
+                        const PointF at=Middle(ghost.at);
+                        // Embers going up from it.
+                        Burst(at.X,at.Y,26,ember,70*s,6*s,1000,-110*s,wait+90,ghost.at.Width*0.3f);
+                        Burst(at.X,at.Y,10,fire,50*s,4*s,800,-70*s,wait+150,ghost.at.Width*0.3f);
+                    }
                     if(state.table.Board().who==Her&&e.who==You)Say(L"倒した",3,0.3);
                     else if(state.table.Board().who==You&&e.who==Her)Say(L"倒された",3,0.3);
                     break;
                 }
                 case Forts::EventKind::Healed:
-                    AddFx(T(L"回復",L"Healed"),UnitBox(e.unit),green,true);
+                {
+                    const RectF box=UnitBox(e.unit);
+                    AddFx(T(L"回復",L"Healed"),box,green,true);
+                    if(box.Width>0)Burst(box.X+box.Width/2,box.GetBottom(),26,green,50*s,6*s,850,-150*s,0,box.Width*0.35f);
                     break;
+                }
                 case Forts::EventKind::Buffed:
-                    AddFx(L"+",UnitBox(e.unit),gold,true);
+                {
+                    const RectF box=UnitBox(e.unit);
+                    AddFx(L"+",box,gold,true);
+                    if(box.Width>0)Burst(box.X+box.Width/2,box.GetBottom(),16,gold,50*s,5*s,650,-170*s,0,box.Width*0.35f);
                     break;
+                }
                 case Forts::EventKind::Frozen:
-                    AddFx(T(L"凍結",L"Frozen"),UnitBox(e.unit),blue,true);
+                {
+                    const RectF box=UnitBox(e.unit);
+                    const PointF to=Middle(box);
+                    AddBolt(Caster(e.who),to,blue,13*s,260);
+                    AddFx(T(L"凍結",L"Frozen"),box,blue,true,240,true);
+                    if(box.Width>0)Burst(to.X,to.Y,30,pale,240*s,5*s,600,70*s,240,box.Width*0.2f);
                     break;
+                }
                 case Forts::EventKind::Shield:
-                    AddFx(T(L"防塁",L"Rampart"),state.bannerBoxes[e.fort],blue,true);
+                {
+                    const RectF fort=state.fortBoxes[e.fort];
+                    AddFx(T(L"防塁",L"Rampart"),state.bannerBoxes[e.fort],blue);
+                    AddFx(L"",fort,blue,true);
+                    Burst(fort.X+fort.Width/2,fort.GetBottom(),30,blue,60*s,6*s,800,-170*s,0,fort.Width*0.42f);
                     break;
+                }
                 case Forts::EventKind::Offered:
                 case Forts::EventKind::Spare:
                     break;
                 }
             }
-            state.fx.erase(std::remove_if(state.fx.begin(),state.fx.end(),[&](const Fx& f){return now-f.start>f.life;}),state.fx.end());
-            state.ghosts.erase(std::remove_if(state.ghosts.begin(),state.ghosts.end(),[&](const Ghost& k){return now-k.start>700;}),state.ghosts.end());
+            state.fx.erase(std::remove_if(state.fx.begin(),state.fx.end(),[&](const Fx& f){return Past(now,f.start,f.life);}),state.fx.end());
+            state.ghosts.erase(std::remove_if(state.ghosts.begin(),state.ghosts.end(),[&](const Ghost& k){return Past(now,k.start,700);}),state.ghosts.end());
+            state.sparks.erase(std::remove_if(state.sparks.begin(),state.sparks.end(),[&](const Spark& p){return Past(now,p.start,p.life);}),state.sparks.end());
+            state.bolts.erase(std::remove_if(state.bolts.begin(),state.bolts.end(),[&](const Bolt& b){return Past(now,b.start,b.life);}),state.bolts.end());
         }
 
         // What is new in the game since the last tick, for words: its start, the game's end.
@@ -1208,7 +1402,7 @@ namespace MikuMikuDesktopPerch
         {
             auto& t=state.table;
             const ULONGLONG now=GetTickCount64();
-            if(!state.said.empty()&&now-state.saidAt>SaidShown){state.said.clear();Redraw();}
+            if(!state.said.empty()&&now-state.saidAt>SaidShown){state.said.clear();RedrawTop();}
             if(!state.choosing&&t.Now()==Phase::Hers&&Seated())
             {
                 if(now+ReachLead>=state.nextAt&&state.reachedFor!=state.herActions)
@@ -1225,19 +1419,44 @@ namespace MikuMikuDesktopPerch
                     state.nextAt=now+(did.kind==Forts::ActionKind::End?TurnWait:(state.renderer?HerPlayWait3D:HerPlayWait)+extra(state.sparkRandom));
                 }
             }
-            if(!state.choosing)HandleEvents();
+            if(!state.choosing)HandleEvents(state.table.TakeEvents());
+            // You won: gold falling for a while.
+            if(EndShown())
+            {
+                if(!state.endAt)state.endAt=now;
+                if(t.Board().winner==You&&now-state.endAt<5000&&state.sparks.size()<MostSparks)
+                {
+                    RECT client{};
+                    GetClientRect(state.window,&client);
+                    const float sc=Scale();
+                    static const Color colours[]={Color(255,255,214,110),Color(255,255,246,200),Color(255,255,170,70)};
+                    for(int i=0;i<3;i++)
+                    {
+                        Spark p;
+                        p.x=Rand(0,static_cast<float>(client.right));
+                        p.y=-10*sc;
+                        p.vx=Rand(-25*sc,25*sc);
+                        p.vy=Rand(120*sc,240*sc);
+                        p.size=Rand(3*sc,7*sc);
+                        p.start=now;
+                        p.life=3200;
+                        p.color=colours[i];
+                        state.sparks.push_back(p);
+                    }
+                }
+            }
             UpdateTell();
             // What changes by itself: what you may do as her wait runs out, a card shown large
             // going away; while numbers rise or a soldier fades, every tick.
             for(auto k=state.fresh.begin();k!=state.fresh.end();)
                 k=now-k->second>=500?state.fresh.erase(k):std::next(k);
-            const int key=(Waiting()?1:0)+(state.shownCard>=0&&now<state.shownUntil?2:0)+(state.clock<state.glanceUntil?4:0)+(now-state.lungeAt<320?8:0)+static_cast<int>(t.Now())*16;
+            const int key=(Waiting()?1:0)+(state.shownCard>=0&&now<state.shownUntil?2:0)+(state.clock<state.glanceUntil?4:0)+(now-state.lungeAt<LungeFor?8:0)+static_cast<int>(t.Now())*16;
             if(key!=state.drawnKey)
             {
                 state.drawnKey=key;
                 Redraw();
             }
-            if(!state.fx.empty()||!state.ghosts.empty()||!state.fresh.empty()||(!state.words.text.empty()&&state.entrance<5))RedrawTop();
+            if(!state.fx.empty()||!state.ghosts.empty()||!state.fresh.empty()||!state.sparks.empty()||!state.bolts.empty()||!state.said.empty()||now-state.lungeAt<LungeFor||(!state.words.text.empty()&&state.entrance<5))RedrawTop();
             if(!state.renderer)state.voice.Tick(0.04);   // (at the 3D table the model's frame ticks it)
             NoticeWords();
             if(!state.choosing&&t.Now()==Phase::Over&&!state.gameOverTold)
@@ -1416,6 +1635,7 @@ namespace MikuMikuDesktopPerch
             const std::vector<Forts::Action> options=Options();
             const Need need=NeedNow(options);
             state.unitBoxes.clear();
+            state.lungeLeftOut=-1;
             for(int f=0;f<Forts::FortCount;f++)
             {
                 const float x=margin+f*(fortW+gap);
@@ -1444,10 +1664,12 @@ namespace MikuMikuDesktopPerch
                         const Forts::Unit& u=side.units[f][i];
                         RectF box(x+(fortW-room)/2+i*(unitW+6*s),y,unitW,unitH);
                         state.unitBoxes[u.uid]=box;
-                        // A soldier striking leans toward the other side, and back. They do not touch.
-                        if(state.lungeUnit==u.uid&&now-state.lungeAt<320)
+                        // The one striking moves over the board (PaintTop).
+                        if(state.lungeUnit==u.uid&&now-state.lungeAt<LungeFor)
                         {
-                            box.Y+=(who==You?-1:1)*14*s;
+                            state.lungeBox=box;
+                            state.lungeLeftOut=u.uid;
+                            continue;
                         }
                         int glow=0;
                         if(YourTurnNow()&&Lit(u.uid,options,need))glow=2;
@@ -1492,37 +1714,198 @@ namespace MikuMikuDesktopPerch
             }
         }
 
-        // What moves over the rest: soldiers just come, those fallen, numbers rising, her words.
+        // A soft speck of light (made once for each colour and strength: drawing it is then only a copy).
+        Bitmap* GlowOf(Color color,int strength)
+        {
+            static std::map<std::uint32_t,std::unique_ptr<Bitmap>> made;
+            auto& glow=made[(static_cast<std::uint32_t>(color.GetR())<<24)|(color.GetG()<<16)|(color.GetB()<<8)|static_cast<std::uint32_t>(strength)];
+            if(!glow)
+            {
+                constexpr int Side=32;
+                glow=std::make_unique<Bitmap>(Side,Side,PixelFormat32bppARGB);
+                for(int y=0;y<Side;y++)
+                    for(int x=0;x<Side;x++)
+                    {
+                        const float dx=(x+0.5f)/Side*2-1,dy=(y+0.5f)/Side*2-1,left=std::max(0.0f,1-std::sqrt(dx*dx+dy*dy));
+                        // A bright heart, whiter than its colour, in a soft edge.
+                        const float heart=std::min(1.0f,left*left*left*left*7);
+                        const auto mix=[&](BYTE c){return static_cast<BYTE>(c+(255-c)*heart*0.55f);};
+                        glow->SetPixel(x,y,Color(static_cast<BYTE>(255*std::pow(left,1.4f)*strength/8.0f),mix(color.GetR()),mix(color.GetG()),mix(color.GetB())));
+                    }
+            }
+            return glow.get();
+        }
+
+        void DrawGlow(Graphics& g,float x,float y,float radius,Color color,float strength)
+        {
+            const int level=std::clamp(static_cast<int>(strength*8+0.5f),0,8);
+            if(level==0||radius<=0)return;
+            g.DrawImage(GlowOf(color,level),x-radius,y-radius,radius*2,radius*2);
+        }
+
+        // A card's face faded, over box.
+        void DrawFaded(Graphics& g,const RectF& box,const RectF& faceSize,int card,float alpha)
+        {
+            Bitmap* face=CardFace(card,static_cast<int>(std::lround(faceSize.Width)),static_cast<int>(std::lround(faceSize.Height)));
+            if(!face)return;
+            ColorMatrix fade={{{1,0,0,0,0},{0,1,0,0,0},{0,0,1,0,0},{0,0,0,alpha,0},{0,0,0,0,1}}};
+            ImageAttributes attributes;
+            attributes.SetColorMatrix(&fade);
+            g.DrawImage(face,box,0,0,static_cast<REAL>(face->GetWidth()),static_cast<REAL>(face->GetHeight()),UnitPixel,&attributes);
+        }
+
+        // A frame of light, spreading from a box.
+        void DrawFrame(Graphics& g,const RectF& at,float grow,Color color,float strength,float s)
+        {
+            const RectF box(at.X-grow,at.Y-grow,at.Width+2*grow,at.Height+2*grow);
+            const auto a=[&](float k){return static_cast<BYTE>(std::clamp(255*strength*k,0.0f,255.0f));};
+            const float r=std::min(at.Width,at.Height)*0.08f+grow;
+            FillRound(g,box,r,Color(0,0,0,0),Color(a(0.3f),color.GetR(),color.GetG(),color.GetB()),7*s);
+            FillRound(g,box,r,Color(0,0,0,0),Color(a(1),color.GetR(),color.GetG(),color.GetB()),2.2f*s);
+        }
+
+        // A cut across a card: two long thin blades of light.
+        void DrawSlash(Graphics& g,const RectF& at,float u,float s)
+        {
+            const PointF c(at.X+at.Width/2,at.Y+at.Height/2);
+            const float reach=std::max(at.Width,at.Height)*0.72f*std::min(1.0f,u*3.5f);
+            const float strength=u<0.35f?1.0f:std::max(0.0f,1-(u-0.35f)/0.65f);
+            const float thick=11*s*strength;
+            const BYTE a=static_cast<BYTE>(255*strength);
+            SolidBrush core(Color(a,255,250,232)),edge(Color(static_cast<BYTE>(a*0.75f),255,176,70));
+            for(int k=0;k<2;k++)
+            {
+                const float angle=(k==0?-0.86f:-0.5f),dx=std::cos(angle),dy=std::sin(angle),nx=-dy,ny=dx,off=(k==0?-1.0f:1.0f)*at.Width*0.12f;
+                const float x=c.X+nx*off,y=c.Y+ny*off;
+                const PointF wide[4]={PointF(x-dx*reach,y-dy*reach),PointF(x+nx*thick*1.5f,y+ny*thick*1.5f),PointF(x+dx*reach,y+dy*reach),PointF(x-nx*thick*1.5f,y-ny*thick*1.5f)};
+                const PointF thin[4]={PointF(x-dx*reach,y-dy*reach),PointF(x+nx*thick*0.55f,y+ny*thick*0.55f),PointF(x+dx*reach,y+dy*reach),PointF(x-nx*thick*0.55f,y-ny*thick*0.55f)};
+                g.FillPolygon(&edge,wide,4);
+                g.FillPolygon(&core,thin,4);
+            }
+            DrawGlow(g,c.X,c.Y,at.Width*0.65f*strength,Color(255,255,214,130),strength*0.8f);
+        }
+
+        // Whose turn: a band of light across the view, its ends fading.
+        void PaintTurnBand(Graphics& g,float W,float H,float s)
+        {
+            const float t=static_cast<float>(GetTickCount64()-state.saidAt);
+            const float a=std::clamp(std::min(t/170.0f,(static_cast<float>(SaidShown)-t)/260.0f),0.0f,1.0f);
+            if(a<=0)return;
+            const bool yours=state.table.Board().who==You;
+            const Color tint=yours?Color(255,24,84,70):Color(255,110,30,44);
+            const float bh=58*s,y=H*0.24f;
+            const RectF band(0,y,W,bh);
+            const auto ramp=[&](BYTE alpha,const RectF& box,Color colour)
+            {
+                LinearGradientBrush brush(RectF(box.X-1,box.Y-1,box.Width+2,box.Height+2),colour,colour,LinearGradientModeHorizontal);
+                const BYTE most=static_cast<BYTE>(alpha*a);
+                const Color colours[4]={Color(0,colour.GetR(),colour.GetG(),colour.GetB()),Color(most,colour.GetR(),colour.GetG(),colour.GetB()),Color(most,colour.GetR(),colour.GetG(),colour.GetB()),Color(0,colour.GetR(),colour.GetG(),colour.GetB())};
+                const REAL at[4]={0,0.3f,0.7f,1};
+                brush.SetInterpolationColors(colours,at,4);
+                g.FillRectangle(&brush,box);
+            };
+            ramp(225,band,tint);
+            ramp(255,RectF(0,y-1.5f*s,W,2*s),Color(255,240,206,120));
+            ramp(255,RectF(0,y+bh-0.5f*s,W,2*s),Color(255,240,206,120));
+            const float rise=1-std::min(1.0f,t/260.0f);
+            const RectF place(rise*rise*40*s,y,W,bh);
+            Text(g,state.said,RectF(place.X+1.5f*s,place.Y+1.5f*s,W,bh),30*s,Color(static_cast<BYTE>(170*a),0,0,0),true,StringAlignmentCenter,StringAlignmentCenter,true);
+            Text(g,state.said,place,30*s,Color(static_cast<BYTE>(255*a),255,240,200),true,StringAlignmentCenter,StringAlignmentCenter,true);
+        }
+
+        // What moves over the rest: soldiers just come or striking, those fallen, shots, specks of
+        // light, numbers rising, whose turn, her words.
         void PaintTop(Graphics& g,float W,float H,float s,bool hud)
         {
             const ULONGLONG now=GetTickCount64();
+            g.SetInterpolationMode(InterpolationModeBilinear);
+            // Soldiers just come: the card coming down onto its place, and light from it.
+            for(int uid:state.burstDue)
+                if(const auto k=state.unitBoxes.find(uid);k!=state.unitBoxes.end())
+                {
+                    const PointF at=Middle(k->second);
+                    Burst(at.X,at.Y,22,Color(255,255,226,150),210*s,5*s,520,60*s,0,k->second.Width*0.25f);
+                }
+            state.burstDue.clear();
             for(const auto& [uid,since]:state.fresh)
                 if(const auto k=state.unitBoxes.find(uid);k!=state.unitBoxes.end()&&now-since<500)
-                    FillRound(g,k->second,k->second.Width*0.08f,Color(static_cast<BYTE>(150*(1-(now-since)/500.0)),255,255,220));
+                {
+                    const float u=(now-since)/500.0f;
+                    const RectF& box=k->second;
+                    if(const Forts::Unit* unit=Forts::FindUnit(state.table.Board(),uid);unit&&u<0.5f)
+                    {
+                        const float big=(1-u*2)*(1-u*2)*0.32f;
+                        DrawFaded(g,RectF(box.X-box.Width*big/2,box.Y-box.Height*big/2,box.Width*(1+big),box.Height*(1+big)),box,unit->card,1-u*2);
+                    }
+                    DrawFrame(g,box,(1-(1-u)*(1-u))*18*s,Color(255,255,232,160),(1-u)*0.9f,s);
+                }
+            // The one striking, leaning and back.
+            if(state.lungeLeftOut>=0)
+                if(const Forts::Unit* u=Forts::FindUnit(state.table.Board(),state.lungeLeftOut))
+                {
+                    const float k=now-state.lungeAt<LungeFor?std::sin(static_cast<float>(now-state.lungeAt)/LungeFor*3.14159f):0;
+                    RectF box=state.lungeBox;
+                    box.X+=state.lungeX*k;
+                    box.Y+=state.lungeY*k;
+                    DrawCard(g,box,u->card);
+                    DrawStats(g,box,u->attack+u->rally,u->health,u->health<u->maxHealth,u->rally>0||u->attack>Forts::CardOf(u->card).attack);
+                }
             for(const Ghost& k:state.ghosts)
             {
-                const float u=static_cast<float>(now-k.start)/700.0f;
-                DrawCard(g,k.at,k.card);
-                FillRound(g,k.at,k.at.Width*0.08f,Color(static_cast<BYTE>(std::min(255.0f,u*280)),30,10,10));
+                const float u=now>k.start?static_cast<float>(now-k.start)/700.0f:0;
+                if(u>=1)continue;
+                const float sink=u*u*20*s;
+                DrawFaded(g,RectF(k.at.X,k.at.Y+sink,k.at.Width,k.at.Height),k.at,k.card,std::clamp(1-u*1.15f,0.0f,1.0f));
+            }
+            for(const Bolt& b:state.bolts)
+            {
+                if(now<b.start)continue;
+                const float u=std::min(1.0f,static_cast<float>(now-b.start)/b.life);
+                for(int k=9;k>=0;k--)
+                {
+                    const float back=u-k*0.045f;
+                    if(back<0)continue;
+                    const float eased=back*back*(3-2*back);
+                    const float x=b.from.X+(b.to.X-b.from.X)*eased,y=b.from.Y+(b.to.Y-b.from.Y)*eased;
+                    DrawGlow(g,x,y,b.size*(1-k*0.08f)*(k==0?1.5f:1.0f),b.color,1-k*0.09f);
+                }
+            }
+            for(const Spark& p:state.sparks)
+            {
+                if(now<p.start)continue;
+                const float t=(now-p.start)/1000.0f,u=(now-p.start)/static_cast<float>(p.life);
+                if(u>=1)continue;
+                const float slow=1-0.35f*u;   // (the air holds them back)
+                DrawGlow(g,p.x+p.vx*t*slow,p.y+p.vy*t*slow+0.5f*p.fall*t*t,p.size*(1-0.45f*u),p.color,std::min(1.0f,(1-u)*1.6f));
             }
             for(const Fx& f:state.fx)
             {
-                if(f.at.Width<=0)continue;
+                if(f.at.Width<=0||now<f.start)continue;
                 const float u=static_cast<float>(now-f.start)/static_cast<float>(f.life);
-                if(f.ring)
+                if(u>=1)continue;
+                if(f.slash)
                 {
-                    const float grow=(u*14)*s;
-                    Pen ring(Color(static_cast<BYTE>(220*(1-u)),f.color.GetR(),f.color.GetG(),f.color.GetB()),3*s);
-                    g.DrawEllipse(&ring,f.at.X-grow,f.at.Y+f.at.Height/2-f.at.Width/2-grow,f.at.Width+2*grow,f.at.Width+2*grow);
+                    DrawSlash(g,f.at,std::min(1.0f,u*f.life/320.0f),s);
+                    continue;
                 }
-                const float size=30*s;
-                const RectF place(f.at.X-40*s,f.at.Y+f.at.Height/2-size*0.8f-u*34*s,f.at.Width+80*s,size*1.5f);
+                if(f.flash&&u<0.22f)FillRound(g,f.at,f.at.Width*0.08f,Color(static_cast<BYTE>(120*(1-u/0.22f)),f.color.GetR(),f.color.GetG(),f.color.GetB()));
+                if(f.frame)
+                {
+                    const float w=std::min(1.0f,u*2.2f);
+                    DrawFrame(g,f.at,(1-(1-w)*(1-w))*16*s,f.color,(1-w)*0.95f,s);
+                }
+                if(f.text.empty())continue;
+                // It leaps out a little, then rises.
+                const float pop=u<0.12f?1.45f-0.45f*(u/0.12f):1.0f;
+                const float size=(f.text.size()>2?19:30)*s*pop,rise=(1-(1-u)*(1-u))*42*s;
+                const RectF place(f.at.X-40*s,f.at.Y+f.at.Height/2-size*0.8f-rise,f.at.Width+80*s,size*1.5f);
                 const BYTE a=static_cast<BYTE>(255*std::min(1.0f,(1-u)*2));
                 for(int k=0;k<4;k++)
                     Text(g,f.text,RectF(place.X+(k<2?-1.5f:1.5f)*s,place.Y+(k%2?-1.5f:1.5f)*s,place.Width,place.Height),size,Color(a,0,0,0),true,StringAlignmentCenter,StringAlignmentCenter);
                 Text(g,f.text,place,size,Color(a,f.color.GetR(),f.color.GetG(),f.color.GetB()),true,StringAlignmentCenter,StringAlignmentCenter);
             }
             if(state.help||state.confirmQuit||EndShown())return;
+            if(!state.said.empty())PaintTurnBand(g,W,H,s);
             // Her words: a bubble just right of her head (as at mahjong).
             if(!state.words.text.empty())
             {
@@ -1592,6 +1975,8 @@ namespace MikuMikuDesktopPerch
             {
                 const auto& her=t.Board().side[Her];
                 Text(g,Fmt(T(L"{0}点",L"{0} points"),{std::to_wstring(her.score)}),RectF(nameX,nameY+28*s,120*s,24*s),18*s,gold,true);
+                state.scoreSpot[Her]=PointF(nameX+18*s,nameY+40*s);
+                state.scoreSpot[You]=PointF(50*s,H-124*s);
                 Text(g,Fmt(T(L"魔力 {0}/{1}",L"Magic {0}/{1}"),{std::to_wstring(her.magic),std::to_wstring(her.maxMagic)}),RectF(nameX+110*s,nameY+29*s,130*s,24*s),15*s,soft);
                 Text(g,Fmt(T(L"手札 {0}　山札 {1}　{2}",L"Hand {0}  Deck {1}  {2}"),{std::to_wstring(her.handSize),std::to_wstring(her.deckLeft),Forts::DeckName(t.Deck(Her),English())}),RectF(nameX,nameY+54*s,250*s,24*s),14*s,soft);
             }
@@ -1665,13 +2050,6 @@ namespace MikuMikuDesktopPerch
                         const float pw=PreviewW*s,ph=PreviewH*s;
                         DrawLarge(g,RectF(W-pw-14*s,std::max(118*s,(H-HandH*s)/2-ph/2-30*s),pw,ph),large);
                     }
-                }
-                if(!state.said.empty())
-                {
-                    const float tw=TextWidth(g,state.said,26*s,true)+40*s;
-                    const RectF bubble(mid-tw/2,H*0.24f,tw,52*s);
-                    FillRound(g,bubble,14*s,Color(235,255,252,240),Color(255,230,120,60),2*s);
-                    Text(g,state.said,bubble,26*s,Color(255,120,50,30),true,StringAlignmentCenter,StringAlignmentCenter);
                 }
             }
             if(EndShown())PaintEnd(g,W,H,s);
@@ -2305,6 +2683,66 @@ namespace MikuMikuDesktopPerch
         if(!SampleWords().empty()){state.words.text=SampleWords();state.words.shown=1e9;}
         RECT client{};
         GetClientRect(state.window,&client);
+        // fx:<kind>: frames of what moves, saved as <path>.NN.png, every 90 ms.
+        if(mode.starts_with(L"fx:"))
+        {
+            const std::wstring kind=mode.substr(3);
+            Bitmap frame(client.right,client.bottom,PixelFormat32bppARGB);
+            const auto draw=[&]{
+                Graphics g(&frame);
+                const HDC dc=g.GetHDC();
+                state.baseDue=true;
+                Paint(dc,client);
+                g.ReleaseHDC(dc);
+            };
+            draw();
+            draw();
+            const auto& b=state.table.Board();
+            int mine=-1,hers=-1,fort=0;
+            for(int f=0;f<Forts::FortCount;f++)
+            {
+                if(mine<0&&b.side[You].count[f])mine=b.side[You].units[f][0].uid;
+                if(hers<0&&b.side[Her].count[f]){hers=b.side[Her].units[f][0].uid;fort=f;}
+            }
+            std::vector<Forts::Event> events;
+            const auto add=[&](Forts::EventKind what,int who,int card,int unit,int target,int amount,int back=0,int at=-1){
+                Forts::Event e;
+                e.kind=what;
+                e.who=static_cast<std::int8_t>(who);
+                e.card=static_cast<std::int8_t>(card);
+                e.unit=static_cast<std::int16_t>(unit);
+                e.target=static_cast<std::int16_t>(target);
+                e.amount=static_cast<std::int8_t>(amount);
+                e.back=static_cast<std::int8_t>(back);
+                e.fort=static_cast<std::int8_t>(at);
+                events.push_back(e);
+            };
+            const int card=mine>=0?Forts::FindUnit(b,mine)->card:0,theirs=hers>=0?Forts::FindUnit(b,hers)->card:0;
+            using K=Forts::EventKind;
+            if(kind==L"hit"){add(K::Hit,You,card,mine,hers,2,1);add(K::Fell,Her,theirs,hers,-1,0);}
+            else if(kind==L"arrow")add(K::Hit,You,9,mine,hers,2);
+            else if(kind==L"fire"){add(K::Spell,You,27,-1,hers,0,0,fort);add(K::Hit,You,27,-1,hers,2,0,fort);}
+            else if(kind==L"storm"){add(K::Spell,You,34,-1,-1,0,0,fort);add(K::Hit,You,34,-1,hers,3,0,fort);add(K::Fell,Her,theirs,hers,-1,0);}
+            else if(kind==L"frost"){add(K::Spell,You,29,-1,hers,0,0,fort);add(K::Frozen,You,29,hers,-1,0);}
+            else if(kind==L"place")add(K::Placed,You,card,mine,-1,0);
+            else if(kind==L"score")add(K::Scored,You,-1,-1,-1,2,0,fort);
+            else if(kind==L"heal"){add(K::Healed,You,13,mine,-1,0);add(K::Shield,You,7,-1,-1,0,0,fort);}
+            else if(kind==L"rally")add(K::Spell,You,10,-1,-1,0,0,fort);
+            else if(kind==L"turn"){state.said=T(L"あなたの番",L"Your turn");state.saidAt=GetTickCount64();}
+            HandleEvents(events);
+            for(int i=0;i<12;i++)
+            {
+                Sleep(90);
+                HandleEvents({});
+                draw();
+                wchar_t name[16];
+                swprintf_s(name,L".%02d.png",i);
+                SavePng(frame,path+name);
+            }
+            DestroyWindow(state.window);
+            state.window=nullptr;
+            return true;
+        }
         Bitmap shot(client.right,client.bottom,PixelFormat32bppARGB);
         {
             Graphics g(&shot);
