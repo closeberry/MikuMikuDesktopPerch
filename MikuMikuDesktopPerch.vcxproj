@@ -154,6 +154,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\MascotModel.hpp" />
+    <ClInclude Include="src\ShownKey.hpp" />
     <ClInclude Include="src\Planner.hpp" />
     <ClInclude Include="src\PlannerWindow.hpp" />
     <ClInclude Include="src\Calendar.hpp" />

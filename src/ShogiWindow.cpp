@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "ShogiWindow.hpp"
+#include "ShownKey.hpp"
 #include "Shogi.hpp"
 #include "MahjongSound.hpp"
 #include "Log.hpp"
@@ -113,6 +114,8 @@ namespace MikuMikuDesktopPerch
             float cellW=0,cellH=0;                                 // and its squares
             std::array<RectF,Shogi::HandKinds> handBoxes{};        // your hand's kinds on the 2D stand
             std::unique_ptr<Bitmap> canvas;
+            bool overlayDue=true;      // (3D) the 2D layer to be drawn again with the next frame
+            std::uint64_t shown=0;     // (3D) what it showed when last drawn (Shown)
             // Her at the table in 3D (none: 2D only).
             HWND view=nullptr;
             std::unique_ptr<MascotRenderer> renderer;
@@ -156,7 +159,11 @@ namespace MikuMikuDesktopPerch
             return dpi*std::clamp(grow,0.6f,2.2f);
         }
 
-        void Redraw(){if(state.window)InvalidateRect(state.window,nullptr,FALSE);}
+        void Redraw()
+        {
+            if(state.renderer)state.overlayDue=true;
+            else if(state.window)InvalidateRect(state.window,nullptr,FALSE);
+        }
 
         // The brush hand of the mahjong result screen (res/mahjong/brush.ttf), null when it
         // cannot be loaded.
@@ -645,6 +652,7 @@ namespace MikuMikuDesktopPerch
             Log(L"shogi: 3D view %ux%u on %s (hips %.1f, upper body %.1f, floor %.1f)",w,h,renderer->AdapterName().c_str(),state.hips,state.upper,state.floorY);
             if(!renderer->SetGeometryTexture(ScrollImage()))Log(L"shogi: no texture for the 3D table");
             state.renderer=std::move(renderer);
+            state.overlayDue=true;
             state.entrance=0;
             state.scene.clear();
             state.camera={};
@@ -1523,7 +1531,7 @@ namespace MikuMikuDesktopPerch
                 else state.nextAt=now+150;
             }
             UpdateTell();
-            Redraw();
+            if(!state.renderer)Redraw();
             Listen();
             if(!state.renderer)state.voice.Tick(0.04);   // (at the 3D table the model's frame ticks it)
             NoticeWords();
@@ -1878,6 +1886,31 @@ namespace MikuMikuDesktopPerch
                              static_cast<INT>(dirty.right-dirty.left),static_cast<INT>(dirty.bottom-dirty.top),UnitPixel);
         }
 
+        // All the 2D layer over the 3D view shows.
+        std::uint64_t Shown()
+        {
+            auto& t=state.table;
+            ShownKey k;
+            k(t.Now(),t.Moves(),t.First(),t.Winner(),t.HowEnded(),t.InCheck(),t.Thought(),state.plannedFor);
+            k(Waiting(),Flying(),state.hover,state.cursor,state.selected,state.promoting.Valid(),state.promoting.from,state.said,state.confirmResign);
+            k.Words(state.words.text,state.words.shown,0,static_cast<float>(state.headScreen.y),2*Scale());
+            return k.Value();
+        }
+
+        // Over the 3D view the 2D layer is drawn from the frame (TickShogiWindow), and only when what it shows changed:
+        // from WM_PAINT on every timer tick, a paint slower than the tick (a maximized window) kept
+        // the main loop draining messages, and no frame came at all, for any character.
+        void DrawOverlay()
+        {
+            const std::uint64_t shown=Shown();
+            if((!state.overlayDue&&shown==state.shown)||IsIconic(state.window))return;
+            state.shown=shown;
+            state.overlayDue=false;
+            RECT client{};
+            GetClientRect(state.window,&client);
+            Paint(nullptr,client);
+        }
+
         // What is under (x, y): a square of the board, or a kind on your stand (HandBase +
         // kind); -1: nothing.
         int TargetAt(float x,float y)
@@ -1991,7 +2024,8 @@ namespace MikuMikuDesktopPerch
             {
                 PAINTSTRUCT ps;
                 HDC dc=BeginPaint(hwnd,&ps);
-                Paint(dc,ps.rcPaint);
+                if(state.renderer)state.overlayDue=true;
+                else Paint(dc,ps.rcPaint);
                 EndPaint(hwnd,&ps);
                 return 0;
             }
@@ -2415,6 +2449,7 @@ namespace MikuMikuDesktopPerch
             }
             else model.SetMouth({},false);
         }
+        DrawOverlay();
         r.Render(model,state.her.edgeScale);
     }
 
