@@ -119,11 +119,24 @@ namespace MikuMikuDesktopPerch::Forts
 
     enum class Phase {Redraw,Yours,Hers,Over};
 
+    // How hard she plays: from Levels-1, her best, down to 0, where she is still learning. It
+    // follows how the games with you end, so that they stay close (AfterGame).
+    constexpr int Levels=10;
+    struct Strength
+    {
+        double level=1;
+        int games=0;
+        int Level() const;
+    };
+    // result: 1 you won, -1 she won, 0 drawn; margin: the points between you. gaveUp: you stopped
+    // midway (it counts only when you were behind, after some turns: pass result -1 then).
+    void AfterGame(Strength& strength,int result,int margin,bool gaveUp=false);
+
     class Table
     {
     public:
-        // care: how carefully she plays (1: her best; less: now and then a looser turn).
-        void NewGame(std::uint32_t seed,int yourDeck,int herDeck,double care=1,int first=You);
+        // level: how hard she plays (Levels-1: her best). Style 0 for you is always at her best.
+        void NewGame(std::uint32_t seed,int yourDeck,int herDeck,int level=Levels-1,int first=You);
 
         Phase Now() const;
         const State& Board() const {return state;}
@@ -151,7 +164,6 @@ namespace MikuMikuDesktopPerch::Forts
         // Diagnostics: set the board up for a test.
         State& Edit() {return state;}
         void ClearRedraw() {redrawDone=true;}
-        void SetCare(double value) {care=value;}
         void StepAs(int who,int style);
 
     private:
@@ -161,9 +173,9 @@ namespace MikuMikuDesktopPerch::Forts
         std::array<int,2> deckKind{};
         std::vector<Event> events;
         std::mt19937 rng,think;
-        double care=1;
+        int level=Levels-1;
         int first=You,shownAim=-1,looseTurn=-1;
-        bool looseNow=false,redrawDone=false,planDone=false;
+        bool looseNow=false,clumsyNow=false,redrawDone=false,planDone=false;
         std::vector<Action> plan;
 
         void TakeDrawn();
@@ -177,6 +189,8 @@ namespace MikuMikuDesktopPerch::Forts
     // from it). loose: she takes the next-best turn.
     Action ChooseAction(const State& state,bool loose,std::mt19937& rng);
     std::vector<Action> ChoosePlan(const State& state,bool loose,std::mt19937& rng);
+    // A turn of one still learning: each step the look of the board, misjudged by noise.
+    std::vector<Action> ClumsyPlan(const State& state,double noise,std::mt19937& rng);
     Action ChooseGreedy(const State& state);
     Action ChooseAnyhow(const State& state,std::mt19937& rng);
 
@@ -185,4 +199,7 @@ namespace MikuMikuDesktopPerch::Forts
     // Diagnostics (--forts-play-test): games of hers against each style and against herself, who
     // won, by deck, by card, how long they took.
     std::wstring CheckPlaying(int count,std::uint32_t seed);
+    // Diagnostics (--forts-level-test): how she does at each level against each style, and where
+    // the level settles against each.
+    std::wstring CheckLevels(int count,std::uint32_t seed);
 }

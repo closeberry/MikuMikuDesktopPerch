@@ -377,6 +377,7 @@ namespace
         TreasurePicture picture;
         bool diagnostic=false;    // --snapshot: no dialogs, settings not saved over the user's
         std::wstring ownLines;    // --own-lines: the user's lines file to use in its place (diagnostics)
+        std::wstring fortsStrength;   // --forts-strength: Three Forts' strength file to use (diagnostics)
         bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -4839,7 +4840,6 @@ namespace
         her.name=face.name;
         her.face=face.face;
         her.faceSize=face.faceSize;
-        her.bond=app.settings.bond?m.bond.Stage():0;
         her.model=&m.model;
         her.toonDir=app.settings.toonDir;
         her.edgeScale=app.settings.edgeScale;
@@ -4858,6 +4858,10 @@ namespace
         };
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Forts,facts,weight,fallback);};
         her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".forts.lines.txt",true);
+        // How hard she plays follows the user, not the character.
+        if(wchar_t base[MAX_PATH];!app.diagnostic&&GetEnvironmentVariableW(L"LOCALAPPDATA",base,MAX_PATH))
+            her.strengthFile=(std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"forts.strength.txt").wstring();
+        if(!app.fortsStrength.empty())her.strengthFile=app.fortsStrength;
         her.styleKey=m.character.name+L"\n"+m.character.persona;
         her.ownLinesFile=OwnLinesFile(m.modelPath);
         her.speak=[model](const std::wstring& line){
@@ -6536,6 +6540,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             }
             else if(arg==L"--ruins-play"&&i+1<argc)snapshotRuinsKeys=argv[++i];
             else if(arg==L"--own-lines"&&i+1<argc)app.ownLines=argv[++i];
+            else if(arg==L"--forts-strength"&&i+1<argc)app.fortsStrength=argv[++i];
             else if(arg==L"--oldmaid")
             {
                 snapshotOldMaid=true;
@@ -6972,9 +6977,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         }
         // --forts-play-test <out.txt> [count] [seed]: whole games of hers against each style (Forts::CheckPlaying).
         // --forts-test <out.txt>: set boards played out (Forts::CheckRules).
-        if(argc>=3&&(std::wstring(argv[1])==L"--forts-play-test"||std::wstring(argv[1])==L"--forts-test"))
+        // --forts-level-test <out.txt> [count] [seed]: how she does at each level (Forts::CheckLevels).
+        if(argc>=3&&(std::wstring(argv[1])==L"--forts-play-test"||std::wstring(argv[1])==L"--forts-test"||std::wstring(argv[1])==L"--forts-level-test"))
         {
             const std::wstring report=std::wstring(argv[1])==L"--forts-test"?Forts::CheckRules():
+                                      std::wstring(argv[1])==L"--forts-level-test"?Forts::CheckLevels(argc>=4?_wtoi(argv[3]):30,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1):
                                       Forts::CheckPlaying(argc>=4?_wtoi(argv[3]):30,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
             if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
             {

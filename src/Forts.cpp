@@ -825,6 +825,31 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
         return plan.empty()?Action{}:plan.front();
     }
 
+    std::vector<Action> ClumsyPlan(const State& state,double noise,std::mt19937& rng)
+    {
+        const int me=state.who;
+        std::normal_distribution<double> misjudged(0,noise);
+        State s=Seen(state);
+        std::vector<Action> plan;
+        for(int step=0;step<12&&!s.over;step++)
+        {
+            double best=Judge(s,me)+misjudged(rng);
+            Action chosen;
+            for(const Action& a:Legal(s))
+            {
+                if(a.kind==ActionKind::End)continue;
+                State next=s;
+                Apply(next,a);
+                const double q=Judge(next,me)+misjudged(rng);
+                if(q>best){best=q;chosen=a;}
+            }
+            if(chosen.kind==ActionKind::End)break;
+            Apply(s,chosen);
+            plan.push_back(chosen);
+        }
+        return plan;
+    }
+
     Action ChooseGreedy(const State& state)
     {
         const int me=state.who;
@@ -849,19 +874,60 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
         return legal[1+rng()%(legal.size()-1)];
     }
 
+    // ---- how hard she plays ----
+
+    namespace
+    {
+        // care: the turns played by her best plan, the rest by the next-best; clumsy: the turns
+        // played by ClumsyPlan, with this noise. Measured by --forts-level-test.
+        struct Ease {double care,clumsy,noise;};
+        constexpr Ease Eases[Levels]=
+        {
+            {0.50,1.00,30},
+            {0.50,0.90,20},
+            {0.50,0.80,14},
+            {0.60,0.70,10},
+            {0.60,0.55,8},
+            {0.70,0.40,6},
+            {0.75,0.30,5},
+            {0.80,0.20,4},
+            {0.90,0.10,3},
+            {1.00,0.00,0},
+        };
+    }
+
+    int Strength::Level() const
+    {
+        return std::clamp(static_cast<int>(std::lround(level)),0,Levels-1);
+    }
+
+    void AfterGame(Strength& strength,int result,int margin,bool gaveUp)
+    {
+        if(result==0)return;
+        // Quicker at first, to find you soon; further for a game far from close, less for a close one.
+        double step=strength.games<4?1.5:1.0;
+        if(!gaveUp&&margin>=5)step*=1.5;
+        else if(!gaveUp&&margin<=1)step*=0.5;
+        // A little further down than up: you should win somewhat more than half. And not up too
+        // far at once, so that a win or two at the start isn't answered by her best.
+        strength.level=std::clamp(strength.level+(result>0?std::min(step,2.0):-1.2*step),0.0,static_cast<double>(Levels-1));
+        strength.games++;
+    }
+
     // ---- the table ----
 
-    void Table::NewGame(std::uint32_t seed,int yourDeck,int herDeck,double careNow,int firstOne)
+    void Table::NewGame(std::uint32_t seed,int yourDeck,int herDeck,int levelNow,int firstOne)
     {
         rng.seed(seed);
         think.seed(seed^0x5bd1e995u);
-        care=careNow;
+        level=std::clamp(levelNow,0,Levels-1);
         first=firstOne;
         state=State{};
         events.clear();
         shownAim=-1;
         looseTurn=-1;
         looseNow=false;
+        clumsyNow=false;
         redrawDone=false;
         planDone=false;
         plan.clear();
@@ -973,6 +1039,7 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
     double Table::CareNow() const
     {
         // Less care still while she leads comfortably.
+        const double care=Eases[state.who==Her?level:Levels-1].care;
         if(care>=1)return 1;
         const int lead=state.side[Her].score-state.side[You].score;
         return lead>=6?care-0.3:lead>=3?care-0.15:care;
@@ -1004,12 +1071,13 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
         {
             looseTurn=state.turns;
             looseNow=std::uniform_real_distribution<double>(0,1)(think)>CareNow();
+            clumsyNow=std::uniform_real_distribution<double>(0,1)(think)<Eases[state.who==Her?level:Levels-1].clumsy;
             plan.clear();
         }
         // She keeps to her plan for the turn, and thinks again when she has drawn a card.
         if(plan.empty()&&!planDone)
         {
-            plan=ChoosePlan(state,looseNow,think);
+            plan=clumsyNow?ClumsyPlan(state,Eases[state.who==Her?level:Levels-1].noise,think):ChoosePlan(state,looseNow,think);
             planDone=true;
             std::reverse(plan.begin(),plan.end());
         }
@@ -1367,5 +1435,81 @@ constexpr int Width=20,Depth=12,Finals=12,Samples=12,Horizon=4;
         wchar_t head[64];
         swprintf_s(head,L"%d failures\n",bad);
         return head+out;
+    }
+
+    std::wstring CheckLevels(int count,std::uint32_t seed)
+    {
+        std::wstring out;
+        wchar_t line[256];
+        int bad=0;
+        std::mt19937 dice(seed);
+        // Style against her at a level: 1 she won, -1 she lost, 0 drawn; margin, the points between.
+        const auto game=[&](int style,int level,int& margin,int& turns)
+        {
+            Table t;
+            t.NewGame(dice(),dice()%DeckKinds,dice()%DeckKinds,level,dice()%2);
+            t.Redraw(style==2?0:t.SuggestRedraw(You));
+            int guard=0;
+            while(t.Now()!=Phase::Over&&guard<4000)
+            {
+                const int who=t.Board().who;
+                t.StepAs(who,who==You?style:0);
+                t.TakeEvents();
+                guard++;
+            }
+            if(t.Now()!=Phase::Over||!t.Consistent())bad++;
+            margin=std::abs(t.Board().side[0].score-t.Board().side[1].score);
+            turns=t.Board().turns+1;
+            return t.Board().winner==Her?1:t.Board().winner==You?-1:0;
+        };
+        const int styles[]={2,1,0};
+        out+=L"her wins (%) at each level against anyhow, greedy, her best; mean turns\n";
+        for(int level=0;level<Levels;level++)
+        {
+            swprintf_s(line,L"  level %d:",level);
+            out+=line;
+            for(int style:styles)
+            {
+                int won=0;
+                long long sum=0;
+                for(int i=0;i<count;i++)
+                {
+                    int margin=0,turns=0;
+                    if(game(style,level,margin,turns)>0)won++;
+                    sum+=turns;
+                }
+                swprintf_s(line,L"  %3d%% (%2.0f)",100*won/std::max(1,count),static_cast<double>(sum)/std::max(1,count));
+                out+=line;
+            }
+            out+=L"\n";
+        }
+        out+=L"where the level goes, starting anew, against each (level after 1,2,3,5,10,20,30 games; your wins in the last 20)\n";
+        const wchar_t* const names[]={L"her best",L"greedy",L"anyhow"};
+        for(int style:styles)
+        {
+            for(int run=0;run<3;run++)
+            {
+                Strength strength;
+                int yourWins=0;
+                swprintf_s(line,L"  %-8s:",names[style]);
+                out+=line;
+                for(int i=1;i<=30;i++)
+                {
+                    int margin=0,turns=0;
+                    const int result=game(style,strength.Level(),margin,turns);
+                    AfterGame(strength,-result,margin);
+                    if(i>10&&result<0)yourWins++;
+                    if(i==1||i==2||i==3||i==5||i==10||i==20||i==30)
+                    {
+                        swprintf_s(line,L" %d",strength.Level());
+                        out+=line;
+                    }
+                }
+                swprintf_s(line,L"; won %d of 20\n",yourWins);
+                out+=line;
+            }
+        }
+        swprintf_s(line,L"%d failures\n",bad);
+        return line+out;
     }
 }

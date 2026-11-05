@@ -18,7 +18,6 @@ namespace MikuMikuDesktopPerch
         std::wstring name;
         std::vector<std::uint8_t> face;   // premultiplied BGRA, faceSize square (empty: her initial)
         int faceSize=0;
-        int bond=0;                       // how close she and the user are (0-4)
         // Her model, drawn sitting at the table (null: 2D only, her face at the top). It must
         // stay loaded while the window is open; TickFortsWindow is given it every frame.
         MascotModel* model=nullptr;
@@ -40,6 +39,8 @@ namespace MikuMikuDesktopPerch
         // Her lines in her own words are kept in this file (empty: not kept), under this key
         // (her name and persona: a change asks again).
         std::wstring linesFile,styleKey;
+        // How hard she plays against this user, kept here (empty: not kept).
+        std::wstring strengthFile;
         // The user's own lines (JSON; docs/GameLines.md), when there is such a file.
         std::wstring ownLinesFile;
         // Her line said aloud in her voice (the voice engine), when speaking aloud is on; an empty

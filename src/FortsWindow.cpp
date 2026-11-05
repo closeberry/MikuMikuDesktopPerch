@@ -44,9 +44,6 @@ namespace MikuMikuDesktopPerch
         constexpr float HandW=124,HandH=166;       // a card in your hand
         constexpr float PreviewW=216,PreviewH=302; // a card shown large
 
-        // How carefully she plays (Forts::Table::NewGame): a little less as you grow closer, and
-        // after games you lost.
-        constexpr double Care=0.85,LessPerBond=0.03,LessPerLoss=0.08,LeastCare=0.4;
         // How often the look on her face is put on, the other way about from how she stands.
         constexpr double PutOnShare=0.2;
 
@@ -79,7 +76,7 @@ namespace MikuMikuDesktopPerch
             bool choosing=true;        // choosing your deck
             RectF deckBoxes[Forts::DeckKinds];
             int hoverDeck=-1;
-            int lost=0;                // games you lost in a row
+            Forts::Strength strength;  // how hard she plays, from how your games have ended
             bool gameOverTold=false;
             bool confirmQuit=false;
             bool help=false;
@@ -342,6 +339,45 @@ namespace MikuMikuDesktopPerch
             Text(g,number,RectF(x-d,y,d*3,d),d*0.72f,ink,true,StringAlignmentCenter,StringAlignmentCenter);
         }
 
+        // The cards' pictures (res/forts/cards.jpg): ArtW by ArtH each, card n at (n%8, n/8).
+        constexpr int ArtW=480,ArtH=270,ArtColumns=8;
+
+        Bitmap* CardPictures()
+        {
+            static std::unique_ptr<Bitmap> atlas=[]{
+                std::unique_ptr<Bitmap> loaded;
+                const HRSRC info=FindResourceW(nullptr,L"CARDS",L"FORTSCARDS");
+                const HGLOBAL data=info?LoadResource(nullptr,info):nullptr;
+                if(!data)return loaded;
+                IStream* stream=SHCreateMemStream(static_cast<const BYTE*>(LockResource(data)),SizeofResource(nullptr,info));
+                if(!stream)return loaded;
+                std::unique_ptr<Bitmap> read(Bitmap::FromStream(stream));
+                stream->Release();
+                if(read&&read->GetLastStatus()==Ok)loaded.reset(read->Clone(0,0,read->GetWidth(),read->GetHeight(),PixelFormat32bppPARGB));
+                return loaded;
+            }();
+            return atlas.get();
+        }
+
+        // A card's picture over box, cut from its middle to fit.
+        bool DrawPicture(Graphics& g,int id,const RectF& box)
+        {
+            Bitmap* pictures=CardPictures();
+            if(!pictures||id<0)return false;
+            // (a pixel in from each side: nothing of the next picture comes in when scaling)
+            float w=static_cast<float>(ArtW-2),h=static_cast<float>(ArtH-2);
+            if(box.Width/box.Height<w/h)w=h*box.Width/box.Height;
+            else h=w*box.Height/box.Width;
+            const float x=(id%ArtColumns)*ArtW+(ArtW-w)/2,y=(id/ArtColumns)*ArtH+(ArtH-h)/2;
+            const InterpolationMode before=g.GetInterpolationMode();
+            g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+            ImageAttributes edges;
+            edges.SetWrapMode(WrapModeTileFlipXY);
+            g.DrawImage(pictures,box,x,y,w,h,UnitPixel,&edges);
+            g.SetInterpolationMode(before);
+            return true;
+        }
+
         // A card's frame, name and words at w by h pixels, made once (drawing text each frame is
         // slow). Its numbers are drawn over it, since a soldier's change.
         Bitmap* CardFace(int id,int w,int h)
@@ -368,13 +404,22 @@ namespace MikuMikuDesktopPerch
             const float room=W-2*m-(card.faction>=0?nameH*0.9f:0.0f)-W*0.03f;
             while(size>6&&TextWidth(g,name,size,true)>room)size*=0.93f;
             Text(g,name,RectF(m+(card.faction>=0?nameH*0.9f:0.0f),nameTop,room,nameH),size,Color(255,40,28,20),true,StringAlignmentCenter,StringAlignmentCenter);
-            // Where the picture will go: for now, the side's colour and the name's first letter.
+            // The picture (without one, the side's colour and the name's first letter).
             const float artTop=nameTop+nameH+m*0.6f,artH=H*(mini?0.40f:0.40f);
             {
                 const RectF art(m,artTop,W-2*m,artH);
-                LinearGradientBrush shade(art,Color(255,30,26,34),Color(255,side.GetR(),side.GetG(),side.GetB()),LinearGradientModeVertical);
-                g.FillRectangle(&shade,art);
-                Text(g,name.substr(0,1),art,artH*0.62f,Color(90,255,250,230),true,StringAlignmentCenter,StringAlignmentCenter);
+                if(!DrawPicture(g,id,art))
+                {
+                    LinearGradientBrush shade(art,Color(255,30,26,34),Color(255,side.GetR(),side.GetG(),side.GetB()),LinearGradientModeVertical);
+                    g.FillRectangle(&shade,art);
+                    Text(g,name.substr(0,1),art,artH*0.62f,Color(90,255,250,230),true,StringAlignmentCenter,StringAlignmentCenter);
+                }
+                if(card.spell)
+                {
+                    const RectF band(art.X,art.GetBottom()-artH*0.34f,art.Width,artH*0.34f);
+                    LinearGradientBrush dark(RectF(band.X,band.Y-1,band.Width,band.Height+2),Color(0,10,8,16),Color(190,10,8,16),LinearGradientModeVertical);
+                    g.FillRectangle(&dark,band);
+                }
                 if(card.spell)Text(g,T(L"呪文",L"Spell"),RectF(art.X,art.GetBottom()-artH*0.26f,art.Width,artH*0.24f),artH*0.17f,Color(255,250,236,190),true,StringAlignmentCenter,StringAlignmentCenter);
             }
             // What it does.
@@ -765,9 +810,38 @@ namespace MikuMikuDesktopPerch
             return std::move(mesh.out);
         }
 
+        void LoadStrength()
+        {
+            state.strength={};
+            if(state.her.strengthFile.empty())return;
+            if(FILE* in=nullptr;_wfopen_s(&in,state.her.strengthFile.c_str(),L"r")==0&&in)
+            {
+                Forts::Strength read;
+                if(fscanf_s(in,"%lf %d",&read.level,&read.games)==2&&read.level>=0&&read.level<=Forts::Levels-1&&read.games>=0)state.strength=read;
+                fclose(in);
+            }
+        }
+
+        void SaveStrength()
+        {
+            if(state.her.strengthFile.empty())return;
+            if(FILE* out=nullptr;_wfopen_s(&out,state.her.strengthFile.c_str(),L"w")==0&&out)
+            {
+                fprintf(out,"%.2f %d\n",state.strength.level,state.strength.games);
+                fclose(out);
+            }
+        }
+
         void Finish()
         {
             if(!state.window)return;
+            // Stopping a game going badly says as much as losing it.
+            if(!state.choosing&&state.seen.started&&state.table.Now()!=Phase::Over&&state.table.Board().turns>=6&&
+               state.table.Board().side[Her].score>state.table.Board().side[You].score)
+            {
+                Forts::AfterGame(state.strength,-1,0,true);
+                SaveStrength();
+            }
             KillTimer(state.window,TimerId);
             state.voice.Stop();
             if(state.her.model)state.her.model->SetSolids({});
@@ -822,7 +896,7 @@ namespace MikuMikuDesktopPerch
             std::random_device device;
             const std::uint32_t seed=device();
             const int herDeck=static_cast<int>(seed%Forts::DeckKinds);
-            state.table.NewGame(seed,deck,herDeck,std::max(LeastCare,Care-LessPerBond*state.her.bond-LessPerLoss*state.lost),static_cast<int>((seed>>8)%2));
+            state.table.NewGame(seed,deck,herDeck,state.strength.Level(),static_cast<int>((seed>>8)%2));
             state.choosing=false;
             state.nextAt=GetTickCount64()+200;
             Redraw();
@@ -1111,8 +1185,9 @@ namespace MikuMikuDesktopPerch
             if(over&&!seen.over)
             {
                 const int you=t.Board().side[You].score,her=t.Board().side[Her].score;
-                // How she goes easier next game comes from how this one ended.
-                state.lost=t.Board().winner==Her?state.lost+1:0;
+                // How hard she plays next game comes from how this one ended.
+                Forts::AfterGame(state.strength,t.Board().winner==You?1:t.Board().winner==Her?-1:0,std::abs(you-her));
+                SaveStrength();
                 const std::wstring result=Fmt(T(L"話し相手は{0}点、あなたは{1}点",L"they have {0} points, you {1}"),{std::to_wstring(you),std::to_wstring(her)});
                 state.afterword=Fmt(T(L"いま、話し相手と三つの砦というカードゲームをして、デスクトップに戻ってきたところ。結果は{0}。その勝負の感想を、話し相手にひと言（1〜2文）",
                                       L"You have just played a card game called Three Forts with them and come back to the desktop. In the end {0}. Tell them what you thought of the game (one or two sentences)"),{result});
@@ -2182,6 +2257,7 @@ namespace MikuMikuDesktopPerch
                              {std::to_wstring(state.entrance),std::to_wstring(state.choosing?1:0),std::to_wstring(static_cast<int>(t.Now())),std::to_wstring(b.turns),
                               std::to_wstring(b.side[You].score),std::to_wstring(b.side[Her].score),std::to_wstring(b.side[You].magic),std::to_wstring(b.side[Her].magic),
                               std::to_wstring(b.side[You].handSize),std::to_wstring(b.side[Her].handSize),std::to_wstring(static_cast<int>(state.tell)),std::to_wstring(t.HerAim())});
+        out+=L"forts level: "+std::to_wstring(state.strength.level)+L" after "+std::to_wstring(state.strength.games)+L" games\n";
         wchar_t speed[160];
         RECT client{};
         GetClientRect(state.window,&client);
@@ -2213,7 +2289,7 @@ namespace MikuMikuDesktopPerch
         state.choosing=mode==L"choose";
         if(!state.choosing)
         {
-            state.table.NewGame(seed,seed%Forts::DeckKinds,(seed/7)%Forts::DeckKinds,1,seed%2);
+            state.table.NewGame(seed,seed%Forts::DeckKinds,(seed/7)%Forts::DeckKinds,Forts::Levels-1,seed%2);
             if(mode!=L"redraw")PlaySimply(moves);
             state.help=mode==L"help";
             // Your move, so that what you may do shows.
@@ -2274,6 +2350,7 @@ namespace MikuMikuDesktopPerch
             state.face.reset(view.Clone(0,0,her.faceSize,her.faceSize,PixelFormat32bppPARGB));
         }
         state.tableBuilt=false;
+        LoadStrength();
         state.lines.Load(L"FORTSLINES",L"forts",her.ownLinesFile,her.linesFile,her.styleKey,English(),
                          {L"三つの砦というカードゲーム",L"a card game called Three Forts",L"",L""});
         state.voice.Stop();
