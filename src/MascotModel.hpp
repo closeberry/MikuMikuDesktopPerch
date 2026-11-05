@@ -91,6 +91,10 @@ namespace MikuMikuDesktopPerch
         // empty path: back to the generated one). Fails for a motion whose feet never stay on
         // the ground long enough to measure its speed.
         bool SetGaitMotion(int which,const std::wstring& path,std::wstring& error);
+        // The morphs above 0 on a VMD's frame 0 stay on as her usual face, as a floor under what
+        // moves them (an empty path: none). Fails, leaving the face as it was, for a motion
+        // with no such morph of this model.
+        bool SetBaseFace(const std::wstring& path,std::wstring& error);
         bool React(bool head);
         bool Reacting() const;
         // True between idle motions (or loops of one) and whenever there is none playing:

@@ -814,6 +814,7 @@ namespace MikuMikuDesktopPerch
 
         // Walking and running in place (instead of the generated gait), sampled like idle motions.
         std::array<std::vector<Clip>,2> gaitClips;
+        std::vector<std::pair<int,float>> baseFace;   // morph, value: SetBaseFace
         PMX::Pose gaitPose;
         double gaitFrame=0;
         Activity gaitLastActivity=Activity::Idle;
@@ -1787,6 +1788,39 @@ namespace MikuMikuDesktopPerch
         return true;
     }
 
+    bool MascotModel::SetBaseFace(const std::wstring& path,std::wstring& error)
+    {
+        auto& m=*impl;
+        if(!m.pmx)return false;
+        std::vector<std::pair<int,float>> face;
+        if(!path.empty())
+        {
+            if(!std::filesystem::exists(path)){error=T(L"モーションファイルが見つかりません: ",L"The motion file was not found: ")+path;return false;}
+            if(!IsVmdFile(path)){error=T(L"VMDファイルではないか、大きすぎます: ",L"Not a VMD file, or too large: ")+path;return false;}
+            std::unique_ptr<PMX::VMD> vmd;
+            std::unique_ptr<PMX::PoseSolver> sampler;
+            if(!LoadVmd(path,m.pmx.get(),vmd,sampler))
+            {
+                error=T(L"モーションのデータが壊れているため、読み込めませんでした: ",L"Could not load the motion: its data is damaged: ")+path;
+                return false;
+            }
+            for(const auto& key:vmd->morphKeys)
+            {
+                if(key.iFrame!=0||key.value<=0)continue;
+                // (An impulse morph would push the bodies every frame.)
+                const auto found=std::find_if(m.pmx->morphs.begin(),m.pmx->morphs.end(),[&](const auto& morph){return morph.name==key.name&&morph.kind!=10;});
+                if(found!=m.pmx->morphs.end())face.push_back({static_cast<int>(found-m.pmx->morphs.begin()),key.value});
+            }
+            if(face.empty())
+            {
+                error=T(L"0フレームに、このモデルのモーフで値が0より大きいものがありません: ",L"Frame 0 has no morph of this model with a value above 0: ")+path;
+                return false;
+            }
+        }
+        m.baseFace=std::move(face);
+        return true;
+    }
+
     bool MascotModel::React(bool head)
     {
         auto& m=*impl;
@@ -2669,6 +2703,12 @@ namespace MikuMikuDesktopPerch
         if(m.shotActive&&m.shotIsGesture&&m.shotFrozen<0&&(m.motion.CurrentActivity()!=Activity::Idle||!m.idleClips.empty()))m.shotEnding=true;
         // The opened motion goes over everything the motion layer made, standing pose included.
         if(m.shotActive)m.ApplyShot(dt);   // authored in the A-stance frame, so before correction
+        // Her usual face, before the blink and the feelings so that they allow for it (EyeRoom).
+        for(const auto& [morph,value]:m.baseFace)
+        {
+            auto& v=m.solver->solvedPose.morphKeys[morph].value;
+            v=std::max(v,value);
+        }
         m.ApplyArmCorrection(m.solver->solvedPose);
         m.ApplyProcedural(m.solver->solvedPose,dt);
         m.ApplyTurn(m.solver->solvedPose,dt);

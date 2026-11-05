@@ -20,6 +20,8 @@ namespace MikuMikuDesktopPerch
         // Walking and running in place (looped, made to be moved by 全ての親) to use instead of
         // the generated gait; empty: generated.
         std::wstring walkMotionPath,runMotionPath;
+        // A VMD whose frame 0 gives the morphs she always has on (those above 0; empty: none).
+        std::wstring faceMotionPath;
         // The user's own window motions (resting on a window's top edge, or moving along it; see
         // docs/WindowMotions.md), stored like IdleMotion as the WindowMotion line.
         std::vector<std::wstring> windowMotionPaths;

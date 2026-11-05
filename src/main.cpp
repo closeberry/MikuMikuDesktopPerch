@@ -85,7 +85,7 @@ namespace
     constexpr UINT TrayMessage=WM_APP+1;
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdStayPut,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
-                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
+                      IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdOpenFaceMotion,IdCloseFaceMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
                       IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdRuins,IdHanafuda,IdOthello,IdGomoku,IdShogi,IdHexWar,IdBlackjack,IdOldMaid,IdPoker,IdGinRummy,IdChess,IdSolitaire};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr UINT IdTreasure=600;          // + the treasure's place in Dungeon::TreasureBook: look at it
@@ -1705,6 +1705,9 @@ namespace
         AppendMenuW(motions,MF_STRING|(Own(m).runMotionPath.empty()?0:MF_CHECKED),IdOpenRunMotion,T(L"走るモーションを開く...",L"Open run motion..."));
         AppendMenuW(motions,MF_STRING|(Own(m).walkMotionPath.empty()&&Own(m).runMotionPath.empty()?MF_GRAYED:0),IdCloseGaitMotion,
                     T(L"歩く・走るモーションを閉じる",L"Close walk and run motions"));
+        AppendMenuW(motions,MF_SEPARATOR,0,nullptr);
+        AppendMenuW(motions,MF_STRING|(Own(m).faceMotionPath.empty()?0:MF_CHECKED),IdOpenFaceMotion,T(L"いつもの表情を開く...",L"Open usual face..."));
+        AppendMenuW(motions,MF_STRING|(Own(m).faceMotionPath.empty()?MF_GRAYED:0),IdCloseFaceMotion,T(L"いつもの表情を閉じる",L"Close usual face"));
         AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(motions),T(L"モーション",L"Motion"));
         AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
         const bool grounded=m.place==Place::Ground;
@@ -5488,6 +5491,23 @@ namespace
             app.settings.Save(app.settingsPath);
             break;
         }
+        case IdOpenFaceMotion:
+        {
+            const auto path=OpenFileDialog(m.hwnd,T(L"VMD モーション (*.vmd)\0*.vmd\0",L"VMD motion (*.vmd)\0*.vmd\0"),Own(m).faceMotionPath.empty()?Own(m).modelPath:Own(m).faceMotionPath);
+            if(path.empty())break;
+            if(std::wstring error;!m.model.SetBaseFace(path,error)){ShowMessage(error,MB_ICONERROR);break;}
+            Own(m).faceMotionPath=path;
+            app.settings.Save(app.settingsPath);
+            break;
+        }
+        case IdCloseFaceMotion:
+        {
+            std::wstring error;
+            m.model.SetBaseFace({},error);
+            Own(m).faceMotionPath.clear();
+            app.settings.Save(app.settingsPath);
+            break;
+        }
         case IdOpenClickMotion:
         case IdCloseClickMotion:
         {
@@ -6211,6 +6231,9 @@ namespace
             std::wstring& path=which==0?own.walkMotionPath:own.runMotionPath;
             if(std::wstring gaitError;!path.empty()&&(!std::filesystem::exists(path)||!m.model.SetGaitMotion(which,path,gaitError)))path.clear();
         }
+        // Kept when it just has nothing for this model: the model may be changed back.
+        if(!own.faceMotionPath.empty()&&!std::filesystem::exists(own.faceMotionPath))own.faceMotionPath.clear();
+        if(std::wstring faceError;!m.model.SetBaseFace(own.faceMotionPath,faceError))Trace(L"usual face: %s",faceError.c_str());
 
         m.bubble.Create(m.hwnd);
         m.character=CharacterProfile::Load(own.modelPath,m.model.ModelName());
@@ -6393,6 +6416,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     std::vector<std::array<std::wstring,2>> clearanceBones;
     bool snapshotDoze=false;         // --doze: doze off from the start
     std::array<std::wstring,2> snapshotGait;   // --walk-motion / --run-motion <vmd>: use that gait motion
+    std::wstring snapshotFace;                 // --face-motion <vmd>: use that usual face
     std::optional<int> snapshotFps;           // --fps <n>: drawing rate for this run
     std::optional<bool> snapshotBlur;         // --motion-blur 0|1
     std::optional<int> snapshotIterations;    // --physics-iterations <n>
@@ -6610,6 +6634,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 snapshotGait[arg==L"--walk-motion"?0:1]=argv[++i];
             }
+            else if(arg==L"--face-motion"&&i+1<argc)snapshotFace=argv[++i];
             else if(arg==L"--pretend-version"&&i+1<argc)
             {
                 PretendVersion(argv[++i]);   // an update to the latest release is offered (and checked at once)
@@ -7394,6 +7419,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     for(int which=0;which<2;++which)
         if(std::wstring gaitError;!snapshotGait[which].empty()&&!first.model.SetGaitMotion(which,snapshotGait[which],gaitError))
             Trace(L"gait motion: %s",gaitError.c_str());
+    if(std::wstring faceError;!snapshotFace.empty()&&!first.model.SetBaseFace(snapshotFace,faceError))
+        Trace(L"usual face: %s",faceError.c_str());
 
     app.tray.cbSize=sizeof(app.tray);
     app.tray.hWnd=app.hwnd;
