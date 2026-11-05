@@ -121,6 +121,8 @@
     <ClCompile Include="src\ChessWindow.cpp" />
     <ClCompile Include="src\GinRummy.cpp" />
     <ClCompile Include="src\GinRummyWindow.cpp" />
+    <ClCompile Include="src\Forts.cpp" />
+    <ClCompile Include="src\FortsWindow.cpp" />
     <ClCompile Include="src\Poker.cpp" />
     <ClCompile Include="src\PokerWindow.cpp" />
     <ClCompile Include="src\OldMaid.cpp" />
@@ -199,6 +201,8 @@
     <ClInclude Include="src\ChessWindow.hpp" />
     <ClInclude Include="src\GinRummy.hpp" />
     <ClInclude Include="src\GinRummyWindow.hpp" />
+    <ClInclude Include="src\Forts.hpp" />
+    <ClInclude Include="src\FortsWindow.hpp" />
     <ClInclude Include="src\Poker.hpp" />
     <ClInclude Include="src\PokerWindow.hpp" />
     <ClInclude Include="src\OldMaid.hpp" />

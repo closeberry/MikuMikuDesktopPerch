@@ -32,7 +32,7 @@ namespace MikuMikuDesktopPerch
         struct Rule {BondAction action;const wchar_t* name;int each,cap;};
         constexpr Rule Rules[]={{BondAction::Present,L"present",10,10},{BondAction::Talk,L"talk",2,10},{BondAction::Click,L"click",1,5},
                                 {BondAction::Focus,L"focus",3,12},{BondAction::Todo,L"todo",2,6},{BondAction::Dungeon,L"dungeon",3,9},
-                                {BondAction::Mahjong,L"mahjong",3,9},{BondAction::Hanafuda,L"hanafuda",3,9},{BondAction::Othello,L"othello",3,9},{BondAction::Gomoku,L"gomoku",3,9},{BondAction::Shogi,L"shogi",3,9},{BondAction::HexWar,L"hexwar",3,9},{BondAction::Blackjack,L"blackjack",3,9},{BondAction::OldMaid,L"oldmaid",3,9},{BondAction::Poker,L"poker",3,9},{BondAction::GinRummy,L"ginrummy",3,9},{BondAction::Chess,L"chess",3,9},{BondAction::Solitaire,L"solitaire",3,9}};
+                                {BondAction::Mahjong,L"mahjong",3,9},{BondAction::Hanafuda,L"hanafuda",3,9},{BondAction::Othello,L"othello",3,9},{BondAction::Gomoku,L"gomoku",3,9},{BondAction::Shogi,L"shogi",3,9},{BondAction::HexWar,L"hexwar",3,9},{BondAction::Blackjack,L"blackjack",3,9},{BondAction::OldMaid,L"oldmaid",3,9},{BondAction::Poker,L"poker",3,9},{BondAction::GinRummy,L"ginrummy",3,9},{BondAction::Chess,L"chess",3,9},{BondAction::Solitaire,L"solitaire",3,9},{BondAction::Forts,L"forts",3,9}};
 
         std::wstring FromUtf8(const std::string& text)
         {

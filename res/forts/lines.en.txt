@@ -1,0 +1,133 @@
+# Drafts of her lines in Three Forts, in plain speech (the same scenes and number of lines as lines.txt).
+# One line each. A "[scene]" line starts a scene. The scene names are used by the code: leave them in Japanese.
+# "They" are the owner of this computer.
+
+[始まり] When the card game begins (hold forts; the first to 8 points wins)
+Let's fight over some forts!
+First to 8, remember.
+I won't lose.
+Nice to play you.
+Which fort shall I take first?
+Here we go.
+I'm rather sure of this deck.
+I'll take my time.
+
+[考える] Her turn, when she can't decide (now and then; said to herself, not a question to them)
+Hmm... what should I play?
+Let me think...
+Hmm...
+Where would be best?
+Now then, what to do.
+Carefully, now...
+This is a hard one.
+I see, so that's your plan...
+
+[狙う左] The start of their turn: she glances at the left fort, hinting she wants it (true or a bluff)
+That west fort looks nice...
+West next, I think.
+I keep looking at the west.
+Maybe I'll take the west fort.
+Is your west side safe?
+Keep an eye on the west.
+I might start from the west.
+The west fort is calling me.
+
+[狙う中央] The start of their turn: she glances at the centre fort, hinting she wants it (true or a bluff)
+It has to be the centre.
+Maybe I'll take the keep.
+The middle matters most.
+The centre next, I think.
+Is your centre safe?
+Keep an eye on the middle.
+The keep is worth 2, you know...
+I do want the middle.
+
+[狙う右] The start of their turn: she glances at the right fort, hinting she wants it (true or a bluff)
+That east fort looks nice...
+East next, I think.
+I keep looking at the east.
+Maybe I'll take the east fort.
+Is your east side safe?
+Keep an eye on the east.
+I might start from the east.
+The east fort is calling me.
+
+[砦を取った] She holds a fort and scores
+This fort is mine!
+Good, points for me!
+I've got this one.
+Going nicely.
+A step ahead now.
+I'll keep this up.
+Can you take it back?
+Yes, a fort!
+
+[砦を取られた] They hold a fort and score
+Oh, you took that one.
+Hm, not bad.
+So you've scored...
+I have to win that back.
+I'll have that fort back.
+Oops, I left it empty.
+I got careless there.
+I'll get you next time.
+
+[大きな札] She plays a big card (cost 5 or more)
+How about this?
+Out comes my best!
+Ta-da!
+Time for my trump card.
+Let's see you stop this.
+I've been waiting for this one.
+Here comes a big one!
+This one is strong.
+
+[倒した] She defeats one of their soldiers
+Got it!
+That's one fewer.
+Sorry, coming through.
+Nice hit, wasn't it?
+The way is open.
+That one's mine.
+Yes!
+I'll take that soldier.
+
+[倒された] They defeat one of her soldiers
+Ah, it's down!
+Hm, you went for that one.
+Well done, little one.
+That hurts...
+Oh no, it fell.
+Not bad at all.
+So that's how it is.
+It's far from over.
+
+[もうすぐ] She is close to winning (on their turn)
+I'm nearly there.
+Almost at 8.
+Can you stop me?
+Can you catch up?
+I'll settle this soon.
+I can see the finish.
+I won't get careless, though.
+Next turn might be it.
+
+[勝って終わる] The game is over and she won
+Yes, I won!
+That was a good game!
+All the forts are mine.
+That was fun, thank you!
+This one goes to me.
+Let's play again!
+Reading each other was fun.
+I won't lose next time either.
+
+[負けて終わる] The game is over and they won
+I lost... you're good!
+Oh, that's frustrating!
+Congratulations, well played!
+You got me. Next time is mine.
+That was a fine move.
+One more game!
+I couldn't hold the forts.
+Well played, that was fun!
