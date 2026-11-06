@@ -2,6 +2,18 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.6
+
+### New
+
+- **Exporting and importing the persona**: "Export..." in the persona dialog saves the name and persona to a text file, and "Import..." reads one in (it takes effect with OK)
+- **Exporting memories and adding many at once**: "Export..." in the memory dialog saves the memories to a text file, one per line (date, tab, text). "Add many..." adds many at once: write or paste one per line (or read a text file in). A line starting with a date keeps it, and lines already remembered are skipped
+- When switching models, export both from the old model and import them into the new one
+
+### Fixed
+
+- The persona's character count did not change after pressing "Default"
+
 ## 1.6.5
 
 ### New
