@@ -613,7 +613,10 @@ namespace
         // (bones alone would leave a long tail or hair cut off at the window's edge).
         const float reach=m.model.GestureReach();
         if(reach>0)need.halfWidth=std::max(need.halfWidth,base.halfWidth+reach);
-        const float widest=reach>0?std::max(1.6f*frame.height,need.halfWidth):1.6f*frame.height;
+        // The clip's travel is added to the usual limit, but bones are not followed past it: a
+        // bone parked far off (a model's hidden glasses at y -955 under the head) swung hundreds
+        // of units out as the head tilted, and the window grew past what the GPU can draw.
+        const float widest=1.6f*frame.height+reach;
         Extent& e=m.extent;
         if(need.halfWidth>e.halfWidth||need.top>e.top||need.bottom<e.bottom)
         {

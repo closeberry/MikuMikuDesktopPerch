@@ -1037,28 +1037,40 @@ namespace MikuMikuDesktopPerch
         if(w==width&&h==height&&ww==windowWidth&&wh==windowHeight)return true;
         clearWhole.fill(true);
         if(w<=bufferWidth&&h<=bufferHeight&&ww<=swapWidth&&wh<=swapHeight){width=w;height=h;windowWidth=ww;windowHeight=wh;return true;}
+        // Refused before anything is released: past D3D12's largest texture the buffers cannot
+        // be made, and drawing on with released targets crashed in the driver.
+        constexpr unsigned Largest=D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION;
+        if(std::max({w,h,ww,wh})>Largest)
+        {
+            error=std::to_wstring(ww)+L"x"+std::to_wstring(wh)+L": larger than the GPU can draw";
+            return false;
+        }
         WaitIdle();
         for(auto& b:backBuffers)b.Reset();
         msaaTarget.Reset();
         depthTarget.Reset();
         sceneColor.Reset();sceneMotion.Reset();msaaMotion.Reset();blurredColor.Reset();
         width=w;height=h;windowWidth=ww;windowHeight=wh;
-        bufferWidth=std::max(bufferWidth,width+width/4);
-        bufferHeight=std::max(bufferHeight,height+height/4);
-        swapWidth=std::max(swapWidth,windowWidth+windowWidth/4);
-        swapHeight=std::max(swapHeight,windowHeight+windowHeight/4);
+        bufferWidth=std::min(Largest,std::max(bufferWidth,width+width/4));
+        bufferHeight=std::min(Largest,std::max(bufferHeight,height+height/4));
+        swapWidth=std::min(Largest,std::max(swapWidth,windowWidth+windowWidth/4));
+        swapHeight=std::min(Largest,std::max(swapHeight,windowHeight+windowHeight/4));
         HRESULT hr;
-        if(FAILED(hr=swapChain->ResizeBuffers(FrameCount,swapWidth,swapHeight,ColorFormat,0))){error=HrText(L"ResizeBuffers",hr);return false;}
+        // Past this point the old targets are gone: on a failure nothing more is drawn (as on
+        // a lost device, which offers a restart) rather than drawing with released ones.
+        if(FAILED(hr=swapChain->ResizeBuffers(FrameCount,swapWidth,swapHeight,ColorFormat,0))){error=HrText(L"ResizeBuffers",hr);deviceLost=hr;return false;}
         for(auto& f:frames){f.hitPoint={-1,-1};f.fenceValue=0;}
         lastAlpha=-1;
         if(CreateRenderTargets(error))return true;
-        if(sampleCount==1)return false;
+        if(sampleCount==1){deviceLost=E_FAIL;return false;}
         // As in Initialize: without MSAA rather than nothing drawn.
         Log(L"MSAA x%u targets failed at %ux%u (%s): drawing without it",sampleCount,bufferWidth,bufferHeight,error.c_str());
         error.clear();
         sampleCount=1;
         msaaTarget.Reset();msaaMotion.Reset();sceneColor.Reset();sceneMotion.Reset();blurredColor.Reset();depthTarget.Reset();
-        return CreateRenderTargets(error)&&CreatePipelines(error);
+        if(CreateRenderTargets(error)&&CreatePipelines(error))return true;
+        deviceLost=E_FAIL;
+        return false;
     }
 
     void MascotRenderer::SetCamera(FXMVECTOR eye,FXMVECTOR target,float fovY)
