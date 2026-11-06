@@ -11,7 +11,10 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Themed (version 6) common controls for the settings window, the message boxes and the file
@@ -34,7 +37,8 @@ namespace MikuMikuDesktopPerch
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
             IdPersonaText,IdPersonaReset,IdPersonaCount,IdChatMemory,IdMemory,IdSelfShadow,IdChatInitiative,IdVoice,IdVoiceList,IdVoiceFetch,IdVoiceSample,IdVoiceMode,IdVoiceFolder,IdVoiceBrowse,IdVoiceStrength,IdSunAzimuth,IdSunElevation,
             IdMemoryList,IdMemoryNew,IdMemoryAdd,IdMemoryDelete,IdMemoryClear,IdMemoryCount,
-            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdGestureOwn,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdBubbleFont,IdBubbleSize,IdTabs,IdStayPut
+            IdChatterMinutes,IdBanterMinutes,IdUpdateCheck,IdLanguage,IdMorningSummary,IdRestMinutes,IdFocusMinutes,IdFocusBreakMinutes,IdCalendarAddress,IdCalendarLead,IdUpdateNow,IdGestures,IdGestureList,IdGestureAll,IdGestureNone,IdGestureOwn,IdApi,IdApiPort,IdBond,IdAlbumHotkey,IdShutterSound,IdOpenAlbum,IdAlbumFolder,IdAlbumBrowse,IdDungeonLight,IdBubbleFont,IdBubbleSize,IdTabs,IdStayPut,
+            IdPersonaImport,IdPersonaExport,IdMemoryExport,IdMemoryBulk,IdBulkText,IdBulkFile,IdBulkAdd
         };
         // The longest persona (characters, a line break counting as one).
         constexpr size_t MaxPersona=4000;
@@ -42,6 +46,7 @@ namespace MikuMikuDesktopPerch
         enum VoiceMode:int{VoiceVoicevox=0,VoiceFiles=1,VoiceAivisSpeech=2};
         constexpr wchar_t PersonaClass[]=L"MikuMikuDesktopPerchPersona";
         constexpr wchar_t MemoryClass[]=L"MikuMikuDesktopPerchMemory";
+        constexpr wchar_t MemoryBulkClass[]=L"MikuMikuDesktopPerchMemoryBulk";
         constexpr wchar_t GesturesClass[]=L"MikuMikuDesktopPerchGestures";
 
         struct State
@@ -49,6 +54,7 @@ namespace MikuMikuDesktopPerch
             HWND window=nullptr;
             HWND persona=nullptr;   // the persona dialog, while open
             HWND memory=nullptr;    // the memory dialog, while open
+            HWND memoryBulk=nullptr;   // adding many notes at once, over the memory dialog
             HWND gestures=nullptr;  // the gesture choice, while open
             // While it is open: the shared choice and the character's own (keys left out), and
             // which one the list shows.
@@ -527,6 +533,84 @@ namespace MikuMikuDesktopPerch
             SendMessageW(combo,CB_SHOWDROPDOWN,TRUE,0);
         }
 
+        // A text file chosen to save (to) or open, empty if none. name is the suggested name
+        // (characters a file name can't have taken out).
+        std::wstring PickTextFile(HWND owner,bool save,const wchar_t* title,std::wstring name=L"")
+        {
+            Microsoft::WRL::ComPtr<IFileDialog> dialog;
+            if(FAILED(save?CoCreateInstance(CLSID_FileSaveDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog))
+                          :CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog))))return {};
+            const COMDLG_FILTERSPEC types[]{{T(L"テキスト ファイル (*.txt)",L"Text files (*.txt)"),L"*.txt"},{T(L"すべてのファイル",L"All files"),L"*.*"}};
+            dialog->SetFileTypes(2,types);
+            dialog->SetDefaultExtension(L"txt");
+            DWORD options=0;
+            dialog->GetOptions(&options);
+            dialog->SetOptions(options|FOS_FORCEFILESYSTEM|(save?FOS_OVERWRITEPROMPT:FOS_FILEMUSTEXIST));
+            dialog->SetTitle(title);
+            std::erase_if(name,[](wchar_t c){return c<L' '||std::wstring_view(L"\\/:*?\"<>|").find(c)!=std::wstring_view::npos;});
+            if(!name.empty())dialog->SetFileName(name.c_str());
+            if(FAILED(dialog->Show(owner)))return {};
+            Microsoft::WRL::ComPtr<IShellItem> item;
+            PWSTR path=nullptr;
+            std::wstring out;
+            if(SUCCEEDED(dialog->GetResult(&item))&&SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH,&path)))
+            {
+                out=path;
+                CoTaskMemFree(path);
+            }
+            return out;
+        }
+
+        // Text written as UTF-8 with a BOM and CRLF line ends, so Notepad shows it as it is.
+        bool WriteTextFile(const std::wstring& path,const std::wstring& text)
+        {
+            std::wstring crlf;
+            for(const wchar_t c:text){if(c==L'\n')crlf+=L'\r';if(c!=L'\r')crlf+=c;}
+            std::string data="\xEF\xBB\xBF";
+            const int n=WideCharToMultiByte(CP_UTF8,0,crlf.data(),static_cast<int>(crlf.size()),nullptr,0,nullptr,nullptr);
+            const size_t head=data.size();
+            data.resize(head+static_cast<size_t>(n));
+            WideCharToMultiByte(CP_UTF8,0,crlf.data(),static_cast<int>(crlf.size()),data.data()+head,n,nullptr,nullptr);
+            std::ofstream out(std::filesystem::path(path),std::ios::binary|std::ios::trunc);
+            out.write(data.data(),static_cast<std::streamsize>(data.size()));
+            return static_cast<bool>(out);
+        }
+
+        // A text file read in (line breaks as \n): UTF-8 or UTF-16 by their BOM, UTF-8 without
+        // one, else the system code page (Shift-JIS as Notepad's "ANSI" saves it). False if it
+        // can't be read or is over 1 MB.
+        bool ReadTextFile(const std::wstring& path,std::wstring& text)
+        {
+            std::error_code ec;
+            const auto size=std::filesystem::file_size(path,ec);
+            if(ec||size>(1u<<20))return false;
+            std::ifstream in(std::filesystem::path(path),std::ios::binary);
+            if(!in)return false;
+            std::string data(static_cast<size_t>(size),'\0');
+            in.read(data.data(),static_cast<std::streamsize>(data.size()));
+            text.clear();
+            if(data.size()>=2&&static_cast<unsigned char>(data[0])==0xFF&&static_cast<unsigned char>(data[1])==0xFE)
+                text.assign(reinterpret_cast<const wchar_t*>(data.data()+2),(data.size()-2)/2);
+            else
+            {
+                if(data.size()>=3&&data.compare(0,3,"\xEF\xBB\xBF")==0)data.erase(0,3);
+                UINT page=CP_UTF8;
+                int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,data.data(),static_cast<int>(data.size()),nullptr,0);
+                if(n<=0&&!data.empty()){page=CP_ACP;n=MultiByteToWideChar(CP_ACP,0,data.data(),static_cast<int>(data.size()),nullptr,0);}
+                text.resize(static_cast<size_t>((std::max)(n,0)));
+                if(n>0)MultiByteToWideChar(page,0,data.data(),static_cast<int>(data.size()),text.data(),n);
+            }
+            std::erase(text,L'\r');
+            return true;
+        }
+
+        // \n as the edit box wants it (\r\n).
+        std::wstring ForEdit(std::wstring text)
+        {
+            for(size_t n=0;(n=text.find(L'\n',n))!=std::wstring::npos;n+=2)text.insert(n,1,L'\r');
+            return text;
+        }
+
         // The persona dialog: a small window over the settings window, which is disabled
         // meanwhile. OK keeps the edits in state.choice.character (saved with the settings).
         void ClosePersona()
@@ -592,10 +676,52 @@ namespace MikuMikuDesktopPerch
                     ClosePersona();
                     return 0;
                 case IdPersonaReset:
+                    SetDlgItemTextW(hwnd,IdPersonaText,ForEdit(CharacterProfile::DefaultPersona()).c_str());
+                    ShowPersonaCount(hwnd);   // a multi-line box sends no EN_CHANGE for WM_SETTEXT
+                    return 0;
+                case IdPersonaExport:
                 {
-                    std::wstring text=CharacterProfile::DefaultPersona();
-                    for(size_t n=0;(n=text.find(L'\n',n))!=std::wstring::npos;n+=2)text.insert(n,1,L'\r');
-                    SetDlgItemTextW(hwnd,IdPersonaText,text.c_str());
+                    // "名前: …", a blank line, then the persona as written (not yet OK'd).
+                    std::wstring name(256,L'\0');
+                    name.resize(static_cast<size_t>(GetDlgItemTextW(hwnd,IdPersonaName,name.data(),256)));
+                    const std::wstring path=PickTextFile(hwnd,true,T(L"人物設定の書き出し",L"Export the persona"),
+                                                         (name.empty()?std::wstring(T(L"人物設定",L"persona")):name+T(L"_人物設定",L"_persona"))+L".txt");
+                    if(path.empty())return 0;
+                    if(!WriteTextFile(path,std::wstring(T(L"名前: ",L"Name: "))+name+L"\n\n"+PersonaText(hwnd)+L"\n"))
+                        MessageBoxW(hwnd,T(L"書き出せませんでした。",L"Could not write the file."),L"MikuMikuDesktopPerch",MB_ICONERROR);
+                    return 0;
+                }
+                case IdPersonaImport:
+                {
+                    // Into the boxes only: OK keeps it, Cancel leaves the persona as it was. A
+                    // first line "名前:" / "Name:" sets the name; any other text is all persona.
+                    const std::wstring path=PickTextFile(hwnd,false,T(L"人物設定の読み込み",L"Import a persona"));
+                    std::wstring text;
+                    if(path.empty())return 0;
+                    if(!ReadTextFile(path,text))
+                    {
+                        MessageBoxW(hwnd,T(L"読み込めませんでした（1MBまでのテキスト ファイルを選んでください）。",L"Could not read the file (choose a text file of 1 MB or less)."),
+                                    L"MikuMikuDesktopPerch",MB_ICONERROR);
+                        return 0;
+                    }
+                    const size_t end=text.find(L'\n');
+                    std::wstring first=text.substr(0,end);
+                    size_t skip=0;
+                    for(const wchar_t* label:{L"名前:",L"名前：",L"Name:",L"name:",L"NAME:"})
+                        if(first.starts_with(label)){skip=wcslen(label);break;}
+                    if(skip)
+                    {
+                        std::wstring name=first.substr(skip);
+                        const size_t a=name.find_first_not_of(L" 　\t"),b=name.find_last_not_of(L" 　\t");
+                        name=a==std::wstring::npos?std::wstring():name.substr(a,b-a+1);
+                        SetDlgItemTextW(hwnd,IdPersonaName,name.c_str());
+                        text=end==std::wstring::npos?std::wstring():text.substr(end+1);
+                    }
+                    while(!text.empty()&&text.front()==L'\n')text.erase(0,1);
+                    while(!text.empty()&&(text.back()==L'\n'||text.back()==L' '))text.pop_back();
+                    SetDlgItemTextW(hwnd,IdPersonaText,ForEdit(text).c_str());
+                    ShowPersonaCount(hwnd);
+                    SetFocus(GetDlgItem(hwnd,IdPersonaText));
                     return 0;
                 }
                 }
@@ -625,7 +751,7 @@ namespace MikuMikuDesktopPerch
             }
             const DWORD style=WS_CAPTION|WS_SYSMENU;
             const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
-            RECT frame{0,0,Px(460),Px(330)};
+            RECT frame{0,0,Px(460),Px(366)};
             AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
             RECT owner{};
             GetWindowRect(state.window,&owner);
@@ -638,15 +764,15 @@ namespace MikuMikuDesktopPerch
             AddTo(p,L"STATIC",T(L"性格や話し方を自由に書いてください。返事が吹き出しに収まる短い話し言葉になるよう、アプリが指示を足します。",
                                     L"Write her personality and way of talking freely. The app adds instructions so replies stay short enough for the bubble."),
                   SS_LEFT,16,50,428,40);
-            std::wstring text=state.choice.character.persona;
-            for(size_t n=0;(n=text.find(L'\n',n))!=std::wstring::npos;n+=2)text.insert(n,1,L'\r');
-            HWND editor=AddTo(p,L"EDIT",text.c_str(),ES_MULTILINE|ES_WANTRETURN|ES_AUTOVSCROLL|WS_VSCROLL|WS_BORDER|WS_TABSTOP,16,92,428,180,IdPersonaText);
+            HWND editor=AddTo(p,L"EDIT",ForEdit(state.choice.character.persona).c_str(),ES_MULTILINE|ES_WANTRETURN|ES_AUTOVSCROLL|WS_VSCROLL|WS_BORDER|WS_TABSTOP,16,92,428,180,IdPersonaText);
             SendMessageW(editor,EM_SETLIMITTEXT,MaxPersona*4,0);   // more is let in, so OK can say what is too long
             AddTo(p,L"BUTTON",T(L"既定に戻す",L"Default"),BS_PUSHBUTTON|WS_TABSTOP,16,286,100,28,IdPersonaReset);
-            AddTo(p,L"STATIC",L"",SS_LEFT,124,292,144,20,IdPersonaCount);
+            AddTo(p,L"BUTTON",T(L"読み込み...",L"Import..."),BS_PUSHBUTTON|WS_TABSTOP,122,286,100,28,IdPersonaImport);
+            AddTo(p,L"BUTTON",T(L"書き出し...",L"Export..."),BS_PUSHBUTTON|WS_TABSTOP,228,286,100,28,IdPersonaExport);
+            AddTo(p,L"STATIC",L"",SS_LEFT,16,330,240,20,IdPersonaCount);
             ShowPersonaCount(p);
-            AddTo(p,L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,272,286,82,28,IDOK);
-            AddTo(p,L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,362,286,82,28,IDCANCEL);
+            AddTo(p,L"BUTTON",L"OK",BS_DEFPUSHBUTTON|WS_TABSTOP,272,324,82,28,IDOK);
+            AddTo(p,L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,362,324,82,28,IDCANCEL);
             EnableWindow(state.window,FALSE);
             ShowWindow(p,SW_SHOWNORMAL);
             SetForegroundWindow(p);
@@ -838,6 +964,157 @@ namespace MikuMikuDesktopPerch
             SetForegroundWindow(state.window);
         }
 
+        // Every note as "date<TAB>text", one a line (the form the bulk add reads back).
+        void ExportMemory(HWND owner)
+        {
+            if(!state.choice.memory)return;
+            const std::wstring& name=state.choice.character.name;
+            const std::wstring path=PickTextFile(owner,true,T(L"記憶の書き出し",L"Export the memory"),
+                                                 (name.empty()?std::wstring(T(L"記憶",L"memory")):name+T(L"_記憶",L"_memory"))+L".txt");
+            if(path.empty())return;
+            std::wstring text;
+            for(const auto& e:state.choice.memory->Entries())text+=e.date+L"\t"+e.text+L"\n";
+            if(!WriteTextFile(path,text))
+                MessageBoxW(owner,T(L"書き出せませんでした。",L"Could not write the file."),L"MikuMikuDesktopPerch",MB_ICONERROR);
+        }
+
+        // Adding many notes at once: one a line, as typed, pasted or read from a file. A line
+        // that starts with a date (YYYY-MM-DD, then a tab or space, as exported or as the list
+        // shows it) keeps that date; others get today's.
+        void CloseMemoryBulk()
+        {
+            if(!state.memoryBulk)return;
+            EnableWindow(state.memory,TRUE);
+            DestroyWindow(state.memoryBulk);
+            state.memoryBulk=nullptr;
+            SetForegroundWindow(state.memory);
+        }
+
+        void AddMemoryLines(HWND hwnd)
+        {
+            CharacterMemory* memory=state.choice.memory;
+            if(!memory)return;
+            HWND editor=GetDlgItem(hwnd,IdBulkText);
+            std::wstring all(static_cast<size_t>(GetWindowTextLengthW(editor))+1,L'\0');
+            all.resize(static_cast<size_t>(GetWindowTextW(editor,all.data(),static_cast<int>(all.size()))));
+            std::erase(all,L'\r');
+            int added=0,same=0,cut=0;
+            size_t start=0;
+            while(start<=all.size())
+            {
+                size_t end=all.find(L'\n',start);
+                if(end==std::wstring::npos)end=all.size();
+                std::wstring line=all.substr(start,end-start);
+                start=end+1;
+                std::wstring date;
+                if(line.size()>11&&std::wstring_view(L"\t 　").find(line[10])!=std::wstring_view::npos&&
+                   line[4]==L'-'&&line[7]==L'-'&&std::all_of(line.begin(),line.begin()+10,[](wchar_t c){return c==L'-'||(c>=L'0'&&c<=L'9');}))
+                {
+                    date=line.substr(0,10);
+                    line.erase(0,11);
+                }
+                else if(line.starts_with(L"----------"))line.erase(0,10);   // the list's "no date"
+                for(auto& c:line)if(c==L'\t')c=L' ';
+                const size_t a=line.find_first_not_of(L" 　"),b=line.find_last_not_of(L" 　");
+                if(a==std::wstring::npos)continue;
+                line=line.substr(a,b-a+1);
+                if(line.size()>CharacterMemory::MaxLength)++cut;
+                if(memory->Add(line,date.empty()?TodayDate():date))++added;else ++same;
+            }
+            if(added)SaveMemory();
+            if(HWND list=GetDlgItem(state.memory,IdMemoryList))SendMessageW(list,LB_SETTOPINDEX,SendMessageW(list,LB_GETCOUNT,0,0)-1,0);
+            std::wstring report=Fmt(T(L"{0}件を追加しました。",L"Added {0} notes."),{std::to_wstring(added)});
+            if(same)report+=Fmt(T(L"\n同じ内容がすでにあった{0}件は飛ばしました。",L"\n{0} already there were skipped."),{std::to_wstring(same)});
+            if(cut)report+=Fmt(T(L"\n{1}文字を超えた{0}件は、{1}文字までにしました。",L"\n{0} longer than {1} characters were cut to {1}."),
+                               {std::to_wstring(cut),std::to_wstring(CharacterMemory::MaxLength)});
+            if(memory->Entries().size()>=CharacterMemory::MaxEntries)
+                report+=Fmt(T(L"\n記憶は{0}件までなので、それを超えた分は古いものから消えます。",L"\nShe keeps {0} notes at most: beyond that the oldest go."),
+                            {std::to_wstring(CharacterMemory::MaxEntries)});
+            MessageBoxW(hwnd,report.c_str(),L"MikuMikuDesktopPerch",MB_ICONINFORMATION);
+            if(added)CloseMemoryBulk();
+        }
+
+        LRESULT CALLBACK MemoryBulkProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
+        {
+            switch(message)
+            {
+            case WM_COMMAND:
+                switch(LOWORD(wParam))
+                {
+                case IdBulkAdd:
+                    AddMemoryLines(hwnd);
+                    return 0;
+                case IdBulkFile:
+                {
+                    const std::wstring path=PickTextFile(hwnd,false,T(L"記憶の読み込み",L"Import notes"));
+                    std::wstring text;
+                    if(path.empty())return 0;
+                    if(!ReadTextFile(path,text))
+                    {
+                        MessageBoxW(hwnd,T(L"読み込めませんでした（1MBまでのテキスト ファイルを選んでください）。",L"Could not read the file (choose a text file of 1 MB or less)."),
+                                    L"MikuMikuDesktopPerch",MB_ICONERROR);
+                        return 0;
+                    }
+                    SetDlgItemTextW(hwnd,IdBulkText,ForEdit(text).c_str());
+                    SetFocus(GetDlgItem(hwnd,IdBulkText));
+                    return 0;
+                }
+                case IDCANCEL:
+                    CloseMemoryBulk();
+                    return 0;
+                }
+                break;
+            case WM_CLOSE:
+                CloseMemoryBulk();
+                return 0;
+            }
+            return DefWindowProcW(hwnd,message,wParam,lParam);
+        }
+
+        void OpenMemoryBulk()
+        {
+            if(state.memoryBulk){SetForegroundWindow(state.memoryBulk);return;}
+            if(!state.memory||!state.choice.memory)return;
+            static bool registered=false;
+            const HINSTANCE instance=GetModuleHandleW(nullptr);
+            if(!registered)
+            {
+                WNDCLASSEXW wc{sizeof(wc)};
+                wc.lpfnWndProc=MemoryBulkProc;
+                wc.hInstance=instance;
+                wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+                wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
+                wc.lpszClassName=MemoryBulkClass;
+                if(!RegisterClassExW(&wc))return;
+                registered=true;
+            }
+            const DWORD style=WS_CAPTION|WS_SYSMENU;
+            const DWORD exStyle=WS_EX_CONTROLPARENT|WS_EX_DLGMODALFRAME;
+            RECT frame{0,0,Px(500),Px(380)};
+            AdjustWindowRectExForDpi(&frame,style,FALSE,exStyle,state.dpi);
+            RECT owner{};
+            GetWindowRect(state.memory,&owner);
+            state.memoryBulk=CreateWindowExW(exStyle,MemoryBulkClass,T(L"記憶をまとめて追加",L"Add notes at once"),style,owner.left+Px(20),owner.top+Px(30),
+                                             frame.right-frame.left,frame.bottom-frame.top,state.memory,nullptr,instance,nullptr);
+            if(!state.memoryBulk)return;
+            const HWND b=state.memoryBulk;
+            AddTo(b,L"STATIC",Fmt(T(L"1行に1件ずつ書くか貼り付けてください（1件{0}文字まで）。書き出した記憶のファイルも読み込めます。"
+                                    L"行の頭に日付（例: 2026-01-31）があればその日付で、なければ今日の日付で覚えます。",
+                                    L"One note a line, typed or pasted ({0} characters each at most); an exported memory file can be read in too. "
+                                    L"A line starting with a date (e.g. 2026-01-31) keeps it; others get today's."),
+                                  {std::to_wstring(CharacterMemory::MaxLength)}).c_str(),
+                  SS_LEFT,16,12,468,52);
+            AddTo(b,L"EDIT",L"",ES_MULTILINE|ES_WANTRETURN|ES_AUTOVSCROLL|ES_AUTOHSCROLL|WS_VSCROLL|WS_HSCROLL|WS_BORDER|WS_TABSTOP,16,68,468,256,IdBulkText);
+            SendMessageW(GetDlgItem(b,IdBulkText),EM_SETLIMITTEXT,1<<20,0);
+            AddTo(b,L"BUTTON",T(L"ファイルから読み込む...",L"Read a file..."),BS_PUSHBUTTON|WS_TABSTOP,16,338,170,28,IdBulkFile);
+            AddTo(b,L"BUTTON",T(L"追加",L"Add"),BS_PUSHBUTTON|WS_TABSTOP,306,338,86,28,IdBulkAdd);
+            AddTo(b,L"BUTTON",T(L"キャンセル",L"Cancel"),BS_PUSHBUTTON|WS_TABSTOP,398,338,86,28,IDCANCEL);
+            EnableWindow(state.memory,FALSE);
+            ShowWindow(b,SW_SHOWNORMAL);
+            SetForegroundWindow(b);
+            SetFocus(GetDlgItem(b,IdBulkText));
+        }
+
         LRESULT CALLBACK MemoryProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
         {
             CharacterMemory* memory=state.choice.memory;
@@ -878,6 +1155,12 @@ namespace MikuMikuDesktopPerch
                         memory->Clear();
                         SaveMemory();
                     }
+                    return 0;
+                case IdMemoryExport:
+                    ExportMemory(hwnd);
+                    return 0;
+                case IdMemoryBulk:
+                    OpenMemoryBulk();
                     return 0;
                 case IDOK:
                     // Enter in the new-note box adds it; anywhere else it closes.
@@ -937,6 +1220,8 @@ namespace MikuMikuDesktopPerch
             SendMessageW(input,EM_SETLIMITTEXT,CharacterMemory::MaxLength,0);
             SendMessageW(input,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(T(L"覚えてほしいこと（例: 話し相手はコーヒーが好き）",L"Something to remember (e.g. The user likes coffee)")));
             AddTo(m,L"BUTTON",T(L"追加",L"Add"),BS_PUSHBUTTON|WS_TABSTOP,434,338,90,28,IdMemoryAdd);
+            AddTo(m,L"BUTTON",T(L"まとめて追加...",L"Add many..."),BS_PUSHBUTTON|WS_TABSTOP,16,380,130,28,IdMemoryBulk);
+            AddTo(m,L"BUTTON",T(L"書き出し...",L"Export..."),BS_PUSHBUTTON|WS_TABSTOP,152,380,100,28,IdMemoryExport);
             AddTo(m,L"BUTTON",T(L"閉じる",L"Close"),BS_PUSHBUTTON|WS_TABSTOP,434,380,90,28,IDCANCEL);
             FillMemoryList();
             HWND list=GetDlgItem(m,IdMemoryList);
