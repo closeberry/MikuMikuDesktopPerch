@@ -2,6 +2,12 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.7
+
+### Fixed
+
+- With some models (ones that hide glasses by parking a bone far away, for example), the app could crash when an idle motion that moves the character sideways, such as "Leaning", began
+
 ## 1.6.6
 
 ### New
