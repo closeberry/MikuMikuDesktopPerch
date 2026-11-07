@@ -2,6 +2,12 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.6.8
+
+### Fixed
+
+- With no other window open on the desktop, the character could fail to appear (the app took its own window for a full-screen app and hid)
+
 ## 1.6.7
 
 ### Fixed
