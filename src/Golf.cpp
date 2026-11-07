@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cwchar>
 #include <cstring>
+#include <tuple>
 
 namespace MikuMikuDesktopPerch::Golf
 {
@@ -30,6 +31,12 @@ namespace MikuMikuDesktopPerch::Golf
             default:return {0.30f,0.32f,0.13f};   // fairway, tee
             }
         }
+
+        // The spot struck, up and down (-1 below .. 1 above): how fast the ball leaves and how
+        // much it spins back. Below: a little faster, much more spin (it climbs and stops);
+        // above: slower, little spin (low, and it runs on).
+        float SpotSpeed(float y){return y<0?1+0.025f*-y:1-0.06f*y;}
+        float SpotSpin(float y){return y<0?1+0.6f*-y:1-0.55f*y;}
 
         constexpr Club Clubs[ClubCount]={
             {L"1W",L"1W",10.5f,69.0f,2900},
@@ -321,10 +328,44 @@ namespace MikuMikuDesktopPerch::Golf
 
     V3 WindVector(const Wind& w){return {w.speed*std::sin(w.toward),0,w.speed*std::cos(w.toward)};}
 
-    float PutterRange(float distance)
+    float PutterRange(float distance,float rise)
     {
-        for(float r:{3.0f,6.0f,10.0f,15.0f,20.0f,30.0f,45.0f,60.0f})if(r>=distance*1.25f)return r;
+        const float needed=(distance+std::max(0.0f,rise)/TurfOf(Lie::Green).roll)*1.4f;
+        for(float r:{3.0f,5.0f,8.0f,12.0f,16.0f,20.0f,30.0f,45.0f,60.0f})if(r>=needed)return r;
         return 60;
+    }
+
+    float FlatCarry(int club,float spotX,float spotY)
+    {
+        if(club==Putter)return 0;
+        // As Fly launches it, flown over level ground until it comes back down to it.
+        const Club& c=ClubOf(club);
+        float launch=c.loft*(club<=1?0.95f:0.86f)*Deg-spotY*4*Deg;
+        const float speed=c.speed*SpotSpeed(spotY);
+        const float back=c.spin*SpotSpin(spotY);
+        const V3 d{0,0,1},up{0,1,0};
+        V3 p,v=d*(std::cos(launch)*speed)+up*(std::sin(launch)*speed);
+        V3 spin=Normalized(Cross(d,up))*(back*2*Pi/60)+up*(-spotX*1800*2*Pi/60);
+        constexpr float step=1/120.0f;
+        for(int i=0;i<12000;++i)
+        {
+            const float va=Length(v);
+            V3 a{0,-G,0};
+            const float s=BallRadius*Length(spin)/va;
+            const float cl=std::min(0.25f,0.9f*s+0.05f),cd=0.21f+0.25f*std::min(s,0.4f);
+            a=a-v*(AirK*cd*va);
+            if(Length(spin)>1)a=a+Normalized(Cross(spin,v))*(AirK*cl*va*va);
+            spin=spin*std::exp(-step/14);
+            v=v+a*step;
+            const V3 before=p;
+            p=p+v*step;
+            if(p.y<0&&v.y<0)
+            {
+                const float t=before.y/(before.y-p.y);
+                return std::hypot(before.x+(p.x-before.x)*t,before.z+(p.z-before.z)*t);
+            }
+        }
+        return std::hypot(p.x,p.z);
     }
 
     Flight Fly(const Course& course,V3 from,Lie lie,const Shot& shot,const Wind& wind,bool keepPath,float step)
@@ -350,9 +391,12 @@ namespace MikuMikuDesktopPerch::Golf
         {
             speed=club.speed*power*speedK;
             // Over full power the strike suffers: higher, less control (the timing errs too).
-            launch=(club.loft*(shot.club<=1?0.95f:0.86f)+(power<0.6f?(0.6f-power)*6:0))*Deg;
-            back=club.spin*(0.55f+0.45f*power)*spinK;
-            side=shot.accuracy*2300*std::min(1.0f,speed/55);
+            // The spot struck: below climbs and spins (and goes a little further), above flies
+            // low and rolls; to one side the ball curves the other way.
+            speed*=SpotSpeed(shot.spotY);
+            launch=(club.loft*(shot.club<=1?0.95f:0.86f)+(power<0.6f?(0.6f-power)*6:0)-shot.spotY*4)*Deg;
+            back=club.spin*(0.55f+0.45f*power)*spinK*SpotSpin(shot.spotY);
+            side=shot.accuracy*2300*std::min(1.0f,speed/55)-shot.spotX*1800*std::min(1.0f,speed/40);
             aim+=shot.accuracy*3.5f*Deg;
         }
         const V3 d{std::sin(aim),0,std::cos(aim)};
@@ -403,7 +447,7 @@ namespace MikuMikuDesktopPerch::Golf
                             // A bounce: back up by the ground's give, slowed along it (more on a
                             // green the more it spins back).
                             float grab=g.grab;
-                            if(at!=Lie::Rough&&at!=Lie::Bunker)grab+=std::min(0.45f,Length(spin)*60/(2*Pi)/(at==Lie::Green?15000.0f:20000.0f));
+                            if(at!=Lie::Rough&&at!=Lie::Bunker)grab+=std::min(0.5f,Length(spin)*60/(2*Pi)/(at==Lie::Green?14000.0f:13000.0f));
                             v=along*(1-std::min(grab,0.95f))-n*(vn*g.bounce);
                             spin=spin*0.4f;
                         }
@@ -530,7 +574,7 @@ namespace MikuMikuDesktopPerch::Golf
             {
                 Shot s;
                 s.club=Putter;
-                s.range=PutterRange(d);
+                s.range=PutterRange(d,pin.y-from.y);
                 // Coarse, then finer round the best.
                 Shot coarse;float coarseScore=1e9f;
                 for(float a=-6;a<=6.01f;a+=1.0f)
@@ -604,6 +648,16 @@ namespace MikuMikuDesktopPerch::Golf
                 float top=0;
                 for(const V3& p:f.path)top=std::max(top,p.y);
                 swprintf_s(line,L"  %-4ls %6.1f m %6.1f m  apex %5.1f m  %.1f s in the air\n",ClubOf(k).en,f.carry,Flat(c.Tee(),f.rest),top,f.landing/60.0f);
+                out+=line;
+            }
+            // The spot struck (7 iron): below, centre, above; left and right (how far it curves).
+            for(const auto& [sx,sy,name]:{std::tuple<float,float,const wchar_t*>{0.0f,-1.0f,L"below"},{0.0f,0.0f,L"centre"},{0.0f,1.0f,L"above"},{-1.0f,0.0f,L"left"},{1.0f,0.0f,L"right"}})
+            {
+                Shot s;s.club=3;s.power=1;s.aim=0;s.spotX=sx;s.spotY=sy;
+                const Flight f=Fly(c,c.Tee(),Lie::Tee,s,{},true);
+                float top=0;
+                for(const V3& p:f.path)top=std::max(top,p.y);
+                swprintf_s(line,L"  7I struck %-6ls flat carry %5.1f m; here carry %5.1f m, total %5.1f m, apex %4.1f m, across %+5.1f m\n",name,FlatCarry(3,sx,sy),f.carry,Flat(c.Tee(),f.rest),top,f.rest.x-c.Tee().x);
                 out+=line;
             }
             // Putts on level-ish green: the range.

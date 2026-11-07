@@ -105,6 +105,9 @@ namespace MikuMikuDesktopPerch::Golf
         float power=1;      // 0-1 (a little over 1: forced)
         float accuracy=0;   // the strike: 0 square, + early (it goes right and curves right), - late
         float range=0;      // the putter: the distance (m) power 1 sends it on level ground
+        // Where on the ball the club meets it (-1 to 1): +x its right (it curves left), +y its
+        // top (lower, less spin, rolls further); below, it climbs, flies a little further, stops.
+        float spotX=0,spotY=0;
     };
 
     // The ball's way from a lie, struck so: where it is each 1/60 s, where it stops, how it ended.
@@ -121,9 +124,13 @@ namespace MikuMikuDesktopPerch::Golf
     // keepPath false: only where it ends (quicker; her thinking). step: seconds a step.
     Flight Fly(const Course& course,V3 from,Lie lie,const Shot& shot,const Wind& wind,bool keepPath=true,float step=1/60.0f);
 
-    // The putter's range for a putt of this distance: the next of 3, 6, 10, 15, 20, 30, 45, 60 m
-    // above it with room (power 1 rolls that far on level ground).
-    float PutterRange(float distance);
+    // The putter's range for a putt of this distance, rise metres uphill: the next of 3, 5, 8,
+    // 12, 16, 20, 30, 45, 60 m with room (power 1 rolls that far on level ground; uphill counts
+    // as the roll it costs).
+    float PutterRange(float distance,float rise=0);
+    // A club's carry at full power from a good lie on level ground with no wind (the gauge's
+    // numbers), struck at that spot.
+    float FlatCarry(int club,float spotX=0,float spotY=0);
     // Clubs that can be played from a lie: off the green every club but the putter (and the
     // putter near the green); on it, only the putter.
     std::vector<int> ClubsFor(Lie lie,float toPin);

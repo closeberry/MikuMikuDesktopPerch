@@ -6507,6 +6507,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     bool snapshotGolf=false;      // --golf: the snapshot is the golf window, your shots played for you
     float snapshotGolfSwing=-1,snapshotGolfYaw=0;   // --golf-swing stage [yaw]: she stands frozen at that stage of her swing
     std::uint32_t snapshotGolfSeed=0;               // --golf-seed n: the first hole's seed
+    std::wstring snapshotGolfGauge;                 // --golf-gauge power,at[,flags]: your gauge held there
     bool snapshotAirHockey=false; // --airhockey: the snapshot is the hover hockey window, your side played for you
     bool snapshotHanafuda=false;  // --hanafuda [moves]: the snapshot is the hanafuda table's 3D view
     int snapshotHanafudaMoves=0;
@@ -6605,6 +6606,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--mahjong-gesture"&&i+1<argc)snapshotMahjongGesture=argv[++i];
             else if(arg==L"--airhockey")snapshotAirHockey=true;
             else if(arg==L"--golf")snapshotGolf=true;
+            else if(arg==L"--golf-gauge"&&i+1<argc){snapshotGolf=true;snapshotGolfGauge=argv[++i];}
             else if(arg==L"--golf-seed"&&i+1<argc)snapshotGolfSeed=static_cast<std::uint32_t>(_wtoi(argv[++i]));
             else if(arg==L"--golf-swing"&&i+1<argc)
             {
@@ -8115,7 +8117,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 opened=true;
                 if(snapshotGolfSeed)SetGolfSeed(snapshotGolfSeed);
                 OpenGolf(*app.mascots.front());
+                float g[2]={};
                 if(snapshotGolfSwing>=0)SetGolfSwingPose(snapshotGolfSwing,snapshotGolfYaw);
+                else if(swscanf_s(snapshotGolfGauge.c_str(),L"%f,%f",&g[0],&g[1])==2)
+                {
+                    const size_t flags=snapshotGolfGauge.find(L',',snapshotGolfGauge.find(L',')+1);
+                    SetGolfGauge(g[0],g[1],flags==std::wstring::npos?std::wstring():snapshotGolfGauge.substr(flags+1));
+                }
                 else PlayGolfForTest();
             }
         }

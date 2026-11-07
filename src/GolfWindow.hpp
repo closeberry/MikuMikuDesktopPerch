@@ -53,4 +53,7 @@ namespace MikuMikuDesktopPerch
     void SetGolfSwingPose(float stage,float yaw);
     // Diagnostics (--golf-seed n): the first hole's seed.
     void SetGolfSeed(std::uint32_t seed);
+    // Diagnostics (--golf-gauge power at [flags]): your first shot's gauge held there (power 0:
+    // still choosing the power, the marker at at); flags hold help, overhead, putter, spot.
+    void SetGolfGauge(float power,float at,const std::wstring& flags);
 }

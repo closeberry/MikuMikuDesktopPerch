@@ -37,9 +37,17 @@ namespace MikuMikuDesktopPerch
         constexpr int You=0,Her=1,Holes=3,MostStrokes=10;
         constexpr float K=12.5f;   // world units a metre (MMD's 8 cm a unit)
         constexpr float Pi=3.14159265f,Deg=Pi/180;
+        constexpr float BeamHigh=25;   // the pin's beam, metres up
+        float FovY(){return 45.0f*Deg;}   // the camera's (the gauge in front of it is placed by it)
 
         enum class Phase {Intro,Aim,Gauge,Swing,Flying,Settle,HoleOver,Over};
-        enum class GaugeState {Ready,Rising,Falling,Done};
+        // The gauge: waiting; the marker running out for the power (and back: no click by the
+        // time it is home again lets the shot go); running back past the line for the strike
+        // (not for the putter); done.
+        enum class GaugeState {Ready,Power,Impact,Done};
+        constexpr double PowerSeconds=1.7;    // the marker out to full power
+        constexpr double ImpactSeconds=1.4;   // back from full power to the line
+        constexpr float Pink=0.09f;           // the curving zone's half width either side of the line (gauge widths)
 
         struct Ball
         {
@@ -75,6 +83,14 @@ namespace MikuMikuDesktopPerch
             float aim=0;
             GaugeState gauge=GaugeState::Ready;
             float gaugeAt=0,gaugePower=0,gaugeAccuracy=0;
+            float gaugeWay=1;           // the marker going out (+1) or back (-1) while the power is chosen
+            float spotX=0,spotY=0;      // where on the ball you strike (Ctrl and the arrow keys)
+            bool overhead=false;        // 0: the aim's circle seen from above
+            bool help=false;            // Tab: the keys shown
+            // Diagnostics (--golf-gauge): your gauge held at power, the marker at; flags: help,
+            // overhead, putter, spot.
+            float frozenPower=-1,frozenAt=0;
+            std::wstring frozenFlags;
             int aimKeys=0;              // -1 left held, +1 right
             V3 landing;                 // where your shot comes down at full power (no wind)
             bool landingKnown=false;
@@ -134,6 +150,7 @@ namespace MikuMikuDesktopPerch
             double bannerUntil=0;
             std::wstring afterword,afterwordLine;
             POINT headScreen{-1,-1},besideHead{-1,-1};
+            POINT beamTop{-1,-1};   // the top of the pin's beam on the screen (x < 0: not seen)
             int frames=0,shots=0;
             std::wstring log;     // diagnostics: what was played
             bool askingQuit=false,overTold=false;
@@ -240,6 +257,11 @@ namespace MikuMikuDesktopPerch
                 for(float& x:n)x/=l;
                 if(n[1]<0)for(float& x:n)x=-x;   // lit from above whichever way it is wound (none are culled)
                 Vertex(a,n,col,kind);Vertex(b,n,col,kind);Vertex(c,n,col,kind);
+            }
+            // One with its normal given (lit the same whichever way it waves).
+            void QuadN(const V& a,const V& b,const V& c,const V& d,const V& n,const float (&col)[4])
+            {
+                for(const V* q:{&a,&b,&c,&a,&c,&d})Vertex(*q,n,col);
             }
             void Quad(const V& a,const V& b,const V& c,const V& d,const float (&col)[4],float kind=4)
             {
@@ -464,14 +486,26 @@ namespace MikuMikuDesktopPerch
 
         float PinAim(V3 from){const V3 p=Course().Pin();return std::atan2(p.x-from.x,p.z-from.z);}
 
+        // Your aim's circle: where the ball comes down struck at full power with this club (a
+        // good lie whatever the ball lies in, no wind, the spot as set); for the putter, the
+        // pin's distance along the aim.
         void UpdateLanding()
         {
             const Ball& b=state.balls[You];
-            Golf::Shot s;
-            s.club=state.club;s.aim=state.aim;s.power=1;
-            s.range=Golf::PutterRange(Golf::Flat(b.at,Course().Pin()));
-            const Golf::Flight f=Golf::Fly(Course(),b.at,b.lie,s,{},true,1/60.0f);
-            state.landing=state.club==Golf::Putter||f.path.empty()?f.rest:f.path[std::min<size_t>(f.landing,f.path.size()-1)];
+            const V3 dir{std::sin(state.aim),0,std::cos(state.aim)};
+            if(state.club==Golf::Putter)
+            {
+                state.landing=b.at+dir*Golf::Flat(b.at,Course().Pin());
+            }
+            else
+            {
+                Golf::Shot s;
+                s.club=state.club;s.aim=state.aim;s.power=1;
+                s.spotX=state.spotX;s.spotY=state.spotY;
+                const Golf::Flight f=Golf::Fly(Course(),b.at,Lie::Fairway,s,{},true,1/60.0f);
+                state.landing=f.path.empty()?f.rest:f.path[std::min<size_t>(f.landing,f.path.size()-1)];
+            }
+            state.landing.y=Course().Height(state.landing.x,state.landing.z);
             state.landingKnown=true;
         }
 
@@ -602,6 +636,8 @@ namespace MikuMikuDesktopPerch
                 state.club=Golf::ClubFor(b.lie,toPin,Course(),b.at,{});
                 state.gauge=GaugeState::Ready;
                 state.gaugeAt=0;
+                state.spotX=state.spotY=0;
+                state.overhead=false;
                 UpdateLanding();
                 PlaceToWatch(b.at,state.aim);
                 if(state.autoplay)
@@ -737,24 +773,45 @@ namespace MikuMikuDesktopPerch
             if(!state.overTold){state.overTold=true;if(state.her.onGameOver)state.her.onGameOver();}
         }
 
+        // The strike's white zone (half width, in gauge widths): narrow for the long clubs, wide
+        // for the short ones.
+        float JustWidth(int club)
+        {
+            static constexpr float widths[Golf::ClubCount]={0.010f,0.012f,0.015f,0.019f,0.023f,0.027f,0.032f,0.04f};
+            return widths[std::clamp(club,0,Golf::ClubCount-1)];
+        }
+        // The strike from where the marker was stopped: square in the white, curving more the
+        // further into the pink (+ early: right), far off beyond it.
+        float AccuracyAt(float at,int club)
+        {
+            const float w=JustWidth(club),a=std::abs(at),sign=at>=0?1.0f:-1.0f;
+            if(a<=w)return 0;
+            if(a<=Pink)return sign*(0.15f+0.85f*(a-w)/(Pink-w));
+            return sign*3.0f;
+        }
+
         // The gauge: clicked (or Space).
         void GaugeClick()
         {
             if(state.phase!=Phase::Aim&&state.phase!=Phase::Gauge)return;
-            if(state.turn!=You||state.askingQuit)return;
+            if(state.turn!=You||state.askingQuit||state.autoplay)return;
             switch(state.gauge)
             {
             case GaugeState::Ready:
-                state.gauge=GaugeState::Rising;
+                state.gauge=GaugeState::Power;
                 state.gaugeAt=0;
+                state.gaugeWay=1;
+                state.overhead=false;
                 state.phase=Phase::Gauge;
                 break;
-            case GaugeState::Rising:
-                state.gaugePower=std::max(0.02f,state.gaugeAt);
-                state.gauge=GaugeState::Falling;
+            case GaugeState::Power:
+                state.gaugePower=std::clamp(state.gaugeAt,0.02f,1.0f);
+                // The putter's stroke is its power alone.
+                if(state.club==Golf::Putter){state.gaugeAccuracy=0;state.gauge=GaugeState::Done;}
+                else state.gauge=GaugeState::Impact;
                 break;
-            case GaugeState::Falling:
-                state.gaugeAccuracy=std::clamp(state.gaugeAt/0.1f,-2.5f,2.5f);
+            case GaugeState::Impact:
+                state.gaugeAccuracy=AccuracyAt(state.gaugeAt,state.club);
                 state.gauge=GaugeState::Done;
                 break;
             default:break;
@@ -769,7 +826,8 @@ namespace MikuMikuDesktopPerch
             state.shot.aim=state.aim;
             state.shot.power=state.gaugePower;
             state.shot.accuracy=state.gaugeAccuracy;
-            state.shot.range=Golf::PutterRange(Golf::Flat(b.at,Course().Pin()));
+            state.shot.range=Golf::PutterRange(Golf::Flat(b.at,Course().Pin()),Course().Pin().y-b.at.y);
+            if(state.club!=Golf::Putter){state.shot.spotX=state.spotX;state.shot.spotY=state.spotY;}
             Launch();
         }
 
@@ -804,7 +862,8 @@ namespace MikuMikuDesktopPerch
             auto& w=state.words;
             if(!w.text.empty()&&GetTickCount64()>w.until)w.text.clear();
             if(state.faceUntil>0&&state.clock>state.faceUntil){state.faceUntil=0;if(state.her.model)state.her.model->SetExpression(Expression::Neutral,false);}
-            if(!state.started&&(!state.prefetching||state.clock>4))
+            // (Once she is there to be seen: not over the look across the hole.)
+            if(!state.started&&(!state.prefetching||state.clock>4)&&state.phase!=Phase::Intro)
             {
                 state.started=true;
                 Happened(7,L"始まり",1,Fmt(T(L"{0}と、このパソコンの持ち主のゴルフ（3ホール）が始まる。",L"A three-hole round of golf between {0} and the owner of this computer is about to begin."),{HerName()}),
@@ -835,15 +894,30 @@ namespace MikuMikuDesktopPerch
                         state.gaugePower=s.power;state.gaugeAccuracy=s.accuracy;
                         state.gauge=GaugeState::Done;
                     }
-                    if(state.gauge==GaugeState::Rising)
+                    if(state.frozenPower>=0&&state.phaseTime>0.5)
                     {
-                        state.gaugeAt+=static_cast<float>(dt/1.05);
-                        if(state.gaugeAt>=1){state.gaugeAt=1;state.gaugePower=1;state.gauge=GaugeState::Falling;}
+                        const std::wstring& f=state.frozenFlags;
+                        if(f.find(L"putter")!=std::wstring::npos&&state.club!=Golf::Putter){state.club=Golf::Putter;UpdateLanding();}
+                        if(f.find(L"spot")!=std::wstring::npos&&state.spotY==0){state.spotX=-0.5f;state.spotY=-0.5f;UpdateLanding();}
+                        state.help=f.find(L"help")!=std::wstring::npos;
+                        state.overhead=f.find(L"overhead")!=std::wstring::npos;
+                        state.gaugePower=state.frozenPower;
+                        state.gaugeAt=state.frozenAt;
+                        state.gauge=state.frozenPower>0?GaugeState::Impact:GaugeState::Power;
+                        state.phase=Phase::Gauge;
+                        break;
                     }
-                    else if(state.gauge==GaugeState::Falling)
+                    if(state.gauge==GaugeState::Power)
                     {
-                        state.gaugeAt-=static_cast<float>(dt/0.8);
-                        if(state.gaugeAt<-0.25f){state.gaugeAccuracy=-2.5f;state.gauge=GaugeState::Done;}
+                        // Out to full power and back; home again with no click: no shot.
+                        state.gaugeAt+=state.gaugeWay*static_cast<float>(dt/PowerSeconds);
+                        if(state.gaugeAt>=1){state.gaugeAt=2-state.gaugeAt;state.gaugeWay=-1;}
+                        if(state.gaugeAt<=0&&state.gaugeWay<0){state.gaugeAt=0;state.gauge=GaugeState::Ready;state.phase=Phase::Aim;}
+                    }
+                    else if(state.gauge==GaugeState::Impact)
+                    {
+                        state.gaugeAt-=static_cast<float>(dt/ImpactSeconds);
+                        if(state.gaugeAt<-Pink-0.08f){state.gaugeAccuracy=-3.0f;state.gauge=GaugeState::Done;}
                     }
                     else if(state.gauge==GaugeState::Done)ShootYours();
                 }
@@ -954,7 +1028,14 @@ namespace MikuMikuDesktopPerch
             case Phase::HoleOver:
             case Phase::Over:
             {
-                if(state.turn==You||state.phase==Phase::HoleOver||state.phase==Phase::Over)
+                if(state.turn==You&&state.overhead&&state.landingKnown&&(state.phase==Phase::Aim||state.phase==Phase::Gauge))
+                {
+                    // 0: the circle from high above, a little behind it.
+                    const V3 dir{std::sin(state.aim),0,std::cos(state.aim)};
+                    const float high=(state.club==Golf::Putter?9.0f:38.0f)*state.camera.zoom;
+                    set(state.landing-dir*(high*0.25f)+V3{0,high,0},state.landing);
+                }
+                else if(state.turn==You||state.phase==Phase::HoleOver||state.phase==Phase::Over)
                 {
                     const V3 at=state.phase==Phase::HoleOver||state.phase==Phase::Over?c.Pin():b.at;
                     const float aim=state.phase==Phase::HoleOver||state.phase==Phase::Over?PinAim(c.Tee())+Pi*0.85f:state.aim;
@@ -1027,7 +1108,69 @@ namespace MikuMikuDesktopPerch
                 ease(state.eye,eye);
                 ease(state.look,look);
             }
-            state.renderer->SetCamera(XMLoadFloat3(&state.eye),XMLoadFloat3(&state.look),XMConvertToRadians(45.0f));
+            state.renderer->SetCamera(XMLoadFloat3(&state.eye),XMLoadFloat3(&state.look),FovY());
+        }
+
+        // The gauge's bar on the screen (window pixels): thin, along the bottom.
+        RectF GaugeBar(float w,float h,float s)
+        {
+            const float gw=std::min(w*0.5f,560*s),gh=9*s;
+            return RectF(w/2-gw/2,h-48*s,gw,gh);
+        }
+        // Where on the bar a gauge position (-0.25 the strike's far end, 0 the line, 1 full power) is.
+        float GaugeX(const RectF& bar,float at){return bar.X+(at+0.25f)/1.25f*bar.Width;}
+
+        // The gauge, drawn in the 3D view just in front of the camera so its marker moves with
+        // every frame (the picture over the view is made again only now and then): light blue
+        // to full power, pink round the strike's line, the line white (narrow for long clubs),
+        // where the power was set, and the marker.
+        void BuildGauge(Mesh& m)
+        {
+            using namespace DirectX;
+            RECT client{};
+            GetClientRect(state.view,&client);
+            const float w=static_cast<float>(std::max(1L,client.right)),h=static_cast<float>(std::max(1L,client.bottom)),s=Scale();
+            const XMVECTOR eye=XMLoadFloat3(&state.eye),forward=XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&state.look),eye));
+            const XMVECTOR right=XMVector3Normalize(XMVector3Cross(XMVectorSet(0,1,0,0),forward)),up=XMVector3Cross(forward,right);
+            // World units in front of the eye (the near plane is at 4); each layer drawn a little
+            // nearer than the one under it, so they never fight over the same depth.
+            float D=6.5f;
+            const float t=std::tan(FovY()/2);
+            auto at=[&](float px,float py){
+                const XMVECTOR q=XMVectorAdd(eye,XMVectorAdd(XMVectorScale(forward,D),XMVectorAdd(XMVectorScale(right,(2*px/w-1)*t*w/h*D),XMVectorScale(up,(1-2*py/h)*t*D))));
+                XMFLOAT3 f;XMStoreFloat3(&f,q);
+                return Mesh::V{f.x,f.y,f.z};
+            };
+            XMFLOAT3 n;XMStoreFloat3(&n,XMVectorNegate(forward));
+            auto rect=[&](float x0,float y0,float x1,float y1,float r,float g,float b){
+                D-=0.05f;
+                const float col[4]={r,g,b,Unlit};
+                m.QuadN(at(x0,y0),at(x1,y0),at(x1,y1),at(x0,y1),{n.x,n.y,n.z},col);
+            };
+            const RectF bar=GaugeBar(w,h,s);
+            const float y0=bar.Y,y1=bar.Y+bar.Height;
+            const bool putt=state.club==Golf::Putter;
+            rect(bar.X-2*s,y0-2*s,bar.X+bar.Width+2*s,y1+2*s,0.06f,0.10f,0.16f);              // the frame
+            rect(GaugeX(bar,putt?0:-0.25f),y0,GaugeX(bar,0),y1,0.20f,0.26f,0.34f);             // past the line
+            rect(GaugeX(bar,0),y0,GaugeX(bar,1),y1,0.42f,0.82f,0.98f);                          // light blue to full power
+            for(int k=1;k<4;++k)rect(GaugeX(bar,k*0.25f)-0.75f*s,y0,GaugeX(bar,k*0.25f)+0.75f*s,y0+bar.Height*0.45f,0.9f,0.97f,1.0f);
+            if(!putt)
+            {
+                rect(GaugeX(bar,-Pink),y0-3*s,GaugeX(bar,Pink),y1+3*s,0.98f,0.42f,0.70f);       // pink: it curves
+                const float jw=std::max(1.2f*s,GaugeX(bar,JustWidth(state.club))-GaugeX(bar,0));
+                rect(GaugeX(bar,0)-jw,y0-4*s,GaugeX(bar,0)+jw,y1+4*s,1,1,1);                     // white: square
+            }
+            if(state.gauge==GaugeState::Impact||state.gauge==GaugeState::Done)
+                rect(GaugeX(bar,state.gaugePower)-1.5f*s,y0-5*s,GaugeX(bar,state.gaugePower)+1.5f*s,y1+5*s,1.0f,0.82f,0.25f);
+            if(state.gauge!=GaugeState::Ready)
+            {
+                const float x=GaugeX(bar,state.gaugeAt);
+                rect(x-1.5f*s,y0-8*s,x+1.5f*s,y1+8*s,1,1,0.6f);
+                const float col[4]={1,1,0.6f,Unlit};
+                D-=0.05f;
+                const Mesh::V a=at(x,y1+8*s),b=at(x-6*s,y1+16*s),c=at(x+6*s,y1+16*s);
+                m.Vertex(a,{n.x,n.y,n.z},col);m.Vertex(b,{n.x,n.y,n.z},col);m.Vertex(c,{n.x,n.y,n.z},col);
+            }
         }
 
         // What moves: the balls, their shadows, the flag, the club in her hands, the trail of the
@@ -1129,33 +1272,39 @@ namespace MikuMikuDesktopPerch
                         const float sway=0.08f*K*std::sin(wave+u*5)*u;
                         return Mesh::V{p.x*K+d.x*lenF*u-d.z*sway,top-y-0.02f*K*u,p.z*K+d.z*lenF*u+d.x*sway};
                     };
-                    m.Quad(at(u0,0),at(u1,0),at(u1,h*(1-0.15f*u1)),at(u0,h*(1-0.15f*u0)),flag);
-                    m.Quad(at(u0,h*(1-0.15f*u0)),at(u1,h*(1-0.15f*u1)),at(u1,0),at(u0,0),flag);
+                    // One face, lit evenly (two faces in one place fought, and a normal that
+                    // turned with the waves flickered).
+                    m.QuadN(at(u0,0),at(u1,0),at(u1,h*(1-0.15f*u1)),at(u0,h*(1-0.15f*u0)),{0,0.8f,0.6f},flag);
                 }
             }
-            // Your aim: a ring where the ball comes down at full power, and a dotted line to it.
+            // Your aim: a ring where the ball comes down at full power.
             if(state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge)&&state.landingKnown&&!state.autoplay)
             {
                 const V3 l=state.landing;
-                const float y=(c.Height(l.x,l.z)+0.05f)*K;
                 const float col[4]={1.0f,0.92f,0.35f,Unlit};
-                const float r0=(state.club==Golf::Putter?0.12f:1.6f)*K,r1=r0*1.35f;
+                const bool putt=state.club==Golf::Putter;
+                const float r0=(putt?0.12f:1.6f)*K,r1=r0*1.35f,lift=(putt?0.02f:0.12f)*K;
+                // Laid on the ground as it rises and falls under it (a flat ring sank into slopes).
+                auto on=[&](float a,float r){
+                    const float x=l.x*K+r*std::cos(a),z=l.z*K+r*std::sin(a);
+                    return Mesh::V{x,c.Height(x/K,z/K)*K+lift,z};
+                };
                 for(int i=0;i<32;++i)
                 {
                     const float a0=2*Pi*i/32,a1=2*Pi*(i+1)/32;
-                    m.Quad({l.x*K+r1*std::cos(a0),y,l.z*K+r1*std::sin(a0)},{l.x*K+r1*std::cos(a1),y,l.z*K+r1*std::sin(a1)},
-                           {l.x*K+r0*std::cos(a1),y,l.z*K+r0*std::sin(a1)},{l.x*K+r0*std::cos(a0),y,l.z*K+r0*std::sin(a0)},col);
+                    m.QuadN(on(a0,r1),on(a1,r1),on(a1,r0),on(a0,r0),{0,1,0},col);
                 }
-                const V3 from=state.balls[You].at;
-                const float len=Golf::Flat(from,l);
-                const int dots=std::clamp(static_cast<int>(len/(state.club==Golf::Putter?0.25f:3.0f)),2,60);
-                for(int i=1;i<dots;++i)
-                {
-                    const float t=static_cast<float>(i)/dots;
-                    const V3 q=from+(l-from)*t;
-                    const float qy=(c.Height(q.x,q.z)+0.04f)*K,s=(state.club==Golf::Putter?0.025f:0.25f)*K;
-                    m.Quad({q.x*K-s,qy,q.z*K-s},{q.x*K-s,qy,q.z*K+s},{q.x*K+s,qy,q.z*K+s},{q.x*K+s,qy,q.z*K-s},col);
-                }
+            }
+            // The pin's beam: a thin light straight up from the cup, seen from anywhere.
+            {
+                const V3 p=c.Pin();
+                const float far_=std::sqrt((state.eye.x-p.x*K)*(state.eye.x-p.x*K)+(state.eye.z-p.z*K)*(state.eye.z-p.z*K));
+                const float w=std::max(0.04f*K,far_*0.0025f);
+                const float col[4]={0.45f,0.95f,0.85f,Unlit};
+                const float ax=state.look.x-state.eye.x,az=state.look.z-state.eye.z,al=std::max(1e-3f,std::hypot(ax,az));
+                const float sx=-az/al*w,sz=ax/al*w;
+                const float y0=(p.y+2.4f)*K,y1=(p.y+BeamHigh)*K;
+                m.QuadN({p.x*K-sx,y0,p.z*K-sz},{p.x*K+sx,y0,p.z*K+sz},{p.x*K+sx,y1,p.z*K+sz},{p.x*K-sx,y1,p.z*K-sz},{0,1,0},col);
             }
             // The club in her hands: from her grip along the way the swing holds it.
             std::array<float,3> middle{},along{},club{};
@@ -1194,6 +1343,7 @@ namespace MikuMikuDesktopPerch
                 const float big=putter?0.05f:state.shot.club<=1?0.06f:0.04f;
                 rod(XMVectorSubtract(end,XMVectorScale(toe,0.02f*K)),XMVectorAdd(end,XMVectorScale(toe,(putter?0.1f:0.09f)*K)),big*K,state.shot.club<=1&&!putter?wood:headCol);
             }
+            if(state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge)&&!state.autoplay)BuildGauge(m);
             return std::move(m.out);
         }
 
@@ -1320,64 +1470,88 @@ namespace MikuMikuDesktopPerch
             {
                 const Ball& b=state.balls[You];
                 const float toPin=Golf::Flat(b.at,c.Pin());
-                const RectF box(10*s,H-128*s,300*s,118*s);
+                const RectF box(10*s,H-112*s,300*s,102*s);
                 Panel(g,box,s);
-                Text(g,Golf::ClubName(state.club),RectF(box.X+12*s,box.Y+6*s,box.Width-20*s,28*s),19*s,gold,true,StringAlignmentNear);
+                Text(g,Golf::ClubName(state.club),RectF(box.X+12*s,box.Y+6*s,box.Width-90*s,28*s),19*s,gold,true,StringAlignmentNear);
                 std::wstring info=std::wstring(Golf::LieName(b.lie))+T(L"　ピンまで ",L"   to the pin ")+std::to_wstring(static_cast<int>(toPin+0.5f))+L" m";
-                Text(g,info,RectF(box.X+12*s,box.Y+36*s,box.Width-20*s,22*s),14*s,white,false,StringAlignmentNear);
-                std::wstring more;
+                Text(g,info,RectF(box.X+12*s,box.Y+36*s,box.Width-90*s,22*s),14*s,white,false,StringAlignmentNear);
                 if(state.club==Golf::Putter)
                 {
                     const float rise=(c.Pin().y-b.at.y)*100;
                     wchar_t t[120];
-                    swprintf_s(t,T(L"最大 %.0f m　%ls %.0f cm",L"Max %.0f m   %ls %.0f cm"),Golf::PutterRange(toPin),rise>=0?T(L"上り",L"uphill"):T(L"下り",L"downhill"),std::abs(rise));
-                    more=t;
+                    swprintf_s(t,T(L"%ls %.0f cm",L"%ls %.0f cm"),rise>=0?T(L"上り",L"uphill"):T(L"下り",L"downhill"),std::abs(rise));
+                    Text(g,t,RectF(box.X+12*s,box.Y+58*s,box.Width-90*s,22*s),14*s,soft,false,StringAlignmentNear);
                 }
-                else
+                Text(g,T(L"Tabで操作説明",L"Tab: the keys"),RectF(box.X+12*s,box.Y+78*s,box.Width-20*s,20*s),12*s,soft,false,StringAlignmentNear);
+                // Where on the ball you strike (not with the putter).
+                if(state.club!=Golf::Putter)
                 {
-                    const float full=Golf::Flat(b.at,state.landing);
-                    more=Fmt(T(L"最大 {0} m（無風）",L"Full carry {0} m (no wind)"),{std::to_wstring(static_cast<int>(full))});
+                    const PointF mid(box.X+box.Width-40*s,box.Y+40*s);
+                    const float r=26*s;
+                    SolidBrush ball(Color(255,244,246,248));
+                    Pen edge(Color(255,150,160,170),1.5f*s),cross(Color(120,120,130,140),1*s);
+                    g.FillEllipse(&ball,mid.X-r,mid.Y-r,2*r,2*r);
+                    g.DrawEllipse(&edge,mid.X-r,mid.Y-r,2*r,2*r);
+                    g.DrawLine(&cross,PointF(mid.X-r,mid.Y),PointF(mid.X+r,mid.Y));
+                    g.DrawLine(&cross,PointF(mid.X,mid.Y-r),PointF(mid.X,mid.Y+r));
+                    SolidBrush dot(Color(255,230,40,60));
+                    const PointF at(mid.X+state.spotX*r*0.8f,mid.Y-state.spotY*r*0.8f);
+                    g.FillEllipse(&dot,at.X-4.5f*s,at.Y-4.5f*s,9*s,9*s);
+                    Text(g,T(L"打点",L"Spot"),RectF(mid.X-r,mid.Y+r+1*s,2*r,16*s),11*s,soft);
                 }
-                Text(g,more,RectF(box.X+12*s,box.Y+58*s,box.Width-20*s,22*s),14*s,soft,false,StringAlignmentNear);
-                Text(g,T(L"←→ 狙い　↑↓ クラブ　Space/クリック ショット",L"←→ aim   ↑↓ club   Space/click: shot"),RectF(box.X+12*s,box.Y+84*s,box.Width-20*s,22*s),12*s,soft,false,StringAlignmentNear);
-                // The gauge: from the strike's line (left) to full power (right).
-                const float gw=std::min(W*0.46f,520*s),gh=26*s;
-                const RectF bar(W/2-gw/2,H-70*s,gw,gh);
-                Panel(g,RectF(bar.X-10*s,bar.Y-26*s,bar.Width+20*s,bar.Height+40*s),s,170);
-                auto x=[&](float p){return bar.X+(p+0.25f)/1.25f*bar.Width;};
-                LinearGradientBrush fill(RectF(x(0),bar.Y,x(1)-x(0),gh),Color(255,80,190,110),Color(255,240,80,60),LinearGradientModeHorizontal);
-                g.FillRectangle(&fill,RectF(x(0),bar.Y,x(1)-x(0),gh));
-                SolidBrush miss(Color(255,60,70,90));
-                g.FillRectangle(&miss,RectF(bar.X,bar.Y,x(0)-bar.X,gh));
-                SolidBrush zone(Color(255,250,250,250));
-                g.FillRectangle(&zone,RectF(x(-0.03f),bar.Y-3*s,x(0.03f)-x(-0.03f),gh+6*s));
-                Pen tick(Color(140,255,255,255),1*s);
-                for(int i=1;i<10;++i)g.DrawLine(&tick,PointF(x(i/10.0f),bar.Y),PointF(x(i/10.0f),bar.Y+gh*0.35f));
-                Text(g,L"100%",RectF(x(1)-30*s,bar.Y-24*s,60*s,20*s),11*s,soft);
-                if(state.gauge==GaugeState::Falling||state.gauge==GaugeState::Done)
-                {
-                    SolidBrush set(Color(255,255,230,90));
-                    g.FillRectangle(&set,RectF(x(state.gaugePower)-2*s,bar.Y-6*s,4*s,gh+12*s));
-                    Text(g,std::to_wstring(static_cast<int>(state.gaugePower*100+0.5f))+L"%",RectF(x(state.gaugePower)-30*s,bar.Y-24*s,60*s,20*s),12*s,gold,true);
-                }
-                if(state.gauge!=GaugeState::Ready)
-                {
-                    SolidBrush marker(Color(255,255,255,255));
-                    PointF tri[3]={PointF(x(state.gaugeAt),bar.Y+gh+2*s),PointF(x(state.gaugeAt)-7*s,bar.Y+gh+14*s),PointF(x(state.gaugeAt)+7*s,bar.Y+gh+14*s)};
-                    g.FillPolygon(&marker,tri,3);
-                    Pen line(Color(255,255,255,255),2.5f*s);
-                    g.DrawLine(&line,PointF(x(state.gaugeAt),bar.Y-2*s),PointF(x(state.gaugeAt),bar.Y+gh+2*s));
-                }
-                else Text(g,T(L"クリックでスタート",L"Click to start"),RectF(bar.X,bar.Y,bar.Width,gh),14*s,white,true);
+                // The gauge's numbers over its bar (the bar itself is drawn in 3D): how far full
+                // power carries with this club on level ground, half that at the middle.
+                const RectF bar=GaugeBar(W,H,s);
+                const float full=state.club==Golf::Putter?Golf::PutterRange(toPin,c.Pin().y-b.at.y):Golf::FlatCarry(state.club,state.spotX,state.spotY);
+                auto number=[&](float at,float metres,bool bold){
+                    wchar_t t[32];
+                    swprintf_s(t,metres<20?L"%.1f m":L"%.0f m",metres);
+                    Text(g,t,RectF(GaugeX(bar,at)-40*s,bar.Y-24*s,80*s,18*s),12*s,bold?gold:white,bold);
+                };
+                number(0.5f,full*0.5f,false);
+                number(1,full,true);
+                if(state.gauge==GaugeState::Impact||state.gauge==GaugeState::Done)
+                    Text(g,std::to_wstring(static_cast<int>(state.gaugePower*100+0.5f))+L"%",RectF(GaugeX(bar,state.gaugePower)-30*s,bar.Y+14*s,60*s,18*s),12*s,gold,true);
+            }
+            // The pin's distance and height over its beam (from the ball whose turn it is).
+            if(state.beamTop.x>=0&&state.phase!=Phase::Intro&&state.phase!=Phase::HoleOver&&state.phase!=Phase::Over)
+            {
+                const V3 from=state.balls[state.turn].at;
+                const float d=Golf::Flat(from,c.Pin()),rise=c.Pin().y-from.y;
+                wchar_t t[80];
+                swprintf_s(t,T(L"%.1f m　%ls%.1f m",L"%.1f m   %ls%.1f m"),d,rise>=0?L"↑":L"↓",std::abs(rise));
+                const float tx=static_cast<float>(state.beamTop.x),ty=static_cast<float>(state.beamTop.y);
+                const RectF box(tx-80*s,std::max(4*s,ty-34*s),160*s,26*s);
+                Panel(g,box,s,150);
+                Text(g,t,box,13*s,white,true);
+            }
+            // The keys, while Tab is on.
+            if(state.help)
+            {
+                const wchar_t* lines[]={
+                    T(L"←→　狙い（Shiftで細かく）",L"←→   aim (Shift: finely)"),
+                    T(L"↑↓　クラブ",L"↑↓   club"),
+                    T(L"Ctrl＋矢印　打点（下で高く少し遠く・止まる、上で低く転がる、左で右へ・右で左へ曲がる）",L"Ctrl+arrows   spot (low: high, a little further, stops; high: low, rolls; left: curves right; right: curves left)"),
+                    T(L"Space／クリック　スタート → パワー → インパクト（白で真っすぐ、ピンクで曲がる）",L"Space/click   start, power, strike (white: straight; pink: it curves)"),
+                    T(L"パターはパワーを決めたら打ちます",L"The putter strikes once the power is set"),
+                    T(L"0　黄色い輪を上から見る",L"0   see the yellow circle from above"),
+                    T(L"右ドラッグ・ホイール　カメラ（F1で戻す）",L"Right drag, wheel   camera (F1 puts it back)"),
+                    T(L"Esc　やめる　　Tab　この説明を閉じる",L"Esc   stop      Tab   close this")};
+                const float bw=std::min(W-40*s,720*s),lh=26*s,bh=lh*std::size(lines)+28*s;
+                const RectF box(W/2-bw/2,H*0.45f-bh/2,bw,bh);
+                Panel(g,box,s,215);
+                for(size_t i=0;i<std::size(lines);++i)
+                    Text(g,lines[i],RectF(box.X+18*s,box.Y+14*s+lh*i,box.Width-36*s,lh),14*s,white,false,StringAlignmentNear);
             }
             // Her words beside her head.
-            if(!state.words.text.empty())
+            const bool herSeen=state.besideHead.x>=0&&state.besideHead.x<w&&state.headScreen.y>0&&state.headScreen.y<h&&state.phase!=Phase::Intro;
+            if(!state.words.text.empty()&&herSeen)
             {
                 const std::wstring& said=state.words.text;
                 const float most=std::max(160*s,W*0.32f);
                 const WordsBubble bubble(g,said,s,most);
                 const float bw=bubble.Width(),bh=bubble.Height();
-                const bool beside=state.besideHead.x>=0&&state.besideHead.x<w&&state.headScreen.y>0&&state.headScreen.y<h;
+                const bool beside=true;
                 const float x=std::clamp(beside?static_cast<float>(state.besideHead.x):W/2+60*s,14*s,W-14*s-bw);
                 const float headY=beside?static_cast<float>(state.headScreen.y):H*0.3f;
                 const float y=std::clamp(headY-bh*0.6f,110*s,std::max(110*s,H-bh-140*s));
@@ -1422,13 +1596,15 @@ namespace MikuMikuDesktopPerch
             RECT client{};
             GetClientRect(state.window,&client);
             const int w=std::max(1L,client.right),h=std::max(1L,client.bottom);
-            const bool moving=state.phase==Phase::Gauge||state.phase==Phase::Flying;
+            const bool moving=state.phase==Phase::Flying;
             const ULONGLONG now=GetTickCount64();
             std::wstring shown=std::to_wstring(w)+L"x"+std::to_wstring(h)+L" "+std::to_wstring(static_cast<int>(state.phase))+L" "+std::to_wstring(state.turn)+L" "+
                                std::to_wstring(state.club)+L" "+std::to_wstring(static_cast<int>(state.aim*200))+L" "+std::to_wstring(static_cast<int>(state.gauge))+
                                L" "+std::to_wstring(static_cast<int>(ViewYaw()*30))+L"|"+ShownWords()+L"|"+(state.clock<state.bannerUntil?state.banner+state.bannerNote:L"")+
                                L"|"+std::to_wstring(state.besideHead.x/12)+L","+std::to_wstring(state.headScreen.y/12)+(state.askingQuit?L"a":L"")+
-                               std::to_wstring(state.balls[0].strokes)+std::to_wstring(state.balls[1].strokes);
+                               std::to_wstring(state.balls[0].strokes)+std::to_wstring(state.balls[1].strokes)+
+                               L"|"+std::to_wstring(static_cast<int>(state.spotX*4))+L","+std::to_wstring(static_cast<int>(state.spotY*4))+(state.help?L"h":L"")+
+                               L"|"+std::to_wstring(state.beamTop.x/6)+L","+std::to_wstring(state.beamTop.y/6);
             if(moving)shown+=L"|"+std::to_wstring(now/40);
             if(shown==state.hudShown)return;
             if(moving&&now-state.hudAt<33)return;
@@ -1623,6 +1799,21 @@ namespace MikuMikuDesktopPerch
                 else if(wParam==VK_RETURN&&state.phase==Phase::Over){state.firstSeed+=104729u;NewRound();}
                 else if(wParam==VK_F1)state.camera={};
                 else if(wParam==VK_SPACE&&!(lParam&0x40000000))GaugeClick();
+                else if(wParam==VK_TAB)state.help=!state.help;
+                else if((wParam=='0'||wParam==VK_NUMPAD0)&&state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge))state.overhead=!state.overhead;
+                else if(state.turn==You&&state.phase==Phase::Aim&&state.gauge==GaugeState::Ready&&GetKeyState(VK_CONTROL)<0&&
+                        (wParam==VK_LEFT||wParam==VK_RIGHT||wParam==VK_UP||wParam==VK_DOWN))
+                {
+                    // The spot on the ball, a quarter at a time, kept on the ball.
+                    if(state.club!=Golf::Putter)
+                    {
+                        state.spotX+=wParam==VK_LEFT?-0.25f:wParam==VK_RIGHT?0.25f:0.0f;
+                        state.spotY+=wParam==VK_DOWN?-0.25f:wParam==VK_UP?0.25f:0.0f;
+                        const float r=std::hypot(state.spotX,state.spotY);
+                        if(r>1){state.spotX/=r;state.spotY/=r;}
+                        UpdateLanding();
+                    }
+                }
                 else if(state.turn==You&&state.phase==Phase::Aim&&state.gauge==GaugeState::Ready)
                 {
                     if(wParam==VK_LEFT)state.aimKeys=-1;
@@ -1790,9 +1981,9 @@ namespace MikuMikuDesktopPerch
             model.LookToward(ToModel(model,at),true);
         }
         if(state.moved){state.moved=false;model.ResetPhysics();}
-        state.renderer->SetMovingGeometry(BuildMoving(model));
         state.renderer->SetModelTransform(HerWorld(model));
         PlaceCamera();
+        state.renderer->SetMovingGeometry(BuildMoving(model));
         if(std::array<float,3> head{};model.HeadPosition(head))
         {
             const XMVECTOR at=XMVector3Transform(XMVectorSet(head[0],head[1],head[2],1),HerWorld(model));
@@ -1803,6 +1994,18 @@ namespace MikuMikuDesktopPerch
             // Behind the camera: not shown.
             const XMVECTOR forward=XMVectorSubtract(XMLoadFloat3(&state.look),XMLoadFloat3(&state.eye));
             if(XMVectorGetX(XMVector3Dot(forward,XMVectorSubtract(at,XMLoadFloat3(&state.eye))))<0)state.headScreen=state.besideHead={-1,-1};
+        }
+        // The top of the pin's beam, for the distance written there.
+        {
+            const V3 p=Course().Pin();
+            const XMFLOAT3 top=W(p,BeamHigh);
+            const XMVECTOR forward=XMVectorSubtract(XMLoadFloat3(&state.look),XMLoadFloat3(&state.eye));
+            const bool ahead=XMVectorGetX(XMVector3Dot(forward,XMVectorSubtract(XMLoadFloat3(&top),XMLoadFloat3(&state.eye))))>0;
+            state.beamTop=ahead?state.renderer->Project({top.x,top.y,top.z}):POINT{-1,-1};
+            RECT client{};
+            GetClientRect(state.view,&client);
+            if(state.beamTop.x<0||state.beamTop.x>client.right||state.beamTop.y>client.bottom)state.beamTop={-1,-1};
+            else state.beamTop.y=std::max(state.beamTop.y,40L);
         }
         state.voice.Tick(dt);
         if(state.voice.Playing())model.SetMouth(state.voice.Mouth(),true);
@@ -1834,6 +2037,7 @@ namespace MikuMikuDesktopPerch
     bool SaveGolfView(const std::wstring& path){return state.renderer&&state.renderer->SaveLastFrame(path);}
     void SetGolfSwingPose(float stage,float yaw){state.posing=stage;state.poseYaw=yaw;}
     void SetGolfSeed(std::uint32_t seed){state.firstSeed=seed;}
+    void SetGolfGauge(float power,float at,const std::wstring& flags){state.frozenPower=power;state.frozenAt=at;state.frozenFlags=flags;}
 
     std::wstring DescribeGolf()
     {
