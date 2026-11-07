@@ -194,6 +194,10 @@ namespace MikuMikuDesktopPerch
             if(const HRESULT created=D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_11_0,IID_PPV_ARGS(&gpu->device));SUCCEEDED(created))
             {
                 gpu->adapterName=desc.Description;Log(L"  using it");
+                // On a laptop with two GPUs the screen is usually on the built-in one; drawing on
+                // the other, each frame is copied across by Windows (worth knowing when she is not seen).
+                if(ComPtr<IDXGIOutput> output;FAILED(adapter->EnumOutputs(0,&output)))
+                    Log(L"  no display is attached to it: Windows copies the frames to the GPU that has the screen");
                 // A display driver's version starts with the WDDM version it was built for
                 // (20: WDDM 2.0 of Windows 10's first release, ..., 26: WDDM 2.5 of 1809,
                 // 27: WDDM 2.7 of 2004, 30 and up: Windows 11). With MSAA on, the model was

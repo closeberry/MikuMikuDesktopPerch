@@ -6386,6 +6386,14 @@ namespace
 
     bool IsFullscreenAppActive()
     {
+        // With no other window open, one of ours comes to the front, and a character's window
+        // spans the screen: Windows then reports it as a full-screen app, and she hid from herself.
+        if(HWND front=GetForegroundWindow())
+        {
+            DWORD process=0;
+            GetWindowThreadProcessId(front,&process);
+            if(process==GetCurrentProcessId())return false;
+        }
         QUERY_USER_NOTIFICATION_STATE state{};
         if(FAILED(SHQueryUserNotificationState(&state)))return false;
         return state==QUNS_BUSY||state==QUNS_RUNNING_D3D_FULL_SCREEN||state==QUNS_PRESENTATION_MODE;
