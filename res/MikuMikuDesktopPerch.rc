@@ -96,6 +96,8 @@ GINRUMMYLINES LINES "ginrummy\\lines.txt"
 GINRUMMYLINESEN LINES "ginrummy\\lines.en.txt"
 FORTSLINES LINES "forts\\lines.txt"
 FORTSLINESEN LINES "forts\\lines.en.txt"
+GOLFLINES LINES "golf\\lines.txt"
+GOLFLINESEN LINES "golf\\lines.en.txt"
 // Three Forts' card pictures: 480x270 each, eight across, card n at (n%8, n/8) (the order of Cards in src/Forts.cpp).
 CARDS FORTSCARDS "forts\\cards.jpg"
 CHESSLINES LINES "chess\\lines.txt"

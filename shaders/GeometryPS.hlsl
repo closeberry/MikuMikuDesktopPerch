@@ -460,6 +460,55 @@ float3 CutGlass(float3 rgb, float3 world, float3 smoothNormal)
     return c;
 }
 
+// The golf course (look 7; the kind in minus uv.z): 1 the ground, its surfaces blended by the
+// vertices' weights (fairway, green, sand in local; water, tee in uv.xy; rough the rest), with
+// the base colour already blended per vertex: grass with mown stripes, fine green, speckled
+// sand, water with ripples and the sky's shine; 2 bark; 3 leaves in clumps; 4 plain (the flag,
+// the pin). Distances are in metres (12.5 units a metre).
+float3 CourseGround(float3 rgb, float3 local, float2 extra, float3 world, inout float3 glow)
+{
+    const float2 m = world.xz / 12.5;
+    const float fairway = saturate(local.x), green = saturate(local.y), sand = saturate(local.z);
+    const float water = saturate(extra.x), tee = saturate(extra.y);
+    const float rough = saturate(1 - fairway - green - sand - water - tee);
+    // Grass: clumps and blades, coarser in the rough.
+    float grass = 0.86 + 0.28 * Noise(m * 0.45) ;
+    grass *= lerp(1.0, 0.82 + 0.36 * Rough(m * 1.7), rough);
+    grass *= lerp(1.0, 0.94 + 0.12 * Noise(m * 3.1), fairway + tee);
+    // Mown stripes across the fairway and checks on the green.
+    const float stripe = step(0.5, frac((m.y + 0.35 * m.x) / 7.0));
+    grass *= lerp(1.0, lerp(0.93, 1.06, stripe), fairway);
+    const float check = step(0.5, frac(m.x / 3.0)) == step(0.5, frac(m.y / 3.0)) ? 1.04 : 0.97;
+    grass *= lerp(1.0, check, green);
+    float3 c = rgb * lerp(1.0, grass, 1 - sand - water);
+    // Sand: fine grains, raked lines.
+    const float grain = 0.9 + 0.2 * Hash(floor(world.xz * 3.0)) + 0.06 * sin(m.x * 9.0 + 2.0 * Noise(m * 0.8));
+    c = lerp(c, rgb * grain, sand);
+    if (water > 0.01)
+    {
+        // Small waves and the sky over them.
+        const float wave = Noise(m * 1.3 + 0.7 * sin(m.yx * 0.4)) * 0.6 + Noise(m * 3.7) * 0.4;
+        const float3 deep = rgb * (0.75 + 0.35 * wave);
+        glow += water * float3(0.55, 0.65, 0.75) * 0.35 * smoothstep(0.55, 0.9, wave);
+        c = lerp(c, deep, water);
+    }
+    return c;
+}
+
+float3 Course(int kind, float3 rgb, float3 local, float4 uv, float3 world, inout float3 glow)
+{
+    if (kind == 1)
+        return CourseGround(rgb, local, uv.xy, world, glow);
+    if (kind == 2)
+        return rgb * (0.75 + 0.4 * Noise(float2(world.x + world.z, world.y * 0.15) * 0.8));
+    if (kind == 3)
+    {
+        const float clump = Rough(world.xz * 0.06 + world.y * 0.08);
+        return rgb * (0.65 + 0.6 * clump) * (0.9 + 0.2 * Noise(world.xy * 0.4 + world.z * 0.3));
+    }
+    return rgb;
+}
+
 float4 main(VSOutput i) : SV_Target
 {
     // See-through (a mahjong tile fading in as it falls): pixels left out in a 4x4 ordered
@@ -508,6 +557,8 @@ float4 main(VSOutput i) : SV_Target
     }
     else if (pattern == 0 && theme == 6)
         rgb = Parlour((int)round(-i.uv.z), rgb, i.local);
+    else if (pattern == 0 && theme == 7)
+        rgb = Course((int)round(-i.uv.z), rgb, i.local, i.uv, i.world, glow);
     else if (pattern == 0 && theme == 3)
     {
         // Stone: rough, mottled, with darker hollows.
@@ -555,5 +606,11 @@ float4 main(VSOutput i) : SV_Target
     light += PointLights(i.world, normalize(i.normal), false);
     if (pattern == 3 && Water.x > 0 && i.normal.y > 0.5)
         return float4(Flooded(rgb, light, glow, i.world), 1);
+    if (pattern == 0 && theme == 7)
+    {
+        // The course fades into the haze far off (in metres from the camera).
+        const float far_ = mul(float4(i.world, 1), View).z / 12.5;
+        return float4(lerp(rgb * light + glow, float3(0.72, 0.80, 0.88), 0.75 * (1 - exp(-max(far_ - 60, 0) / 420))), 1);
+    }
     return float4(rgb * light + glow, 1);
 }

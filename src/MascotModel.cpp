@@ -2815,6 +2815,20 @@ namespace MikuMikuDesktopPerch
         impl->motion.Hold(side,{wrist[0],wrist[1],wrist[2]},on,style);
     }
 
+    void MascotModel::Swing(bool on,float stage,float power)
+    {
+        if(on&&impl->shotActive){impl->shotFrozen=-1;impl->shotEnding=true;}
+        impl->motion.Swing(on,stage,power);
+    }
+
+    bool MascotModel::SwingClub(std::array<float,3>& along) const
+    {
+        DirectX::XMFLOAT3 a{};
+        const bool on=impl->motion.SwingClub(a);
+        along={a.x,a.y,a.z};
+        return on;
+    }
+
     void MascotModel::SetSolids(const std::vector<Solid>& solids)
     {
         using namespace DirectX;

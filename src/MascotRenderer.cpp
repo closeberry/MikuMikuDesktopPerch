@@ -1083,7 +1083,7 @@ namespace MikuMikuDesktopPerch
         XMStoreFloat3(&cameraEye,eye);
         XMStoreFloat3(&cameraTarget,target);
         cameraFovY=fovY;
-        XMStoreFloat4x4(&projection,XMMatrixPerspectiveFovLH(fovY,static_cast<float>(windowWidth)/windowHeight,1.0f,1000.0f));
+        XMStoreFloat4x4(&projection,XMMatrixPerspectiveFovLH(fovY,static_cast<float>(windowWidth)/windowHeight,nearZ,farZ));
     }
 
     void MascotRenderer::SetLight(float azimuth,float elevation)

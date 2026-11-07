@@ -1874,6 +1874,125 @@ namespace MikuMikuDesktopPerch
         }
     }
 
+    void GeneratedMotion::Swing(bool on,float stage,float power)
+    {
+        swingOn=on;
+        if(on){swingStage=std::clamp(stage,0.0f,3.0f);swingPower=std::clamp(power,0.2f,1.0f);}
+    }
+
+    namespace
+    {
+        // A value through keys (stage, value) in order, Catmull-Rom between them: the speed
+        // goes on through a key (the club does not stop at the ball), level at the ends.
+        template<size_t N> float Through(const float (&k)[N][2],float s)
+        {
+            if(s<=k[0][0])return k[0][1];
+            if(s>=k[N-1][0])return k[N-1][1];
+            size_t i=0;
+            while(i+2<N&&s>k[i+1][0])++i;
+            const float s0=k[i][0],s1=k[i+1][0],v0=k[i][1],v1=k[i+1][1];
+            const float u=(s-s0)/(s1-s0);
+            auto slope=[&](size_t j){
+                if(j==0||j==N-1)return 0.0f;
+                return (k[j+1][1]-k[j-1][1])/(k[j+1][0]-k[j-1][0]);
+            };
+            const float m0=slope(i)*(s1-s0),m1=slope(i+1)*(s1-s0);
+            const float u2=u*u,u3=u2*u;
+            return (2*u3-3*u2+1)*v0+(u3-2*u2+u)*m0+(-2*u3+3*u2)*v1+(u3-u2)*m1;
+        }
+        // v turned about unit axis k by angle a (k = d x e takes d toward e).
+        XMVECTOR Turned(FXMVECTOR v,FXMVECTOR k,float a)
+        {
+            const float c=std::cos(a),s=std::sin(a);
+            return XMVectorAdd(XMVectorAdd(XMVectorScale(v,c),XMVectorScale(XMVector3Cross(k,v),s)),XMVectorScale(k,XMVectorGetX(XMVector3Dot(k,v))*(1-c)));
+        }
+    }
+
+    // The swing as a golfer's goes, by stage (Swing): the chest turns about the bent spine some
+    // 90 degrees back and the hips half that, the arms go up across the chest and the wrists cock
+    // the club to level; coming down the hips lead, the club's lag held until late; through the
+    // ball the chest and hips turn to face the target, the arms and club wrap round, the back heel
+    // comes up. The arms swing in a plane of the chest's own (they go round with it), the head
+    // stays down over the ball until after the strike. Feet set apart a little wider than the
+    // hips, knees flexed, the hips back.
+    void GeneratedMotion::ApplySwing(std::vector<Key>& keys,double dt)
+    {
+        swingWeight=std::clamp(swingWeight+static_cast<float>(dt/0.5)*(swingOn?1.0f:-1.0f),0.0f,1.0f);
+        if(swingWeight<=0||overrides.empty()||rig.arm[0]<0||rig.arm[1]<0||rig.upperBody<0)return;
+        const float L=rig.legLength,p=swingPower,s=swingStage;
+        std::vector<Key> g=keys;
+        // Degrees by stage (+: turned back, away from the target).
+        const float chestKeys[][2]={{0,0},{1,88*p},{1.55f,46*p},{2,-14},{2.4f,-62},{3,-96}};
+        const float hipKeys[][2]={{0,0},{1,42*p},{1.55f,6},{2,-36},{2.4f,-60},{3,-78}};
+        const float armKeys[][2]={{0,0},{1,104*p},{1.55f,58*p},{2,-2},{2.4f,-72},{3,-126}};
+        const float cockKeys[][2]={{0,0},{0.55f,38*p},{1,84*p},{1.6f,82*p},{1.85f,38*p},{2,0},{2.4f,-30},{3,-92}};
+        const float leanKeys[][2]={{0,28},{2.05f,28},{2.5f,20},{3,9}};
+        const float shiftKeys[][2]={{0,0},{1,-0.02f},{1.6f,0.03f},{2,0.05f},{3,0.09f}};   // toward the target, leg lengths
+        const float heelKeys[][2]={{0,0},{2.02f,0},{2.5f,1},{3,1}};
+        const float neckKeys[][2]={{0,0.65f},{2.05f,0.65f},{2.6f,0},{3,0}};             // the head kept on the ball
+        const float chest=Through(chestKeys,s)*Deg,hips=Through(hipKeys,s)*Deg,arm=Through(armKeys,s)*Deg,cock=Through(cockKeys,s)*Deg;
+        const float lean=Through(leanKeys,s)*Deg,shift=Through(shiftKeys,s)*L,heel=Smooth(Through(heelKeys,s)),neck=Through(neckKeys,s);
+        constexpr float AddressLean=28*Deg,HipLean=8*Deg,Lie=52*Deg;
+        // The body: lowered a little and the hips back, moving toward the target as it swings.
+        if(rig.center>=0)KeyOf(g,rig.center).position={shift,0,0.07f*L};
+        if(rig.groove>=0)KeyOf(g,rig.groove).position={0,-0.045f*L,0};
+        const XMVECTOR upper=Then(XMQuaternionRotationRollPitchYaw(0,chest,0),XMQuaternionRotationRollPitchYaw(-lean,0,0));
+        SetRotation(g,rig.upperBody,upper);
+        const XMVECTOR lower=Then(XMQuaternionRotationRollPitchYaw(0,hips,0),XMQuaternionRotationRollPitchYaw(-HipLean,0,0));
+        if(rig.lowerBody>=0)SetRotation(g,rig.lowerBody,lower);
+        if(rig.neck>=0)SetRotation(g,rig.neck,XMQuaternionRotationRollPitchYaw(10*Deg*neck,-chest*neck,0));
+        for(const int bone:rig.neutral)if(bone>=0&&slot[bone]>=0&&bone!=rig.neck)SetRotation(g,bone,XMQuaternionIdentity());
+        // The feet: apart, planted; the back (right) heel up toward the finish.
+        const float spread=std::max(std::abs(rig.hipRest[0].x-rig.hipRest[1].x)*0.95f,0.16f*L);
+        for(int side=0;side<2;++side)
+        {
+            if(rig.legIK[side]<0)continue;
+            const float out=side==0?1.0f:-1.0f;
+            const XMFLOAT3& rest=rig.ankleRest[side];
+            const float up=side==1?heel:0.0f;
+            const XMVECTOR at=XMVectorSet(out*spread,rest.y+up*0.07f*L,rest.z+up*0.04f*L,0);
+            auto& k=KeyOf(g,rig.legIK[side]);
+            XMStoreFloat3(&k.position,XMVectorSubtract(at,XMLoadFloat3(&rest)));
+            XMStoreFloat4(&k.rotation,Then(XMQuaternionRotationRollPitchYaw(-45*Deg*up,0,0),XMQuaternionRotationRollPitchYaw(0,(side==1?hips*0.6f*up:0.0f)+out*-8*Deg,0)));
+            SolveLeg(g,side,at,XMVector3Normalize(XMVectorSet(-out*0.15f+(side==1?0.6f*up:0.0f),0,-1,0)));
+        }
+        // The arms, in the chest's own frame: hanging to the hands under the shoulders at the
+        // address (straight down as the body bends), round the plane toward her right (back)
+        // and up, or toward the target.
+        const XMVECTOR sh0=XMLoadFloat3(&rig.shoulderPos[0]),sh1=XMLoadFloat3(&rig.shoulderPos[1]);
+        const XMVECTOR mid=XMVectorScale(XMVectorAdd(sh0,sh1),0.5f);
+        const float half=0.5f*XMVectorGetX(XMVector3Length(XMVectorSubtract(sh0,sh1)));
+        const XMVECTOR d0=XMVector3Normalize(XMVectorSet(0,-std::cos(AddressLean),-std::sin(AddressLean)-0.10f,0));
+        XMVECTOR e=XMVectorSet(-1,0.25f,0,0);
+        e=XMVector3Normalize(XMVectorSubtract(e,XMVectorScale(d0,XMVectorGetX(XMVector3Dot(e,d0)))));
+        const XMVECTOR axis=XMVector3Normalize(XMVector3Cross(d0,e));
+        const float reach=0.93f*(rig.upperArm+rig.forearm);
+        const float hang=std::sqrt(std::max(reach*reach-half*half,0.25f*reach*reach));
+        const XMVECTOR hands=XMVectorAdd(mid,XMVectorScale(Turned(d0,axis,arm),hang));
+        // The club at the address: down and forward at its lie, as the chest sees it; then round
+        // the same plane as the arms, and on by the wrists' cock.
+        const XMVECTOR addressTurn=XMQuaternionRotationRollPitchYaw(-AddressLean,0,0);
+        const XMVECTOR club0=XMVector3Rotate(XMVectorSet(0,-std::sin(Lie),-std::cos(Lie),0),XMQuaternionConjugate(addressTurn));
+        const XMVECTOR club=XMVector3Normalize(Turned(club0,axis,arm+cock));
+        const XMVECTOR across=XMVector3Normalize(Turned(e,axis,arm+cock));
+        XMStoreFloat3(&swingClub,XMVector3Rotate(club,upper));
+        const XMVECTOR at[2]={hands,XMVectorAdd(hands,XMVectorScale(club,0.09f*L))};
+        for(int side=0;side<2;++side)
+        {
+            const float out=side==0?1.0f:-1.0f;
+            ReachArm(g,side,at[side],XMVectorSet(out*0.5f,-1,0.35f,0),0.7f,true);
+            const XMVECTOR palm=side==0?across:XMVectorNegate(across);
+            AimHand(g,side,XMVector3Rotate(XMVector3Normalize(XMVectorAdd(club,XMVectorScale(palm,-0.35f))),upper),XMVector3Rotate(palm,upper));
+            CurlFingers(g,side,{0.72f,0.76f,0.8f,0.82f});
+        }
+        const float weight=Smooth(swingWeight);
+        for(size_t i=0;i<keys.size();++i)
+        {
+            XMStoreFloat4(&keys[i].rotation,XMQuaternionSlerp(XMLoadFloat4(&keys[i].rotation),XMLoadFloat4(&g[i].rotation),weight));
+            XMStoreFloat3(&keys[i].position,XMVectorLerp(XMLoadFloat3(&keys[i].position),XMLoadFloat3(&g[i].position),weight));
+        }
+    }
+
     void GeneratedMotion::Generate(std::vector<Key>& keys,double dt)
     {
         const float L=rig.legLength;
@@ -2541,6 +2660,7 @@ namespace MikuMikuDesktopPerch
         lastOutput=out;
         ApplyReaction(out,dt);
         ApplyHold(out,dt);
+        ApplySwing(out,dt);
 
         // Landing crouch on top of whatever comes next (the knees bend through the foot IK).
         if(rig.groove>=0&&landTime<0.8)

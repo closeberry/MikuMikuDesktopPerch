@@ -264,6 +264,12 @@ namespace MikuMikuDesktopPerch
         // style: 0 leaning over it, palm down (the mallet); 1 sitting up, palm down; 2 sitting up,
         // holding something up before her (cards).
         void Hold(int side,const std::array<float,3>& wrist,bool on,int style=0);
+        // A golf club in both hands, standing side-on to the target (+X, her left): see
+        // GeneratedMotion::Swing (stage 0 address, 1 top, 2 impact, 3 finish; power 0.2-1).
+        void Swing(bool on,float stage,float power);
+        // The club's way from the grip toward its head (model space), as posed last; false when
+        // she holds none.
+        bool SwingClub(std::array<float,3>& along) const;
         // The arm's own pose for style 2: 腕, 腕捩, ひじ, 手捩, 手首 (x, y, z, w as keyed in MMD);
         // null: worked out to the wrist point.
         void HoldPose(int side,const std::array<std::array<float,4>,5>* keys);

@@ -1,0 +1,102 @@
+# Golf lines (drafts in plain, everyday speech).
+# One per line. From a "[scene]" line to the next are that scene's lines.
+# When the game opens, the LLM says these again in the character's own way (docs/Golf.md).
+# The scene names are used by the code: keep them as they are, and keep the same scenes and
+# the same number of lines as lines.txt.
+
+[始まり] When the round begins
+All right, let's play a round!
+What lovely weather for golf!
+I'm going for a good score today!
+I won't lose, you know!
+I wonder how the wind is.
+I hope it flies straight.
+Tee shots first, then.
+Let's take it easy and have fun.
+
+[ナイスショット] When the character hits a good shot
+Yes, a good one!
+Nice shot, if I say so myself!
+Right where I aimed!
+That flew nicely.
+Okay, nice and straight!
+That one felt great!
+Heh, that went well!
+Go, go, and stop there!
+
+[ミスショット] When the character hooks, slices or mishits
+Oh no, it curved away...
+Ugh, I mishit it!
+Huh, it didn't go as far as I thought...
+Oops, I pulled it!
+Ah, not that way!
+Maybe I tried too hard.
+Hmm, I'll make it up next shot!
+Well, these things happen.
+
+[池やOB] When the character's ball goes in the water or out of bounds
+Oh no, it went in the water...
+No way, out of bounds?!
+I did it now, a penalty stroke...
+The pond swallowed it...
+Ugh, no luck today.
+Let's shake it off and go on!
+
+[あなたのナイスショット] When you hit a good shot
+Nice shot!
+Wow, that went a long way!
+What a good strike!
+Beautifully straight!
+You're really good at this.
+Wasn't that just perfect?
+Ooh, it's heading for the pin!
+Not bad at all!
+
+[あなたのミスショット] When you hook, slice or mishit
+Oops, it curved away.
+Never mind, on to the next!
+So close, a little to the right.
+The wind carried it off.
+It's fine, you can still get it back.
+Did you try too hard?
+Hmm, so close!
+The next one will go in for sure.
+
+[カップイン] When the character holes out
+It went in, yay!
+Yes, in the cup!
+Heh, I sank it!
+Roll, roll... in!
+Holed it, a round of applause for me!
+Holed out!
+
+[あなたのカップイン] When you hole out
+Nice putt, it's in!
+It went in, amazing!
+That was a lovely putt!
+Well done!
+You sank it, of course!
+It dropped in so cleanly!
+
+[勝った] After the last hole, when the character had the better score
+Yay, I win!
+Heh, I was on form today.
+That was a good round!
+I won, hehe.
+That was fun, let's play again!
+I won't lose next time either!
+
+[負けた] After the last hole, when you had the better score
+I lost, how frustrating!
+You're so good, I'm beaten.
+I'll definitely win next time!
+That was a great score, congratulations!
+Ugh, I need to practise...
+That was fun, let's play again!
+
+[引き分け] After the last hole, when the scores were level
+It's a draw!
+The same score, a close match!
+We couldn't settle it.
+Let's settle it another time!
+Exactly the same, how about that!

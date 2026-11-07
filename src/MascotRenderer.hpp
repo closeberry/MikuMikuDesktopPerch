@@ -77,6 +77,9 @@ namespace MikuMikuDesktopPerch
         // out of step with the frame's position, a smaller drawn area never does.
         bool Resize(unsigned width,unsigned height,std::wstring& error);
         void SetCamera(DirectX::FXMVECTOR eye,DirectX::FXMVECTOR target,float fovY);
+        // The nearest and farthest drawn (world units; 1 and 1000 normally): an outdoor scene
+        // seen far off asks for more. Takes effect with the next SetCamera.
+        void SetDepthRange(float nearest,float farthest){nearZ=std::max(nearest,0.01f);farZ=std::max(farthest,nearZ*2);}
         // MMD's self-shadow: the model shades itself from the light (a shadow map pass).
         void SetSelfShadow(bool on){selfShadow=on;}
         // Before Initialize: the self-shadow map's side (2048 normally; a renderer that never
@@ -321,6 +324,7 @@ namespace MikuMikuDesktopPerch
         DirectX::XMFLOAT4X4 view{},projection{};
         DirectX::XMFLOAT3 cameraEye{},cameraTarget{};
         float cameraFovY=0.5f;
+        float nearZ=1,farZ=1000;
         DirectX::XMFLOAT4X4 modelWorld{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
         std::vector<Particle> particles;
         DirectX::XMFLOAT2 pixelOffset{};

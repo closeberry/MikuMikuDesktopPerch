@@ -142,6 +142,14 @@ namespace MikuMikuDesktopPerch
         // one worked out to a wrist point; none: worked out.
         void HoldPose(int side,const std::array<DirectX::XMFLOAT4,5>* keys);
         bool Holding(int side) const {return side>=0&&side<2&&holds[side].on;}
+        // A golf club in both hands (docs/Golf.md): standing side-on to where the ball goes (+X,
+        // her left), bent from the hips over the ball. stage: 0 the address, 1 the top of the
+        // backswing, 2 the ball struck, 3 the finish (any stage between, as the caller times it);
+        // power (0.2-1): how far back she swings. Eases in (on) and out (off) in 0.5 s.
+        void Swing(bool on,float stage,float power);
+        // The club's way from the grip toward its head, model space, as posed last (false: no swing).
+        bool SwingClub(DirectX::XMFLOAT3& along) const {along=swingClub;return swingWeight>0;}
+        float SwingWeight() const {return swingWeight;}
         // Stops in front of solid things (MascotModel::SetSolids), from the check after each
         // solve. StopArm: the hand or arm on side is depth in (counting a margin; 0: near, held
         // where it is; below 0: well clear), its way out push (a unit vector in the frame
@@ -396,6 +404,10 @@ namespace MikuMikuDesktopPerch
         };
         std::array<HoldArm,2> holds{};
         void ApplyHold(std::vector<Key>& keys,double dt);
+        bool swingOn=false;
+        float swingStage=0,swingPower=1,swingWeight=0;
+        DirectX::XMFLOAT3 swingClub{0,-1,0};
+        void ApplySwing(std::vector<Key>& keys,double dt);
         float reactionWeight=0;
         std::vector<std::pair<int,float>> reactionMorphs;
         std::uint32_t random=FreshSeed();
