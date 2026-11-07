@@ -31,7 +31,7 @@ namespace MikuMikuDesktopPerch
             bool glow=false;                 // a soft round halo instead of a star (fire, magic)
             bool nearer=false;               // a star not cut by the thing it stands in (a halo never is)
         };
-        static constexpr size_t MaxParticles=512;
+        static constexpr size_t MaxParticles=2048;
         // A light of fire or magic at a point (world units), fading out at radius: on the
         // geometry and the model, added to the scene's light.
         struct PointLight
@@ -99,7 +99,13 @@ namespace MikuMikuDesktopPerch
         // geometry's texture, -1), tiled (wrapped): a vertex asks for it with 2 in uv.z (1 is
         // SetGeometryTexture's clamped picture). MaxSceneryTextures at most. Waits for the GPU;
         // empty lists: none.
-        struct SceneryDraw {UINT start=0,count=0;int texture=-1;};
+        // group >= 0: drawn once at each of that group's places (SetSceneryInstances).
+        struct SceneryDraw {UINT start=0,count=0;int texture=-1;int group=-1;};
+        // A place for an instanced stretch: where (world), turned about the up axis, how big.
+        struct SceneryInstance {float x=0,y=0,z=0,yaw=0,scale=1,pad[3]{};};
+        static constexpr size_t MaxSceneryInstances=4096;
+        // This frame's places for each group of instanced stretches (the trees in view).
+        void SetSceneryInstances(std::vector<std::vector<SceneryInstance>> groups){sceneryInstances=std::move(groups);}
         static constexpr size_t MaxSceneryTextures=24;
         bool SetScenery(const std::vector<GeometryVertex>& vertices,const std::vector<SceneryDraw>& draws,const std::vector<ImageRgba8>& textures);
         // The picture drawn on the geometry where its vertices ask for it (the mahjong tiles'
@@ -117,9 +123,15 @@ namespace MikuMikuDesktopPerch
         // Shallow water over the geometry's floors (a flooded dungeon floor): its clock in
         // seconds (for the small waves) and the rings on it (MaxRipples at most).
         void SetWater(bool on,float time,const std::vector<Ripple>& list);
+        // The wind over the water (world units a second, x and z), for its waves.
+        void SetWaterWind(float x,float z){waterWind={x,z};}
         // Geometry that changes every frame (the dungeon's monsters as they walk and strike),
         // drawn as SetGeometry's is, copied to the GPU each frame.
         void SetMovingGeometry(std::vector<GeometryVertex> vertices){moving=std::move(vertices);}
+        // Light this frame, added to what is behind it and hiding nothing (a beam, a trail):
+        // as SetMovingGeometry's, drawn after everything solid. Unlit vertices (colour alpha
+        // 0.25) are what it is for; their colour is how bright.
+        void SetGlowGeometry(std::vector<GeometryVertex> vertices){glowing=std::move(vertices);}
         // Shaped pieces (the chess men): one mesh holds every shape (SetPieceMesh), and each frame
         // gives the list of what is drawn of it (SetPieces): a stretch of the mesh, where it stands,
         // and its neck. A vertex follows the neck by its weight, as a PMX vertex two bones. Colour
@@ -214,6 +226,13 @@ namespace MikuMikuDesktopPerch
             Microsoft::WRL::ComPtr<ID3D12Resource> moving;
             std::uint8_t* movingMapped=nullptr;
             size_t movingCapacity=0;   // vertices
+            // SetSceneryInstances' places this frame (made on first use).
+            Microsoft::WRL::ComPtr<ID3D12Resource> instances;
+            std::uint8_t* instancesMapped=nullptr;
+            // SetGlowGeometry's (as moving's).
+            Microsoft::WRL::ComPtr<ID3D12Resource> glow;
+            std::uint8_t* glowMapped=nullptr;
+            size_t glowCapacity=0;
             // SetPieces' list this frame (made on first use).
             Microsoft::WRL::ComPtr<ID3D12Resource> pieceInstances;
             std::uint8_t* pieceInstancesMapped=nullptr;
@@ -239,7 +258,9 @@ namespace MikuMikuDesktopPerch
         std::wstring adapterName;
         HRESULT deviceLost=S_OK;
         bool modelHidden=false;
-        std::vector<GeometryVertex> moving;
+        std::vector<GeometryVertex> moving,glowing;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> glowPso;
+        DirectX::XMFLOAT2 waterWind{};
         std::vector<PieceDraw> pieces;
 
         // The GPU device, shared by every renderer in the process (one per character): each
@@ -309,6 +330,8 @@ namespace MikuMikuDesktopPerch
         Microsoft::WRL::ComPtr<ID3D12PipelineState> geometryPso;
         Microsoft::WRL::ComPtr<ID3D12Resource> geometryBuffer,roomBuffer,sceneryBuffer;
         std::vector<SceneryDraw> sceneryDraws;
+        std::vector<std::vector<SceneryInstance>> sceneryInstances;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> geometryInstPso;
         std::vector<Texture> sceneryTextures;
         UINT roomCount=0;
         // SetPieceMesh's.

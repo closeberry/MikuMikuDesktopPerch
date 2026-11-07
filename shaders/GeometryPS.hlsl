@@ -461,7 +461,7 @@ float3 CutGlass(float3 rgb, float3 world, float3 smoothNormal)
     return c;
 }
 
-// The golf course (look 7; the kind in minus uv.z): 1 the ground, its surfaces blended by the
+// The golf course (look 6 with its kind, plus 10, in minus uv.z): 1 the ground, its surfaces blended by the
 // vertices' weights (fairway, green, sand in local; water, tee in uv.xy; rough the rest), with
 // the base colour already blended per vertex: grass with mown stripes, fine green, speckled
 // sand, water with ripples and the sky's shine; 2 bark; 3 leaves in clumps; 4 plain (the flag,
@@ -473,17 +473,18 @@ float3 CourseGround(float3 rgb, float3 local, float2 extra, float3 world, inout 
     const float water = saturate(extra.x), tee = saturate(extra.y);
     const float rough = saturate(1 - fairway - green - sand - water - tee);
     // Grass: clumps and blades, coarser in the rough.
-    float grass = 0.86 + 0.28 * Noise(m * 0.45) ;
-    grass *= lerp(1.0, 0.82 + 0.36 * Rough(m * 1.7), rough);
-    grass *= lerp(1.0, 0.94 + 0.12 * Noise(m * 3.1), fairway + tee);
+    float grass = 0.93 + 0.14 * Noise(m * 0.45);
+    grass *= lerp(1.0, 0.91 + 0.18 * Rough(m * 1.7), rough);
+    grass *= lerp(1.0, 0.97 + 0.06 * Noise(m * 3.1), fairway + tee);
     // Mown stripes across the fairway and checks on the green.
     const float stripe = step(0.5, frac((m.y + 0.35 * m.x) / 7.0));
-    grass *= lerp(1.0, lerp(0.93, 1.06, stripe), fairway);
-    const float check = step(0.5, frac(m.x / 3.0)) == step(0.5, frac(m.y / 3.0)) ? 1.04 : 0.97;
+    grass *= lerp(1.0, lerp(0.96, 1.04, stripe), fairway);
+    // (Faint, so the green's rise and fall shows in how the squares lean.)
+    const float check = step(0.5, frac(m.x / 3.0)) == step(0.5, frac(m.y / 3.0)) ? 1.015 : 0.985;
     grass *= lerp(1.0, check, green);
     float3 c = rgb * lerp(1.0, grass, 1 - sand - water);
     // Sand: fine grains, raked lines.
-    const float grain = 0.9 + 0.2 * Hash(floor(world.xz * 3.0)) + 0.06 * sin(m.x * 9.0 + 2.0 * Noise(m * 0.8));
+    const float grain = 0.95 + 0.1 * Hash(floor(world.xz * 3.0)) + 0.03 * sin(m.x * 9.0 + 2.0 * Noise(m * 0.8));
     c = lerp(c, rgb * grain, sand);
     if (water > 0.01)
     {
@@ -493,6 +494,58 @@ float3 CourseGround(float3 rgb, float3 local, float2 extra, float3 world, inout 
         glow += water * float3(0.55, 0.65, 0.75) * 0.35 * smoothstep(0.55, 0.9, wave);
         c = lerp(c, deep, water);
     }
+    return c;
+}
+
+// Where the camera is (from the view matrix: the eye is where the view's origin comes from).
+float3 CourseEye()
+{
+    const float3 t = View[3].xyz;
+    return -float3(dot(t, View[0].xyz), dot(t, View[1].xyz), dot(t, View[2].xyz));
+}
+
+// The pond's surface height (metres) at m (metres): waves driven by the wind (Water.zw, world
+// units a second), small ones always, and the rings spreading where something fell in (Ripples:
+// x, z in world units, seconds since, how strong).
+float WaveHeight(float2 m, float t)
+{
+    const float2 wind = Water.zw / 12.5;
+    const float speed = length(wind);
+    const float2 dir = speed > 0.05 ? wind / speed : float2(0.6, 0.8);
+    const float2 side = float2(-dir.y, dir.x);
+    const float a = 0.003 + 0.010 * saturate(speed / 6);
+    float h = a * sin(dot(m, dir) * 1.7 - t * 2.3);
+    h += a * 0.6 * sin(dot(m, normalize(dir + 0.45 * side)) * 2.9 - t * 3.2 + 1.3);
+    h += a * 0.45 * sin(dot(m, normalize(dir - 0.55 * side)) * 4.6 - t * 4.1 + 2.1);
+    h += a * 0.8 * (Noise(m * 1.9 - dir * t * 0.9) - 0.5) + 0.002 * (Noise(m * 6.0 + t * 0.7) - 0.5);
+    [unroll] for (int k = 0; k < 16; ++k)
+    {
+        const float4 r = Ripples[k];
+        if (r.w <= 0)
+            continue;
+        const float d = distance(m, r.xy / 12.5), front = 0.25 + r.z * 1.1, x = d - front;
+        h += r.w * 0.025 * exp(-x * x * 10) * sin(x * 22) * exp(-r.z * 0.9) / (1 + d);
+    }
+    return h;
+}
+
+// The pond: its own waves bend the sky it mirrors (more at a low angle), the sun glints on
+// it, and the water's own dark colour shows through where it is seen from above.
+float3 CourseWater(float3 deep, float3 world)
+{
+    const float2 m = world.xz / 12.5;
+    const float t = Water.y, e = 0.04;
+    const float h = WaveHeight(m, t), hx = WaveHeight(m + float2(e, 0), t), hz = WaveHeight(m + float2(0, e), t);
+    const float3 n = normalize(float3(-(hx - h) / e, 1, -(hz - h) / e));
+    const float3 v = normalize(CourseEye() - world);
+    const float3 r = reflect(-v, n);
+    const float3 sky = lerp(float3(0.74, 0.82, 0.90), float3(0.30, 0.50, 0.82), saturate(r.y * 1.8)) +
+                       float3(0.25, 0.25, 0.25) * smoothstep(0.55, 0.85, Noise(r.xz / max(r.y, 0.08) * 1.5));
+    const float fresnel = 0.03 + 0.97 * pow(1 - saturate(dot(n, v)), 5);
+    const float3 sun = -normalize(LightDir);
+    const float3 body = deep * (0.55 + 0.45 * saturate(dot(n, sun)));
+    float3 c = lerp(body, sky, saturate(fresnel * 1.1 + 0.22));
+    c += float3(1.0, 0.96, 0.88) * pow(saturate(dot(n, normalize(sun + v))), 260) * 2.2;
     return c;
 }
 
@@ -522,15 +575,33 @@ float4 main(VSOutput i) : SV_Target
     }
     const int pattern = (int)round(i.color.a * 4);
     const int theme = (int)round((i.color.a * 4 - pattern) / 0.08);
-    if (pattern == 0 && theme == 6 && i.uv.z < -5.5)
+    // Look 6 is shared: the parlour (its kinds 1-5 in minus uv.z, gilt and cut glass 6 and 7)
+    // and the golf course (its kinds 11 and on, less 10; or a tiled picture, 2 in uv.z).
+    const bool course = pattern == 0 && theme == 6 && (i.uv.z < -10.5 || i.uv.z > 1.5);
+    const int courseKind = i.uv.z > 1.5 ? 0 : (int)round(-i.uv.z) - 10;
+    if (pattern == 0 && theme == 6 && i.uv.z < -5.5 && i.uv.z > -10.5)
         return float4(i.uv.z < -6.5 ? CutGlass(i.color.rgb, i.world, normalize(i.normal)) : Gilt(i.color.rgb, i.world, normalize(i.normal)), 1);
     float3 rgb = i.color.rgb, glow = 0;
     if (i.uv.z > 1.5)
-        rgb *= Picture.Sample(WrapSampler, i.uv.xy).rgb;
+    {
+        // Tiled, and cut out where the picture is clear (leaves).
+        const float4 picture = Picture.Sample(WrapSampler, i.uv.xy);
+        clip(picture.a - 0.5);
+        rgb *= picture.rgb;
+    }
     else if (i.uv.z > 0)
         rgb *= Picture.Sample(ClampSampler, i.uv.xy).rgb;
     if (pattern == 1)
+    {
+        // A soft light (the glowing pass's beams and trails, 9 in minus uv.z): bright along its
+        // middle (uv.x 0.5), fading to nothing at both edges.
+        if (i.uv.z < -8.5)
+        {
+            const float across = saturate(1 - abs(2 * i.uv.x - 1));
+            rgb *= across * across;
+        }
         return float4(rgb, 1);
+    }
     float shine = 0;
     if (pattern == 0 && (theme == 1 || theme == 5))
     {
@@ -558,10 +629,10 @@ float4 main(VSOutput i) : SV_Target
         rgb *= 0.94 + 0.08 * Noise(q.xy * 9.0) + 0.04 * Noise(float2(q.x * 30.0, q.y * 3.0));
         rgb *= 1 - 0.10 * Seigaiha(q.xy);
     }
+    else if (course)
+        rgb = Course(courseKind, rgb, i.local, i.uv, i.world, glow);
     else if (pattern == 0 && theme == 6)
         rgb = Parlour((int)round(-i.uv.z), rgb, i.local);
-    else if (pattern == 0 && theme == 7)
-        rgb = Course((int)round(-i.uv.z), rgb, i.local, i.uv, i.world, glow);
     else if (pattern == 0 && theme == 3)
     {
         // Stone: rough, mottled, with darker hollows.
@@ -609,7 +680,9 @@ float4 main(VSOutput i) : SV_Target
     light += PointLights(i.world, normalize(i.normal), false);
     if (pattern == 3 && Water.x > 0 && i.normal.y > 0.5)
         return float4(Flooded(rgb, light, glow, i.world), 1);
-    if (pattern == 0 && theme == 7)
+    if (course && courseKind == 5)
+        return float4(CourseWater(i.color.rgb, i.world), 1);
+    if (course)
     {
         // The course fades into the haze far off (in metres from the camera).
         const float far_ = mul(float4(i.world, 1), View).z / 12.5;

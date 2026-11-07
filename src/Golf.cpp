@@ -146,6 +146,16 @@ namespace MikuMikuDesktopPerch::Golf
         std::vector<std::uint32_t> start;   // per cell, where its triangles start in list (and the next's)
         std::vector<int> list;
         V3 tee,cup,clubhouse;
+        // In bounds, a metre a cell from (x0, z0): what can be reached from the tee without
+        // crossing the out-of-bounds band (or the ground's end).
+        std::vector<std::uint8_t> inside;
+        int ix=0,iz=0;
+        float inLo[2]{},inHi[2]{};   // the in-bounds part's own bounds
+        bool In(float x,float z) const
+        {
+            const int i=static_cast<int>(std::floor(x-x0)),j=static_cast<int>(std::floor(z-z0));
+            return i>=0&&j>=0&&i<ix&&j<iz&&inside[static_cast<size_t>(j)*ix+i];
+        }
         // The highest triangle over (x, z): its height and what it is. False: none there.
         bool At(float x,float z,float& h,Lie& lie) const
         {
@@ -198,6 +208,7 @@ namespace MikuMikuDesktopPerch::Golf
             case 5:lie=Lie::Tee;break;
             case 6:lie=Lie::Bunker;break;
             case 8:lie=Lie::Water;break;
+            case 11:lie=Lie::Out;break;   // the band round the course
             default:continue;
             }
             for(std::uint32_t i=mt.first;i+2<mt.first+mt.count;i+=3)
@@ -234,6 +245,34 @@ namespace MikuMikuDesktopPerch::Golf
             g->list.insert(g->list.end(),c.begin(),c.end());
             g->start.push_back(static_cast<std::uint32_t>(g->list.size()));
         }
+        // In bounds: filled from the tee, a metre at a time, up to the band.
+        g->ix=static_cast<int>(std::ceil(hi[0]-lo[0]))+1;
+        g->iz=static_cast<int>(std::ceil(hi[1]-lo[1]))+1;
+        g->inside.assign(static_cast<size_t>(g->ix)*g->iz,0);
+        std::vector<std::uint8_t> open(g->inside.size(),0);
+        for(int j=0;j<g->iz;++j)
+            for(int i=0;i<g->ix;++i)
+            {
+                float h=0;Lie lie=Lie::Out;
+                bool any=true;
+                for(const float dx:{0.25f,0.75f})for(const float dz:{0.25f,0.75f})
+                    if(!g->At(g->x0+i+dx,g->z0+j+dz,h,lie)||lie==Lie::Out)any=false;
+                open[static_cast<size_t>(j)*g->ix+i]=any?1:0;
+            }
+        std::vector<std::pair<int,int>> todo{{static_cast<int>(g->tee.x-g->x0),static_cast<int>(g->tee.z-g->z0)}};
+        g->inLo[0]=g->inLo[1]=1e9f;g->inHi[0]=g->inHi[1]=-1e9f;
+        while(!todo.empty())
+        {
+            const auto [i,j]=todo.back();
+            todo.pop_back();
+            if(i<0||j<0||i>=g->ix||j>=g->iz)continue;
+            const size_t c=static_cast<size_t>(j)*g->ix+i;
+            if(!open[c]||g->inside[c])continue;
+            g->inside[c]=1;
+            g->inLo[0]=std::min(g->inLo[0],g->x0+i);g->inHi[0]=std::max(g->inHi[0],g->x0+i+1);
+            g->inLo[1]=std::min(g->inLo[1],g->z0+j);g->inHi[1]=std::max(g->inHi[1],g->z0+j+1);
+            todo.push_back({i+1,j});todo.push_back({i-1,j});todo.push_back({i,j+1});todo.push_back({i,j-1});
+        }
         made=g;
         return made;
     }
@@ -263,6 +302,10 @@ namespace MikuMikuDesktopPerch::Golf
             }
         }
         pin.y=Height(pin.x,pin.z);
+        static std::weak_ptr<const Ground> plantedOn;
+        static std::shared_ptr<const Wood> planted;
+        if(!planted||plantedOn.lock()!=ground){planted=PlantTrees(*ground);plantedOn=ground;}
+        wood=planted;
     }
 
     V3 Course::Tee() const {return {ground->tee.x,Height(ground->tee.x,ground->tee.z),ground->tee.z};}
@@ -275,15 +318,144 @@ namespace MikuMikuDesktopPerch::Golf
         if(!ground->greens.empty())sum=sum*(1.0f/ground->greens.size());
         return {sum.x,Height(sum.x,sum.z),sum.z};
     }
-    float Course::MinX() const {return std::min(ground->tee.x,pin.x)-42;}
-    float Course::MaxX() const {return std::max(ground->tee.x,pin.x)+58;}
-    float Course::MinZ() const {return ground->tee.z-18;}
-    float Course::MaxZ() const {return std::max(pin.z,ground->clubhouse.z)+20;}
+    float Course::MinX() const {return ground->inLo[0]-4;}
+    float Course::MaxX() const {return ground->inHi[0]+4;}
+    float Course::MinZ() const {return ground->inLo[1]-4;}
+    float Course::MaxZ() const {return ground->inHi[1]+4;}
     float Course::LineX(float z) const
     {
         const V3 t=ground->tee;
         const float span=pin.z-t.z;
         return std::abs(span)<1e-3f?t.x:t.x+(pin.x-t.x)*std::clamp((z-t.z)/span,0.0f,1.0f);
+    }
+
+    // The trees' shapes, measured once on the five models (TREE1-5): the leaves' middle height,
+    // their reach across and up and down, the trunk's radius at the ground (metres).
+    const std::array<TreeShape,TreeKinds>& TreeShapes()
+    {
+        static std::array<TreeShape,TreeKinds> shapes{};
+        static bool measured=false;
+        if(measured)return shapes;
+        measured=true;
+        for(int k=0;k<TreeKinds;++k)
+        {
+            TreeShape& t=shapes[static_cast<size_t>(k)];
+            t={5,4,3,0.25f};
+            SceneModel m;
+            const std::wstring name=L"TREE"+std::to_wstring(k+1);
+            if(!LoadScene(name.c_str(),m))continue;
+            constexpr float M=1/12.5f;
+            float lo=1e9f,hi=-1e9f,across=0,trunk=0;
+            for(const auto& mt:m.materials)
+            {
+                const bool leaves=mt.name.find("Lea")!=std::string::npos;
+                for(std::uint32_t i=mt.first;i<mt.first+mt.count;++i)
+                {
+                    const float* v=&m.vertices[static_cast<size_t>(m.indices[i])*8];
+                    const float r=std::hypot(v[0],v[2])*M,y=v[1]*M;
+                    if(leaves){lo=std::min(lo,y);hi=std::max(hi,y);across=std::max(across,r);}
+                    else if(y<1.0f)trunk=std::max(trunk,r);
+                }
+            }
+            if(hi>lo)t={(lo+hi)/2,across*0.8f,(hi-lo)/2*0.9f,std::max(0.12f,trunk)};
+        }
+        return shapes;
+    }
+
+    std::shared_ptr<const Course::Wood> Course::PlantTrees(const Ground& g)
+    {
+        auto w=std::make_shared<Wood>();
+        const Ground* ground=&g;
+        auto& trees=w->trees;
+        // A wood all round outside the band: a tree in each cell of a 5 m grid (shifted a
+        // little at random), where there is ground, clear of the band by a few metres, off the
+        // cart path and the water, not on the clubhouse's ground.
+        constexpr float Step=5,WoodDepth=64;   // out to the ground's end
+        std::mt19937 r(0x7EEu);
+        std::uniform_real_distribution<float> u(0,1);
+        const V3 c=ground->clubhouse;
+        for(float z=ground->inLo[1]-WoodDepth;z<ground->inHi[1]+WoodDepth;z+=Step)
+            for(float x=ground->inLo[0]-WoodDepth;x<ground->inHi[0]+WoodDepth;x+=Step)
+            {
+                const float px=x+(u(r)-0.5f)*Step*0.8f,pz=z+(u(r)-0.5f)*Step*0.8f;
+                const int kind=static_cast<int>(u(r)*TreeKinds)%TreeKinds;
+                // Taller the further out, so the wood closes off the view beyond it.
+                const float outX=std::max({0.0f,ground->inLo[0]-px,px-ground->inHi[0]}),outZ=std::max({0.0f,ground->inLo[1]-pz,pz-ground->inHi[1]});
+                const float yaw=u(r)*2*Pi,scale=0.85f+0.4f*u(r)+0.7f*std::min(1.0f,std::hypot(outX,outZ)/45);
+                float h=0;
+                Lie lie;
+                if(ground->In(px,pz)||!ground->At(px,pz,h,lie)||(lie!=Lie::Rough&&lie!=Lie::Out))continue;
+                if(std::abs(px-c.x)<30&&std::abs(pz-c.z)<24)continue;
+                bool clear=true;
+                for(int k=0;k<8&&clear;++k)
+                {
+                    const float an=k*Pi/4;
+                    for(const float d:{2.5f,4.5f})
+                    {
+                        float h2=0;Lie l2;
+                        const float qx=px+d*std::cos(an),qz=pz+d*std::sin(an);
+                        if(ground->In(qx,qz)||(ground->At(qx,qz,h2,l2)&&(l2==Lie::Water||l2==Lie::Fairway)))clear=false;
+                    }
+                }
+                if(clear)trees.push_back({px,h,pz,yaw,scale,kind});
+            }
+        // Each tree listed in the cells its leaves reach over (for the ball).
+        const auto& shapes=TreeShapes();
+        w->x0=ground->inLo[0]-70;w->z0=ground->inLo[1]-70;
+        w->nx=static_cast<int>((ground->inHi[0]+70-w->x0)/Wood::Cell)+1;
+        w->nz=static_cast<int>((ground->inHi[1]+70-w->z0)/Wood::Cell)+1;
+        w->cells.assign(static_cast<size_t>(w->nx)*w->nz,{});
+        for(size_t t=0;t<trees.size();++t)
+        {
+            const Tree& tr=trees[t];
+            const float reach=shapes[static_cast<size_t>(tr.kind)].across*tr.scale;
+            const int i0=static_cast<int>((tr.x-reach-w->x0)/Wood::Cell),i1=static_cast<int>((tr.x+reach-w->x0)/Wood::Cell);
+            const int j0=static_cast<int>((tr.z-reach-w->z0)/Wood::Cell),j1=static_cast<int>((tr.z+reach-w->z0)/Wood::Cell);
+            for(int j=std::max(0,j0);j<=std::min(w->nz-1,j1);++j)
+                for(int i=std::max(0,i0);i<=std::min(w->nx-1,i1);++i)w->cells[static_cast<size_t>(j)*w->nx+i].push_back(static_cast<int>(t));
+        }
+        return w;
+    }
+
+    // A ball at p in the air: in a tree's leaves it is slowed hard (and knocked about a little);
+    // against its trunk it bounces off. False when nothing is there.
+    bool Course::ThroughTrees(V3& p,V3& v,V3& spin,float step) const
+    {
+        if(!wood||wood->trees.empty())return false;
+        const Wood& w=*wood;
+        const int i=static_cast<int>((p.x-w.x0)/Wood::Cell),j=static_cast<int>((p.z-w.z0)/Wood::Cell);
+        if(i<0||j<0||i>=w.nx||j>=w.nz)return false;
+        const auto& shapes=TreeShapes();
+        bool hit=false;
+        for(const int t:w.cells[static_cast<size_t>(j)*w.nx+i])
+        {
+            const Tree& tr=w.trees[static_cast<size_t>(t)];
+            const TreeShape& s=shapes[static_cast<size_t>(tr.kind)];
+            const float dx=p.x-tr.x,dz=p.z-tr.z,dy=p.y-(tr.y+s.middle*tr.scale);
+            const float rx=s.across*tr.scale,ry=s.half*tr.scale;
+            if((dx*dx+dz*dz)/(rx*rx)+dy*dy/(ry*ry)<1)
+            {
+                // Through leaves and twigs: most of its speed gone within a few metres.
+                const float k=std::exp(-4*step);
+                v=v*k;
+                spin=spin*k;
+                const float jig=std::sin(p.x*31.7f+p.y*17.3f+p.z*23.1f);
+                v.x+=jig*2*step;v.z+=std::cos(p.x*13.1f+p.z*29.9f)*2*step;
+                hit=true;
+            }
+            const float flat=std::hypot(dx,dz),trunk=s.trunk*tr.scale;
+            if(flat<trunk+BallRadius&&p.y<tr.y+(s.middle-s.half*0.5f)*tr.scale)
+            {
+                // The trunk: back off it, the speed across it turned back and mostly lost.
+                const V3 n=Normalized({dx,0,dz});
+                const float in=Dot(v,n);
+                if(in<0)v=v-n*(1.6f*in);
+                v=v*0.5f;
+                p=p+n*(trunk+BallRadius-flat);
+                hit=true;
+            }
+        }
+        return hit;
     }
 
     float Course::Height(float x,float z) const
@@ -311,7 +483,7 @@ namespace MikuMikuDesktopPerch::Golf
 
     Lie Course::LieAt(float x,float z) const
     {
-        if(x<MinX()||x>MaxX()||z<MinZ()||z>MaxZ())return Lie::Out;
+        if(!ground->In(x,z))return Lie::Out;   // beyond the band round the course
         // The clubhouse's ground (44 by 26 m round its middle, the steps out in front of it).
         const V3 c=ground->clubhouse;
         if(std::abs(x-c.x)<23.5f&&z>c.z-17&&z<c.z+14)return Lie::Out;
@@ -337,7 +509,13 @@ namespace MikuMikuDesktopPerch::Golf
 
     float FlatCarry(int club,float spotX,float spotY)
     {
-        if(club==Putter)return 0;
+        const V3 l=FlatLanding(club,spotX,spotY);
+        return std::hypot(l.x,l.z);
+    }
+
+    V3 FlatLanding(int club,float spotX,float spotY)
+    {
+        if(club==Putter)return {};
         // As Fly launches it, flown over level ground until it comes back down to it.
         const Club& c=ClubOf(club);
         float launch=c.loft*(club<=1?0.95f:0.86f)*Deg-spotY*4*Deg;
@@ -362,10 +540,10 @@ namespace MikuMikuDesktopPerch::Golf
             if(p.y<0&&v.y<0)
             {
                 const float t=before.y/(before.y-p.y);
-                return std::hypot(before.x+(p.x-before.x)*t,before.z+(p.z-before.z)*t);
+                return {before.x+(p.x-before.x)*t,0,before.z+(p.z-before.z)*t};
             }
         }
-        return std::hypot(p.x,p.z);
+        return {p.x,0,p.z};
     }
 
     Flight Fly(const Course& course,V3 from,Lie lie,const Shot& shot,const Wind& wind,bool keepPath,float step)
@@ -428,6 +606,7 @@ namespace MikuMikuDesktopPerch::Golf
                 spin=spin*std::exp(-step/14);
                 v=v+a*step;
                 p=p+v*step;
+                course.ThroughTrees(p,v,spin,step);
                 ground=course.Height(p.x,p.z);
                 if(p.y-BallRadius<=ground)
                 {
@@ -640,6 +819,20 @@ namespace MikuMikuDesktopPerch::Golf
             swprintf_s(line,L"course: tee %.1f,%.1f,%.1f; the model's cup %.1f,%.1f,%.1f (%.1f m); clubhouse %.1f,%.1f,%.1f; bounds x %.0f..%.0f z %.0f..%.0f\n",
                        c.Tee().x,c.Tee().y,c.Tee().z,c.Pin().x,c.Pin().y,c.Pin().z,c.Length(),c.Clubhouse().x,c.Clubhouse().y,c.Clubhouse().z,c.MinX(),c.MaxX(),c.MinZ(),c.MaxZ());
             out+=line;
+            swprintf_s(line,L"ground x %.0f..%.0f z %.0f..%.0f; %zu trees\n",ground->x0,ground->x0+ground->nx*Ground::Cell,ground->z0,ground->z0+ground->nz*Ground::Cell,c.Trees().size());
+            out+=line;
+            // A ball driven into the wood: how much speed the leaves take (a few trees tried).
+            for(size_t k=0;k<c.Trees().size()&&k<400;k+=97)
+            {
+                const auto& t=c.Trees()[k];
+                const TreeShape& sh=TreeShapes()[static_cast<size_t>(t.kind)];
+                const V3 middle{t.x,t.y+sh.middle*t.scale,t.z};
+                V3 p=middle+V3{-15,0,0},v{40,0,0},spin{};
+
+                for(int i=0;i<60;++i){c.ThroughTrees(p,v,spin,1/60.0f);p=p+v*(1/60.0f);}
+                swprintf_s(line,L"tree %zu (kind %d, x%.2f): leaves %.1f m up, %.1f m across; a ball at 40 m/s through it leaves at %.1f m/s\n",k,t.kind+1,t.scale,sh.middle*t.scale,sh.across*t.scale,Length(v));
+                out+=line;
+            }
             out+=L"clubs from the tee (full power, no wind): carry, total\n";
             for(int k=0;k<Putter;++k)
             {

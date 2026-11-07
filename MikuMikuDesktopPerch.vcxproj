@@ -243,6 +243,7 @@
     <FxCompile Include="shaders\PostPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
     <FxCompile Include="shaders\UpscalePS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
     <FxCompile Include="shaders\GeometryVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
+    <FxCompile Include="shaders\GeometryInstVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>
     <FxCompile Include="shaders\GeometryPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
     <FxCompile Include="shaders\OverlayPS.hlsl"><ShaderType>Pixel</ShaderType></FxCompile>
     <FxCompile Include="shaders\PieceVS.hlsl"><ShaderType>Vertex</ShaderType></FxCompile>

@@ -20,6 +20,7 @@
 #include "PostPS.h"
 #include "UpscalePS.h"
 #include "GeometryVS.h"
+#include "GeometryInstVS.h"
 #include "GeometryPS.h"
 #include "PieceVS.h"
 #include "PiecePS.h"
@@ -609,6 +610,20 @@ namespace MikuMikuDesktopPerch
                 Log(L"  geometry pipeline: 0x%08X",static_cast<unsigned>(hr));
                 return false;
             }
+            // Its instanced kind (the scenery's trees): the same, placed by instance.
+            pso.VS={g_GeometryInstVS,sizeof(g_GeometryInstVS)};
+            if(const HRESULT hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&geometryInstPso));FAILED(hr))
+                Log(L"  instanced geometry pipeline: 0x%08X",static_cast<unsigned>(hr));
+            pso.VS={g_GeometryVS,sizeof(g_GeometryVS)};
+            // Its glowing kind: added onto what is there, tested against depth but not writing it.
+            auto& add=pso.BlendState.RenderTarget[0];
+            add.BlendEnable=TRUE;
+            add.SrcBlend=D3D12_BLEND_ONE;add.DestBlend=D3D12_BLEND_ONE;add.BlendOp=D3D12_BLEND_OP_ADD;
+            add.SrcBlendAlpha=D3D12_BLEND_ZERO;add.DestBlendAlpha=D3D12_BLEND_ONE;add.BlendOpAlpha=D3D12_BLEND_OP_ADD;
+            pso.BlendState.RenderTarget[1].RenderTargetWriteMask=0;
+            pso.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ZERO;
+            if(const HRESULT hr=device->CreateGraphicsPipelineState(&pso,IID_PPV_ARGS(&glowPso));FAILED(hr))
+                Log(L"  glow pipeline: 0x%08X",static_cast<unsigned>(hr));
         }
         // The old buffer may still be drawn from: the GPU finishes first.
         WaitIdle();
@@ -1212,7 +1227,7 @@ namespace MikuMikuDesktopPerch
                 scene.modelLightPlaces[i]={XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at),l.onModel?l.radius*shrink:0.0f};
             }
         }
-        scene.water={water?1.0f:0.0f,waterTime,0,0};
+        scene.water={water?1.0f:0.0f,waterTime,waterWind.x,waterWind.y};
         for(size_t i=0;i<MaxRipples;++i)
         {
             const Ripple r=i<ripples.size()?ripples[i]:Ripple{};
@@ -1312,6 +1327,49 @@ namespace MikuMikuDesktopPerch
             {
                 std::memcpy(f.movingMapped,moving.data(),moving.size()*sizeof(GeometryVertex));
                 movingCount=static_cast<UINT>(moving.size());
+            }
+        }
+        // The scenery's instanced places this frame, group after group.
+        std::vector<size_t> instanceStart;
+        if(!sceneryInstances.empty()&&geometryInstPso)
+        {
+            if(!f.instances)
+            {
+                auto heap=HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+                auto desc=BufferDesc(MaxSceneryInstances*sizeof(SceneryInstance));
+                if(FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&f.instances)))||
+                   FAILED(f.instances->Map(0,nullptr,reinterpret_cast<void**>(&f.instancesMapped))))
+                {f.instances.Reset();f.instancesMapped=nullptr;}
+            }
+            size_t at=0;
+            for(const auto& g:sceneryInstances)
+            {
+                instanceStart.push_back(at);
+                const size_t n=std::min(g.size(),MaxSceneryInstances-at);
+                if(f.instancesMapped&&n)std::memcpy(f.instancesMapped+at*sizeof(SceneryInstance),g.data(),n*sizeof(SceneryInstance));
+                at+=n;
+            }
+            instanceStart.push_back(at);
+        }
+        UINT glowCount=0;
+        if(!glowing.empty()&&glowPso)
+        {
+            if(f.glowCapacity<glowing.size())
+            {
+                if(f.glow&&f.glowMapped)f.glow->Unmap(0,nullptr);
+                f.glow.Reset();f.glowMapped=nullptr;f.glowCapacity=0;
+                const size_t capacity=glowing.size()+glowing.size()/2+1024;
+                auto heap=HeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+                auto desc=BufferDesc(capacity*sizeof(GeometryVertex));
+                if(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&f.glow)))&&
+                   SUCCEEDED(f.glow->Map(0,nullptr,reinterpret_cast<void**>(&f.glowMapped))))
+                    f.glowCapacity=capacity;
+                else{f.glow.Reset();f.glowMapped=nullptr;}
+            }
+            if(f.glowMapped)
+            {
+                std::memcpy(f.glowMapped,glowing.data(),glowing.size()*sizeof(GeometryVertex));
+                glowCount=static_cast<UINT>(glowing.size());
             }
         }
         // SetPieces' list this frame, in this frame's own buffer.
@@ -1431,9 +1489,28 @@ namespace MikuMikuDesktopPerch
                 commandList->IASetVertexBuffers(0,1,&scenery);
                 for(const SceneryDraw& d:sceneryDraws)
                 {
+                    if(d.group>=0)continue;   // the instanced ones next
                     const size_t slot=d.texture>=0&&static_cast<size_t>(d.texture)<MaxSceneryTextures?materialCount*3+13+static_cast<size_t>(d.texture)*3:materialCount*3+10;
                     commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+slot*srvStride});
                     commandList->DrawInstanced(d.count,1,d.start,0);
+                }
+                if(f.instances&&instanceStart.size()>1)
+                {
+                    commandList->SetPipelineState(geometryInstPso.Get());
+                    for(const SceneryDraw& d:sceneryDraws)
+                    {
+                        if(d.group<0||static_cast<size_t>(d.group)+1>=instanceStart.size())continue;
+                        const size_t first=instanceStart[static_cast<size_t>(d.group)],n=instanceStart[static_cast<size_t>(d.group)+1]-first;
+                        if(!n)continue;
+                        const size_t slot=d.texture>=0&&static_cast<size_t>(d.texture)<MaxSceneryTextures?materialCount*3+13+static_cast<size_t>(d.texture)*3:materialCount*3+10;
+                        commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+slot*srvStride});
+                        // (SV_InstanceID starts at 0 whatever the first instance: the group's
+                        // places are found by where the buffer is bound from.)
+                        commandList->SetGraphicsRootShaderResourceView(2,f.instances->GetGPUVirtualAddress()+first*sizeof(SceneryInstance));
+                        commandList->DrawInstanced(d.count,static_cast<UINT>(n),d.start,0);
+                    }
+                    commandList->SetGraphicsRootShaderResourceView(2,uploadVa+boneOffset);
+                    commandList->SetPipelineState(geometryPso.Get());
                 }
             }
             commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+(materialCount*3+10)*srvStride});
@@ -1521,6 +1598,15 @@ namespace MikuMikuDesktopPerch
                     commandList->DrawIndexedInstanced(pieces[i].indexCount,1,pieces[i].indexStart,pieces[i].baseVertex,static_cast<UINT>(i));
             commandList->IASetVertexBuffers(0,2,vbs);
             commandList->IASetIndexBuffer(&ib);
+        }
+        if(glowCount)
+        {
+            commandList->SetPipelineState(glowPso.Get());
+            commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+(materialCount*3+10)*srvStride});
+            const D3D12_VERTEX_BUFFER_VIEW view{f.glow->GetGPUVirtualAddress(),glowCount*static_cast<UINT>(sizeof(GeometryVertex)),sizeof(GeometryVertex)};
+            commandList->IASetVertexBuffers(0,1,&view);
+            commandList->DrawInstanced(glowCount,1,0,0);
+            commandList->IASetVertexBuffers(0,2,vbs);
         }
         if(!particles.empty())
         {

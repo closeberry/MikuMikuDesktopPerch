@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <random>
@@ -66,6 +67,12 @@ namespace MikuMikuDesktopPerch::Golf
     struct Ground;
     std::shared_ptr<const Ground> LoadGround();   // made once from the COURSE resource (null: none)
 
+    // A tree's shape (metres, at its own size): its leaves' middle height, reach across, half
+    // their height; the trunk's radius.
+    struct TreeShape {float middle,across,half,trunk;};
+    constexpr int TreeKinds=5;
+    const std::array<TreeShape,TreeKinds>& TreeShapes();
+
     // One hole on the course: the pin placed by a seed (0: the model's own cup).
     class Course
     {
@@ -87,12 +94,29 @@ namespace MikuMikuDesktopPerch::Golf
         float MinZ() const;
         float MaxZ() const;
         float LineX(float z) const;     // the straight line from the tee to the pin, across at z
+        // The wood round the course: the trees out of bounds (where, turned, how big, which of
+        // the five), the same for every hole.
+        struct Tree {float x,y,z,yaw,scale;int kind;};
+        const std::vector<Tree>& Trees() const {return wood->trees;}
+        // A ball in the air at p: slowed in a tree's leaves, bounced off its trunk (false: none there).
+        bool ThroughTrees(V3& p,V3& v,V3& spin,float step) const;
         std::uint32_t Seed() const {return seed;}
 
     private:
         std::shared_ptr<const Ground> ground;
         std::uint32_t seed;
         V3 pin;
+        // The wood, planted once for the ground and shared by every hole on it.
+        struct Wood
+        {
+            std::vector<Tree> trees;
+            static constexpr float Cell=8;
+            float x0=0,z0=0;
+            int nx=0,nz=0;
+            std::vector<std::vector<int>> cells;   // the trees whose leaves reach over each cell
+        };
+        static std::shared_ptr<const Wood> PlantTrees(const Ground& ground);
+        std::shared_ptr<const Wood> wood;
     };
 
     struct Wind {float speed=0,toward=0;};   // m/s; the way it blows (radians, 0 = down the hole, + to the right)
@@ -131,6 +155,9 @@ namespace MikuMikuDesktopPerch::Golf
     // A club's carry at full power from a good lie on level ground with no wind (the gauge's
     // numbers), struck at that spot.
     float FlatCarry(int club,float spotX=0,float spotY=0);
+    // Where it comes down on level ground with no wind, struck square at full power: x across
+    // (aimed along +z), z ahead (metres).
+    V3 FlatLanding(int club,float spotX=0,float spotY=0);
     // Clubs that can be played from a lie: off the green every club but the putter (and the
     // putter near the green); on it, only the putter.
     std::vector<int> ClubsFor(Lie lie,float toPin);

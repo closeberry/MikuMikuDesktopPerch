@@ -37,10 +37,13 @@ namespace MikuMikuDesktopPerch
         constexpr int You=0,Her=1,Holes=3,MostStrokes=10;
         constexpr float K=12.5f;   // world units a metre (MMD's 8 cm a unit)
         constexpr float Pi=3.14159265f,Deg=Pi/180;
-        constexpr float BeamHigh=25;   // the pin's beam, metres up
+        constexpr float BeamHigh=25;   // where the pin's distance is written on its beam, metres up
+        constexpr float BeamSky=700;   // how high the beam goes (into the sky's dome)
         float FovY(){return 45.0f*Deg;}   // the camera's (the gauge in front of it is placed by it)
 
         enum class Phase {Intro,Aim,Gauge,Swing,Flying,Settle,HoleOver,Over};
+        // A drop of water thrown up (metres, metres a second, seconds).
+        struct Drop {V3 at,v;float age=0,life=1,size=0.05f;};
         // The gauge: waiting; the marker running out for the power (and back: no click by the
         // time it is home again lets the shot go); running back past the line for the strike
         // (not for the putter); done.
@@ -85,6 +88,7 @@ namespace MikuMikuDesktopPerch
             float gaugeAt=0,gaugePower=0,gaugeAccuracy=0;
             float gaugeWay=1;           // the marker going out (+1) or back (-1) while the power is chosen
             float spotX=0,spotY=0;      // where on the ball you strike (Ctrl and the arrow keys)
+            float spotShownX=0,spotShownY=0;   // where its mark is drawn, easing after it
             bool overhead=false;        // 0: the aim's circle seen from above
             bool help=false;            // Tab: the keys shown
             // Diagnostics (--golf-gauge): your gauge held at power, the marker at; flags: help,
@@ -119,6 +123,11 @@ namespace MikuMikuDesktopPerch
             float herYaw=0;
             bool herSwinging=false;
             bool moved=false;      // put somewhere else this frame (her hair and clothes settled again)
+            size_t treesShown=0;   // trees drawn this frame
+            bool justShot=false;   // the shot in the air was struck square (its trail glitters)
+            bool splashed=false;   // the ball in the air has fallen into the pond
+            std::vector<MascotRenderer::Ripple> ripples;   // on the pond (world units)
+            std::vector<Drop> drops;
             // Diagnostics: frozen at a stage of the swing (-1: no), the camera round her.
             float posing=-1,poseYaw=0;
             // The camera: where it looks from and at (world units), eased; the user's turn and
@@ -156,6 +165,8 @@ namespace MikuMikuDesktopPerch
             bool askingQuit=false,overTold=false;
             RectF askButtons[2];
         } state;
+
+        void Splash(V3 p);   // (below)
 
         std::wstring HerName(){return state.her.name.empty()?std::wstring(T(L"相手",L"Her")):state.her.name;}
         float Scale(){return state.window?static_cast<float>(GetDpiForWindow(state.window))/96.0f:1;}
@@ -235,8 +246,8 @@ namespace MikuMikuDesktopPerch
 
         // ---- The course in 3D ----------------------------------------------------------------
 
-        // The geometry's look 7 (GeometryPS: Course): alpha 0.14, kind in minus uv.z.
-        constexpr float CourseLook=0.14f,Unlit=0.25f;
+        // The geometry's look for the course (GeometryPS: look 6, its kind plus 10 in minus uv.z).
+        constexpr float CourseLook=0.12f,Unlit=0.25f;   // GeometryPS: look 6, the course's kinds being 10 on
         struct Mesh
         {
             std::vector<MascotRenderer::GeometryVertex> out;
@@ -245,7 +256,7 @@ namespace MikuMikuDesktopPerch
             {
                 MascotRenderer::GeometryVertex v{{p[0],p[1],p[2]},{n[0],n[1],n[2]},{c[0],c[1],c[2],c[3]}};
                 v.wall[0]=weights[0];v.wall[1]=weights[1];v.wall[2]=0;v.wall[3]=weights[2];
-                v.uv[0]=weights[3];v.uv[1]=0;v.uv[2]=c[3]==CourseLook?-kind:0;v.uv[3]=0;
+                v.uv[0]=weights[3];v.uv[1]=0;v.uv[2]=c[3]==CourseLook?-(10+kind):0;v.uv[3]=0;
                 out.push_back(v);
             }
             void Tri(const V& a,const V& b,const V& c,const float (&col)[4],float kind=4)
@@ -328,7 +339,7 @@ namespace MikuMikuDesktopPerch
                     {
                         const BYTE* from=static_cast<const BYTE*>(bits.Scan0)+static_cast<size_t>(y)*bits.Stride;
                         BYTE* to=level.pixels.data()+static_cast<size_t>(y)*w*4;
-                        for(UINT x=0;x<w;++x,from+=4,to+=4){to[0]=from[2];to[1]=from[1];to[2]=from[0];to[3]=255;}
+                        for(UINT x=0;x<w;++x,from+=4,to+=4){to[0]=from[2];to[1]=from[1];to[2]=from[0];to[3]=from[3];}
                     }
                     bitmap.UnlockBits(&bits);
                     GenerateMips(image);
@@ -349,7 +360,8 @@ namespace MikuMikuDesktopPerch
             std::vector<ImageRgba8> pictures;
             std::vector<std::string> named;
             bool all=true;
-            auto add=[&](const wchar_t* resource,XMFLOAT3 offset){
+            auto add=[&](const wchar_t* resource,XMFLOAT3 offset,float yaw=0,float scale=1,int group=-1){
+                const float turnC=std::cos(yaw),turnS=std::sin(yaw);
                 Golf::SceneModel m;
                 if(!Golf::LoadScene(resource,m)){all=false;Log(L"golf: no model %s",resource);return;}
                 for(const auto& mt:m.materials)
@@ -382,19 +394,32 @@ namespace MikuMikuDesktopPerch
                     const bool sky=mt.kind==10,water=mt.kind==8;
                     float c[4]={mt.rgb[0],mt.rgb[1],mt.rgb[2],sky?Unlit:CourseLook};
                     if(sky)c[0]=c[1]=c[2]=1;
-                    if(water){c[0]=0.10f;c[1]=0.32f;c[2]=0.40f;}
+                    if(water){c[0]=0.07f;c[1]=0.22f;c[2]=0.25f;}   // the water's own colour, under what it mirrors
+                    const bool grass=mt.kind==1||(mt.kind>=2&&mt.kind<=5)||mt.kind==11;
+                    if(mt.kind==3)for(int i=0;i<3;++i)state.greenColour[i]=mt.rgb[i];   // for filling the model's own cup
                     MascotRenderer::SceneryDraw d;
                     d.start=static_cast<UINT>(vertices.size());
                     d.texture=picture;
+                    d.group=group;
                     for(std::uint32_t i=mt.first;i<mt.first+mt.count;++i)
                     {
                         const float* v=&m.vertices[static_cast<size_t>(m.indices[i])*8];
-                        MascotRenderer::GeometryVertex g{{v[0]+offset.x,v[1]+offset.y,v[2]+offset.z},{v[3],v[4],v[5]},{c[0],c[1],c[2],c[3]}};
+                        // Turned about the up axis and sized (the trees), then put in place.
+                        const float px=v[0]*turnC+v[2]*turnS,pz=-v[0]*turnS+v[2]*turnC,nx=v[3]*turnC+v[5]*turnS,nz=-v[3]*turnS+v[5]*turnC;
+                        MascotRenderer::GeometryVertex g{{px*scale+offset.x,v[1]*scale+offset.y,pz*scale+offset.z},{nx,v[4],nz},{c[0],c[1],c[2],c[3]}};
                         g.wall[0]=g.wall[1]=g.wall[2]=g.wall[3]=0;
                         g.uv[0]=v[6];g.uv[1]=v[7];g.uv[3]=0;
                         if(picture>=0)g.uv[2]=2;
-                        else if(water){g.uv[0]=1;g.uv[1]=0;g.uv[2]=-1;}   // GeometryPS's Course: all water
-                        else{g.uv[0]=g.uv[1]=0;g.uv[2]=sky?0.0f:-4.0f;}
+                        else if(water){g.uv[0]=g.uv[1]=0;g.uv[2]=-15;}   // GeometryPS's CourseWater
+                        else if(grass)
+                        {
+                            // The grass drawn by GeometryPS's CourseGround: mown stripes on the
+                            // fairway, faint squares on the green, fine on the tee and fringe.
+                            g.wall[0]=mt.kind==2?1.0f:0.0f;
+                            g.wall[1]=mt.kind==3?1.0f:0.0f;
+                            g.uv[0]=0;g.uv[1]=mt.kind==4||mt.kind==5?1.0f:0.0f;g.uv[2]=-11;
+                        }
+                        else{g.uv[0]=g.uv[1]=0;g.uv[2]=sky?0.0f:-14.0f;}
                         vertices.push_back(g);
                     }
                     d.count=static_cast<UINT>(vertices.size())-d.start;
@@ -406,6 +431,14 @@ namespace MikuMikuDesktopPerch
             const V3 house=Course().Clubhouse();
             const std::wstring name=L"CLUBHOUSE"+std::to_wstring(std::clamp(clubhouse,1,4));
             add(name.c_str(),W(house));
+            // The wood round the course: each of the five trees once, drawn at its places
+            // (PlaceTrees, every frame).
+            for(int k=0;k<Golf::TreeKinds;++k)
+            {
+                const std::wstring tree=L"TREE"+std::to_wstring(k+1);
+                add(tree.c_str(),{0,0,0},0,1,k);
+            }
+            Log(L"golf: %zu trees in the wood",Course().Trees().size());
             const bool ok=state.renderer->SetScenery(vertices,draws,pictures);
             Log(L"golf: scenery %zu triangles in %zu stretches, %zu pictures, clubhouse %d%s",vertices.size()/3,draws.size(),pictures.size(),clubhouse,ok&&all?L"":L" (something missing)");
             return ok&&all;
@@ -486,24 +519,19 @@ namespace MikuMikuDesktopPerch
 
         float PinAim(V3 from){const V3 p=Course().Pin();return std::atan2(p.x-from.x,p.z-from.z);}
 
-        // Your aim's circle: where the ball comes down struck at full power with this club (a
-        // good lie whatever the ball lies in, no wind, the spot as set); for the putter, the
-        // pin's distance along the aim.
+        // Your aim's circle: where the ball comes down struck at full power with this club,
+        // as on level ground with no wind (the spot as set); for the putter, where full power
+        // rolls to on a level green.
         void UpdateLanding()
         {
             const Ball& b=state.balls[You];
-            const V3 dir{std::sin(state.aim),0,std::cos(state.aim)};
+            const V3 dir{std::sin(state.aim),0,std::cos(state.aim)},side{std::cos(state.aim),0,-std::sin(state.aim)};
             if(state.club==Golf::Putter)
-            {
-                state.landing=b.at+dir*Golf::Flat(b.at,Course().Pin());
-            }
+                state.landing=b.at+dir*Golf::PutterRange(Golf::Flat(b.at,Course().Pin()),Course().Pin().y-b.at.y);
             else
             {
-                Golf::Shot s;
-                s.club=state.club;s.aim=state.aim;s.power=1;
-                s.spotX=state.spotX;s.spotY=state.spotY;
-                const Golf::Flight f=Golf::Fly(Course(),b.at,Lie::Fairway,s,{},true,1/60.0f);
-                state.landing=f.path.empty()?f.rest:f.path[std::min<size_t>(f.landing,f.path.size()-1)];
+                const V3 l=Golf::FlatLanding(state.club,state.spotX,state.spotY);
+                state.landing=b.at+dir*l.z+side*l.x;
             }
             state.landing.y=Course().Height(state.landing.x,state.landing.z);
             state.landingKnown=true;
@@ -672,6 +700,8 @@ namespace MikuMikuDesktopPerch
             state.flight=Golf::Fly(Course(),b.at,b.lie,state.shot,state.wind,true,1/60.0f);
             state.flightTime=0;
             state.launched=true;
+            state.justShot=state.shot.club!=Golf::Putter&&std::abs(state.shot.accuracy)<0.08f;
+            state.splashed=false;
             b.teed=true;
             ++b.strokes;
             ++state.shots;
@@ -698,9 +728,11 @@ namespace MikuMikuDesktopPerch
                 b.holed=true;
                 b.at=Course().Pin();
                 const int par=Course().Par(),n=b.strokes;
-                const std::wstring score=n==1?T(L"ホールインワン！",L"Hole in one!"):n<=par-2?T(L"イーグル！",L"Eagle!"):n==par-1?T(L"バーディー！",L"Birdie!"):
-                                         n==par?T(L"パー",L"Par"):n==par+1?T(L"ボギー",L"Bogey"):n==par+2?T(L"ダブルボギー",L"Double bogey"):Fmt(T(L"{0}打",L"{0} strokes"),{std::to_wstring(n)});
-                Banner(T(L"カップイン！",L"In the cup!"),(hers?name+L"  ":std::wstring(T(L"あなた  ",L"You  ")))+score,2.6);
+                // The score's name, large; who and how many strokes under it.
+                const std::wstring score=n==1?T(L"ホールインワン！",L"Hole in one!"):n<=par-3?T(L"アルバトロス！",L"Albatross!"):n==par-2?T(L"イーグル！",L"Eagle!"):
+                                         n==par-1?T(L"バーディー！",L"Birdie!"):n==par?T(L"パー",L"Par"):n==par+1?T(L"ボギー",L"Bogey"):n==par+2?T(L"ダブルボギー",L"Double bogey"):
+                                         n==par+3?T(L"トリプルボギー",L"Triple bogey"):Fmt(T(L"+{0}",L"+{0}"),{std::to_wstring(n-par)});
+                Banner(score,(hers?name+L"  ":std::wstring(T(L"あなた  ",L"You  ")))+Fmt(T(L"{0}打",L"{0} strokes"),{std::to_wstring(n)}),2.6);
                 if(hers){Face(Expression::Smile,3);Happened(7,L"カップイン",1,Fmt(T(L"ゴルフで、{0}がカップに入れた（{1}打）。",L"In the golf game, {0} holed out ({1} strokes)."),{name,std::to_wstring(n)}),{T(L"ナイスイン！",L"Nice putt!")});}
                 else{Face(Expression::Smile,2.5);Happened(7,L"あなたのカップイン",1,Fmt(T(L"ゴルフで、持ち主がカップに入れた（{0}打）。",L"In the golf game, the owner holed out ({0} strokes)."),{std::to_wstring(n)}),{T(L"入った！",L"In!")});}
                 return;
@@ -879,7 +911,25 @@ namespace MikuMikuDesktopPerch
             case Phase::Gauge:
                 if(state.turn==You)
                 {
-                    if(state.aimKeys!=0&&state.gauge==GaugeState::Ready)
+                    // The spot on the ball, moved smoothly while Ctrl and an arrow are held; up or
+                    // down alone also brings it back to the middle across.
+                    if(state.gauge==GaugeState::Ready&&state.phase==Phase::Aim&&state.club!=Golf::Putter&&GetKeyState(VK_CONTROL)<0&&!state.autoplay)
+                    {
+                        const float across=(GetKeyState(VK_RIGHT)<0?1.0f:0.0f)-(GetKeyState(VK_LEFT)<0?1.0f:0.0f);
+                        const float upDown=(GetKeyState(VK_UP)<0?1.0f:0.0f)-(GetKeyState(VK_DOWN)<0?1.0f:0.0f);
+                        if(across!=0||upDown!=0)
+                        {
+                            constexpr float Speed=1.1f;   // ball radii a second
+                            const float step=Speed*static_cast<float>(dt);
+                            state.spotX+=across*step;
+                            state.spotY+=upDown*step;
+                            if(across==0)state.spotX=std::abs(state.spotX)<=step?0:state.spotX-std::copysign(step,state.spotX);
+                            const float r=std::hypot(state.spotX,state.spotY);
+                            if(r>1){state.spotX/=r;state.spotY/=r;}
+                            UpdateLanding();
+                        }
+                    }
+                    if(state.aimKeys!=0&&state.gauge==GaugeState::Ready&&GetKeyState(VK_CONTROL)>=0)
                     {
                         const float speed=(GetKeyState(VK_SHIFT)<0?3.0f:(state.club==Golf::Putter?8.0f:18.0f))*Deg;
                         state.aim+=state.aimKeys*speed*static_cast<float>(dt);
@@ -949,6 +999,11 @@ namespace MikuMikuDesktopPerch
                 // Faster while it rolls a long way on the ground.
                 state.flightTime+=dt;
                 if(state.turn==Her)state.swingTime+=dt;
+                if(state.flight.water&&!state.splashed&&state.flightTime*60>=state.flight.path.size()-1)
+                {
+                    state.splashed=true;
+                    Splash(state.flight.path.back());
+                }
                 const double end=state.flight.path.size()/60.0;
                 if(state.flightTime>=end+0.3)
                 {
@@ -1111,6 +1166,212 @@ namespace MikuMikuDesktopPerch
             state.renderer->SetCamera(XMLoadFloat3(&state.eye),XMLoadFloat3(&state.look),FovY());
         }
 
+        // The trees in sight this frame, as the renderer's places for each kind: those within
+        // the view's cone (with room for their size) or close by. A wood of several hundred is
+        // drawn a few hundred at a time.
+        void PlaceTrees()
+        {
+            using namespace DirectX;
+            std::vector<std::vector<MascotRenderer::SceneryInstance>> groups(Golf::TreeKinds);
+            const XMVECTOR eye=XMLoadFloat3(&state.eye);
+            const XMVECTOR ahead=XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&state.look),eye));
+            RECT rc{};
+            GetClientRect(state.window,&rc);
+            const float aspect=rc.bottom>rc.top?static_cast<float>(rc.right-rc.left)/static_cast<float>(rc.bottom-rc.top):1.6f;
+            const float half=std::atan(std::tan(FovY()/2)*std::max(1.0f,aspect));   // the wider half-angle
+            const float coneCos=std::cos(std::min(1.5f,half+0.08f));
+            size_t shown=0;
+            for(const auto& t:Course().Trees())
+            {
+                const XMFLOAT3 at=W(V3{t.x,t.y,t.z});
+                const XMVECTOR to=XMVectorSubtract(XMLoadFloat3(&at),eye);
+                const float d=XMVectorGetX(XMVector3Length(to));
+                const float reach=9*K*t.scale;   // a tree's size, round its foot
+                if(d>reach)
+                {
+                    const float c=XMVectorGetX(XMVector3Dot(to,ahead))/d;
+                    // Within the cone widened by the angle the tree's size takes at that distance.
+                    if(c<std::cos(std::min(1.5f,std::acos(std::clamp(coneCos,-1.0f,1.0f))+std::asin(std::min(1.0f,reach/d)))))continue;
+                }
+                MascotRenderer::SceneryInstance q;
+                q.x=at.x;q.y=at.y-0.05f*K;q.z=at.z;q.yaw=t.yaw;q.scale=t.scale;
+                auto& g=groups[static_cast<size_t>(t.kind)];
+                if(shown<MascotRenderer::MaxSceneryInstances){g.push_back(q);++shown;}
+            }
+            state.treesShown=shown;
+            state.renderer->SetSceneryInstances(std::move(groups));
+        }
+
+        // Putting now.
+        bool Putting()
+        {
+            if(state.phase==Phase::Flying||state.phase==Phase::Settle)return state.shot.club==Golf::Putter;
+            if(state.phase!=Phase::Aim&&state.phase!=Phase::Gauge&&state.phase!=Phase::Swing)return false;
+            if(state.turn==You)return state.club==Golf::Putter;
+            return state.thought?state.shot.club==Golf::Putter:state.balls[Her].lie==Lie::Green;
+        }
+
+        // A soft strip of light for the glowing pass (GeometryPS: 9 in minus uv.z, bright along
+        // its middle): from a to b, half width w across the view, as bright as ca at a, cb at b.
+        void LightStrip(std::vector<MascotRenderer::GeometryVertex>& out,XMFLOAT3 a,XMFLOAT3 b,float w,const float (&ca)[3],const float (&cb)[3])
+        {
+            using namespace DirectX;
+            const XMVECTOR A=XMLoadFloat3(&a),B=XMLoadFloat3(&b);
+            const XMVECTOR toEye=XMVectorSubtract(XMLoadFloat3(&state.eye),XMVectorScale(XMVectorAdd(A,B),0.5f));
+            XMVECTOR side=XMVector3Cross(XMVectorSubtract(B,A),toEye);
+            if(XMVectorGetX(XMVector3LengthSq(side))<1e-10f)return;
+            side=XMVectorScale(XMVector3Normalize(side),w);
+            auto v=[&](FXMVECTOR p,float u,const float (&c)[3]){
+                MascotRenderer::GeometryVertex g{};
+                XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(g.position),p);
+                g.normal[1]=1;
+                g.color[0]=c[0];g.color[1]=c[1];g.color[2]=c[2];g.color[3]=Unlit;
+                g.uv[0]=u;g.uv[2]=-9;
+                out.push_back(g);
+            };
+            const XMVECTOR a0=XMVectorSubtract(A,side),a1=XMVectorAdd(A,side),b0=XMVectorSubtract(B,side),b1=XMVectorAdd(B,side);
+            v(a0,0,ca);v(a1,1,ca);v(b1,1,cb);
+            v(a0,0,ca);v(b1,1,cb);v(b0,0,cb);
+        }
+
+        // What glows this frame: the pin's beam up into the sky, and the
+        // ball's trail while it is in the air, the brighter the faster it goes.
+        std::vector<MascotRenderer::GeometryVertex> BuildGlow()
+        {
+            std::vector<MascotRenderer::GeometryVertex> out;
+            const auto& c=Course();
+            {
+                const V3 p=c.Pin();
+                const float far_=std::sqrt((state.eye.x-p.x*K)*(state.eye.x-p.x*K)+(state.eye.z-p.z*K)*(state.eye.z-p.z*K));
+                const float w=std::max(0.18f*K,far_*0.006f);
+                const float pulse=0.85f+0.15f*std::sin(static_cast<float>(state.clock)*2.4f);
+                const float low[3]={0.10f*pulse,0.42f*pulse,0.38f*pulse},high[3]={0.04f,0.20f,0.22f};
+                const float coreLow[3]={0.35f*pulse,0.55f*pulse,0.50f*pulse},coreHigh[3]={0.10f,0.22f,0.22f};
+                for(int k=0;k<6;++k)   // in pieces up the sky, so its brightness fades smoothly
+                {
+                    const float h0=k*k*BeamSky/36,h1=(k+1)*(k+1)*BeamSky/36;
+                    const float t0=static_cast<float>(k)/6,t1=static_cast<float>(k+1)/6;
+                    float l0[3],l1[3],c0[3],c1[3];
+                    for(int i=0;i<3;++i){l0[i]=low[i]+(high[i]-low[i])*t0;l1[i]=low[i]+(high[i]-low[i])*t1;c0[i]=coreLow[i]+(coreHigh[i]-coreLow[i])*t0;c1[i]=coreLow[i]+(coreHigh[i]-coreLow[i])*t1;}
+                    LightStrip(out,W(p,h0),W(p,h1),w,l0,l1);
+                    LightStrip(out,W(p,h0),W(p,h1),w*0.3f,c0,c1);
+                }
+            }
+            // The trail: from the strike to where it first comes down (not along the ground
+            // after), fading behind it, as bright as the ball is fast.
+            if(state.phase==Phase::Flying&&!state.flight.path.empty())
+            {
+                const auto& path=state.flight.path;
+                const size_t now=std::min(static_cast<size_t>(state.flightTime*60),path.size()-1);
+                const size_t end=std::min(now,static_cast<size_t>(std::max(0,state.flight.landing)));
+                const size_t from=now>150?now-150:0;
+                const bool hers=state.turn==Her;
+                const float tint[3]={hers?1.0f:0.55f,hers?0.55f:0.8f,hers?0.8f:1.0f};
+                for(size_t i=from;i+3<=end;i+=3)
+                {
+                    const V3 a=path[i],b=path[i+3];
+                    const float speed=Golf::Length(b-a)*20;   // m/s
+                    const float age=static_cast<float>(i-from)/std::max<size_t>(1,now-from);
+                    const float k=std::clamp(speed/55.0f,0.0f,1.0f)*age*0.9f;
+                    if(k<0.01f)continue;
+                    const float ca[3]={tint[0]*k,tint[1]*k,tint[2]*k};
+                    LightStrip(out,W(a),W(b),(0.03f+0.05f*age)*K,ca,ca);
+                }
+            }
+            return out;
+        }
+
+        // The sparks this frame: rising round the pin's beam, glittering along a square strike's
+        // trail, the water thrown up where a ball fell in.
+        std::vector<MascotRenderer::Particle> BuildSparks(double dt)
+        {
+            std::vector<MascotRenderer::Particle> out;
+            const auto& c=Course();
+            const float t=static_cast<float>(state.clock);
+            {
+                // Fine motes winding up close round the beam, many of them.
+                const V3 p=c.Pin();
+                const float far_=std::sqrt((state.eye.x-p.x*K)*(state.eye.x-p.x*K)+(state.eye.z-p.z*K)*(state.eye.z-p.z*K));
+                const float size=std::max(0.035f*K,far_*0.0022f);
+                const float beam=std::max(0.18f*K,far_*0.006f)/K;   // the beam's half width, metres
+                constexpr int N=180;
+                for(int i=0;i<N;++i)
+                {
+                    const float u=std::fmod(t*0.05f+static_cast<float>(i)*0.61803f,1.0f);   // up the beam, over and again
+                    const float h=0.2f+u*u*80,a=t*(1.4f+0.6f*std::sin(i*0.9f))+i*2.39996f,r=beam*(0.9f+0.5f*std::sin(i*1.7f)+u*0.8f);
+                    MascotRenderer::Particle q;
+                    q.position={(p.x+r*std::cos(a))*K,(p.y+h)*K,(p.z+r*std::sin(a))*K};
+                    const float twinkle=0.6f+0.4f*std::sin(t*9+i*1.3f);
+                    q.size=size*(1-0.35f*u)*(0.7f+0.5f*twinkle);
+                    const float fade=std::min(1.0f,u*10)*(1-u);
+                    q.color={0.6f,1.0f,0.93f,0.95f*fade*twinkle};
+                    q.glow=true;
+                    q.angle=a;
+                    out.push_back(q);
+                }
+            }
+            if(state.phase==Phase::Flying&&state.justShot&&!state.flight.path.empty())
+            {
+                const auto& path=state.flight.path;
+                const size_t now=std::min(static_cast<size_t>(state.flightTime*60),path.size()-1);
+                const size_t end=std::min(now,static_cast<size_t>(std::max(0,state.flight.landing)));
+                std::uniform_real_distribution<float> u(-1,1);
+                // Fine glitter, three motes a frame of the path, drifting out and down as it ages.
+                for(size_t i=end>100?end-100:0;i<end;++i)
+                    for(int k=0;k<3;++k)
+                    {
+                        const float age=static_cast<float>(now-i)/100;
+                        if(age>1)continue;
+                        std::mt19937 r(static_cast<std::uint32_t>(i*2654435761u+k*40503u+state.shots*97u));
+                        const V3 a=path[i];
+                        const float spread=(0.06f+0.7f*age);
+                        MascotRenderer::Particle q;
+                        q.position={(a.x+u(r)*spread)*K,(a.y+u(r)*spread-age*age*1.2f)*K,(a.z+u(r)*spread)*K};
+                        const float twinkle=0.5f+0.5f*std::sin(t*18+i*1.3f+k*2.1f);
+                        q.size=(0.035f+0.05f*twinkle)*K*(1-0.5f*age);
+                        q.color={1.0f,0.92f,0.55f+0.45f*twinkle,(1-age)*(0.6f+0.4f*twinkle)};
+                        q.glow=true;
+                        q.angle=t*3+i;
+                        out.push_back(q);
+                    }
+            }
+            // The splash: drops thrown up, falling back.
+            for(auto& d:state.drops)
+            {
+                d.age+=static_cast<float>(dt);
+                d.v.y-=9.81f*static_cast<float>(dt);
+                d.at=d.at+d.v*static_cast<float>(dt);
+            }
+            state.drops.erase(std::remove_if(state.drops.begin(),state.drops.end(),[](const Drop& d){return d.age>d.life;}),state.drops.end());
+            for(const auto& d:state.drops)
+            {
+                MascotRenderer::Particle q;
+                q.position={d.at.x*K,d.at.y*K,d.at.z*K};
+                q.size=d.size*K;
+                q.color={0.85f,0.93f,1.0f,0.85f*(1-d.age/d.life)};
+                q.glow=true;
+                out.push_back(q);
+            }
+            return out;
+        }
+
+        // A ball fell into the pond at p: rings spread, water is thrown up.
+        void Splash(V3 p)
+        {
+            state.ripples.push_back({p.x*K,p.z*K,0,1.0f});
+            std::uniform_real_distribution<float> u(0,1);
+            for(int i=0;i<70;++i)
+            {
+                const float a=u(state.random)*2*Pi,out=0.6f+u(state.random)*2.2f,up=2.5f+u(state.random)*4.5f;
+                Drop d;
+                d.at=p+V3{0,0.05f,0};
+                d.v={std::cos(a)*out,i<14?up*1.5f:up,std::sin(a)*out};
+                d.life=0.6f+u(state.random)*0.7f;
+                d.size=0.03f+u(state.random)*0.05f;
+                state.drops.push_back(d);
+            }
+        }
+
         // The gauge's bar on the screen (window pixels): thin, along the bottom.
         RectF GaugeBar(float w,float h,float s)
         {
@@ -1119,6 +1380,9 @@ namespace MikuMikuDesktopPerch
         }
         // Where on the bar a gauge position (-0.25 the strike's far end, 0 the line, 1 full power) is.
         float GaugeX(const RectF& bar,float at){return bar.X+(at+0.25f)/1.25f*bar.Width;}
+        // The ball showing where you strike it: its middle on the screen, right of the bar.
+        static constexpr float SpotRadius=22;   // pixels at 96 dpi
+        PointF SpotMiddle(const RectF& bar,float s){return PointF(bar.X+bar.Width+(SpotRadius+34)*s,bar.Y+bar.Height/2-8*s);}
 
         // The gauge, drawn in the 3D view just in front of the camera so its marker moves with
         // every frame (the picture over the view is made again only now and then): light blue
@@ -1156,9 +1420,37 @@ namespace MikuMikuDesktopPerch
             for(int k=1;k<4;++k)rect(GaugeX(bar,k*0.25f)-0.75f*s,y0,GaugeX(bar,k*0.25f)+0.75f*s,y0+bar.Height*0.45f,0.9f,0.97f,1.0f);
             if(!putt)
             {
-                rect(GaugeX(bar,-Pink),y0-3*s,GaugeX(bar,Pink),y1+3*s,0.98f,0.42f,0.70f);       // pink: it curves
+                // pink: it curves; white: square; each edged dark, as the bar is
+                const float px0=GaugeX(bar,-Pink),px1=GaugeX(bar,Pink);
+                rect(px0-1.5f*s,y0-4.5f*s,px1+1.5f*s,y1+4.5f*s,0.06f,0.10f,0.16f);
+                rect(px0,y0-3*s,px1,y1+3*s,0.98f,0.42f,0.70f);
                 const float jw=std::max(1.2f*s,GaugeX(bar,JustWidth(state.club))-GaugeX(bar,0));
-                rect(GaugeX(bar,0)-jw,y0-4*s,GaugeX(bar,0)+jw,y1+4*s,1,1,1);                     // white: square
+                rect(GaugeX(bar,0)-jw-1.5f*s,y0-5.5f*s,GaugeX(bar,0)+jw+1.5f*s,y1+5.5f*s,0.06f,0.10f,0.16f);
+                rect(GaugeX(bar,0)-jw,y0-4*s,GaugeX(bar,0)+jw,y1+4*s,1,1,1);
+            }
+            // The ball and where you strike it, the mark easing after the spot.
+            if(!putt)
+            {
+                const PointF mid=SpotMiddle(bar,s);
+                const float r=SpotRadius*s;
+                auto disc=[&](float cx,float cy,float r0,float r1,const float (&col)[3],int k){
+                    D-=0.05f;
+                    const float c4[4]={col[0],col[1],col[2],Unlit};
+                    for(int i=0;i<k;++i)
+                    {
+                        const float a0=2*Pi*i/k,a1=2*Pi*(i+1)/k;
+                        const Mesh::V p0=at(cx+r1*std::cos(a0),cy+r1*std::sin(a0)),p1=at(cx+r1*std::cos(a1),cy+r1*std::sin(a1));
+                        const Mesh::V q0=at(cx+r0*std::cos(a0),cy+r0*std::sin(a0)),q1=at(cx+r0*std::cos(a1),cy+r0*std::sin(a1));
+                        m.QuadN(q0,q1,p1,p0,{n.x,n.y,n.z},c4);
+                    }
+                };
+                disc(mid.X,mid.Y,0,r+1.5f*s,{0.35f,0.40f,0.46f},40);       // its edge
+                disc(mid.X,mid.Y,0,r,{0.96f,0.97f,0.98f},40);                // the ball
+                rect(mid.X-r,mid.Y-0.5f*s,mid.X+r,mid.Y+0.5f*s,0.62f,0.66f,0.72f);
+                rect(mid.X-0.5f*s,mid.Y-r,mid.X+0.5f*s,mid.Y+r,0.62f,0.66f,0.72f);
+                const float x=mid.X+state.spotShownX*r*0.8f,y=mid.Y-state.spotShownY*r*0.8f;
+                disc(x,y,0,5.5f*s,{0.45f,0.05f,0.10f},20);
+                disc(x,y,0,4.2f*s,{0.92f,0.16f,0.24f},20);
             }
             if(state.gauge==GaugeState::Impact||state.gauge==GaugeState::Done)
                 rect(GaugeX(bar,state.gaugePower)-1.5f*s,y0-5*s,GaugeX(bar,state.gaugePower)+1.5f*s,y1+5*s,1.0f,0.82f,0.25f);
@@ -1187,9 +1479,14 @@ namespace MikuMikuDesktopPerch
                 if(b.holed&&!(who==state.turn&&state.phase==Phase::Flying))continue;
                 const V3 p=BallNow(who);
                 const float r=Golf::BallRadius*K*1.6f;   // a little large, to be seen
-                m.Sphere({p.x*K,p.y*K+r*0.4f,p.z*K},r,white,4,10,6);
+                // Sitting on the ground, never in it (the path keeps its middle a radius up while
+                // it rolls, its resting place on the ground), except going down the cup.
+                const float ground=c.Height(p.x,p.z)*K;
+                const bool cup=Golf::Flat(p,c.Pin())<0.08f;
+                const float bottom=cup?(p.y-Golf::BallRadius)*K:std::max((p.y-Golf::BallRadius)*K,ground);
+                m.Sphere({p.x*K,bottom+r,p.z*K},r,white,4,10,6);
                 // Its shadow on the ground under it.
-                const float g=c.Height(p.x,p.z)*K+0.02f*K;
+                const float g=ground+0.02f*K;
                 const float s=r*(1.2f+std::min(2.0f,(p.y*K-g)/(6*K)));
                 for(int i=0;i<10;++i)
                 {
@@ -1203,27 +1500,6 @@ namespace MikuMikuDesktopPerch
                 {
                     const float col[4]={who==Her?1.0f:0.35f,who==Her?0.45f:0.65f,who==Her?0.7f:1.0f,Unlit};
                     m.Cylinder(p.x*K,p.z*K,(p.y+0.5f)*K,(p.y+0.8f)*K,0.06f*K,0,col,4,6,false);
-                }
-            }
-            // The ball's trail in the air.
-            if(state.phase==Phase::Flying&&!state.flight.path.empty())
-            {
-                const size_t now=std::min(static_cast<size_t>(state.flightTime*60),state.flight.path.size()-1);
-                const size_t from=now>90?now-90:0;
-                const float col[4]={state.turn==Her?1.0f:0.6f,state.turn==Her?0.7f:0.85f,1.0f,Unlit};
-                const XMVECTOR view=XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&state.look),XMLoadFloat3(&state.eye)));
-                for(size_t i=from;i+3<=now;i+=3)
-                {
-                    const V3 a=state.flight.path[i],b=state.flight.path[i+3];
-                    if(a.y-c.Height(a.x,a.z)<0.15f)continue;
-                    const float fade=static_cast<float>(i-from)/std::max<size_t>(1,now-from);
-                    const float wdt=(0.01f+0.03f*fade)*K;
-                    const XMVECTOR along=XMVectorSet(b.x-a.x,b.y-a.y,b.z-a.z,0);
-                    const XMVECTOR side=XMVectorScale(XMVector3Normalize(XMVector3Cross(along,view)),wdt);
-                    const XMFLOAT3 A=W(a),B=W(b);
-                    XMFLOAT3 s;XMStoreFloat3(&s,side);
-                    m.Quad({A.x-s.x,A.y-s.y,A.z-s.z},{B.x-s.x,B.y-s.y,B.z-s.z},{B.x+s.x,B.y+s.y,B.z+s.z},{A.x+s.x,A.y+s.y,A.z+s.z},col);
-                    m.Quad({A.x+s.x,A.y+s.y,A.z+s.z},{B.x+s.x,B.y+s.y,B.z+s.z},{B.x-s.x,B.y-s.y,B.z-s.z},{A.x-s.x,A.y-s.y,A.z-s.z},col);
                 }
             }
             // The cup: a dark hole with a white rim; the model's own cup filled with green when
@@ -1255,28 +1531,6 @@ namespace MikuMikuDesktopPerch
                     }
                 }
             }
-            // The pin and its flag, the flag waving with the wind.
-            {
-                const V3 p=c.Pin();
-                const float pole[4]={0.95f,0.95f,0.92f,1},flag[4]={0.95f,0.25f,0.20f,1};
-                const float top=(p.y+2.3f)*K;
-                m.Cylinder(p.x*K,p.z*K,p.y*K-0.1f*K,top,0.012f*K,0.012f*K,pole,4,6);
-                const float toward=state.wind.toward;
-                const V3 d{std::sin(toward),0,std::cos(toward)};
-                const float wave=static_cast<float>(state.clock*6);
-                const float lenF=0.55f*K*(0.5f+0.5f*std::min(1.0f,state.wind.speed/4)),h=0.38f*K;
-                for(int i=0;i<6;++i)
-                {
-                    const float u0=i/6.0f,u1=(i+1)/6.0f;
-                    auto at=[&](float u,float y){
-                        const float sway=0.08f*K*std::sin(wave+u*5)*u;
-                        return Mesh::V{p.x*K+d.x*lenF*u-d.z*sway,top-y-0.02f*K*u,p.z*K+d.z*lenF*u+d.x*sway};
-                    };
-                    // One face, lit evenly (two faces in one place fought, and a normal that
-                    // turned with the waves flickered).
-                    m.QuadN(at(u0,0),at(u1,0),at(u1,h*(1-0.15f*u1)),at(u0,h*(1-0.15f*u0)),{0,0.8f,0.6f},flag);
-                }
-            }
             // Your aim: a ring where the ball comes down at full power.
             if(state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge)&&state.landingKnown&&!state.autoplay)
             {
@@ -1294,17 +1548,6 @@ namespace MikuMikuDesktopPerch
                     const float a0=2*Pi*i/32,a1=2*Pi*(i+1)/32;
                     m.QuadN(on(a0,r1),on(a1,r1),on(a1,r0),on(a0,r0),{0,1,0},col);
                 }
-            }
-            // The pin's beam: a thin light straight up from the cup, seen from anywhere.
-            {
-                const V3 p=c.Pin();
-                const float far_=std::sqrt((state.eye.x-p.x*K)*(state.eye.x-p.x*K)+(state.eye.z-p.z*K)*(state.eye.z-p.z*K));
-                const float w=std::max(0.04f*K,far_*0.0025f);
-                const float col[4]={0.45f,0.95f,0.85f,Unlit};
-                const float ax=state.look.x-state.eye.x,az=state.look.z-state.eye.z,al=std::max(1e-3f,std::hypot(ax,az));
-                const float sx=-az/al*w,sz=ax/al*w;
-                const float y0=(p.y+2.4f)*K,y1=(p.y+BeamHigh)*K;
-                m.QuadN({p.x*K-sx,y0,p.z*K-sz},{p.x*K+sx,y0,p.z*K+sz},{p.x*K+sx,y1,p.z*K+sz},{p.x*K-sx,y1,p.z*K-sz},{0,1,0},col);
             }
             // The club in her hands: from her grip along the way the swing holds it.
             std::array<float,3> middle{},along{},club{};
@@ -1483,21 +1726,14 @@ namespace MikuMikuDesktopPerch
                     Text(g,t,RectF(box.X+12*s,box.Y+58*s,box.Width-90*s,22*s),14*s,soft,false,StringAlignmentNear);
                 }
                 Text(g,T(L"Tabで操作説明",L"Tab: the keys"),RectF(box.X+12*s,box.Y+78*s,box.Width-20*s,20*s),12*s,soft,false,StringAlignmentNear);
-                // Where on the ball you strike (not with the putter).
-                if(state.club!=Golf::Putter)
+                // Where on the ball you strike (the ball and its mark are drawn in 3D by
+                // BuildGauge, right of the bar; only the word here).
+                const bool gauge=state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge)&&!state.autoplay;
+                if(gauge&&state.club!=Golf::Putter)
                 {
-                    const PointF mid(box.X+box.Width-40*s,box.Y+40*s);
-                    const float r=26*s;
-                    SolidBrush ball(Color(255,244,246,248));
-                    Pen edge(Color(255,150,160,170),1.5f*s),cross(Color(120,120,130,140),1*s);
-                    g.FillEllipse(&ball,mid.X-r,mid.Y-r,2*r,2*r);
-                    g.DrawEllipse(&edge,mid.X-r,mid.Y-r,2*r,2*r);
-                    g.DrawLine(&cross,PointF(mid.X-r,mid.Y),PointF(mid.X+r,mid.Y));
-                    g.DrawLine(&cross,PointF(mid.X,mid.Y-r),PointF(mid.X,mid.Y+r));
-                    SolidBrush dot(Color(255,230,40,60));
-                    const PointF at(mid.X+state.spotX*r*0.8f,mid.Y-state.spotY*r*0.8f);
-                    g.FillEllipse(&dot,at.X-4.5f*s,at.Y-4.5f*s,9*s,9*s);
-                    Text(g,T(L"打点",L"Spot"),RectF(mid.X-r,mid.Y+r+1*s,2*r,16*s),11*s,soft);
+                    const RectF bar=GaugeBar(W,H,s);
+                    const PointF mid=SpotMiddle(bar,s);
+                    Text(g,T(L"打点",L"Spot"),RectF(mid.X-SpotRadius*s,mid.Y+SpotRadius*s+2*s,2*SpotRadius*s,16*s),11*s,soft);
                 }
                 // The gauge's numbers over its bar (the bar itself is drawn in 3D): how far full
                 // power carries with this club on level ground, half that at the middle.
@@ -1508,13 +1744,16 @@ namespace MikuMikuDesktopPerch
                     swprintf_s(t,metres<20?L"%.1f m":L"%.0f m",metres);
                     Text(g,t,RectF(GaugeX(bar,at)-40*s,bar.Y-24*s,80*s,18*s),12*s,bold?gold:white,bold);
                 };
-                number(0.5f,full*0.5f,false);
-                number(1,full,true);
+                if(gauge)
+                {
+                    number(0.5f,full*0.5f,false);
+                    number(1,full,true);
+                }
                 if(state.gauge==GaugeState::Impact||state.gauge==GaugeState::Done)
                     Text(g,std::to_wstring(static_cast<int>(state.gaugePower*100+0.5f))+L"%",RectF(GaugeX(bar,state.gaugePower)-30*s,bar.Y+14*s,60*s,18*s),12*s,gold,true);
             }
             // The pin's distance and height over its beam (from the ball whose turn it is).
-            if(state.beamTop.x>=0&&state.phase!=Phase::Intro&&state.phase!=Phase::HoleOver&&state.phase!=Phase::Over)
+            if(state.beamTop.x>=0&&state.phase!=Phase::HoleOver&&state.phase!=Phase::Over)
             {
                 const V3 from=state.balls[state.turn].at;
                 const float d=Golf::Flat(from,c.Pin()),rise=c.Pin().y-from.y;
@@ -1804,15 +2043,7 @@ namespace MikuMikuDesktopPerch
                 else if(state.turn==You&&state.phase==Phase::Aim&&state.gauge==GaugeState::Ready&&GetKeyState(VK_CONTROL)<0&&
                         (wParam==VK_LEFT||wParam==VK_RIGHT||wParam==VK_UP||wParam==VK_DOWN))
                 {
-                    // The spot on the ball, a quarter at a time, kept on the ball.
-                    if(state.club!=Golf::Putter)
-                    {
-                        state.spotX+=wParam==VK_LEFT?-0.25f:wParam==VK_RIGHT?0.25f:0.0f;
-                        state.spotY+=wParam==VK_DOWN?-0.25f:wParam==VK_UP?0.25f:0.0f;
-                        const float r=std::hypot(state.spotX,state.spotY);
-                        if(r>1){state.spotX/=r;state.spotY/=r;}
-                        UpdateLanding();
-                    }
+                    // The spot on the ball: moved while held, in the tick.
                 }
                 else if(state.turn==You&&state.phase==Phase::Aim&&state.gauge==GaugeState::Ready)
                 {
@@ -1983,7 +2214,22 @@ namespace MikuMikuDesktopPerch
         if(state.moved){state.moved=false;model.ResetPhysics();}
         state.renderer->SetModelTransform(HerWorld(model));
         PlaceCamera();
+        {
+            const float ease=1-std::exp(-14*static_cast<float>(dt));
+            state.spotShownX+=(state.spotX-state.spotShownX)*ease;
+            state.spotShownY+=(state.spotY-state.spotShownY)*ease;
+        }
         state.renderer->SetMovingGeometry(BuildMoving(model));
+        PlaceTrees();
+        state.renderer->SetGlowGeometry(BuildGlow());
+        state.renderer->SetParticles(BuildSparks(dt));
+        for(auto& r:state.ripples)r.age+=static_cast<float>(dt);
+        state.ripples.erase(std::remove_if(state.ripples.begin(),state.ripples.end(),[](const MascotRenderer::Ripple& r){return r.age>7;}),state.ripples.end());
+        state.renderer->SetWater(true,static_cast<float>(state.clock),state.ripples);
+        {
+            const V3 w=Golf::WindVector(state.wind);
+            state.renderer->SetWaterWind(w.x*K,w.z*K);
+        }
         if(std::array<float,3> head{};model.HeadPosition(head))
         {
             const XMVECTOR at=XMVector3Transform(XMVectorSet(head[0],head[1],head[2],1),HerWorld(model));
@@ -2050,6 +2296,8 @@ namespace MikuMikuDesktopPerch
         text+=line;
         swprintf_s(line,L"golf: her hips %.1f upper %.1f, club %.2f m, ball %.2f,%.2f from her (m); at %.1f,%.1f yaw %.0f, swinging %d\n",state.hips,state.upper,state.clubLength/K,state.head[0]/K,state.head[2]/K,
                    state.herAt.x,state.herAt.z,state.herYaw/Deg,state.herSwinging?1:0);
+        text+=line;
+        swprintf_s(line,L"golf: %zu trees, %zu drawn this frame\n",Course().Trees().size(),state.treesShown);
         text+=line;
         text+=L"golf play:\n"+state.log;
         if(!state.words.told.empty())text+=L"golf words:\n"+state.words.told;
