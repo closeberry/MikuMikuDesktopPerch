@@ -24,6 +24,7 @@ struct VSOutput
 
 Texture2D<float4> Picture : register(t1);   // the geometry's texture (the mahjong tiles' faces)
 SamplerState ClampSampler : register(s1);
+SamplerState WrapSampler : register(s0);   // the scenery's tiled pictures (2 in uv.z)
 
 float Hash(float2 p)
 {
@@ -524,7 +525,9 @@ float4 main(VSOutput i) : SV_Target
     if (pattern == 0 && theme == 6 && i.uv.z < -5.5)
         return float4(i.uv.z < -6.5 ? CutGlass(i.color.rgb, i.world, normalize(i.normal)) : Gilt(i.color.rgb, i.world, normalize(i.normal)), 1);
     float3 rgb = i.color.rgb, glow = 0;
-    if (i.uv.z > 0)
+    if (i.uv.z > 1.5)
+        rgb *= Picture.Sample(WrapSampler, i.uv.xy).rgb;
+    else if (i.uv.z > 0)
         rgb *= Picture.Sample(ClampSampler, i.uv.xy).rgb;
     if (pattern == 1)
         return float4(rgb, 1);
@@ -610,7 +613,9 @@ float4 main(VSOutput i) : SV_Target
     {
         // The course fades into the haze far off (in metres from the camera).
         const float far_ = mul(float4(i.world, 1), View).z / 12.5;
-        return float4(lerp(rgb * light + glow, float3(0.72, 0.80, 0.88), 0.75 * (1 - exp(-max(far_ - 60, 0) / 420))), 1);
+        // (Textured scenery, its own far hills already pale, fades less.)
+        const float haze = i.uv.z > 1.5 ? 0.45 : 0.75;
+        return float4(lerp(rgb * light + glow, float3(0.72, 0.80, 0.88), haze * (1 - exp(-max(far_ - 60, 0) / 420))), 1);
     }
     return float4(rgb * light + glow, 1);
 }

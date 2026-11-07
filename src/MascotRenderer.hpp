@@ -94,6 +94,14 @@ namespace MikuMikuDesktopPerch
         // Geometry that stays as it is while SetGeometry's changes (the room round a table), drawn
         // as that is. Waits for the GPU.
         bool SetRoomGeometry(const std::vector<GeometryVertex>& vertices);
+        // Textured scenery drawn before the room (an outdoor scene's ground, sky and buildings):
+        // vertices as SetGeometry's, drawn in stretches, each with a picture of its own (or the
+        // geometry's texture, -1), tiled (wrapped): a vertex asks for it with 2 in uv.z (1 is
+        // SetGeometryTexture's clamped picture). MaxSceneryTextures at most. Waits for the GPU;
+        // empty lists: none.
+        struct SceneryDraw {UINT start=0,count=0;int texture=-1;};
+        static constexpr size_t MaxSceneryTextures=24;
+        bool SetScenery(const std::vector<GeometryVertex>& vertices,const std::vector<SceneryDraw>& draws,const std::vector<ImageRgba8>& textures);
         // The picture drawn on the geometry where its vertices ask for it (the mahjong tiles'
         // faces), with its mipmaps made here. Waits for the GPU.
         bool SetGeometryTexture(const ImageRgba8& image);
@@ -299,7 +307,9 @@ namespace MikuMikuDesktopPerch
         Microsoft::WRL::ComPtr<ID3D12Resource> staticVertexBuffer,indexBuffer;
         // SetGeometry's.
         Microsoft::WRL::ComPtr<ID3D12PipelineState> geometryPso;
-        Microsoft::WRL::ComPtr<ID3D12Resource> geometryBuffer,roomBuffer;
+        Microsoft::WRL::ComPtr<ID3D12Resource> geometryBuffer,roomBuffer,sceneryBuffer;
+        std::vector<SceneryDraw> sceneryDraws;
+        std::vector<Texture> sceneryTextures;
         UINT roomCount=0;
         // SetPieceMesh's.
         Microsoft::WRL::ComPtr<ID3D12PipelineState> piecePso,pieceBlobPso,pieceClearBackPso,pieceClearFrontPso,pieceGlowPso;

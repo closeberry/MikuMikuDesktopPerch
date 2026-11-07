@@ -1,0 +1,9 @@
+Golf course textures (res/golf/tex), from Poly Haven under CC0 1.0
+https://polyhaven.com/license
+https://creativecommons.org/publicdomain/zero/1.0/
+
+coast_sand_02 (bunker sand, recoloured)          https://polyhaven.com/a/coast_sand_02
+asphalt_02 (cart path)                           https://polyhaven.com/a/asphalt_02
+rock_wall_02 (clubhouse masonry)                 https://polyhaven.com/a/rock_wall_02
+roof_tiles_14 (clubhouse roof, recoloured)       https://polyhaven.com/a/roof_tiles_14
+kloofendal_48d_partly_cloudy_puresky (the sky)   https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky

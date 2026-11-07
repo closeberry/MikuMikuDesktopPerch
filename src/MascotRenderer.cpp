@@ -622,6 +622,30 @@ namespace MikuMikuDesktopPerch
         return ok;
     }
 
+    bool MascotRenderer::SetScenery(const std::vector<GeometryVertex>& vertices,const std::vector<SceneryDraw>& draws,const std::vector<ImageRgba8>& textures)
+    {
+        if(!geometryPso&&!SetGeometry({}))return false;
+        WaitIdle();
+        sceneryBuffer.Reset();
+        sceneryDraws.clear();
+        sceneryTextures.clear();
+        bool ok=true;
+        if(!vertices.empty())
+        {
+            BeginUploads();
+            ok=UploadBuffer(vertices.data(),vertices.size()*sizeof(GeometryVertex),sceneryBuffer,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+            sceneryTextures.resize(std::min(textures.size(),MaxSceneryTextures));
+            for(size_t i=0;i<sceneryTextures.size();++i)
+                if(!UploadTexture(textures[i],sceneryTextures[i])){sceneryTextures[i]={};ok=false;}
+                else sceneryTextures[i].valid=true;
+            FinishUploads();
+            if(ok)
+                for(const SceneryDraw& d:draws)
+                    if(d.count&&d.start+d.count<=vertices.size())sceneryDraws.push_back(d);
+        }
+        return WriteGeometryDescriptors()&&ok;
+    }
+
     bool MascotRenderer::SetRoomGeometry(const std::vector<GeometryVertex>& vertices)
     {
         // (the pipeline is SetGeometry's, made on its first call)
@@ -799,6 +823,13 @@ namespace MikuMikuDesktopPerch
             overlay.valid?overlay.resource.Get():white.resource.Get(),white.resource.Get()};
         for(size_t i=0;i<3;++i)
             device->CreateShaderResourceView(slots[i],nullptr,D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr+(base+i)*srvStride});
+        // The scenery's pictures, three to a table as the geometry's (its picture first).
+        for(size_t t=0;t<MaxSceneryTextures;++t)
+        {
+            ID3D12Resource* picture=t<sceneryTextures.size()&&sceneryTextures[t].valid?sceneryTextures[t].resource.Get():white.resource.Get();
+            for(size_t i=0;i<3;++i)
+                device->CreateShaderResourceView(i==0?picture:white.resource.Get(),nullptr,D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr+(base+3+t*3+i)*srvStride});
+        }
         return true;
     }
 
@@ -980,7 +1011,7 @@ namespace MikuMikuDesktopPerch
 
         D3D12_DESCRIPTOR_HEAP_DESC heap{};
         heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        heap.NumDescriptors=static_cast<UINT>(materialCount*3+13);   // the materials' textures, the shadow map, the last passes' inputs, the geometry's and overlay's
+        heap.NumDescriptors=static_cast<UINT>(materialCount*3+13+MaxSceneryTextures*3);   // the materials' textures, the shadow map, the last passes' inputs, the geometry's and overlay's, the scenery's
         heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         srvHeap.Reset();
         if(FAILED(device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&srvHeap)))){error=T(L"SRV ヒープの作成に失敗しました。",L"Could not create the SRV heap.");return false;}
@@ -1391,9 +1422,20 @@ namespace MikuMikuDesktopPerch
         commandList->RSSetViewports(1,&viewport);
         commandList->RSSetScissorRects(1,&scissor);
 
-        if(geometryCount||movingCount||roomCount)
+        if(geometryCount||movingCount||roomCount||!sceneryDraws.empty())
         {
             commandList->SetPipelineState(geometryPso.Get());
+            if(!sceneryDraws.empty())
+            {
+                const D3D12_VERTEX_BUFFER_VIEW scenery{sceneryBuffer->GetGPUVirtualAddress(),static_cast<UINT>(sceneryBuffer->GetDesc().Width),sizeof(GeometryVertex)};
+                commandList->IASetVertexBuffers(0,1,&scenery);
+                for(const SceneryDraw& d:sceneryDraws)
+                {
+                    const size_t slot=d.texture>=0&&static_cast<size_t>(d.texture)<MaxSceneryTextures?materialCount*3+13+static_cast<size_t>(d.texture)*3:materialCount*3+10;
+                    commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+slot*srvStride});
+                    commandList->DrawInstanced(d.count,1,d.start,0);
+                }
+            }
             commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+(materialCount*3+10)*srvStride});
             if(roomCount)
             {

@@ -9,6 +9,7 @@
 #include "TextureLoader.hpp"
 #include "GameLines.hpp"
 #include <objidl.h>
+#include <shlwapi.h>
 #include <gdiplus.h>
 #include <windowsx.h>
 #include <DirectXMath.h>
@@ -20,6 +21,7 @@
 #include <random>
 #include <vector>
 #pragma comment(lib,"gdiplus.lib")
+#pragma comment(lib,"shlwapi.lib")
 
 namespace MikuMikuDesktopPerch
 {
@@ -55,6 +57,10 @@ namespace MikuMikuDesktopPerch
             std::function<void()> onEnd;
             std::unique_ptr<MascotRenderer> renderer;
             std::shared_ptr<const Golf::Course> course;
+            std::shared_ptr<const Golf::Ground> ground;
+            int clubhouse=1;                 // this round's (1-4)
+            bool sceneryBuilt=false;
+            float greenColour[3]{0.4f,0.65f,0.3f};
             std::uint32_t firstSeed=0;
             int hole=0;
             std::array<std::array<int,Holes>,2> card{};   // strokes per hole (0: not played)
@@ -274,179 +280,113 @@ namespace MikuMikuDesktopPerch
             }
         };
 
-        void BlendColour(float fairway,float green,float sand,float water,float tee,float (&c)[4])
+        // A picture of the course's (a JPEG resource of type GOLFTEX), with its mipmaps.
+        bool LoadPicture(const std::string& name,ImageRgba8& image)
         {
-            const float rough[3]={0.25f,0.42f,0.14f},fw[3]={0.36f,0.60f,0.21f},gr[3]={0.38f,0.66f,0.25f},sa[3]={0.88f,0.80f,0.60f},wa[3]={0.13f,0.30f,0.42f},te[3]={0.36f,0.63f,0.24f};
-            const float r=std::max(0.0f,1-fairway-green-sand-water-tee);
-            const float sum=r+fairway+green+sand+water+tee;
-            for(int i=0;i<3;++i)c[i]=(rough[i]*r+fw[i]*fairway+gr[i]*green+sa[i]*sand+wa[i]*water+te[i]*tee)/std::max(sum,1e-4f);
-            c[3]=CourseLook;
+            const std::wstring wide(name.begin(),name.end());
+            const HRSRC info=FindResourceW(nullptr,wide.c_str(),L"GOLFTEX");
+            const HGLOBAL data=info?LoadResource(nullptr,info):nullptr;
+            if(!data)return false;
+            IStream* stream=SHCreateMemStream(static_cast<const BYTE*>(LockResource(data)),SizeofResource(nullptr,info));
+            if(!stream)return false;
+            bool ok=false;
+            {
+                Bitmap bitmap(stream);
+                const UINT w=bitmap.GetWidth(),h=bitmap.GetHeight();
+                BitmapData bits{};
+                Rect whole(0,0,static_cast<INT>(w),static_cast<INT>(h));
+                if(w&&h&&bitmap.LockBits(&whole,ImageLockModeRead,PixelFormat32bppARGB,&bits)==Ok)
+                {
+                    image={};
+                    image.levels.resize(1);
+                    auto& level=image.levels[0];
+                    level.width=w;level.height=h;
+                    level.pixels.resize(static_cast<size_t>(w)*h*4);
+                    for(UINT y=0;y<h;++y)
+                    {
+                        const BYTE* from=static_cast<const BYTE*>(bits.Scan0)+static_cast<size_t>(y)*bits.Stride;
+                        BYTE* to=level.pixels.data()+static_cast<size_t>(y)*w*4;
+                        for(UINT x=0;x<w;++x,from+=4,to+=4){to[0]=from[2];to[1]=from[1];to[2]=from[0];to[3]=255;}
+                    }
+                    bitmap.UnlockBits(&bits);
+                    GenerateMips(image);
+                    ok=true;
+                }
+            }
+            stream->Release();
+            return ok;
         }
 
-        // What does not move on this hole: the ground, the pond's water, trees, the sky, the
-        // tee markers, the cup.
-        std::vector<MascotRenderer::GeometryVertex> BuildCourse()
+        // The course, its sky and the clubhouse of this round (1-4), as the renderer's
+        // scenery: each material a stretch, its picture tiled over it (GeometryPS: 2 in uv.z),
+        // under the course's look (its haze); the sky unlit; the pond's water with its waves.
+        bool BuildScenery(int clubhouse)
         {
-            const auto& c=Course();
-            Mesh m;
-            constexpr float Step=2.0f;
-            const int nx=static_cast<int>(std::ceil((c.MaxX()-c.MinX())/Step)),nz=static_cast<int>(std::ceil((c.MaxZ()-c.MinZ())/Step));
-            struct P {Mesh::V p,n;float col[4];std::array<float,4> w;};
-            std::vector<P> grid(static_cast<size_t>(nx+1)*(nz+1));
-            for(int j=0;j<=nz;++j)
-                for(int i=0;i<=nx;++i)
+            std::vector<MascotRenderer::GeometryVertex> vertices;
+            std::vector<MascotRenderer::SceneryDraw> draws;
+            std::vector<ImageRgba8> pictures;
+            std::vector<std::string> named;
+            bool all=true;
+            auto add=[&](const wchar_t* resource,XMFLOAT3 offset){
+                Golf::SceneModel m;
+                if(!Golf::LoadScene(resource,m)){all=false;Log(L"golf: no model %s",resource);return;}
+                for(const auto& mt:m.materials)
                 {
-                    const float x=c.MinX()+i*Step,z=c.MinZ()+j*Step;
-                    P& q=grid[static_cast<size_t>(j)*(nx+1)+i];
-                    const float h=c.Height(x,z);
-                    const V3 n=c.Normal(x,z);
-                    float fw,gr,sa,wa,te;
-                    c.Surface(x,z,fw,gr,sa,wa,te);
-                    // Under the water: mud (the water's plane is drawn over it).
-                    const bool under=c.LieAt(x,z)==Lie::Water;
-                    if(under){fw=gr=sa=te=0;wa=0;}
-                    q.p={x*K,h*K,z*K};
-                    q.n={n.x,n.y,n.z};
-                    BlendColour(fw,gr,sa,wa,te,q.col);
-                    if(under){q.col[0]=0.22f;q.col[1]=0.20f;q.col[2]=0.14f;}
-                    q.w={fw,gr,sa,0};
-                    (void)te;
+                    if(mt.kind==9||mt.count==0)continue;   // the model's own flag and cup: ours are drawn
+                    int picture=-1;
+                    if(mt.texture>=0&&static_cast<size_t>(mt.texture)<m.textures.size())
+                    {
+                        const std::string& name=m.textures[static_cast<size_t>(mt.texture)];
+                        const auto it=std::find(named.begin(),named.end(),name);
+                        if(it!=named.end())picture=static_cast<int>(it-named.begin());
+                        else if(pictures.size()<MascotRenderer::MaxSceneryTextures)
+                        {
+                            ImageRgba8 image;
+                            if(LoadPicture(name,image))
+                            {
+                                picture=static_cast<int>(pictures.size());
+                                pictures.push_back(std::move(image));
+                                named.push_back(name);
+                                // The green's colour, for filling the model's own cup when the pin is elsewhere.
+                                if(name=="TURF_GREEN")
+                                {
+                                    const auto& l=pictures.back().levels.back();
+                                    for(int i=0;i<3;++i)state.greenColour[i]=l.pixels[static_cast<size_t>(i)]/255.0f;
+                                }
+                            }
+                            else{all=false;Log(L"golf: no picture %S",name.c_str());}
+                        }
+                    }
+                    const bool sky=mt.kind==10,water=mt.kind==8;
+                    float c[4]={mt.rgb[0],mt.rgb[1],mt.rgb[2],sky?Unlit:CourseLook};
+                    if(sky)c[0]=c[1]=c[2]=1;
+                    if(water){c[0]=0.10f;c[1]=0.32f;c[2]=0.40f;}
+                    MascotRenderer::SceneryDraw d;
+                    d.start=static_cast<UINT>(vertices.size());
+                    d.texture=picture;
+                    for(std::uint32_t i=mt.first;i<mt.first+mt.count;++i)
+                    {
+                        const float* v=&m.vertices[static_cast<size_t>(m.indices[i])*8];
+                        MascotRenderer::GeometryVertex g{{v[0]+offset.x,v[1]+offset.y,v[2]+offset.z},{v[3],v[4],v[5]},{c[0],c[1],c[2],c[3]}};
+                        g.wall[0]=g.wall[1]=g.wall[2]=g.wall[3]=0;
+                        g.uv[0]=v[6];g.uv[1]=v[7];g.uv[3]=0;
+                        if(picture>=0)g.uv[2]=2;
+                        else if(water){g.uv[0]=1;g.uv[1]=0;g.uv[2]=-1;}   // GeometryPS's Course: all water
+                        else{g.uv[0]=g.uv[1]=0;g.uv[2]=sky?0.0f:-4.0f;}
+                        vertices.push_back(g);
+                    }
+                    d.count=static_cast<UINT>(vertices.size())-d.start;
+                    draws.push_back(d);
                 }
-            auto put=[&](const P& q){
-                MascotRenderer::GeometryVertex v{{q.p[0],q.p[1],q.p[2]},{q.n[0],q.n[1],q.n[2]},{q.col[0],q.col[1],q.col[2],q.col[3]}};
-                v.wall[0]=q.w[0];v.wall[1]=q.w[1];v.wall[2]=0;v.wall[3]=q.w[2];
-                v.uv[0]=0;v.uv[1]=0;v.uv[2]=-1;v.uv[3]=0;
-                m.out.push_back(v);
             };
-            for(int j=0;j<nz;++j)
-                for(int i=0;i<nx;++i)
-                {
-                    const P& a=grid[static_cast<size_t>(j)*(nx+1)+i];
-                    const P& b=grid[static_cast<size_t>(j)*(nx+1)+i+1];
-                    const P& cc=grid[static_cast<size_t>(j+1)*(nx+1)+i+1];
-                    const P& d=grid[static_cast<size_t>(j+1)*(nx+1)+i];
-                    // Wound so the faces look up (left-handed: clockwise seen from above).
-                    put(a);put(d);put(cc);
-                    put(a);put(cc);put(b);
-                }
-            // The world round the course: a wide plain below its edges, fading into the haze.
-            {
-                float low=1e9f;
-                for(const P& q:grid)low=std::min(low,q.p[1]);
-                const float y=low-1.5f*K,R=3000*K,cx=(c.MinX()+c.MaxX())/2*K,cz=(c.MinZ()+c.MaxZ())/2*K;
-                float col[4];
-                BlendColour(0,0,0,0,0,col);
-                for(int i=0;i<24;++i)
-                {
-                    const float a0=2*Pi*i/24,a1=2*Pi*(i+1)/24;
-                    MascotRenderer::GeometryVertex v{{cx,y,cz},{0,1,0},{col[0],col[1],col[2],col[3]}};
-                    v.uv[2]=-1;
-                    MascotRenderer::GeometryVertex p1=v,p2=v;
-                    p1.position[0]=cx+R*std::cos(a1);p1.position[2]=cz+R*std::sin(a1);
-                    p2.position[0]=cx+R*std::cos(a0);p2.position[2]=cz+R*std::sin(a0);
-                    m.out.push_back(v);m.out.push_back(p1);m.out.push_back(p2);
-                }
-            }
-            // The pond's water: a flat sheet at its level.
-            if(c.HasWater())
-            {
-                const float y=c.WaterLevel()*K;
-                float col[4];
-                BlendColour(0,0,0,1,0,col);
-                for(int j=0;j<nz;++j)
-                    for(int i=0;i<nx;++i)
-                    {
-                        const float x=c.MinX()+i*Step,z=c.MinZ()+j*Step;
-                        bool any=false;
-                        for(float dx:{0.0f,Step})for(float dz:{0.0f,Step})if(c.LieAt(x+dx,z+dz)==Lie::Water)any=true;
-                        if(!any)continue;
-                        for(const auto& tri:{std::array<std::array<float,2>,3>{{{0,0},{0,Step},{Step,Step}}},std::array<std::array<float,2>,3>{{{0,0},{Step,Step},{Step,0}}}})
-                            for(const auto& q:tri)m.Vertex({(x+q[0])*K,y,(z+q[1])*K},{0,1,0},col,1,{0,0,0,1});
-                    }
-            }
-            // Trees: firs (cones on a trunk) and round-headed ones.
-            for(const auto& t:c.Trees())
-            {
-                const float base=c.Height(t.x,t.z)*K,x=t.x*K,z=t.z*K,h=t.height*K,r=t.radius*K;
-                const float bark[4]={0.30f,0.22f,0.15f,CourseLook};
-                m.Cylinder(x,z,base-0.3f*K,base+h*0.45f,0.08f*r,0.06f*r,bark,2,6,false);
-                const float shade=0.85f+0.3f*std::fmod(std::abs(t.x*7.3f+t.z*3.1f),1.0f);
-                if(t.kind==0)
-                {
-                    const float leaf[4]={0.13f*shade,0.30f*shade,0.15f*shade,CourseLook};
-                    for(int k=0;k<3;++k)
-                    {
-                        const float y0=base+h*(0.22f+0.22f*k),y1=y0+h*(0.5f-0.08f*k);
-                        m.Cylinder(x,z,y0,y1,r*(1.0f-0.22f*k),0,leaf,3,9);
-                    }
-                }
-                else
-                {
-                    const float leaf[4]={0.22f*shade,0.40f*shade,0.13f*shade,CourseLook};
-                    m.Sphere({x,base+h*0.62f,z},r*1.05f,leaf,3,10,6,0.9f);
-                    m.Sphere({x+r*0.5f,base+h*0.5f,z+r*0.3f},r*0.7f,leaf,3,8,5,0.9f);
-                    m.Sphere({x-r*0.45f,base+h*0.55f,z-r*0.35f},r*0.75f,leaf,3,8,5,0.9f);
-                }
-            }
-            // A line of far woods round the course's edge, dark against the haze.
-            {
-                const float leaf[4]={0.16f,0.30f,0.16f,CourseLook};
-                std::mt19937 r(c.Seed()+99);
-                std::uniform_real_distribution<float> u(0,1);
-                const float x0=c.MinX()-8,x1=c.MaxX()+8,z0=c.MinZ()-8,z1=c.MaxZ()+8;
-                auto tree=[&](float x,float z){
-                    const float h=(9+8*u(r))*K,rad=(3+2*u(r))*K,base=c.Height(std::clamp(x,c.MinX(),c.MaxX()),std::clamp(z,c.MinZ(),c.MaxZ()))*K-1.5f*K;
-                    m.Cylinder(x*K,z*K,base,base+h,rad,0,leaf,3,7);
-                };
-                for(float z=z0;z<=z1;z+=4+3*u(r)){tree(x0-6*u(r),z);tree(x1+6*u(r),z);}
-                for(float x=x0;x<=x1;x+=4+3*u(r)){tree(x,z0-6*u(r));tree(x,z1+6*u(r));}
-            }
-            // The tee's markers.
-            {
-                const V3 t=c.Tee();
-                const float col[4]={0.92f,0.25f,0.25f,1};
-                for(float side:{-2.5f,2.5f})m.Sphere({side*K,(t.y+0.06f)*K,1.5f*K},0.09f*K,col,4,8,5);
-            }
-            // The cup: a dark hole with a white rim.
-            {
-                const V3 p=c.Pin();
-                const float dark[4]={0.03f,0.03f,0.03f,1},white[4]={0.95f,0.95f,0.95f,1};
-                const float y=(p.y+0.004f)*K;
-                for(int i=0;i<24;++i)
-                {
-                    const float a0=2*Pi*i/24,a1=2*Pi*(i+1)/24,r0=Golf::CupRadius*K,r1=r0*1.12f;
-                    m.Vertex({p.x*K,y,p.z*K},{0,1,0},dark);
-                    m.Vertex({p.x*K+r0*std::cos(a1),y,p.z*K+r0*std::sin(a1)},{0,1,0},dark);
-                    m.Vertex({p.x*K+r0*std::cos(a0),y,p.z*K+r0*std::sin(a0)},{0,1,0},dark);
-                    m.Quad({p.x*K+r0*std::cos(a0),y,p.z*K+r0*std::sin(a0)},{p.x*K+r0*std::cos(a1),y,p.z*K+r0*std::sin(a1)},
-                           {p.x*K+r1*std::cos(a1),y,p.z*K+r1*std::sin(a1)},{p.x*K+r1*std::cos(a0),y,p.z*K+r1*std::sin(a0)},white);
-                }
-            }
-            // The sky: a dome, pale at the horizon (the haze's colour), deep blue overhead, unlit.
-            {
-                const float cx=(c.MinX()+c.MaxX())/2*K,cz=(c.MinZ()+c.MaxZ())/2*K,R=3500*K;
-                const int around=32,down=10;
-                auto colour=[&](float t,float (&col)[4]){
-                    const float lo[3]={0.72f,0.80f,0.88f},hi[3]={0.30f,0.52f,0.86f};
-                    const float k=std::pow(std::clamp(t,0.0f,1.0f),0.6f);
-                    for(int i=0;i<3;++i)col[i]=lo[i]+(hi[i]-lo[i])*k;
-                    col[3]=Unlit;
-                };
-                for(int j=-1;j<down;++j)
-                    for(int i=0;i<around;++i)
-                    {
-                        const float e0=j<0?-0.2f:(Pi/2)*j/down,e1=(Pi/2)*(j+1)/down;
-                        const float a0=2*Pi*i/around,a1=2*Pi*(i+1)/around;
-                        auto at=[&](float a,float e){return Mesh::V{cx+R*std::cos(e)*std::cos(a),R*std::sin(e),cz+R*std::cos(e)*std::sin(a)};};
-                        float c0[4],c1[4];
-                        colour(std::max(0.0f,e0/(Pi/2)),c0);
-                        colour(e1/(Pi/2),c1);
-                        const Mesh::V n{0,-1,0};
-                        m.Vertex(at(a0,e0),n,c0);m.Vertex(at(a1,e0),n,c0);m.Vertex(at(a1,e1),n,c1);
-                        m.Vertex(at(a0,e0),n,c0);m.Vertex(at(a1,e1),n,c1);m.Vertex(at(a0,e1),n,c1);
-                    }
-            }
-            return std::move(m.out);
+            add(L"COURSE",{0,0,0});
+            add(L"SKY",{0,0,0});
+            const V3 house=Course().Clubhouse();
+            const std::wstring name=L"CLUBHOUSE"+std::to_wstring(std::clamp(clubhouse,1,4));
+            add(name.c_str(),W(house));
+            const bool ok=state.renderer->SetScenery(vertices,draws,pictures);
+            Log(L"golf: scenery %zu triangles in %zu stretches, %zu pictures, clubhouse %d%s",vertices.size()/3,draws.size(),pictures.size(),clubhouse,ok&&all?L"":L" (something missing)");
+            return ok&&all;
         }
 
         // ---- Her on the course -------------------------------------------------------------
@@ -570,16 +510,16 @@ namespace MikuMikuDesktopPerch
 
         void StartHole()
         {
-            const int par=state.hole==0?4:state.hole==1?3:5;
+            // The same hole each time, the pin moved: first in the model's own cup.
+            state.course=std::make_shared<const Golf::Course>(state.ground,state.hole==0?0u:state.firstSeed*7919u+static_cast<std::uint32_t>(state.hole));
+            const int par=Course().Par();
             state.pars[state.hole]=par;
-            state.course=std::make_shared<const Golf::Course>(state.firstSeed+static_cast<std::uint32_t>(state.hole)*7919u,par);
             std::uniform_real_distribution<float> u(0,1);
             state.wind={u(state.random)*6.5f,u(state.random)*2*Pi};
             for(Ball& b:state.balls){b={};b.at=Course().Tee();b.lie=Lie::Tee;}
             state.turn=You;
             state.club=Golf::Driver;
             state.aim=PinAim(Course().Tee())*0.4f;
-            if(state.renderer)state.renderer->SetRoomGeometry(BuildCourse());
             BuildMap();
             state.phase=Phase::Intro;
             state.phaseTime=0;
@@ -596,6 +536,7 @@ namespace MikuMikuDesktopPerch
         {
             if(state.thinking.valid())state.thinking.wait();
             state.card={};
+            state.pars.fill(3);
             state.hole=0;
             state.started=false;
             state.overTold=false;
@@ -605,6 +546,14 @@ namespace MikuMikuDesktopPerch
             state.words.text.clear();
             if(!state.firstSeed)state.firstSeed=static_cast<std::uint32_t>(GetTickCount64()*2654435761ull);
             StartHole();
+            // A clubhouse of the four, this round's.
+            const int house=1+static_cast<int>((state.firstSeed/7)%4);
+            if(state.renderer&&(house!=state.clubhouse||!state.sceneryBuilt))
+            {
+                state.clubhouse=house;
+                state.sceneryBuilt=true;
+                BuildScenery(house);
+            }
         }
 
         // Who plays next: one still on the tee (you first), else the one farther from the pin.
@@ -1134,6 +1083,35 @@ namespace MikuMikuDesktopPerch
                     m.Quad({A.x+s.x,A.y+s.y,A.z+s.z},{B.x+s.x,B.y+s.y,B.z+s.z},{B.x-s.x,B.y-s.y,B.z-s.z},{A.x-s.x,A.y-s.y,A.z-s.z},col);
                 }
             }
+            // The cup: a dark hole with a white rim; the model's own cup filled with green when
+            // the pin is elsewhere.
+            {
+                const V3 p=c.Pin();
+                const float dark[4]={0.03f,0.03f,0.03f,1},white[4]={0.95f,0.95f,0.95f,1};
+                const float y=(p.y+0.006f)*K;
+                for(int i=0;i<24;++i)
+                {
+                    const float a0=2*Pi*i/24,a1=2*Pi*(i+1)/24,r0=Golf::CupRadius*K,r1=r0*1.12f;
+                    m.Vertex({p.x*K,y,p.z*K},{0,1,0},dark);
+                    m.Vertex({p.x*K+r0*std::cos(a1),y,p.z*K+r0*std::sin(a1)},{0,1,0},dark);
+                    m.Vertex({p.x*K+r0*std::cos(a0),y,p.z*K+r0*std::sin(a0)},{0,1,0},dark);
+                    m.Quad({p.x*K+r0*std::cos(a0),y,p.z*K+r0*std::sin(a0)},{p.x*K+r0*std::cos(a1),y,p.z*K+r0*std::sin(a1)},
+                           {p.x*K+r1*std::cos(a1),y,p.z*K+r1*std::sin(a1)},{p.x*K+r1*std::cos(a0),y,p.z*K+r1*std::sin(a0)},white);
+                }
+                const V3 old=c.ModelCup();
+                if(Golf::Flat(old,p)>0.3f)
+                {
+                    const float fill[4]={state.greenColour[0],state.greenColour[1],state.greenColour[2],CourseLook};
+                    const float oy=(c.Height(old.x+0.3f,old.z)+0.004f)*K,r=0.12f*K;
+                    for(int i=0;i<16;++i)
+                    {
+                        const float a0=2*Pi*i/16,a1=2*Pi*(i+1)/16;
+                        m.Vertex({old.x*K,oy,old.z*K},{0,1,0},fill);
+                        m.Vertex({old.x*K+r*std::cos(a1),oy,old.z*K+r*std::sin(a1)},{0,1,0},fill);
+                        m.Vertex({old.x*K+r*std::cos(a0),oy,old.z*K+r*std::sin(a0)},{0,1,0},fill);
+                    }
+                }
+            }
             // The pin and its flag, the flag waving with the wind.
             {
                 const V3 p=c.Pin();
@@ -1412,7 +1390,8 @@ namespace MikuMikuDesktopPerch
             if(state.clock<state.bannerUntil&&!state.banner.empty())
             {
                 const float bw=std::min(W-40*s,560*s),bh=state.bannerNote.empty()?64*s:96*s;
-                const RectF box(W/2-bw/2,H*0.36f-bh/2,bw,bh);
+                // (Low during the look over the hole, which shows the clubhouse in the middle.)
+                const RectF box(W/2-bw/2,(state.phase==Phase::Intro?H*0.62f:H*0.36f)-bh/2,bw,bh);
                 Panel(g,box,s,205);
                 Text(g,state.banner,RectF(box.X,box.Y+8*s,box.Width,state.bannerNote.empty()?box.Height-16*s:48*s),26*s,gold,true);
                 if(!state.bannerNote.empty())Text(g,state.bannerNote,RectF(box.X,box.Y+56*s,box.Width,30*s),14*s,white);
@@ -1588,6 +1567,7 @@ namespace MikuMikuDesktopPerch
                 return false;
             }
             renderer->SetLight(35,50);
+            state.sceneryBuilt=false;
             MeasureHer(*state.her.model);
             state.renderer=std::move(renderer);
             state.renderer->SetGeometry({});
@@ -1722,6 +1702,14 @@ namespace MikuMikuDesktopPerch
         }
         state.her=her;
         state.onEnd=std::move(onEnd);
+        state.ground=Golf::LoadGround();
+        if(!state.ground)
+        {
+            Log(L"golf: the course model could not be read");
+            auto end=std::move(state.onEnd);
+            if(end)end();
+            return;
+        }
         state.lines.Load(L"GOLFLINES",L"golf",her.ownLinesFile,her.linesFile,her.styleKey,English(),{L"ゴルフ",L"golf",L"",L""});
         state.voice.Stop();
         state.prefetching=false;

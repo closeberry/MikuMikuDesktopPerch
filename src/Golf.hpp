@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -38,49 +39,60 @@ namespace MikuMikuDesktopPerch::Golf
     const Club& ClubOf(int club);
     std::wstring ClubName(int club);
 
-    // One hole, made from a seed: its line (a dogleg or straight), the fairway, the green with
-    // its slope and the cup, bunkers, maybe a pond, trees along the sides; the ground's rise and
-    // fall. Outside its bounds the ball is out of bounds.
+    // A model of the course's (res/golf/*.bin, made by tools/golf/build_scene.py from the
+    // user's PMX files): its pictures' resource names (type GOLFTEX), its materials, vertices
+    // (x, y, z, normal, u, v: MMD units, 12.5 a metre), triangles and bones.
+    struct SceneModel
+    {
+        struct Material
+        {
+            std::string name;
+            int texture=-1;
+            float rgb[3]{1,1,1};
+            int kind=0;   // 0 drawn only, 1 rough, 2 fairway, 3 green, 4 fringe, 5 tee, 6 bunker, 7 cart path, 8 water, 9 left out, 10 the sky
+            std::uint32_t first=0,count=0;
+        };
+        std::vector<std::string> textures;
+        std::vector<Material> materials;
+        std::vector<float> vertices;          // 8 a vertex
+        std::vector<std::uint32_t> indices;
+        std::vector<std::pair<std::string,V3>> bones;
+    };
+    // name: the resource (type GOLFMODEL): COURSE, SKY, CLUBHOUSE1-4.
+    bool LoadScene(const wchar_t* name,SceneModel& model);
+
+    // The course model's ground, for the ball: its surface triangles (metres) and what each is,
+    // found quickly by a grid; the tee, the model's own cup, the clubhouse's place.
+    struct Ground;
+    std::shared_ptr<const Ground> LoadGround();   // made once from the COURSE resource (null: none)
+
+    // One hole on the course: the pin placed by a seed (0: the model's own cup).
     class Course
     {
     public:
-        Course(std::uint32_t seed,int par);
+        Course(std::shared_ptr<const Ground> ground,std::uint32_t seed);
         float Height(float x,float z) const;
         V3 Normal(float x,float z) const;
         Lie LieAt(float x,float z) const;
-        // How much of each surface a point is (for drawing: the edges blend). Rough is the rest.
-        void Surface(float x,float z,float& fairway,float& green,float& sand,float& water,float& tee) const;
-        V3 Tee() const {return {0,Height(0,0),0};}
-        V3 Pin() const {return {pin.x,Height(pin.x,pin.z),pin.z};}
-        V3 GreenMiddle() const {return {green.x,Height(green.x,green.z),green.z};}
-        int Par() const {return par;}
-        float Length() const {return length;}   // tee to the green's middle, along the line
-        float WaterLevel() const {return waterLevel;}
-        bool HasWater() const {return pond.rx>0;}
-        // Bounds of what is drawn (and in play), metres.
-        float MinX() const {return minX;}
-        float MaxX() const {return maxX;}
-        float MinZ() const {return -20;}
-        float MaxZ() const {return length+40;}
-        float LineX(float z) const;   // the hole's middle line across at z
-        struct Tree {float x,z,height,radius;int kind;};
-        const std::vector<Tree>& Trees() const {return trees;}
+        V3 Tee() const;
+        V3 Pin() const {return pin;}
+        V3 ModelCup() const;            // the model's own cup (filled in when the pin is elsewhere)
+        V3 Clubhouse() const;           // where the clubhouse stands (its ground's middle)
+        V3 GreenMiddle() const;
+        int Par() const {return 3;}
+        float Length() const {return Flat(Tee(),pin);}
+        // Bounds of play (beyond them, and on the clubhouse's ground, out of bounds), metres.
+        float MinX() const;
+        float MaxX() const;
+        float MinZ() const;
+        float MaxZ() const;
+        float LineX(float z) const;     // the straight line from the tee to the pin, across at z
         std::uint32_t Seed() const {return seed;}
 
     private:
-        struct Ellipse {float x=0,z=0,rx=0,rz=0,turn=0;float At(float px,float pz) const;};   // < 1 inside
-        float BaseHeight(float x,float z) const;
+        std::shared_ptr<const Ground> ground;
         std::uint32_t seed;
-        int par;
-        float length=360,bend=0,bendFrom=150,bendTo=260,fairwayFrom=80,fairwayWidth=30;
-        Ellipse green,pond;
         V3 pin;
-        float greenTilt[2]={0,0};      // the green's slope (rise per metre along x, z)
-        float waterLevel=-100;
-        std::vector<Ellipse> bunkers;
-        std::vector<Tree> trees;
-        float minX=-60,maxX=60;
-        float hills[6]={};             // the ground's waves' phases
     };
 
     struct Wind {float speed=0,toward=0;};   // m/s; the way it blows (radians, 0 = down the hole, + to the right)
