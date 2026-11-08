@@ -2,6 +2,20 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.0
+
+### New
+
+- **Golf**: "Mini games" → "Play golf" in the right-click menu lets you play golf against the character (3D view only), over 3 holes, 3 holes (random), 6 holes or 9 holes
+  - Nine holes with water, bunkers, doglegs and slopes. The wind, the slope and the lie (rough, bunker, wet grass on a rainy day) change how the ball goes
+  - Choose the club, the aim, where to strike the ball, and the power and strike on the gauge. Backspin and topspin shots, and special shots (boost, meteor)
+  - Strike the light pillar over the pin in the air and the ball is drawn down into it. Add backspin, and...
+  - She swings a club of her own, reading the wind and the slope. At the end, a thumbs-up when she wins, an "oops" when she loses
+  - Each round's conditions (sunny, windy, rain, dusk, hard pins) and a mission on each hole
+  - 22 achievements, records for each hole and round, looks they unlock (shot trail, magic circle, ball, meteor fire) and her rank, which rises and falls with your games; C opens the album
+  - A hole in one brings the camera down by the cup just before the ball drops
+  - The design (in Japanese): docs/Golf.md
+
 ## 1.6.8
 
 ### Fixed
