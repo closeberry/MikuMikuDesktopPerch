@@ -90,7 +90,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdStayPut,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdOpenFaceMotion,IdCloseFaceMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdRuins,IdHanafuda,IdOthello,IdGomoku,IdShogi,IdHexWar,IdBlackjack,IdOldMaid,IdPoker,IdGinRummy,IdChess,IdSolitaire,IdForts,IdGolf};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdRuins,IdHanafuda,IdOthello,IdGomoku,IdShogi,IdHexWar,IdBlackjack,IdOldMaid,IdPoker,IdGinRummy,IdChess,IdSolitaire,IdForts,IdGolf,IdGolf3,IdGolf3Random,IdGolf6};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr UINT IdTreasure=600;          // + the treasure's place in Dungeon::TreasureBook: look at it
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
@@ -382,6 +382,7 @@ namespace
         std::wstring ownLines;    // --own-lines: the user's lines file to use in its place (diagnostics)
         std::wstring fortsStrength;   // --forts-strength: Three Forts' strength file to use (diagnostics)
         std::wstring fortsCollection; // --forts-collection: its collected cards' file to use (diagnostics)
+        std::wstring golfProgress;    // --golf-progress: golf's progress file to use (diagnostics)
         bool deviceLostTold=false;   // the GPU stopped and the user was told
         double clock=0,topmostCheck=0;
         std::uint32_t random=0x2545F491u;
@@ -1749,7 +1750,15 @@ namespace
             AppendMenuW(games,MF_STRING,IdGinRummy,T(L"ジンラミーをする",L"Play gin rummy"));
             AppendMenuW(games,MF_STRING,IdForts,T(L"三つの砦をする",L"Play Three Forts"));
             AppendMenuW(games,MF_STRING,IdAirHockey,T(L"ホバーホッケーをする",L"Play hover hockey"));
-            AppendMenuW(games,MF_STRING,IdGolf,T(L"ゴルフをする",L"Play golf"));
+            {
+                // Golf: how long a round.
+                HMENU golf=CreatePopupMenu();
+                AppendMenuW(golf,MF_STRING,IdGolf3,T(L"3ホール",L"3 holes"));
+                AppendMenuW(golf,MF_STRING,IdGolf3Random,T(L"3ホール（ランダム）",L"3 holes (random)"));
+                AppendMenuW(golf,MF_STRING,IdGolf6,T(L"6ホール",L"6 holes"));
+                AppendMenuW(golf,MF_STRING,IdGolf,T(L"9ホール",L"9 holes"));
+                AppendMenuW(games,MF_POPUP,reinterpret_cast<UINT_PTR>(golf),T(L"ゴルフをする",L"Play golf"));
+            }
             AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(games),T(L"ミニゲーム",L"Mini games"));
         }
         // The ruins (IdRuins, "遺跡を探検する") are left out of the menu while they are on hold
@@ -4248,6 +4257,10 @@ namespace
         her.light=app.settings.dungeonLight;
         her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Golf,facts,weight,fallback);};
         her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".golf.lines.txt",true);
+        // Golf's progress follows the user, not the character.
+        if(wchar_t base[MAX_PATH];!app.diagnostic&&GetEnvironmentVariableW(L"LOCALAPPDATA",base,MAX_PATH))
+            her.progressFile=(std::filesystem::path(base)/L"MikuMikuDesktopPerch"/L"golf.progress.txt").wstring();
+        if(!app.golfProgress.empty())her.progressFile=app.golfProgress;
         her.styleKey=m.character.name+L"\n"+m.character.persona;
         her.ownLinesFile=OwnLinesFile(m.modelPath);
         her.speak=[model](const std::wstring& line){
@@ -5776,6 +5789,10 @@ namespace
             OpenAirHockey(m);
             break;
         case IdGolf:
+        case IdGolf3:
+        case IdGolf3Random:
+        case IdGolf6:
+            if(!GolfWindowOpen())SetGolfRound(id==IdGolf3||id==IdGolf3Random?3:id==IdGolf6?6:9,id==IdGolf3Random);
             OpenGolf(m);
             break;
         case IdRuins:
@@ -6505,7 +6522,15 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     double snapshotMahjongAfter=0;   // --mahjong-after <seconds>: on the desktop that long first, as when asked for from the menu
     int snapshotMahjongLater=0;   // --mahjong-later n: n more moves played 20 seconds in (the watchers in place by then)
     bool snapshotGolf=false;      // --golf: the snapshot is the golf window, your shots played for you
-    float snapshotGolfSwing=-1,snapshotGolfYaw=0;   // --golf-swing stage [yaw]: she stands frozen at that stage of her swing
+    float snapshotGolfSwing=-1,snapshotGolfYaw=0,snapshotGolfPower=1;   // --golf-swing stage [yaw [power [putter]]]: she stands frozen at that stage of her swing
+    bool snapshotGolfPutter=false;
+    bool snapshotGolfBones=false;
+    int snapshotGolfSpecial=0;
+    bool snapshotGolfAce=false;
+    int snapshotGolfWeather=-1;   // --golf-weather 0-4: the day's conditions
+    std::wstring snapshotGolfRound;   // --golf-round 3|3r|6|9: the round's holes (r: drawn at random)   // --golf-special 1|2: your autoplayed shots boost or meteor
+    int snapshotGolfHole=0;   // --golf-hole n: the round starts at hole n   // --golf-bones: her skeleton instead of her
+    std::wstring snapshotGolfVmd;   // --golf-swing-vmd out.vmd [power [putter]]: her swing written as a VMD
     std::uint32_t snapshotGolfSeed=0;               // --golf-seed n: the first hole's seed
     std::wstring snapshotGolfGauge;                 // --golf-gauge power,at[,flags]: your gauge held there
     bool snapshotAirHockey=false; // --airhockey: the snapshot is the hover hockey window, your side played for you
@@ -6608,11 +6633,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--golf")snapshotGolf=true;
             else if(arg==L"--golf-gauge"&&i+1<argc){snapshotGolf=true;snapshotGolfGauge=argv[++i];}
             else if(arg==L"--golf-seed"&&i+1<argc)snapshotGolfSeed=static_cast<std::uint32_t>(_wtoi(argv[++i]));
+            else if(arg==L"--golf-bones")snapshotGolfBones=true;
+            else if(arg==L"--golf-special"&&i+1<argc){snapshotGolf=true;snapshotGolfSpecial=_wtoi(argv[++i]);}
+            else if(arg==L"--golf-ace"){snapshotGolf=true;snapshotGolfAce=true;}
+            else if(arg==L"--golf-round"&&i+1<argc){snapshotGolf=true;snapshotGolfRound=argv[++i];}
+            else if(arg==L"--golf-hole"&&i+1<argc){snapshotGolf=true;snapshotGolfHole=_wtoi(argv[++i]);}
+            else if(arg==L"--golf-swing-vmd"&&i+1<argc)
+            {
+                snapshotGolf=true;
+                snapshotGolfVmd=argv[++i];
+                if(i+1<argc&&(iswdigit(argv[i+1][0])||argv[i+1][0]==L'.'))snapshotGolfPower=static_cast<float>(_wtof(argv[++i]));
+                if(i+1<argc&&std::wstring(argv[i+1])==L"putter"){snapshotGolfPutter=true;++i;}
+            }
             else if(arg==L"--golf-swing"&&i+1<argc)
             {
                 snapshotGolf=true;
                 snapshotGolfSwing=static_cast<float>(_wtof(argv[++i]));
                 if(i+1<argc&&(iswdigit(argv[i+1][0])||argv[i+1][0]==L'-'))snapshotGolfYaw=static_cast<float>(_wtof(argv[++i]));
+                if(i+1<argc&&(iswdigit(argv[i+1][0])||argv[i+1][0]==L'.'))snapshotGolfPower=static_cast<float>(_wtof(argv[++i]));
+                if(i+1<argc&&std::wstring(argv[i+1])==L"putter"){snapshotGolfPutter=true;++i;}
             }
             else if(arg==L"--mahjong-later"&&i+1<argc)snapshotMahjongLater=_wtoi(argv[++i]);
             else if(arg==L"--airhockey-camera"&&i+1<argc)snapshotAirHockeyCamera=argv[++i];
@@ -6627,6 +6666,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--own-lines"&&i+1<argc)app.ownLines=argv[++i];
             else if(arg==L"--forts-strength"&&i+1<argc)app.fortsStrength=argv[++i];
             else if(arg==L"--forts-collection"&&i+1<argc)app.fortsCollection=argv[++i];
+            else if(arg==L"--golf-progress"&&i+1<argc)app.golfProgress=argv[++i];
+            else if(arg==L"--golf-weather"&&i+1<argc){snapshotGolf=true;snapshotGolfWeather=_wtoi(argv[++i]);}
             else if(arg==L"--oldmaid")
             {
                 snapshotOldMaid=true;
@@ -8116,10 +8157,17 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             {
                 opened=true;
                 if(snapshotGolfSeed)SetGolfSeed(snapshotGolfSeed);
+                if(snapshotGolfHole>0)SetGolfHole(snapshotGolfHole);
+                if(!snapshotGolfRound.empty())SetGolfRound(_wtoi(snapshotGolfRound.c_str()),snapshotGolfRound.find(L'r')!=std::wstring::npos);
                 OpenGolf(*app.mascots.front());
                 float g[2]={};
-                if(snapshotGolfSwing>=0)SetGolfSwingPose(snapshotGolfSwing,snapshotGolfYaw);
-                else if(swscanf_s(snapshotGolfGauge.c_str(),L"%f,%f",&g[0],&g[1])==2)
+                if(snapshotGolfSwing>=0)SetGolfSwingPose(snapshotGolfSwing,snapshotGolfYaw,snapshotGolfPower,snapshotGolfPutter);
+                if(!snapshotGolfVmd.empty())SetGolfSwingVmd(snapshotGolfVmd,snapshotGolfPower,snapshotGolfPutter);
+                if(snapshotGolfBones)SetGolfBones(true);
+                if(snapshotGolfSpecial>0)SetGolfSpecial(snapshotGolfSpecial);
+                if(snapshotGolfAce)SetGolfAce();
+                if(snapshotGolfWeather>=0)SetGolfWeather(snapshotGolfWeather);
+                if(swscanf_s(snapshotGolfGauge.c_str(),L"%f,%f",&g[0],&g[1])==2)
                 {
                     const size_t flags=snapshotGolfGauge.find(L',',snapshotGolfGauge.find(L',')+1);
                     SetGolfGauge(g[0],g[1],flags==std::wstring::npos?std::wstring():snapshotGolfGauge.substr(flags+1));

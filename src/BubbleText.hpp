@@ -37,7 +37,8 @@ namespace MikuMikuDesktopPerch
         float Width() const {return width;}
         float Height() const {return height;}
         // At (x,y), the tail pointing at height tailY, showing shown (the part said so far).
-        void Draw(Gdiplus::Graphics& g,float x,float y,float tailY,const std::wstring& shown) const;
+        // tailRight: the tail out of its right side instead (the bubble on her left).
+        void Draw(Gdiplus::Graphics& g,float x,float y,float tailY,const std::wstring& shown,bool tailRight=false) const;
         // At (x,y), the tail from its top edge pointing at (tipX,tipY) (her mouth, above it).
         void DrawPointing(Gdiplus::Graphics& g,float x,float y,float tipX,float tipY,const std::wstring& shown) const;
 

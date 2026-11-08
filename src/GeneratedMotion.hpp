@@ -52,7 +52,9 @@ namespace MikuMikuDesktopPerch
                             // Asked for alone (Strike, the dungeon): a sword's cut, a spell cast.
                             Slash,Cast,
                             // Asked for alone (Reach, at the mahjong table): an arm out to a tile.
-                            Reach};
+                            Reach,
+                            // Asked for alone (EmoteSeated): a thumb up (golf: she won).
+                            ThumbsUp};
         static constexpr int GestureCount=37;
 
         // T-stance correction of one side: keys are generated in the corrected (A-stance) frame.
@@ -146,9 +148,21 @@ namespace MikuMikuDesktopPerch
         // her left), bent from the hips over the ball. stage: 0 the address, 1 the top of the
         // backswing, 2 the ball struck, 3 the finish (any stage between, as the caller times it);
         // power (0.2-1): how far back she swings. Eases in (on) and out (off) in 0.5 s.
-        void Swing(bool on,float stage,float power);
+        void Swing(bool on,float stage,float power,bool putter=false);
         // The club's way from the grip toward its head, model space, as posed last (false: no swing).
         bool SwingClub(DirectX::XMFLOAT3& along) const {along=swingClub;return swingWeight>0;}
+        const std::vector<int>& Overrides() const {return overrides;}   // the bones this layer writes
+        // Diagnostics: the swing's wrists now (degrees: bend, twist) and arms in the body (leg lengths).
+        void SwingStrain(std::array<float,2>& bend,std::array<float,2>& twist,std::array<float,2>& inBody) const {bend=wristBend;twist=wristTwist;inBody=armInBody;}
+        void SwingWrists(std::array<float,2>& flex,std::array<float,2>& sideways) const {flex=wristFlex;sideways=wristSide;}
+        std::array<float,2> SwingElbows() const {return elbowBent;}   // degrees from straight
+        // The club as the fist holds it, in the hand's own frame: the grip's middle (x along the
+        // fingers' way from the wrist, y toward the little finger, z out of the palm); the shaft
+        // runs to the head cos a toward the index finger, plus sin a of the fingers' way.
+        bool ClubInHand(int side,DirectX::XMFLOAT3& grip,float& chirality) const;   // chirality: the palm is chirality * (fingers x little)
+        static constexpr float ShaftTilt=0.45f;   // a, radians: diagonal, from the heel of the hand to the index finger's root
+        // Where the club's head is at a stage (model space, the club this long).
+        DirectX::XMFLOAT3 SwingHead(float stage,float power,bool putter,float clubLength) const;
         float SwingWeight() const {return swingWeight;}
         // Stops in front of solid things (MascotModel::SetSolids), from the check after each
         // solve. StopArm: the hand or arm on side is depth in (counting a margin; 0: near, held
@@ -222,6 +236,12 @@ namespace MikuMikuDesktopPerch
             // Where the palm touches another (the middle of its surface), from the wrist at rest,
             // measured on the model's own hand.
             std::array<DirectX::XMFLOAT3,2> palmContact{};
+            // A club in the fist: the hand's own frame (fingers from the wrist, the line across
+            // the knuckles toward the little finger, the palm's normal), the grip's middle in it,
+            // the hand's width (the gap between the two hands on the shaft).
+            std::array<DirectX::XMFLOAT3,2> littleRestDir{},gripLocal{};
+            std::array<float,2> handChirality{1,1};
+            float handWidth=0;
             // 肩: it follows the arm (ShoulderTurn). Its pivot, and the elbow of the arm hanging
             // naturally (where the shoulder is at rest).
             std::array<int,2> shoulder{-1,-1};
@@ -296,6 +316,15 @@ namespace MikuMikuDesktopPerch
         // How far forward (toward -Z) a point must go to be margin in front of the body's
         // surface (0 when it already is, or nothing of the body is there).
         float IntoBody(DirectX::FXMVECTOR point,float margin) const;
+        // Where the elbow is with the arm's keys as they are (chest frame).
+        DirectX::XMVECTOR ElbowAt(const std::vector<Key>& keys,int side) const;
+        // How far the wrist would have to bend (radians, besides its twist) and twist (about the
+        // forearm, 手捩's part) for the hand to point so on the arm as the keys have it.
+        // bend splits into flex (toward the palm +, the back -) and side (toward the thumb +).
+        void WristStrain(const std::vector<Key>& keys,int side,DirectX::FXMVECTOR fingers,DirectX::FXMVECTOR palm,float& bend,float& twist,float& flex,float& sideways) const;
+        // The hand turned as near that as the wrist and forearm allow (flex, sideways, twist held
+        // to their reach); model space in and out, with the hand's line toward the little finger.
+        void HandWithinReach(const std::vector<Key>& keys,int side,DirectX::XMVECTOR& fingers,DirectX::XMVECTOR& palm,DirectX::XMVECTOR& little) const;
         // Curl each finger but the thumb (0 straight .. 1 fully curled), index to little.
         void CurlFingers(std::vector<Key>& keys,int side,std::array<float,4> amount);
         void Gestures(std::vector<Key>& keys,double dt);
@@ -406,7 +435,26 @@ namespace MikuMikuDesktopPerch
         void ApplyHold(std::vector<Key>& keys,double dt);
         bool swingOn=false;
         float swingStage=0,swingPower=1,swingWeight=0;
+        bool swingPutter=false;
+        // Her hands on the club, chosen each frame (ApplySwing): each hand's roll about the
+        // shaft and its elbow's swing about the shoulder-wrist line, kept near last frame's.
+        std::array<float,2> gripRoll{},elbowSwivel{};
+        bool gripChosen=false;
+        // What that choice left (for the diagnostics): the wrists' bend and twist, how far the
+        // arms are in the body (leg lengths).
+        std::array<float,2> wristBend{},wristTwist{},armInBody{},wristFlex{},wristSide{},elbowBent{};
+    public:
+        std::wstring swingDebug;   // diagnostics: the left hand's vectors this frame
+    private:
         DirectX::XMFLOAT3 swingClub{0,-1,0};
+        // The swing's shape at a stage (chest frame: as if 上半身 were at rest).
+        struct SwingShape
+        {
+            float chest=0,hips=0,lean=0,shift=0,heel=0,neck=0,rock=0;
+            DirectX::XMFLOAT4 upper{0,0,0,1};
+            DirectX::XMFLOAT3 grip[2]{},club{0,-1,0},across{-1,0,0};
+        };
+        SwingShape Shape(float stage,float power,bool putter) const;
         void ApplySwing(std::vector<Key>& keys,double dt);
         float reactionWeight=0;
         std::vector<std::pair<int,float>> reactionMorphs;

@@ -124,6 +124,7 @@
     <ClCompile Include="src\Forts.cpp" />
     <ClCompile Include="src\Golf.cpp" />
     <ClCompile Include="src\GolfWindow.cpp" />
+    <ClCompile Include="src\GolfProgress.cpp" />
     <ClCompile Include="src\FortsWindow.cpp" />
     <ClCompile Include="src\Poker.cpp" />
     <ClCompile Include="src\PokerWindow.cpp" />
@@ -206,6 +207,7 @@
     <ClInclude Include="src\Forts.hpp" />
     <ClInclude Include="src\Golf.hpp" />
     <ClInclude Include="src\GolfWindow.hpp" />
+    <ClInclude Include="src\GolfProgress.hpp" />
     <ClInclude Include="src\FortsWindow.hpp" />
     <ClInclude Include="src\Poker.hpp" />
     <ClInclude Include="src\PokerWindow.hpp" />

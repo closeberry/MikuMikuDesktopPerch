@@ -268,6 +268,20 @@ namespace MikuMikuDesktopPerch
                 if(surface<=-1e8f||surface>width)surface=0.25f*width;
                 XMStoreFloat3(&rig.palmContact[side],XMVectorAdd(middle,XMVectorScale(n,surface-XMVectorGetX(XMVector3Dot(middle,n)))));
             }
+            {
+                // The hand's own frame for a club in the fist, and the grip's middle in it: the
+                // palm's middle, a shaft's radius out from the palm.
+                const XMVECTOR f=XMLoadFloat3(&rig.handRestDir[side]);
+                XMVECTOR l=XMVectorSubtract(restPos(little1),restPos(index1));
+                l=XMVector3Normalize(XMVectorSubtract(l,XMVectorScale(f,XMVectorGetX(XMVector3Dot(l,f)))));
+                const XMVECTOR n0=XMLoadFloat3(&rig.palmRestNormal[side]);
+                const XMVECTOR n=XMVector3Normalize(XMVectorSubtract(XMVectorSubtract(n0,XMVectorScale(f,XMVectorGetX(XMVector3Dot(n0,f)))),XMVectorScale(l,XMVectorGetX(XMVector3Dot(n0,l)))));
+                XMStoreFloat3(&rig.littleRestDir[side],l);
+                rig.handChirality[side]=XMVectorGetX(XMVector3Dot(XMVector3Cross(f,l),n))>=0?1.0f:-1.0f;
+                const XMVECTOR g=XMVectorAdd(XMLoadFloat3(&rig.palmContact[side]),XMVectorScale(n,0.018f*rig.legLength));
+                rig.gripLocal[side]={XMVectorGetX(XMVector3Dot(g,f)),XMVectorGetX(XMVector3Dot(g,l)),XMVectorGetX(XMVector3Dot(g,n))};
+                rig.handWidth=std::max(rig.handWidth,XMVectorGetX(XMVector3Length(XMVectorSubtract(restPos(little1),restPos(index1)))));
+            }
             for(const wchar_t* finger:{L"人指",L"中指",L"薬指",L"小指"})
                 for(int joint=0;joint<3;++joint)
                 {
@@ -666,6 +680,85 @@ namespace MikuMikuDesktopPerch
         return std::max(0.0f,z-(front-margin));
     }
 
+    void GeneratedMotion::HandWithinReach(const std::vector<Key>& keys,int side,XMVECTOR& fingers,XMVECTOR& palm,XMVECTOR& little) const
+    {
+        if(rig.wrist[side]<0||rig.arm[side]<0||rig.elbow[side]<0)return;
+        auto turn=[&](int bone){return bone>=0&&slot[bone]>=0?XMLoadFloat4(&keys[slot[bone]].rotation):XMQuaternionIdentity();};
+        const XMVECTOR forearm=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(
+            turn(rig.elbow[side]),turn(rig.armTwist[side])),turn(rig.arm[side])),turn(rig.shoulder[side])),turn(rig.upperBody));
+        const XMMATRIX now=HandFrame(XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[side]),forearm),XMVector3Rotate(XMLoadFloat3(&rig.palmRestNormal[side]),forearm));
+        const XMVECTOR aim=XMQuaternionRotationMatrix(XMMatrixTranspose(now)*HandFrame(fingers,palm));
+        const XMVECTOR hand=XMQuaternionNormalize(XMQuaternionMultiply(XMQuaternionMultiply(forearm,aim),XMQuaternionInverse(forearm)));
+        // Its twist about the forearm (手捩) and the rest (手首), each held within reach.
+        const XMVECTOR axis=XMVector3Normalize(XMLoadFloat3(&rig.elbowTwistAxis[side]));
+        const XMVECTOR along=XMVectorScale(axis,XMVectorGetX(XMVector3Dot(hand,axis)));
+        XMVECTOR t=XMVectorSelect(XMVectorSplatW(hand),along,XMVectorSelectControl(1,1,1,0));
+        t=XMVectorGetX(XMVector4LengthSq(t))<1e-8f?XMQuaternionIdentity():XMQuaternionNormalize(t);
+        XMVECTOR rest=XMQuaternionNormalize(XMQuaternionMultiply(hand,XMQuaternionInverse(t)));
+        auto angleAxis=[](FXMVECTOR q,XMVECTOR& k)->float{
+            XMVECTOR r=q;
+            if(XMVectorGetW(r)<0)r=XMVectorNegate(r);
+            const XMVECTOR v=XMVectorSelect(XMVectorZero(),r,XMVectorSelectControl(1,1,1,0));
+            const float sn=XMVectorGetX(XMVector3Length(v));
+            k=sn>1e-6f?XMVectorScale(v,1/sn):XMVectorSet(1,0,0,0);
+            return 2*std::atan2(sn,XMVectorGetW(r));
+        };
+        XMVECTOR kt,kr;
+        const float at=angleAxis(t,kt),ar=angleAxis(rest,kr);
+        t=XMQuaternionRotationNormal(kt,std::min(at,80*Deg));
+        const XMVECTOR l=XMLoadFloat3(&rig.littleRestDir[side]),n=XMLoadFloat3(&rig.palmRestNormal[side]),f=XMLoadFloat3(&rig.handRestDir[side]);
+        const XMVECTOR r=XMVectorScale(kr,ar);
+        const float rf=std::clamp(XMVectorGetX(XMVector3Dot(r,l)),-60*Deg,60*Deg),rs=std::clamp(XMVectorGetX(XMVector3Dot(r,n)),-28*Deg,28*Deg),ra=XMVectorGetX(XMVector3Dot(r,f));
+        const XMVECTOR r2=XMVectorAdd(XMVectorAdd(XMVectorScale(l,rf),XMVectorScale(n,rs)),XMVectorScale(f,ra));
+        const float a2=XMVectorGetX(XMVector3Length(r2));
+        rest=a2>1e-6f?XMQuaternionRotationNormal(XMVectorScale(r2,1/a2),a2):XMQuaternionIdentity();
+        // The hand's own lines through 手首, then 手捩, then the forearm.
+        auto pose=[&](const XMFLOAT3& v){return XMVector3Rotate(XMVector3Rotate(XMVector3Rotate(XMLoadFloat3(&v),rest),t),forearm);};
+        fingers=pose(rig.handRestDir[side]);
+        palm=pose(rig.palmRestNormal[side]);
+        little=pose(rig.littleRestDir[side]);
+    }
+
+    XMVECTOR GeneratedMotion::ElbowAt(const std::vector<Key>& keys,int side) const
+    {
+        const XMVECTOR sh=rig.shoulder[side]>=0&&slot[rig.shoulder[side]]>=0?XMLoadFloat4(&keys[slot[rig.shoulder[side]]].rotation):XMQuaternionIdentity();
+        const XMVECTOR arm=XMQuaternionMultiply(XMLoadFloat4(&keys[slot[rig.arm[side]]].rotation),sh);
+        XMVECTOR root=XMLoadFloat3(&rig.shoulderPos[side]);
+        if(rig.shoulder[side]>=0){const XMVECTOR pivot=XMLoadFloat3(&rig.claviclePos[side]);root=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(root,pivot),sh));}
+        return XMVectorAdd(root,XMVector3Rotate(XMVectorScale(XMLoadFloat3(&rig.armRestDir[side]),rig.upperArm),arm));
+    }
+
+    void GeneratedMotion::WristStrain(const std::vector<Key>& keys,int side,FXMVECTOR fingers,FXMVECTOR palm,float& bend,float& twist,float& flex,float& sideways) const
+    {
+        // As AimHand turns it, without writing it.
+        bend=twist=flex=sideways=0;
+        if(rig.wrist[side]<0||rig.arm[side]<0||rig.elbow[side]<0)return;
+        auto turn=[&](int bone){return bone>=0&&slot[bone]>=0?XMLoadFloat4(&keys[slot[bone]].rotation):XMQuaternionIdentity();};
+        const XMVECTOR forearm=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(
+            turn(rig.elbow[side]),turn(rig.armTwist[side])),turn(rig.arm[side])),turn(rig.shoulder[side])),turn(rig.upperBody));
+        const XMMATRIX now=HandFrame(XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[side]),forearm),XMVector3Rotate(XMLoadFloat3(&rig.palmRestNormal[side]),forearm));
+        const XMVECTOR aim=XMQuaternionRotationMatrix(XMMatrixTranspose(now)*HandFrame(fingers,palm));
+        XMVECTOR hand=XMQuaternionNormalize(XMQuaternionMultiply(XMQuaternionMultiply(forearm,aim),XMQuaternionInverse(forearm)));
+        const XMVECTOR axis=XMVector3Normalize(XMLoadFloat3(&rig.elbowTwistAxis[side]));
+        const XMVECTOR along=XMVectorScale(axis,XMVectorGetX(XMVector3Dot(hand,axis)));
+        XMVECTOR t=XMVectorSelect(XMVectorSplatW(hand),along,XMVectorSelectControl(1,1,1,0));
+        t=XMVectorGetX(XMVector4LengthSq(t))<1e-8f?XMQuaternionIdentity():XMQuaternionNormalize(t);
+        twist=2*std::acos(std::clamp(std::abs(XMVectorGetW(t)),0.0f,1.0f));
+        XMVECTOR rest=XMQuaternionNormalize(XMQuaternionMultiply(hand,XMQuaternionInverse(t)));
+        if(XMVectorGetW(rest)<0)rest=XMVectorNegate(rest);
+        bend=2*std::acos(std::clamp(XMVectorGetW(rest),0.0f,1.0f));
+        // Its axis against the hand's own (the wrist's frame is the hand's at rest): about the
+        // line across the knuckles it flexes, about the palm's normal it goes sideways.
+        const XMVECTOR v=XMVectorSelect(XMVectorZero(),rest,XMVectorSelectControl(1,1,1,0));
+        const float s=XMVectorGetX(XMVector3Length(v));
+        if(s>1e-6f)
+        {
+            const XMVECTOR k=XMVectorScale(v,1/s);
+            flex=bend*XMVectorGetX(XMVector3Dot(k,XMLoadFloat3(&rig.littleRestDir[side])));
+            sideways=bend*XMVectorGetX(XMVector3Dot(k,XMLoadFloat3(&rig.palmRestNormal[side])));
+        }
+    }
+
     void GeneratedMotion::ReachArm(std::vector<Key>& keys,int side,FXMVECTOR wristTarget,FXMVECTOR pole,float shoulderAmount,bool clear)
     {
         // Off the lap: the hand comes from lying on the thigh, its wrist turned for that.
@@ -827,7 +920,7 @@ namespace MikuMikuDesktopPerch
             {L"neck",Gesture::NeckStretch},{L"nod",Gesture::Nod},{L"drowse",Gesture::Drowse},{L"sway",Gesture::Sway},
             {L"twist",Gesture::Twist},{L"peek",Gesture::Peek},{L"bounce",Gesture::Bounce},{L"tap",Gesture::TapFoot},
             {L"pat",Gesture::PatHead},{L"surprised",Gesture::Surprised},{L"curious",Gesture::Curious},{L"shynod",Gesture::ShyNod},
-            {L"oops",Gesture::Oops},{L"ponder",Gesture::Ponder},
+            {L"oops",Gesture::Oops},{L"ponder",Gesture::Ponder},{L"thumbsup",Gesture::ThumbsUp},
             {L"present",Gesture::Present},{L"slash",Gesture::Slash},{L"cast",Gesture::Cast}};
     }
 
@@ -872,7 +965,7 @@ namespace MikuMikuDesktopPerch
     {
         if(reaction!=Gesture::None||overrides.empty()||(activity!=Activity::Idle&&activity!=Activity::Sit))return false;
         static constexpr Gesture upper[]={Gesture::Think,Gesture::Clap,Gesture::Cheeks,Gesture::Surprised,Gesture::Sigh,
-                                          Gesture::ShyNod,Gesture::Curious,Gesture::Oops,Gesture::Ponder};
+                                          Gesture::ShyNod,Gesture::Curious,Gesture::Oops,Gesture::Ponder,Gesture::ThumbsUp};
         for(const auto& [n,g]:GestureNames)
             if(name==n&&std::find(std::begin(upper),std::end(upper),g)!=std::end(upper))
             {
@@ -1378,6 +1471,17 @@ namespace MikuMikuDesktopPerch
             face(rig.smileMouth,0.6f*relief);
             break;
         }
+        case Gesture::ThumbsUp:
+            // A thumb up: the fist held out in front of the chest, the fingers curled and the
+            // thumb (left as it rests) standing up, the palm turned in; a big smile, the head
+            // tilted a little toward it.
+            ReachArm(g,s,XMVectorSet(out*0.20f*L,S.y-0.20f*L,S.z-0.48f*L,0),XMVectorSet(out,-1,0.4f,0),0.5f);
+            AimHand(g,s,XMVectorSet(-out*0.25f,0,-1,0),XMVectorSet(-out,0,0.05f,0));
+            CurlFingers(g,s,{1.0f,1.0f,1.0f,1.0f});
+            neck(-3.0f*Deg,0,-out*6.0f*Deg);
+            face(rig.smileEyes,1.0f);
+            face(rig.smileMouth,0.8f);
+            break;
         case Gesture::Oops:
             // "Oops" (あちゃー): a hand to the forehead, palm on it, the head dropping and
             // tilting into the hand, the eyes shut with a wry smile, the shoulders down a little.
@@ -1874,10 +1978,17 @@ namespace MikuMikuDesktopPerch
         }
     }
 
-    void GeneratedMotion::Swing(bool on,float stage,float power)
+    void GeneratedMotion::Swing(bool on,float stage,float power,bool putter)
     {
         swingOn=on;
-        if(on){swingStage=std::clamp(stage,0.0f,3.0f);swingPower=std::clamp(power,0.2f,1.0f);}
+        if(on)
+        {
+            const float s=std::clamp(stage,0.0f,3.0f);
+            // A swing started over (back to an earlier stage, or the other club kind) chooses its
+            // hold afresh, not from where the last one (or a measurement) left the hands.
+            if(s<swingStage-0.25f||putter!=swingPutter)gripChosen=false;
+            swingStage=s;swingPower=std::clamp(power,0.05f,1.0f);swingPutter=putter;
+        }
     }
 
     namespace
@@ -1908,6 +2019,126 @@ namespace MikuMikuDesktopPerch
         }
     }
 
+    // The swing's shape by stage. Degrees (+: turned back, away from the target). Stage 0 the
+    // address, 0.5 the arms level going back (the club upright), 1 the top (the club level
+    // behind the head, pointing at the target), 1.5 coming down (the hands at the hip, the club's
+    // lag held), 2 the strike, 2.5 the arms level through, 3 the finish (the club behind the
+    // neck). The backswing and the finish shorten with the power (b, f); the strike is the same.
+    // The share of the putt's pendulum taken by the shoulders' rock (the rest by the arms).
+    static constexpr float PuttRock=0.5f,PuttRockSign=-1;
+    GeneratedMotion::SwingShape GeneratedMotion::Shape(float s,float p,bool putter) const
+    {
+        SwingShape out;
+        const float L=rig.legLength;
+        const float b=p,f=0.25f+0.75f*p;
+        const float chestKeys[][2]={{0,0},{0.5f,48*b},{1,88*b},{1.5f,38*b},{2,-14},{2.5f,-60*f},{3,-90*f}};
+        const float hipKeys[][2]={{0,0},{0.5f,20*b},{1,42*b},{1.5f,8*b},{2,-34},{2.5f,-58*f},{3,-78*f}};
+        const float armKeys[][2]={{0,0},{0.5f,46*b},{1,88*b},{1.5f,14*b},{2,2},{2.5f,-60*f},{3,-86*f}};
+        // The wrists' cock: at most a right angle between the lead arm and the shaft (a wrist goes no
+        // further); the club comes level behind the head by turning out of the plane (set).
+        const float cockKeys[][2]={{0,0},{0.25f,20*b},{0.5f,72*b},{1,70*b},{1.5f,35*b},{1.8f,20*b},{2,8},{2.5f,-70*f},{3,-85*f}};
+        // The club tipped back off the arms' plane (behind the head at the top and the finish).
+        const float setKeys[][2]={{0,0},{0.5f,10*b},{1,60*b},{1.5f,10*b},{2,0},{2.5f,20*f},{3,70*f}};
+        const float leanKeys[][2]={{0,28},{2.05f,28},{2.5f,20},{3,28-18*f}};
+        const float shiftKeys[][2]={{0,0},{1,-0.02f*b},{1.5f,0.03f},{2,0.05f},{3,0.05f+0.04f*f}};   // toward the target, leg lengths
+        const float heelKeys[][2]={{0,0},{2.02f,0},{2.5f,f},{3,f}};
+        const float neckKeys[][2]={{0,0.65f},{2.05f,0.65f},{2.6f,0.65f*(1-f)},{3,0.65f*(1-f)}};   // the head kept on the ball
+        float chest=Through(chestKeys,s)*Deg,arm=Through(armKeys,s)*Deg,cock=Through(cockKeys,s)*Deg,set=Through(setKeys,s)*Deg;
+        out.hips=Through(hipKeys,s)*Deg;out.lean=Through(leanKeys,s)*Deg;out.shift=Through(shiftKeys,s)*L;
+        out.heel=Smooth(Through(heelKeys,s));out.neck=Through(neckKeys,s);
+        if(putter)
+        {
+            // The putter: the arms and club one pendulum from the shoulders, back and through as
+            // far (up to 45 degrees each way, less the softer the stroke), the body still, the
+            // head down throughout.
+            const float a=45*p;
+            const float strokeKeys[][2]={{0,0},{1,a},{2,0},{3,-a}};
+            // The shoulders rock with it (the upper body rolled about its own front-to-back
+            // line), so the arms and wrists change less: with the shoulders still, the hands
+            // turned over as it passed the ball and the club shook after it.
+            const float stroke=Through(strokeKeys,s)*Deg;
+            arm=stroke*(1-PuttRock);
+            out.rock=stroke*PuttRock;
+            chest=arm*0.08f;out.hips=0;cock=0;set=0;out.lean=28*Deg;out.shift=0;out.heel=0;out.neck=0.65f;
+        }
+        out.chest=chest;
+        constexpr float AddressLean=28*Deg,Lie=52*Deg;
+        // The spine tilts a little away from the target while the club is low (the right hand is
+        // lower on the shaft, so the right shoulder sits lower), then stands up to the finish.
+        const float tiltKeys[][2]={{0,8},{0.6f,4},{1,3},{1.6f,6},{2,9},{2.5f,5},{3,0}};
+        const float tilt=(putter?6:Through(tiltKeys,s))*Deg+out.rock*PuttRockSign;
+        XMStoreFloat4(&out.upper,Then(Then(XMQuaternionRotationRollPitchYaw(0,0,tilt),XMQuaternionRotationRollPitchYaw(0,chest,0)),XMQuaternionRotationRollPitchYaw(-out.lean,0,0)));
+        // The arms, in the chest's own frame: hanging to the hands under the shoulders at the
+        // address (straight down as the body bends), round a plane toward her right (back) and
+        // up, or toward the target; the plane leans out in front of the chest, so the arm across
+        // it at the top stays clear of the body.
+        const XMVECTOR sh0=XMLoadFloat3(&rig.shoulderPos[0]),sh1=XMLoadFloat3(&rig.shoulderPos[1]);
+        const XMVECTOR mid=XMVectorScale(XMVectorAdd(sh0,sh1),0.5f);
+        const float half=0.5f*XMVectorGetX(XMVector3Length(XMVectorSubtract(sh0,sh1)));
+        const XMVECTOR d0=XMVector3Normalize(XMVectorSet(0,-std::cos(AddressLean),-std::sin(AddressLean)-0.10f,0));
+        // (The putter swings in one upright plane along the line, back and through alike: two
+        // planes made the hands turn over as it passed the ball, and the club shook after it.)
+        XMVECTOR e=putter?XMVectorSet(-1,0,0,0):XMVectorSet(-1,0.25f,-0.32f,0),ef=putter?XMVectorSet(1,0,0,0):XMVectorSet(1,0.25f,-0.32f,0);
+        e=XMVector3Normalize(XMVectorSubtract(e,XMVectorScale(d0,XMVectorGetX(XMVector3Dot(e,d0)))));
+        ef=XMVector3Normalize(XMVectorSubtract(ef,XMVectorScale(d0,XMVectorGetX(XMVector3Dot(ef,d0)))));
+        // Going back the arms turn toward e, going through toward ef: each plane leans out in
+        // front of her, so neither side's arms cross into the chest.
+        const XMVECTOR axis=XMVector3Normalize(XMVector3Cross(d0,e)),axisThrough=XMVector3Normalize(XMVector3Cross(d0,ef));
+        auto round=[&](FXMVECTOR v,float angle){return angle>=0?Turned(v,axis,angle):Turned(v,axisThrough,-angle);};
+        // The arms straight at the address and the strike (the wrist at the arm's full length, the
+        // grip a hand beyond it), a little bent between.
+        const float reachKeys[][2]={{0,1.0f},{0.5f,0.96f},{1,0.92f},{1.6f,0.96f},{2,1.0f},{2.5f,0.95f},{3,0.88f}};
+        const float reach=(putter?0.97f:Through(reachKeys,s))*(rig.upperArm+rig.forearm)+0.8f*rig.gripLocal[0].x;
+        const float hang=std::sqrt(std::max(reach*reach-half*half,0.25f*reach*reach));
+        const XMVECTOR hands=XMVectorAdd(mid,XMVectorScale(round(d0,arm),hang));
+        // The club at the address: down and forward at its lie, as the chest sees it; then round
+        // the same plane as the arms, and on by the wrists' cock.
+        const XMVECTOR addressTurn=XMQuaternionRotationRollPitchYaw(-AddressLean,0,0);
+        const XMVECTOR club0=XMVector3Rotate(XMVectorSet(0,-std::sin(Lie),-std::cos(Lie),0),XMQuaternionConjugate(addressTurn));
+        XMVECTOR club=XMVector3Normalize(round(club0,arm+cock));
+        XMVECTOR across=XMVector3Normalize(round(e,arm+cock));
+        {
+            // Tipped toward the chest's back (+Z) by set, the grip turned with it.
+            const XMVECTOR back=XMVectorSet(0,0,1,0);
+            const XMVECTOR k=XMVector3Cross(club,back);
+            if(XMVectorGetX(XMVector3LengthSq(k))>1e-6f&&set!=0)
+            {
+                const XMVECTOR kn=XMVector3Normalize(k);
+                const float most=std::acos(std::clamp(XMVectorGetX(XMVector3Dot(club,back)),-1.0f,1.0f));
+                const float t=std::min(set,most);
+                club=XMVector3Normalize(Turned(club,kn,t));
+                across=XMVector3Normalize(Turned(across,kn,t));
+            }
+        }
+        XMStoreFloat3(&out.club,club);
+        XMStoreFloat3(&out.across,across);
+        // The left hand at the arms' place, the right one a hand's width down the shaft.
+        XMStoreFloat3(&out.grip[0],hands);
+        XMStoreFloat3(&out.grip[1],XMVectorAdd(hands,XMVectorScale(club,1.1f*std::max(rig.handWidth,0.05f*L))));
+        return out;
+    }
+
+    bool GeneratedMotion::ClubInHand(int side,XMFLOAT3& grip,float& chirality) const
+    {
+        if(side<0||side>1||rig.wrist[side]<0)return false;
+        grip=rig.gripLocal[side];
+        chirality=rig.handChirality[side];
+        return true;
+    }
+
+    XMFLOAT3 GeneratedMotion::SwingHead(float stage,float power,bool putter,float clubLength) const
+    {
+        // As ApplySwing poses it: the left grip and the club in the chest's frame, turned with
+        // 上半身 about the hips, moved with センター and グルーブ.
+        const SwingShape sh=Shape(stage,power,putter);
+        const float L=rig.legLength;
+        const XMVECTOR pivot=XMLoadFloat3(&rig.lowerBodyRest);
+        const XMVECTOR head=XMVectorAdd(XMLoadFloat3(&sh.grip[0]),XMVectorScale(XMLoadFloat3(&sh.club),clubLength));
+        const XMVECTOR at=XMVectorAdd(XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(head,pivot),XMLoadFloat4(&sh.upper))),XMVectorSet(sh.shift,-0.045f*L,0.07f*L,0));
+        XMFLOAT3 r;XMStoreFloat3(&r,at);
+        return r;
+    }
+
     // The swing as a golfer's goes, by stage (Swing): the chest turns about the bent spine some
     // 90 degrees back and the hips half that, the arms go up across the chest and the wrists cock
     // the club to level; coming down the hips lead, the club's lag held until late; through the
@@ -1919,28 +2150,18 @@ namespace MikuMikuDesktopPerch
     {
         swingWeight=std::clamp(swingWeight+static_cast<float>(dt/0.5)*(swingOn?1.0f:-1.0f),0.0f,1.0f);
         if(swingWeight<=0||overrides.empty()||rig.arm[0]<0||rig.arm[1]<0||rig.upperBody<0)return;
-        const float L=rig.legLength,p=swingPower,s=swingStage;
+        const float L=rig.legLength;
         std::vector<Key> g=keys;
-        // Degrees by stage (+: turned back, away from the target).
-        const float chestKeys[][2]={{0,0},{1,88*p},{1.55f,46*p},{2,-14},{2.4f,-62},{3,-96}};
-        const float hipKeys[][2]={{0,0},{1,42*p},{1.55f,6},{2,-36},{2.4f,-60},{3,-78}};
-        const float armKeys[][2]={{0,0},{1,104*p},{1.55f,58*p},{2,-2},{2.4f,-72},{3,-126}};
-        const float cockKeys[][2]={{0,0},{0.55f,38*p},{1,84*p},{1.6f,82*p},{1.85f,38*p},{2,0},{2.4f,-30},{3,-92}};
-        const float leanKeys[][2]={{0,28},{2.05f,28},{2.5f,20},{3,9}};
-        const float shiftKeys[][2]={{0,0},{1,-0.02f},{1.6f,0.03f},{2,0.05f},{3,0.09f}};   // toward the target, leg lengths
-        const float heelKeys[][2]={{0,0},{2.02f,0},{2.5f,1},{3,1}};
-        const float neckKeys[][2]={{0,0.65f},{2.05f,0.65f},{2.6f,0},{3,0}};             // the head kept on the ball
-        const float chest=Through(chestKeys,s)*Deg,hips=Through(hipKeys,s)*Deg,arm=Through(armKeys,s)*Deg,cock=Through(cockKeys,s)*Deg;
-        const float lean=Through(leanKeys,s)*Deg,shift=Through(shiftKeys,s)*L,heel=Smooth(Through(heelKeys,s)),neck=Through(neckKeys,s);
-        constexpr float AddressLean=28*Deg,HipLean=8*Deg,Lie=52*Deg;
+        const SwingShape sh=Shape(swingStage,swingPower,swingPutter);
+        constexpr float HipLean=8*Deg;
         // The body: lowered a little and the hips back, moving toward the target as it swings.
-        if(rig.center>=0)KeyOf(g,rig.center).position={shift,0,0.07f*L};
+        if(rig.center>=0)KeyOf(g,rig.center).position={sh.shift,0,0.07f*L};
         if(rig.groove>=0)KeyOf(g,rig.groove).position={0,-0.045f*L,0};
-        const XMVECTOR upper=Then(XMQuaternionRotationRollPitchYaw(0,chest,0),XMQuaternionRotationRollPitchYaw(-lean,0,0));
+        const XMVECTOR upper=XMLoadFloat4(&sh.upper);
         SetRotation(g,rig.upperBody,upper);
-        const XMVECTOR lower=Then(XMQuaternionRotationRollPitchYaw(0,hips,0),XMQuaternionRotationRollPitchYaw(-HipLean,0,0));
+        const XMVECTOR lower=Then(XMQuaternionRotationRollPitchYaw(0,sh.hips,0),XMQuaternionRotationRollPitchYaw(-HipLean,0,0));
         if(rig.lowerBody>=0)SetRotation(g,rig.lowerBody,lower);
-        if(rig.neck>=0)SetRotation(g,rig.neck,XMQuaternionRotationRollPitchYaw(10*Deg*neck,-chest*neck,0));
+        if(rig.neck>=0)SetRotation(g,rig.neck,XMQuaternionRotationRollPitchYaw(10*Deg*sh.neck,-sh.chest*sh.neck,0));
         for(const int bone:rig.neutral)if(bone>=0&&slot[bone]>=0&&bone!=rig.neck)SetRotation(g,bone,XMQuaternionIdentity());
         // The feet: apart, planted; the back (right) heel up toward the finish.
         const float spread=std::max(std::abs(rig.hipRest[0].x-rig.hipRest[1].x)*0.95f,0.16f*L);
@@ -1949,42 +2170,154 @@ namespace MikuMikuDesktopPerch
             if(rig.legIK[side]<0)continue;
             const float out=side==0?1.0f:-1.0f;
             const XMFLOAT3& rest=rig.ankleRest[side];
-            const float up=side==1?heel:0.0f;
+            const float up=side==1?sh.heel:0.0f;
             const XMVECTOR at=XMVectorSet(out*spread,rest.y+up*0.07f*L,rest.z+up*0.04f*L,0);
             auto& k=KeyOf(g,rig.legIK[side]);
             XMStoreFloat3(&k.position,XMVectorSubtract(at,XMLoadFloat3(&rest)));
-            XMStoreFloat4(&k.rotation,Then(XMQuaternionRotationRollPitchYaw(-45*Deg*up,0,0),XMQuaternionRotationRollPitchYaw(0,(side==1?hips*0.6f*up:0.0f)+out*-8*Deg,0)));
+            XMStoreFloat4(&k.rotation,Then(XMQuaternionRotationRollPitchYaw(-45*Deg*up,0,0),XMQuaternionRotationRollPitchYaw(0,(side==1?sh.hips*0.6f*up:0.0f)+out*-8*Deg,0)));
             SolveLeg(g,side,at,XMVector3Normalize(XMVectorSet(-out*0.15f+(side==1?0.6f*up:0.0f),0,-1,0)));
         }
-        // The arms, in the chest's own frame: hanging to the hands under the shoulders at the
-        // address (straight down as the body bends), round the plane toward her right (back)
-        // and up, or toward the target.
-        const XMVECTOR sh0=XMLoadFloat3(&rig.shoulderPos[0]),sh1=XMLoadFloat3(&rig.shoulderPos[1]);
-        const XMVECTOR mid=XMVectorScale(XMVectorAdd(sh0,sh1),0.5f);
-        const float half=0.5f*XMVectorGetX(XMVector3Length(XMVectorSubtract(sh0,sh1)));
-        const XMVECTOR d0=XMVector3Normalize(XMVectorSet(0,-std::cos(AddressLean),-std::sin(AddressLean)-0.10f,0));
-        XMVECTOR e=XMVectorSet(-1,0.25f,0,0);
-        e=XMVector3Normalize(XMVectorSubtract(e,XMVectorScale(d0,XMVectorGetX(XMVector3Dot(e,d0)))));
-        const XMVECTOR axis=XMVector3Normalize(XMVector3Cross(d0,e));
-        const float reach=0.93f*(rig.upperArm+rig.forearm);
-        const float hang=std::sqrt(std::max(reach*reach-half*half,0.25f*reach*reach));
-        const XMVECTOR hands=XMVectorAdd(mid,XMVectorScale(Turned(d0,axis,arm),hang));
-        // The club at the address: down and forward at its lie, as the chest sees it; then round
-        // the same plane as the arms, and on by the wrists' cock.
-        const XMVECTOR addressTurn=XMQuaternionRotationRollPitchYaw(-AddressLean,0,0);
-        const XMVECTOR club0=XMVector3Rotate(XMVectorSet(0,-std::sin(Lie),-std::cos(Lie),0),XMQuaternionConjugate(addressTurn));
-        const XMVECTOR club=XMVector3Normalize(Turned(club0,axis,arm+cock));
-        const XMVECTOR across=XMVector3Normalize(Turned(e,axis,arm+cock));
-        XMStoreFloat3(&swingClub,XMVector3Rotate(club,upper));
-        const XMVECTOR at[2]={hands,XMVectorAdd(hands,XMVectorScale(club,0.09f*L))};
+        // The hands on the club: each fist round the shaft (the left one on top, the right a
+        // hand's width further down), the shaft across the palm from the heel of the hand out
+        // past the index finger;
+        // the palms face each other. Each wrist is sent where that puts its fist on the shaft.
+        XMVECTOR club=XMLoadFloat3(&sh.club);
+        const XMVECTOR across=XMLoadFloat3(&sh.across);
+        XMVECTOR gripAt[2]={XMLoadFloat3(&sh.grip[0]),XMLoadFloat3(&sh.grip[1])};
+        // The club's way is the swing's; how each hand sits on it is not quite: each hand may
+        // roll a little round the grip and its elbow swing round the line from shoulder to wrist.
+        // Of those, the one is taken that bends the wrist least, keeps the forearm's twist in
+        // reach, keeps the arm out of the body, and is near last frame's.
+        if(swingWeight<=0.01f)gripChosen=false;
+        const float L2=rig.legLength;
         for(int side=0;side<2;++side)
         {
             const float out=side==0?1.0f:-1.0f;
-            ReachArm(g,side,at[side],XMVectorSet(out*0.5f,-1,0.35f,0),0.7f,true);
-            const XMVECTOR palm=side==0?across:XMVectorNegate(across);
-            AimHand(g,side,XMVector3Rotate(XMVector3Normalize(XMVectorAdd(club,XMVectorScale(palm,-0.35f))),upper),XMVector3Rotate(palm,upper));
-            CurlFingers(g,side,{0.72f,0.76f,0.8f,0.82f});
+            XMVECTOR palm0=side==0?across:XMVectorNegate(across);   // (club: the left hand's, for the right)
+            palm0=XMVector3Normalize(XMVectorSubtract(palm0,XMVectorScale(club,XMVectorGetX(XMVector3Dot(palm0,club)))));
+            struct Way {XMVECTOR wrist,fingers,palm,pole;float roll,swivel,cost,bend,twist,inBody,flex,sideways,inward;};
+            auto handFor=[&](float roll,Way& w){
+                // The shaft leaves the fist past the index finger toward the head, its butt at
+                // the heel of the hand: club = cos a (toward the index finger) + sin a (fingers).
+                const XMVECTOR palm=Turned(palm0,club,roll);
+                const XMVECTOR u=XMVectorScale(XMVector3Cross(club,palm),rig.handChirality[side]);
+                const float ca=std::cos(ShaftTilt),sa=std::sin(ShaftTilt);
+                const XMVECTOR little=XMVectorNegate(XMVectorAdd(XMVectorScale(club,ca),XMVectorScale(u,sa)));
+                const XMVECTOR fingers=XMVectorSubtract(XMVectorScale(club,sa),XMVectorScale(u,ca));
+                const XMFLOAT3& gl=rig.gripLocal[side];
+                const XMVECTOR inHand=XMVectorAdd(XMVectorAdd(XMVectorScale(fingers,gl.x),XMVectorScale(little,gl.y)),XMVectorScale(palm,gl.z));
+                w.wrist=XMVectorSubtract(gripAt[side],inHand);
+                w.fingers=fingers;w.palm=palm;w.roll=roll;
+            };
+            const XMVECTOR basePole=XMVectorSet(out*0.5f,-1,0.35f,0);
+            Way best{};best.cost=1e9f;
+            // The first frame of a swing looks all round; after it, only near last frame's choice
+            // (a free search jumped between near-equal choices: the putt shook).
+            const bool near=gripChosen;
+            // The putter's hands keep the address's hold all through the stroke (one piece with
+            // the club, as a putt is): searching on, they turned over past the ball.
+            const bool held=near&&swingPutter;
+            const int rolls=near?9:24,swivels=near?9:24;
+            for(int r=held?4:0;r<(held?5:rolls);++r)
+            {
+                Way w{};
+                handFor(near?gripRoll[side]+(r-4)*7.5f*Deg:(r-12)*15*Deg,w);
+                const XMVECTOR dir=XMVector3Normalize(XMVectorSubtract(w.wrist,XMLoadFloat3(&rig.shoulderPos[side])));
+                XMVECTOR e1=XMVectorSubtract(basePole,XMVectorScale(dir,XMVectorGetX(XMVector3Dot(basePole,dir))));
+                if(XMVectorGetX(XMVector3LengthSq(e1))<1e-6f)e1=XMVectorSet(0,-1,0,0);
+                e1=XMVector3Normalize(e1);
+                const XMVECTOR e2=XMVector3Cross(dir,e1);
+                for(int k=held?4:0;k<(held?5:swivels);++k)
+                {
+                    const float swivel=near?elbowSwivel[side]+(k-4)*7.5f*Deg:(k-12)*(XM_PI/12);
+                    w.pole=XMVectorAdd(XMVectorScale(e1,std::cos(swivel)),XMVectorScale(e2,std::sin(swivel)));
+                    w.swivel=swivel;
+                    std::vector<Key> trial=g;
+                    ReachArm(trial,side,w.wrist,w.pole,0.7f,false);
+                    WristStrain(trial,side,XMVector3Rotate(w.fingers,upper),XMVector3Rotate(w.palm,upper),w.bend,w.twist,w.flex,w.sideways);
+                    // The arm against the body: the elbow and along both of its bones.
+                    const XMVECTOR elbow=ElbowAt(trial,side),shoulder=XMLoadFloat3(&rig.shoulderPos[side]);
+                    float in=0;
+                    // (Only above the waist: below it the chest's frame, bent over, is not the hips'.)
+                    const float waist=rig.lowerBodyRest.y;
+                    auto into=[&](FXMVECTOR q){return XMVectorGetY(q)>waist?IntoBody(q,0.03f*L2):0.0f;};
+                    // (The upper arm lies against the chest's side as it hangs: the elbow and the
+                    // forearm are what must stay out.)
+                    for(float f2=0.0f;f2<=1.0f;f2+=0.2f)in=std::max(in,into(XMVectorLerp(elbow,w.wrist,f2)));
+                    w.inBody=in/L2;
+                    // An elbow hangs toward its own hip: it never comes in across the chest past
+                    // its own shoulder (a little way for the arm across the chest at the top).
+                    const float inward=std::max(0.0f,(XMVectorGetX(shoulder)-XMVectorGetX(elbow))*out-0.04f*L2)/L2;
+                    w.inward=inward;
+                    // A wrist flexes or extends some 60-70 degrees, goes sideways only 20-30; a
+                    // forearm turns some 80 either way.
+                    const float overTwist=std::max(0.0f,w.twist-80*Deg),overFlex=std::max(0.0f,std::abs(w.flex)-60*Deg),overSide=std::max(0.0f,std::abs(w.sideways)-28*Deg);
+                    float cost=0.5f*w.flex*w.flex+2*w.sideways*w.sideways+0.3f*w.twist*w.twist+8*overFlex*overFlex+12*overSide*overSide+8*overTwist*overTwist+100*w.inBody*w.inBody+4*w.inBody+300*w.inward*w.inward+10*w.inward;
+                    // The lead (left) arm stays straight, more so the nearer the strike; the right
+                    // a little; neither at the finish.
+                    {
+                        const float bent=rig.elbow[side]>=0&&slot[rig.elbow[side]]>=0?2*std::acos(std::clamp(std::abs(XMVectorGetW(XMLoadFloat4(&trial[slot[rig.elbow[side]]].rotation))),0.0f,1.0f)):0.0f;
+                        // (Eased in and out: a weight that changed in a step made the arm jump
+                        // to another way of holding the club. The putter's arms stay straight
+                        // throughout, the triangle of a putt.)
+                        const float near=std::clamp(1-std::abs(swingStage-2)/0.6f,0.0f,1.0f),address=1-Smooth(std::clamp(swingStage/0.4f,0.0f,1.0f));
+                        const float most=swingPutter?1.0f:std::max(near,address),late=swingPutter?1.0f:1-0.8f*Smooth(std::clamp((swingStage-2.3f)/0.4f,0.0f,1.0f));
+                        const float want=(side==0?0.6f+1.4f*most:0.15f+0.6f*most)*late;
+                        cost+=want*bent*bent;
+                    }
+                    if(gripChosen)
+                    {
+                        float dr=std::abs(w.roll-gripRoll[side]);dr=std::min(dr,XM_2PI-dr);
+                        float ds=std::abs(w.swivel-elbowSwivel[side]);ds=std::min(ds,XM_2PI-ds);
+                        cost+=0.3f*dr*dr+0.15f*ds*ds;
+                    }
+                    else cost+=0.02f*w.swivel*w.swivel+0.02f*w.roll*w.roll;
+                    if(cost<best.cost)best=w,best.cost=cost;
+                }
+            }
+            if(side==0)
+            {
+                std::vector<Key> trial=g;
+                ReachArm(trial,side,best.wrist,best.pole,0.7f,false);
+                const XMVECTOR el=ElbowAt(trial,side);
+                const XMVECTOR F=XMVector3Normalize(XMVectorSubtract(best.wrist,el));
+                auto turn=[&](int bone){return bone>=0&&slot[bone]>=0?XMLoadFloat4(&trial[slot[bone]].rotation):XMQuaternionIdentity();};
+                const XMVECTOR forearm=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(turn(rig.elbow[side]),turn(rig.arm[side])),turn(rig.shoulder[side])),XMQuaternionIdentity());
+                const XMVECTOR nf=XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[side]),forearm),np=XMVector3Rotate(XMLoadFloat3(&rig.palmRestNormal[side]),forearm);
+                wchar_t t[400];
+                swprintf_s(t,L"F %.2f %.2f %.2f | fingers %.2f %.2f %.2f palm %.2f %.2f %.2f | natural fingers %.2f %.2f %.2f palm %.2f %.2f %.2f | club %.2f %.2f %.2f roll %.0f swivel %.0f chi %.0f",
+                    XMVectorGetX(F),XMVectorGetY(F),XMVectorGetZ(F),XMVectorGetX(best.fingers),XMVectorGetY(best.fingers),XMVectorGetZ(best.fingers),XMVectorGetX(best.palm),XMVectorGetY(best.palm),XMVectorGetZ(best.palm),
+                    XMVectorGetX(nf),XMVectorGetY(nf),XMVectorGetZ(nf),XMVectorGetX(np),XMVectorGetY(np),XMVectorGetZ(np),XMVectorGetX(club),XMVectorGetY(club),XMVectorGetZ(club),best.roll/Deg,best.swivel/Deg,rig.handChirality[side]);
+                swingDebug=t;
+            }
+            gripRoll[side]=best.roll;elbowSwivel[side]=best.swivel;
+            wristBend[side]=best.bend/Deg;wristTwist[side]=best.twist/Deg;armInBody[side]=best.inBody;wristFlex[side]=best.flex/Deg;wristSide[side]=best.sideways/Deg;
+            ReachArm(g,side,best.wrist,best.pole,0.7f,false);
+            if(side==0)
+            {
+                // The left hand holds the club: turned no further than a wrist goes, and the club
+                // goes as that hand has it; the right hand then takes the shaft where it is.
+                const XMVECTOR inv=XMQuaternionInverse(upper);
+                XMVECTOR f=XMVector3Rotate(best.fingers,upper),p=XMVector3Rotate(best.palm,upper),l;
+                HandWithinReach(g,side,f,p,l);
+                f=XMVector3Rotate(f,inv);p=XMVector3Rotate(p,inv);l=XMVector3Rotate(l,inv);
+                best.fingers=f;best.palm=p;
+                club=XMVector3Normalize(XMVectorAdd(XMVectorScale(l,-std::cos(ShaftTilt)),XMVectorScale(f,std::sin(ShaftTilt))));
+                const XMFLOAT3& gl=rig.gripLocal[side];
+                const XMVECTOR grip=XMVectorAdd(best.wrist,XMVectorAdd(XMVectorAdd(XMVectorScale(f,gl.x),XMVectorScale(l,gl.y)),XMVectorScale(p,gl.z)));
+                const XMVECTOR shift=XMVectorSubtract(gripAt[1],gripAt[0]);
+                gripAt[0]=grip;
+                gripAt[1]=XMVectorAdd(grip,XMVectorScale(club,XMVectorGetX(XMVector3Length(shift))));
+                WristStrain(g,side,XMVector3Rotate(f,upper),XMVector3Rotate(p,upper),best.bend,best.twist,best.flex,best.sideways);
+                wristBend[side]=best.bend/Deg;wristTwist[side]=best.twist/Deg;wristFlex[side]=best.flex/Deg;wristSide[side]=best.sideways/Deg;
+            }
+            AimHand(g,side,XMVector3Rotate(best.fingers,upper),XMVector3Rotate(best.palm,upper));
+            CurlFingers(g,side,{0.78f,0.82f,0.86f,0.9f});
+            if(rig.elbow[side]>=0&&slot[rig.elbow[side]]>=0)
+                elbowBent[side]=2*std::acos(std::clamp(std::abs(XMVectorGetW(XMLoadFloat4(&g[slot[rig.elbow[side]]].rotation))),0.0f,1.0f))/Deg;
         }
+        XMStoreFloat3(&swingClub,XMVector3Rotate(club,upper));
+        gripChosen=true;
         const float weight=Smooth(swingWeight);
         for(size_t i=0;i<keys.size();++i)
         {

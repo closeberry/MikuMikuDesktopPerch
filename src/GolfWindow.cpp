@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "GolfWindow.hpp"
 #include "Golf.hpp"
+#include "GolfProgress.hpp"
 #include "Log.hpp"
 #include "MascotModel.hpp"
 #include "MascotRenderer.hpp"
@@ -34,16 +35,27 @@ namespace MikuMikuDesktopPerch
         constexpr wchar_t ClassName[]=L"MikuMikuDesktopPerchGolf";
         constexpr wchar_t ViewClassName[]=L"MikuMikuDesktopPerchGolfView";
         constexpr UINT_PTR TimerId=1;
-        constexpr int You=0,Her=1,Holes=3,MostStrokes=10;
+        constexpr int You=0,Her=1,Holes=Golf::HoleCount,MostStrokes=10;
         constexpr float K=12.5f;   // world units a metre (MMD's 8 cm a unit)
+        // Distances along the ground are shown in yards (as golf counts them), heights in metres.
+        constexpr float YardM=0.9144f;
+        inline float Yards(float metres){return metres/YardM;}
+        inline std::wstring YardText(float metres,bool fine=false)
+        {
+            wchar_t t[32];
+            swprintf_s(t,fine?L"%.1f":L"%.0f",Yards(metres));
+            return std::wstring(t)+T(L"y",L" yd");
+        }
         constexpr float Pi=3.14159265f,Deg=Pi/180;
         constexpr float BeamHigh=25;   // where the pin's distance is written on its beam, metres up
-        constexpr float BeamSky=700;   // how high the beam goes (into the sky's dome)
+        constexpr float BeamSky=700;
+        constexpr double AceZoom=1.6;  // a hole in one: the camera down by the cup for its last seconds   // how high the beam goes (into the sky's dome)
         float FovY(){return 45.0f*Deg;}   // the camera's (the gauge in front of it is placed by it)
 
         enum class Phase {Intro,Aim,Gauge,Swing,Flying,Settle,HoleOver,Over};
         // A drop of water thrown up (metres, metres a second, seconds).
-        struct Drop {V3 at,v;float age=0,life=1,size=0.05f;};
+        constexpr float PuttLineShown=4.0f;   // metres of your putt's likely way shown
+        struct Drop {V3 at,v;float age=0,life=1,size=0.05f;float rgb[3]{0.85f,0.93f,1.0f};float fall=9.81f;bool rain=false;};
         // The gauge: waiting; the marker running out for the power (and back: no click by the
         // time it is home again lets the shot go); running back past the line for the strike
         // (not for the putter); done.
@@ -52,6 +64,21 @@ namespace MikuMikuDesktopPerch
         constexpr double ImpactSeconds=1.4;   // back from full power to the line
         constexpr float Pink=0.09f;           // the curving zone's half width either side of the line (gauge widths)
 
+        // Her swing's timing, made for each swing from the way the club's head goes: the
+        // backswing eases away and back to rest at the top; coming down the head gathers speed
+        // (its path as the cube of the time) to be as fast as the ball leaves at the strike, and
+        // through the ball it starts at that speed and slows to the finish. Stage 0 address, 1
+        // top, 2 strike, 3 finish (GeneratedMotion::Shape).
+        constexpr double Address=1.6,HoldFinish=1.5;
+        struct SwingPlan
+        {
+            double back=0.95,top=0.12,down=0.28,through=0.55;
+            static constexpr int PerStage=100;
+            std::vector<float> path;   // metres the head has gone by stage i/PerStage
+            float speed=0;             // m/s at the strike
+            double Strike() const {return back+top+down;}
+            double Length() const {return back+top+down+through;}
+        };
         struct Ball
         {
             V3 at;
@@ -73,6 +100,13 @@ namespace MikuMikuDesktopPerch
             bool sceneryBuilt=false;
             float greenColour[3]{0.4f,0.65f,0.3f};
             std::uint32_t firstSeed=0;
+            int round=0;   // rounds played in this window (the first in the models' own cups)
+            int startHole=0;   // diagnostics (--golf-hole): the first round starts here (0-8)
+            // The round chosen from the menu: how many holes, and whether they are drawn at random
+            // (else the first ones in order); the holes of this round (numbers 1-9, in play order).
+            int roundHoles=Holes;
+            bool roundRandom=false;
+            std::vector<int> order;
             int hole=0;
             std::array<std::array<int,Holes>,2> card{};   // strokes per hole (0: not played)
             std::array<int,Holes> pars{};
@@ -110,6 +144,8 @@ namespace MikuMikuDesktopPerch
             bool thought=false;
             double swingTime=0;
             float swingPower=1;
+            SwingPlan plan;           // her swing's timing (MakePlan)
+            std::vector<float> pathScale;   // her posed club head's way over the reckoned one, a twentieth of a stage each (MeasureHer)
             std::mt19937 random{12345};
             float care=0.85f;
             bool autoplay=false;
@@ -117,6 +153,16 @@ namespace MikuMikuDesktopPerch
             // head is at the address (model space; the ball goes there).
             float hips=10,upper=10,clubLength=12;
             std::array<float,3> head{0,0,-8};
+            std::array<float,3> putterHead{0,0,-8};   // the same for the putter
+            float putterLength=1;
+            bool herPutting=false;   // her club now is the putter (PlaceToSwing)
+            int herClub=3;           // the club in her hands (PlaceToSwing)
+            // Each club: its length (model units; the measured length is the 7 iron's), how much
+            // flatter it lies in her hands (radians), where its head rests at the address (the
+            // ball goes there: straight out from her across the aim, further for longer clubs).
+            std::array<float,Golf::ClubCount> clubLen{},clubTilt{};
+            std::array<std::array<float,3>,Golf::ClubCount> clubHead{};
+            float faceSign=1;   // her left palm's normal or its opposite is the club face's way
             // Where she is: on the course (metres), turned by yaw (radians, the model's
             // rotation about the up axis), swinging or watching.
             V3 herAt;
@@ -124,19 +170,67 @@ namespace MikuMikuDesktopPerch
             bool herSwinging=false;
             bool moved=false;      // put somewhere else this frame (her hair and clothes settled again)
             size_t treesShown=0;   // trees drawn this frame
+            std::vector<float> treeFade;   // each tree's fade, 0 gone .. 1 there (PlaceTrees)
+            bool cutNow=false;             // the camera jumped this frame (no fading)
             bool justShot=false;   // the shot in the air was struck square (its trail glitters)
             bool splashed=false;   // the ball in the air has fallen into the pond
+            bool spunShown=false,boomShown=false,beamShown=false;   // this flight's effects, shown
+            // The special gauge (0-200, two bars: the boost takes one, the meteor two), yours and hers;
+            // what you have chosen for this shot (0 none, 1 boost, 2 meteor); the spin your strike made.
+            std::array<float,2> meter{};
+            int special=0,gaugeSpin=0;
+            // The special shots' menu (S): open, the line picked (0 boost, 1 meteor, 2 cancel),
+            // where its lines are on screen.
+            bool menuOpen=false;
+            int diagSpecial=0;
+            bool diagAce=false;
+            float diagMeteor=0;   // (--golf-ace: the meteor's speed found)   // diagnostics (--golf-ace): no wind, and your tee shot a meteor with backspin found to go in
+            // Progress kept for the user (achievements, records, looks, her rank, stars).
+            GolfProgress::Data progress;
+            std::wstring progressFile;
+            // The day's conditions for this round (Weather; forced: diagnostics, -1 none).
+            int weather=0,forcedWeather=-1;
+            // This hole, for your missions and achievements: the mission (-1 none) and whether it
+            // is done, a penalty, a meteor used, your shots and putts; this round's square-strike
+            // run, a penalty, missions done.
+            int mission=-1;
+            bool missionDone=false,holePenalty=false,meteorUsed=false,roundPenalty=false;
+            int shotsHere=0,putts=0,squareRun=0,missionsDone=0;
+            // Short notices (an achievement, a mission cleared), shown one after another.
+            std::vector<std::wstring> toasts;
+            double toastUntil=0;
+            // The album (C): open, the line of looks picked.
+            bool album=false;
+            int albumRow=0;
+            double nextPoseAt=0;   // the result: when she next does her pose (thumb up, or "oh no")
+            // The meteor's landing: where, how long ago (seconds; below 0 none), the camera's shake.
+            V3 blastAt;
+            float blastAge=-1,shake=0;
+            float lastHeadX=-1e9f;   // her club head along the aim, the frame before (HeadAtBall)
+            std::wstring measured;
+            int groundVertices=0,shadedVertices=0;   // diagnostics: the ground's vertices, those in the trees' shade   // diagnostics: where her club head was found (for the report)   // diagnostics (--golf-special): your autoplayed shots use this special
+            int menuPick=0;
+            RectF menuBoxes[3];
+            // Your putt's likely way (on the green, the strength that would roll the flat
+            // distance to the cup), as far as it is shown.
+            std::vector<V3> puttLine;
             std::vector<MascotRenderer::Ripple> ripples;   // on the pond (world units)
             std::vector<Drop> drops;
             // Diagnostics: frozen at a stage of the swing (-1: no), the camera round her.
-            float posing=-1,poseYaw=0;
+            float posing=-1,poseYaw=0,posePower=1;
+            bool posePutter=false;
+            std::wstring swingVmd;   // --golf-swing-vmd: where to write her swing
+            bool bonesView=false;    // --golf-bones: her skeleton drawn instead of her
             // The camera: where it looks from and at (world units), eased; the user's turn and
             // nearness on top.
             XMFLOAT3 eye{},look{};
             bool cut=true;
             struct Camera {float yaw=0,pitch=0,zoom=1;} camera;
             POINT dragFrom{};
-            int dragging=0;
+            int dragging=0;             // 1 turning the camera (right or middle), 2 moving the view from above (middle, in the 0 view)
+            POINT dragStart{};          // where the right button went down (a click without a drag: the 0 view)
+            bool activating=false;      // the window was not active when this click came: it only brings the window up
+            V3 overheadPan;             // the 0 view moved by a middle drag (metres)
             std::wstring hudShown;
             ULONGLONG hudAt=0;
             std::unique_ptr<Bitmap> map;      // the hole from above (made per hole)
@@ -159,7 +253,7 @@ namespace MikuMikuDesktopPerch
             double bannerUntil=0;
             std::wstring afterword,afterwordLine;
             POINT headScreen{-1,-1},besideHead{-1,-1};
-            POINT beamTop{-1,-1};   // the top of the pin's beam on the screen (x < 0: not seen)
+            POINT beamTop{-1,-1};   // the top of the light pillar on the screen (x < 0: not seen)
             int frames=0,shots=0;
             std::wstring log;     // diagnostics: what was played
             bool askingQuit=false,overTold=false;
@@ -167,6 +261,10 @@ namespace MikuMikuDesktopPerch
         } state;
 
         void Splash(V3 p);   // (below)
+        void MeteorBlast(V3 p);   // (below)
+        std::array<float,3> FlameColour(bool hers);   // (below)
+        void Burst(V3 p,int n,const std::array<float,3>& rgb,float speed,float life,float size);   // (below)
+        float JustWidth(int club);   // (below)
 
         std::wstring HerName(){return state.her.name.empty()?std::wstring(T(L"相手",L"Her")):state.her.name;}
         float Scale(){return state.window?static_cast<float>(GetDpiForWindow(state.window))/96.0f:1;}
@@ -181,6 +279,10 @@ namespace MikuMikuDesktopPerch
         const Golf::Course& Course(){return *state.course;}
         XMFLOAT3 W(V3 p,float above=0){return {p.x*K,(p.y+above)*K,p.z*K};}
         int Total(int who){int t=0;for(int h=0;h<Holes;++h)t+=state.card[who][h];return t;}
+        // How many holes this round has, and the course's number for the h-th of them (0: now).
+        int RoundLength(){return state.order.empty()?Holes:static_cast<int>(state.order.size());}
+        int HoleNo(int h){return state.order.empty()?h+1:state.order[static_cast<size_t>(std::clamp(h,0,RoundLength()-1))];}
+        int HoleNo(){return HoleNo(state.hole);}
 
         // ---- Her words ------------------------------------------------------------------
 
@@ -247,6 +349,7 @@ namespace MikuMikuDesktopPerch
         // ---- The course in 3D ----------------------------------------------------------------
 
         // The geometry's look for the course (GeometryPS: look 6, its kind plus 10 in minus uv.z).
+        constexpr float SkyExposure=1.8f;   // GeometryPS lifts the sky picture's middle tones by this
         constexpr float CourseLook=0.12f,Unlit=0.25f;   // GeometryPS: look 6, the course's kinds being 10 on
         struct Mesh
         {
@@ -360,7 +463,44 @@ namespace MikuMikuDesktopPerch
             std::vector<ImageRgba8> pictures;
             std::vector<std::string> named;
             bool all=true;
+            // The wood's shade on the ground under it (metres; 1 in the open), on a 2 m grid.
+            float shadeX0=0,shadeZ0=0;int shadeW=0,shadeH=0;
+            std::vector<float> shade;
+            {
+                const auto& trees=Course().Trees();
+                const auto& shapes=Golf::TreeShapes();
+                float x0=Course().MinX(),x1=Course().MaxX(),z0=Course().MinZ(),z1=Course().MaxZ();
+                for(const auto& t:trees){x0=std::min(x0,t.x-12);x1=std::max(x1,t.x+12);z0=std::min(z0,t.z-12);z1=std::max(z1,t.z+12);}
+                constexpr float Cell=2;
+                shadeX0=x0;shadeZ0=z0;
+                shadeW=static_cast<int>((x1-x0)/Cell)+2;shadeH=static_cast<int>((z1-z0)/Cell)+2;
+                shade.assign(static_cast<size_t>(shadeW)*shadeH,1.0f);
+                for(const auto& t:trees)
+                {
+                    const float r=std::max(2.0f,shapes[static_cast<size_t>(t.kind)].across*t.scale*1.3f);
+                    const int i0=std::max(0,static_cast<int>((t.x-r-x0)/Cell)),i1=std::min(shadeW-1,static_cast<int>((t.x+r-x0)/Cell)+1);
+                    const int j0=std::max(0,static_cast<int>((t.z-r-z0)/Cell)),j1=std::min(shadeH-1,static_cast<int>((t.z+r-z0)/Cell)+1);
+                    for(int j=j0;j<=j1;++j)
+                        for(int i=i0;i<=i1;++i)
+                        {
+                            const float dx=x0+i*Cell-t.x,dz=z0+j*Cell-t.z,d2=(dx*dx+dz*dz)/(r*r);
+                            if(d2>=1)continue;
+                            float& v=shade[static_cast<size_t>(j)*shadeW+i];
+                            v*=1-0.55f*(1-d2);
+                        }
+                }
+                for(float& v:shade)v=std::max(v,0.32f);
+            }
+            auto shadeAt=[&](float x,float z){
+                if(shade.empty())return 1.0f;
+                const float fx=std::clamp((x-shadeX0)/2,0.0f,static_cast<float>(shadeW-1)),fz=std::clamp((z-shadeZ0)/2,0.0f,static_cast<float>(shadeH-1));
+                const int i=std::min(static_cast<int>(fx),shadeW-2),j=std::min(static_cast<int>(fz),shadeH-2);
+                const float u=fx-i,v=fz-j;
+                auto at=[&](int a,int b){return shade[static_cast<size_t>(b)*shadeW+a];};
+                return (at(i,j)*(1-u)+at(i+1,j)*u)*(1-v)+(at(i,j+1)*(1-u)+at(i+1,j+1)*u)*v;
+            };
             auto add=[&](const wchar_t* resource,XMFLOAT3 offset,float yaw=0,float scale=1,int group=-1){
+                const bool ground=std::wstring(resource).rfind(L"HOLE",0)==0;
                 const float turnC=std::cos(yaw),turnS=std::sin(yaw);
                 Golf::SceneModel m;
                 if(!Golf::LoadScene(resource,m)){all=false;Log(L"golf: no model %s",resource);return;}
@@ -393,8 +533,8 @@ namespace MikuMikuDesktopPerch
                     }
                     const bool sky=mt.kind==10,water=mt.kind==8;
                     float c[4]={mt.rgb[0],mt.rgb[1],mt.rgb[2],sky?Unlit:CourseLook};
-                    if(sky)c[0]=c[1]=c[2]=1;
-                    if(water){c[0]=0.07f;c[1]=0.22f;c[2]=0.25f;}   // the water's own colour, under what it mirrors
+                    if(sky)c[0]=c[1]=c[2]=SkyExposure;
+                    if(water){c[0]=0.09f;c[1]=0.27f;c[2]=0.35f;}   // the clear water's colour, over its bottom
                     const bool grass=mt.kind==1||(mt.kind>=2&&mt.kind<=5)||mt.kind==11;
                     if(mt.kind==3)for(int i=0;i<3;++i)state.greenColour[i]=mt.rgb[i];   // for filling the model's own cup
                     MascotRenderer::SceneryDraw d;
@@ -407,10 +547,17 @@ namespace MikuMikuDesktopPerch
                         // Turned about the up axis and sized (the trees), then put in place.
                         const float px=v[0]*turnC+v[2]*turnS,pz=-v[0]*turnS+v[2]*turnC,nx=v[3]*turnC+v[5]*turnS,nz=-v[3]*turnS+v[5]*turnC;
                         MascotRenderer::GeometryVertex g{{px*scale+offset.x,v[1]*scale+offset.y,pz*scale+offset.z},{nx,v[4],nz},{c[0],c[1],c[2],c[3]}};
+                        if(ground&&!water&&!sky)
+                        {
+                            // Darker under the trees.
+                            const float k=shadeAt(g.position[0]/K,g.position[2]/K);
+                            g.color[0]*=k;g.color[1]*=k;g.color[2]*=k;
+                            ++state.groundVertices;if(k<0.9f)++state.shadedVertices;
+                        }
                         g.wall[0]=g.wall[1]=g.wall[2]=g.wall[3]=0;
                         g.uv[0]=v[6];g.uv[1]=v[7];g.uv[3]=0;
-                        if(picture>=0)g.uv[2]=2;
-                        else if(water){g.uv[0]=g.uv[1]=0;g.uv[2]=-15;}   // GeometryPS's CourseWater
+                        if(water){g.uv[0]=g.uv[1]=0;g.uv[2]=-15;}   // GeometryPS's CourseWater
+                        else if(picture>=0)g.uv[2]=2;
                         else if(grass)
                         {
                             // The grass drawn by GeometryPS's CourseGround: mown stripes on the
@@ -426,7 +573,10 @@ namespace MikuMikuDesktopPerch
                     draws.push_back(d);
                 }
             };
-            add(L"COURSE",{0,0,0});
+            {
+                const std::wstring hole=L"HOLE"+std::to_wstring(Course().Hole());
+                add(hole.c_str(),{0,0,0});
+            }
             add(L"SKY",{0,0,0});
             const V3 house=Course().Clubhouse();
             const std::wstring name=L"CLUBHOUSE"+std::to_wstring(std::clamp(clubhouse,1,4));
@@ -461,11 +611,15 @@ namespace MikuMikuDesktopPerch
 
         // Standing at the ball to hit it toward aim: the model turned so its left (+X) points
         // there, and placed so the club's head at the address is on the ball.
-        void PlaceToSwing(V3 ball,float aim)
+        void PlaceToSwing(V3 ball,float aim,int club)
         {
+            const bool putter=club==Golf::Putter;
             state.herYaw=aim-Pi/2;
+            state.herPutting=putter;
+            state.herClub=club;
+            const auto& head=putter?state.putterHead:state.clubHead[static_cast<size_t>(club)];
             const float c=std::cos(state.herYaw),s=std::sin(state.herYaw);
-            const float hx=state.head[0]*c+state.head[2]*s,hz=-state.head[0]*s+state.head[2]*c;
+            const float hx=head[0]*c+head[2]*s,hz=-head[0]*s+head[2]*c;
             const V3 at{ball.x-hx/K,0,ball.z-hz/K};
             if(Golf::Flat(at,state.herAt)>0.5f)state.moved=true;
             state.herAt=at;
@@ -487,6 +641,62 @@ namespace MikuMikuDesktopPerch
             state.herSwinging=false;
         }
 
+        // Each club at the address (she is posed there now): longer for the woods, shorter for
+        // the wedges, each turned in her hands until its head rests on the ground; where that
+        // head is, the ball goes.
+        void MeasureClubs(MascotModel& model)
+        {
+            // Lengths against the 7 iron's (the measured one): about as real clubs go.
+            constexpr float Share[Golf::ClubCount]={1.2f,1.14f,1.05f,1.0f,0.96f,0.95f,0.94f,1.0f};
+            for(int c=0;c<Golf::ClubCount;++c)
+            {
+                const size_t k=static_cast<size_t>(c);
+                state.clubLen[k]=state.clubLength*Share[k];
+                state.clubTilt[k]=0;
+                std::array<float,3> g{},d{};
+                auto below=[&](float tilt){   // how far the head is under the ball's middle
+                    if(!model.ClubInHand(g,d,tilt))return 0.0f;
+                    return g[1]+d[1]*state.clubLen[k]-Golf::BallRadius*K*0.3f;
+                };
+                float lo=-0.6f,hi=0.6f;
+                const float flo=below(lo),fhi=below(hi);
+                if(flo*fhi<0)
+                {
+                    for(int i=0;i<30;++i)
+                    {
+                        const float mid=0.5f*(lo+hi),fm=below(mid);
+                        if((fm<0)==(flo<0))lo=mid;else hi=mid;
+                    }
+                    // Of the two ways to bring it to the ground, the one nearer the hand's own.
+                    state.clubTilt[k]=0.5f*(lo+hi);
+                }
+                std::array<float,3> palm{};
+                if(model.ClubInHand(g,d,state.clubTilt[k],&palm))
+                {
+                    // (The ball at the middle of the face: a little toward the toe, out from her,
+                    // and just in front of the face, toward the target.)
+                    state.clubHead[k]={g[0]+d[0]*state.clubLen[k]+(Golf::BallRadius+0.004f)*K,0,g[2]+d[2]*state.clubLen[k]-(c<=1?0.05f:0.035f)*K};
+                    if(c==3)state.faceSign=palm[0]>=0?1.0f:-1.0f;   // the face toward the target (+X) at the address
+                }
+                else state.clubHead[k]=state.head;
+            }
+        }
+        // Her posed club head has come to the ball (along the aim: the model's +X).
+        bool HeadAtBall()
+        {
+            if(!state.her.model)return true;
+            std::array<float,3> g{},d{};
+            const size_t k=static_cast<size_t>(state.herClub);
+            const float len=state.herPutting?state.putterLength:state.clubLen[k];
+            if(!state.her.model->ClubInHand(g,d,state.herPutting?0.0f:state.clubTilt[k]))return true;
+            const float ball=state.herPutting?state.putterHead[0]:state.clubHead[k][0];
+            // On it, or nearer it now than it will be next frame (the head goes as far again as
+            // it came since the last: so the frame shown is the nearest).
+            const float x=g[0]+d[0]*len+(Golf::BallRadius+0.004f)*K,step=x-state.lastHeadX;
+            state.lastHeadX=x;
+            return x>=ball||(step>0&&x+step*0.5f>=ball);
+        }
+
         void MeasureHer(MascotModel& model)
         {
             std::array<float,3> lo{},hi{},legLo{},legHi{},head{};
@@ -500,16 +710,62 @@ namespace MikuMikuDesktopPerch
             model.EndGestures();
             model.StopMotion();
             for(int i=0;i<15||(i<90&&model.MotionPlaying());++i)model.Update(1/30.0);
-            // At the address for a while: where the grip is and the club's way give its length
-            // (its head on the ground) and where the ball lies.
-            for(int i=0;i<60;++i){model.Swing(true,0,1);model.Update(1/30.0);}
-            std::array<float,3> middle{},along{},club{};
-            if(model.Grip(0,middle,along)&&model.SwingClub(club)&&club[1]<-0.2f)
+            // Held at the strike for a while: where the grip is and the club's way there give its
+            // length (its head on the ground) and where the ball lies, so the head meets the
+            // ball as she swings through (at the address it hovers or rests a little off it).
+            // The putter's the same way, its own stroke.
+            for(int putter=0;putter<2;++putter)
             {
-                state.clubLength=std::clamp((middle[1]-Golf::BallRadius*K)/-club[1],0.6f*K,1.4f*K);
-                state.head={middle[0]+club[0]*state.clubLength,0,middle[2]+club[2]*state.clubLength};
+                // Swung there from the address as in play (the hands' hold carries on from frame
+                // to frame; the strike posed on its own held the club otherwise, and the ball
+                // was left off the head).
+                for(int i=0;i<20;++i){model.Swing(true,0,1,putter!=0);model.Update(1/30.0);}
+                std::array<float,3> g0{},d0{};
+                const bool atAddress=model.ClubInHand(g0,d0);
+                for(int i=1;i<=40;++i){model.Swing(true,2.0f*i/40,1,putter!=0);model.Update(1/30.0);}
+                std::array<float,3> middle{},club{};
+                float& length=putter?state.putterLength:state.clubLength;
+                std::array<float,3>& head=putter?state.putterHead:state.head;
+                if(model.ClubInHand(middle,club)&&club[1]<-0.2f)
+                {
+                    length=std::clamp((middle[1]-Golf::BallRadius*K)/-club[1],0.6f*K,1.4f*K);
+                    head={middle[0]+club[0]*length+(putter?(Golf::BallRadius+0.004f)*K:0.0f),0,middle[2]+club[2]*length-(putter?0.045f*K:0.0f)};
+                }
+                else head={0,0,-0.9f*K};
+                if(atAddress)
+                {
+                    wchar_t t[200];
+                    swprintf_s(t,L"golf: %ls head at the address %.2f,%.2f,%.2f, at the strike %.2f,%.2f m (from her)\n",putter?L"putter":L"club",
+                               (g0[0]+d0[0]*length)/K,(g0[1]+d0[1]*length)/K,(g0[2]+d0[2]*length)/K,head[0]/K,head[2]/K);
+                    state.measured+=t;
+                }
             }
-            else state.head={0,0,-0.9f*K};
+            for(int i=0;i<20;++i){model.Swing(true,0,1,false);model.Update(1/30.0);}
+            MeasureClubs(model);
+            // How much longer or shorter the head's way is on her posed arms than
+            // GeneratedMotion::SwingHead reckons, stage by stage (her swing's timing is made from
+            // the latter): near the strike her arms are at full stretch.
+            {
+                constexpr int N=60;
+                state.pathScale.assign(N,1.0f);
+                std::array<float,3> last{},lastR{};
+                for(int i=0;i<=N;++i)
+                {
+                    const float stage=3.0f*i/N;
+                    for(int k=0;k<(i==0?20:2);++k){model.Swing(true,stage,1);model.Update(1/30.0);}
+                    std::array<float,3> g{},d{};
+                    if(!model.ClubInHand(g,d)){state.pathScale.assign(N,1.0f);break;}
+                    const std::array<float,3> h{g[0]+d[0]*state.clubLength,g[1]+d[1]*state.clubLength,g[2]+d[2]*state.clubLength};
+                    const auto r=model.SwingHead(stage,1,false,state.clubLength);
+                    if(i>0)
+                    {
+                        const float posed=std::sqrt((h[0]-last[0])*(h[0]-last[0])+(h[1]-last[1])*(h[1]-last[1])+(h[2]-last[2])*(h[2]-last[2]));
+                        const float reckoned=std::sqrt((r[0]-lastR[0])*(r[0]-lastR[0])+(r[1]-lastR[1])*(r[1]-lastR[1])+(r[2]-lastR[2])*(r[2]-lastR[2]));
+                        state.pathScale[i-1]=reckoned>0.02f?std::clamp(posed/reckoned,0.5f,1.5f):1.0f;
+                    }
+                    last=h;lastR=r;
+                }
+            }
             for(int i=0;i<20;++i){model.Swing(false,0,1);model.Update(1/30.0);}
             model.ResetPhysics();
             Log(L"golf: hips %.1f, upper body %.1f, club %.2f m, ball at %.2f,%.2f m from her",state.hips,state.upper,state.clubLength/K,state.head[0]/K,state.head[2]/K);
@@ -535,6 +791,25 @@ namespace MikuMikuDesktopPerch
             }
             state.landing.y=Course().Height(state.landing.x,state.landing.z);
             state.landingKnown=true;
+            // The putt's likely way: struck at the strength that rolls the flat distance to the
+            // cup, no wind; only its first PuttLineShown metres (a long putt's end is not shown).
+            state.puttLine.clear();
+            if(state.club==Golf::Putter&&b.lie==Lie::Green)
+            {
+                const float toPin=Golf::Flat(b.at,Course().Pin());
+                Golf::Shot s;
+                s.club=Golf::Putter;s.aim=state.aim;
+                s.range=Golf::PutterRange(toPin,Course().Pin().y-b.at.y);
+                s.power=std::clamp(toPin/std::max(s.range,0.1f),0.02f,1.0f);
+                const Golf::Flight f=Golf::Fly(Course(),b.at,b.lie,s,{},true,1/60.0f);
+                float along=0;
+                for(size_t i=0;i<f.path.size();i+=2)
+                {
+                    if(!state.puttLine.empty())along+=Golf::Length(f.path[i]-state.puttLine.back());
+                    state.puttLine.push_back(f.path[i]);
+                    if(along>PuttLineShown)break;
+                }
+            }
         }
 
         void BuildMap()
@@ -570,35 +845,202 @@ namespace MikuMikuDesktopPerch
             state.map->UnlockBits(&bits);
         }
 
+        // The day's conditions.
+        enum Weather:int {Sunny,Windy,Rain,Dusk,HardPin,WeatherCount};
+        const wchar_t* WeatherName(int w)
+        {
+            switch(w)
+            {
+            case Windy:return T(L"強風",L"Windy");
+            case Rain:return T(L"雨",L"Rain");
+            case Dusk:return T(L"夕暮れ",L"Dusk");
+            case HardPin:return T(L"難しいピン",L"Hard pins");
+            default:return T(L"晴れ",L"Sunny");
+            }
+        }
+
+        // Hole missions: the one for this hole, what it asks.
+        enum Mission:int {OneOn,PinClose,FairwayKeep,ParOn,BirdieOrBetter,TwoPutts,CleanHole,MissionCount};
+        const wchar_t* MissionText(int m)
+        {
+            switch(m)
+            {
+            case OneOn:return T(L"1打でグリーンに乗せる",L"On the green in one");
+            case PinClose:return T(L"1打目でピンから5ヤード以内",L"Within 5 yards of the pin in one");
+            case FairwayKeep:return T(L"ティーショットをフェアウェイに",L"Tee shot on the fairway");
+            case ParOn:return T(L"パーオン（パーより2打少なくグリーンに）",L"Green in regulation");
+            case BirdieOrBetter:return T(L"バーディー以上",L"Birdie or better");
+            case TwoPutts:return T(L"2パット以内",L"Two putts or fewer");
+            default:return T(L"池にもOBにも入れない",L"No water, no out of bounds");
+            }
+        }
+
+        void SaveProgress(){GolfProgress::Save(state.progressFile,state.progress);}
+        void Toast(const std::wstring& text){state.toasts.push_back(text);}
+        // An achievement of yours: kept, told, and any look it unlocks named.
+        void Achieve(int a)
+        {
+            if(state.autoplay||a<0||a>=GolfProgress::AchievementCount||state.progress.got[static_cast<size_t>(a)])return;
+            state.progress.got[static_cast<size_t>(a)]=true;
+            const auto& info=GolfProgress::InfoOf(a);
+            std::wstring text=std::wstring(T(L"実績：",L"Achievement: "))+T(info.jp,info.en);
+            for(int k=0;k<GolfProgress::LookKindCount;++k)
+                for(const auto& look:GolfProgress::LooksOf(k))
+                    if(look.needs==a)text+=std::wstring(T(L"　新しい見た目「",L"   new look: "))+T(look.jp,look.en)+T(L"」",L"");
+            Toast(text);
+            SaveProgress();
+        }
+        void MissionCleared()
+        {
+            if(state.missionDone||state.mission<0)return;
+            state.missionDone=true;
+            ++state.missionsDone;
+            if(!state.autoplay){++state.progress.stars;SaveProgress();}
+            Toast(std::wstring(T(L"ミッション達成！★　",L"Mission cleared! *   "))+MissionText(state.mission));
+        }
+        // Your ball came to rest (not in the cup): the missions and drives that count now.
+        void YouSettled(bool penalty)
+        {
+            const Ball& b=state.balls[You];
+            const auto& f=state.flight;
+            if(penalty){state.holePenalty=true;state.roundPenalty=true;}
+            const int par=Course().Par();
+            const bool first=state.shotsHere==1;
+            if(!penalty)
+            {
+                if(state.mission==OneOn&&first&&f.lie==Lie::Green)MissionCleared();
+                if(state.mission==PinClose&&first&&Golf::Flat(f.rest,Course().Pin())<=5*YardM)MissionCleared();
+                if(state.mission==FairwayKeep&&first&&(f.lie==Lie::Fairway||f.lie==Lie::Green))MissionCleared();
+                if(state.mission==ParOn&&f.lie==Lie::Green&&b.strokes<=par-2)MissionCleared();
+                if(state.shot.club==Golf::Driver&&Golf::Flat(state.shotFrom,f.rest)>=280*YardM)Achieve(GolfProgress::LongDrive);
+            }
+        }
+        // You holed out in n.
+        void YouHoled(int n,int par)
+        {
+            const auto& f=state.flight;
+            const bool first=state.shotsHere==1;
+            if(state.mission==OneOn&&first)MissionCleared();
+            if(state.mission==PinClose&&first)MissionCleared();
+            if(state.mission==FairwayKeep&&first)MissionCleared();
+            if(state.mission==ParOn&&n<=par-1)MissionCleared();
+            if(state.mission==BirdieOrBetter&&n<=par-1)MissionCleared();
+            if(state.mission==TwoPutts&&state.putts<=2)MissionCleared();
+            if(state.mission==CleanHole&&!state.holePenalty)MissionCleared();
+            if(n==1)Achieve(GolfProgress::HoleInOne);
+            if(n<=par-3)Achieve(GolfProgress::Albatross);
+            else if(n==par-2)Achieve(GolfProgress::Eagle);
+            else if(n==par-1)Achieve(GolfProgress::Birdie);
+            if(state.shot.club!=Golf::Putter&&state.shotFromLie!=Lie::Green&&n>1)Achieve(GolfProgress::ChipIn);
+            if(f.beamed)Achieve(GolfProgress::Lightfall);
+            if(state.shot.spin==1)Achieve(GolfProgress::SpinIn);
+            if(state.meteorUsed&&n<=par-2)Achieve(GolfProgress::MeteorEagle);
+            if(state.shot.club==Golf::Putter&&Golf::Flat(state.shotFrom,Course().Pin())>=10*YardM)Achieve(GolfProgress::LongPutt);
+            if(state.weather==HardPin&&n<=par-1)Achieve(GolfProgress::HardPinBirdie);
+        }
+        // The round is over: records, wins, her rank, the round's achievements.
+        void RoundProgress()
+        {
+            if(state.autoplay)return;
+            auto& pr=state.progress;
+            const int you=Total(You),her=Total(Her),n=RoundLength();
+            int par=0;
+            bool overPar=false;
+            for(int h=0;h<n;++h)
+            {
+                const int hp=Golf::HolePar(HoleNo(h)),strokes=state.card[You][static_cast<size_t>(h)];
+                if(strokes<=0)continue;
+                par+=hp;
+                if(strokes>hp)overPar=true;
+                int& best=pr.bestHole[static_cast<size_t>(HoleNo(h)-1)];
+                if(best==0||strokes<best)best=strokes;
+            }
+            const int slot=n<=3?0:n<=6?1:2;
+            if((n==3||n==6||n==9)&&(pr.bestRound[static_cast<size_t>(slot)]==0||you-par+100<pr.bestRound[static_cast<size_t>(slot)]))pr.bestRound[static_cast<size_t>(slot)]=you-par+100;
+            ++pr.rounds;
+            const bool won=you<her;
+            if(won)
+            {
+                ++pr.wins;
+                Achieve(GolfProgress::FirstWin);
+                if(pr.rank>=9)Achieve(GolfProgress::RankTop);
+                if(state.weather==Windy)Achieve(GolfProgress::WindWin);
+                if(state.weather==Rain)Achieve(GolfProgress::RainWin);
+            }
+            if(state.weather==Dusk)Achieve(GolfProgress::DuskRound);
+            if(n>=9&&you<par)Achieve(GolfProgress::UnderPar);
+            if(n>=3&&!overPar)Achieve(GolfProgress::BogeyFree);
+            if(n>=9&&!state.roundPenalty)Achieve(GolfProgress::DryRound);
+            if(n>=6&&state.missionsDone>=n)Achieve(GolfProgress::AllMissions);
+            // Her rank: up when you beat her, down when she beats you.
+            const int before=pr.rank;
+            if(won)pr.rank=std::min(9,pr.rank+1);
+            else if(her<you)pr.rank=std::max(1,pr.rank-1);
+            if(pr.rank>5)Achieve(GolfProgress::RankFive);
+            if(pr.rank!=before)Toast(Fmt(T(L"{0}の段位：{1} → {2}",L"{0}'s rank: {1} -> {2}"),{HerName(),std::to_wstring(before),std::to_wstring(pr.rank)}));
+            SaveProgress();
+        }
+
         void StartHole()
         {
-            // The same hole each time, the pin moved: first in the model's own cup.
-            state.course=std::make_shared<const Golf::Course>(state.ground,state.hole==0?0u:state.firstSeed*7919u+static_cast<std::uint32_t>(state.hole));
+            // Each hole its own model: the pin in the model's own cup the first round, moved on
+            // the green in later ones.
+            state.ground=Golf::LoadGround(HoleNo());
+            const bool hard=state.weather==HardPin;
+            state.course=std::make_shared<const Golf::Course>(state.ground,state.round==0&&!hard?0u:state.firstSeed*7919u+static_cast<std::uint32_t>(HoleNo())+1u,hard);
+            if(state.renderer&&state.clubhouse>0)
+            {
+                state.sceneryBuilt=true;
+                BuildScenery(state.clubhouse);
+            }
             const int par=Course().Par();
             state.pars[state.hole]=par;
             std::uniform_real_distribution<float> u(0,1);
-            state.wind={u(state.random)*6.5f,u(state.random)*2*Pi};
+            state.wind={state.weather==Windy?6.5f+u(state.random)*6.0f:u(state.random)*6.5f,u(state.random)*2*Pi};
+            if(state.diagAce)state.wind={0,0};
+            // This hole's mission (one that suits its par), and its tallies.
+            {
+                std::vector<int> fit={ParOn,BirdieOrBetter,TwoPutts,CleanHole};
+                if(par==3){fit.push_back(OneOn);fit.push_back(PinClose);}
+                else fit.push_back(FairwayKeep);
+                state.mission=fit[std::min(fit.size()-1,static_cast<size_t>(u(state.random)*fit.size()))];
+            }
+            state.missionDone=false;state.holePenalty=false;state.meteorUsed=false;state.shotsHere=0;state.putts=0;
             for(Ball& b:state.balls){b={};b.at=Course().Tee();b.lie=Lie::Tee;}
             state.turn=You;
             state.club=Golf::Driver;
             state.aim=PinAim(Course().Tee())*0.4f;
             BuildMap();
+            state.treeFade.clear();
             state.phase=Phase::Intro;
             state.phaseTime=0;
             state.cut=true;
             state.landingKnown=false;
             PlaceToWatch(Course().Tee(),state.aim);
-            state.log+=Fmt(L"hole {0}: par {1}, {2} m, seed {3}, wind {4} m/s\n",{std::to_wstring(state.hole+1),std::to_wstring(par),std::to_wstring(static_cast<int>(Course().Length())),
+            state.log+=Fmt(L"hole {0}: par {1}, {2} m, seed {3}, wind {4} m/s\n",{std::to_wstring(HoleNo()),std::to_wstring(par),std::to_wstring(static_cast<int>(Course().Length())),
                                                                               std::to_wstring(Course().Seed()),std::to_wstring(static_cast<int>(state.wind.speed*10)/10.0f).substr(0,3)});
-            Banner(Fmt(T(L"{0}番ホール　パー{1}",L"Hole {0}   Par {1}"),{std::to_wstring(state.hole+1),std::to_wstring(par)}),
-                   Fmt(T(L"{0} m",L"{0} m"),{std::to_wstring(static_cast<int>(Course().Length()))}),3.0);
+            Banner(Fmt(T(L"{0}番ホール　パー{1}",L"Hole {0}   Par {1}"),{std::to_wstring(HoleNo()),std::to_wstring(par)}),
+                   YardText(Course().Length()),3.0);
         }
 
         void NewRound()
         {
             if(state.thinking.valid())state.thinking.wait();
             state.card={};
-            state.pars.fill(3);
+            state.pars.fill(0);
+            // The holes: the first ones in order, or as many drawn at random (in a random order);
+            // a diagnostic start (--golf-hole) plays from there to the last.
+            state.order.clear();
+            if(state.round==0&&state.startHole>0)
+                for(int h=state.startHole+1;h<=Holes;++h)state.order.push_back(h);
+            else if(state.roundRandom)
+            {
+                std::vector<int> all;
+                for(int h=1;h<=Holes;++h)all.push_back(h);
+                std::shuffle(all.begin(),all.end(),state.random);
+                state.order.assign(all.begin(),all.begin()+std::clamp(state.roundHoles,1,Holes));
+            }
+            else for(int h=1;h<=std::clamp(state.roundHoles,1,Holes);++h)state.order.push_back(h);
             state.hole=0;
             state.started=false;
             state.overTold=false;
@@ -607,15 +1049,21 @@ namespace MikuMikuDesktopPerch
             state.afterwordLine.clear();
             state.words.text.clear();
             if(!state.firstSeed)state.firstSeed=static_cast<std::uint32_t>(GetTickCount64()*2654435761ull);
-            StartHole();
-            // A clubhouse of the four, this round's.
-            const int house=1+static_cast<int>((state.firstSeed/7)%4);
-            if(state.renderer&&(house!=state.clubhouse||!state.sceneryBuilt))
+            // A clubhouse of the four, this round's (at each hole's own place for it).
+            state.clubhouse=1+static_cast<int>((state.firstSeed/7)%4);
+            // The day: mostly fine, now and then windy, wet, late or with hard pins.
             {
-                state.clubhouse=house;
-                state.sceneryBuilt=true;
-                BuildScenery(house);
+                std::uniform_real_distribution<float> u(0,1);
+                const float d=u(state.random);
+                state.weather=d<0.4f?Sunny:d<0.58f?Windy:d<0.74f?Rain:d<0.88f?Dusk:HardPin;
+                if(state.forcedWeather>=0)state.weather=state.forcedWeather;
+                Golf::SetWet(state.weather==Rain);
+                if(state.renderer)state.renderer->SetLight(35,state.weather==Dusk?12.0f:50.0f);
             }
+            // How hard she plays: her rank (raised by your wins).
+            state.care=0.55f+0.05f*static_cast<float>(state.progress.rank);
+            state.squareRun=0;state.roundPenalty=false;state.missionsDone=0;
+            StartHole();
         }
 
         // Who plays next: one still on the tee (you first), else the one farther from the pin.
@@ -645,7 +1093,7 @@ namespace MikuMikuDesktopPerch
                 state.phase=Phase::HoleOver;
                 state.phaseTime=0;
                 const int you=state.balls[You].strokes,her=state.balls[Her].strokes;
-                Banner(Fmt(T(L"{0}番ホール終了",L"Hole {0} done"),{std::to_wstring(state.hole+1)}),
+                Banner(Fmt(T(L"{0}番ホール終了",L"Hole {0} done"),{std::to_wstring(HoleNo())}),
                        Fmt(T(L"あなた {0}打　{1} {2}打",L"You {0}   {1} {2}"),{std::to_wstring(you),HerName(),std::to_wstring(her)}),3.5);
                 return;
             }
@@ -659,8 +1107,12 @@ namespace MikuMikuDesktopPerch
             if(who==You)
             {
                 state.aim=PinAim(b.at);
-                // From the tee of a long hole, down the line rather than at the far-off pin.
-                if(b.lie==Lie::Tee&&toPin>260)state.aim=std::atan2(Course().LineX(230)-b.at.x,230-b.at.z);
+                // Down the fairway's way rather than at a far-off pin round a bend (or over the wood).
+                if(toPin>120)
+                {
+                    const V3 to=Course().AimPoint(b.at,std::min(230.0f,toPin));
+                    state.aim=std::atan2(to.x-b.at.x,to.z-b.at.z);
+                }
                 state.club=Golf::ClubFor(b.lie,toPin,Course(),b.at,{});
                 state.gauge=GaugeState::Ready;
                 state.gaugeAt=0;
@@ -688,12 +1140,29 @@ namespace MikuMikuDesktopPerch
                 const Golf::Wind wind=state.wind;
                 state.thinking=std::async(std::launch::async,[course,at,lie,wind]{return Golf::Choose(*course,at,lie,wind);});
                 // At her ball already, turned toward the pin (turned again once she has chosen).
-                PlaceToSwing(b.at,PinAim(b.at));
+                PlaceToSwing(b.at,PinAim(b.at),b.lie==Lie::Green?Golf::Putter:3);
             }
         }
 
         void Launch()
         {
+            // Diagnostics: where her club head is (as last posed) when the ball leaves, against
+            // where the ball was laid for her.
+            if(state.turn==Her&&state.her.model&&state.measured.size()<4000)
+            {
+                std::array<float,3> g{},d{};
+                const bool putt=state.shot.club==Golf::Putter;
+                const size_t k=static_cast<size_t>(state.herClub);
+                const float len=putt?state.putterLength:state.clubLen[k];
+                const auto& want=putt?state.putterHead:state.clubHead[k];
+                if(state.her.model->ClubInHand(g,d,putt?0.0f:state.clubTilt[k]))
+                {
+                    wchar_t t[200];
+                    swprintf_s(t,L"golf: her strike (%ls, power %.2f): head %.2f,%.2f,%.2f, ball %.2f,%.2f m\n",putt?L"putter":L"club",state.swingPower,
+                               (g[0]+d[0]*len)/K,(g[1]+d[1]*len)/K,(g[2]+d[2]*len)/K,want[0]/K,want[2]/K);
+                    state.measured+=t;
+                }
+            }
             Ball& b=state.balls[state.turn];
             state.shotFrom=b.at;
             state.shotFromLie=b.lie;
@@ -702,15 +1171,41 @@ namespace MikuMikuDesktopPerch
             state.launched=true;
             state.justShot=state.shot.club!=Golf::Putter&&std::abs(state.shot.accuracy)<0.08f;
             state.splashed=false;
+            state.spunShown=state.boomShown=state.beamShown=false;
+            if(state.turn==You)
+            {
+                ++state.shotsHere;
+                if(state.shot.club==Golf::Putter)++state.putts;
+                else
+                {
+                    state.squareRun=std::abs(state.shot.accuracy)<JustWidth(state.shot.club)?state.squareRun+1:0;
+                    if(state.squareRun>=5)Achieve(GolfProgress::JustStreak);
+                }
+                if(state.shot.special==2)state.meteorUsed=true;
+            }
+            // The special gauge: each shot fills it some, a square strike more (two square
+            // strikes fill a bar), a spin shot more again.
+            if(state.shot.club!=Golf::Putter)
+            {
+                float& m=state.meter[static_cast<size_t>(state.turn)];
+                m=std::min(200.0f,m+25+(std::abs(state.shot.accuracy)<JustWidth(state.shot.club)?25.0f:0.0f)+(state.shot.spin!=0?15.0f:0.0f));
+            }
+            if(state.shot.special!=0||state.shot.spin!=0)
+            {
+                std::wstring what=state.shot.special==2?T(L"メテオショット",L"Meteor shot"):state.shot.special==1?T(L"ブーストショット",L"Boost shot"):L"";
+                const std::wstring spinName=state.shot.spin==1?T(L"バックスピン",L"backspin"):state.shot.spin==-1?T(L"トップスピン",L"topspin"):L"";
+                if(!spinName.empty())what=what.empty()?spinName+T(L"ショット",L" shot"):what+L" + "+spinName;
+                Banner(what,L"",1.4);
+            }
             b.teed=true;
             ++b.strokes;
             ++state.shots;
             state.phase=Phase::Flying;
             state.phaseTime=0;
             wchar_t line[200];
-            swprintf_s(line,L"  %ls: %ls power %.2f accuracy %+.2f aim %.1f -> %ls%ls%ls carry %.0f m, %.1f m left\n",state.turn==You?L"you":L"her",Golf::ClubOf(state.shot.club).en,
-                       state.shot.power,state.shot.accuracy,state.shot.aim/Deg,Golf::LieName(state.flight.lie),state.flight.holed?L" HOLED":L"",state.flight.water?L" WATER":state.flight.out?L" OB":L"",
-                       state.flight.carry,Golf::Flat(state.flight.rest,Course().Pin()));
+            swprintf_s(line,L"  %ls: %ls power %.2f accuracy %+.2f aim %.1f spin %d special %d -> %ls%ls%ls%ls carry %.0f m, %.1f m left\n",state.turn==You?L"you":L"her",Golf::ClubOf(state.shot.club).en,
+                       state.shot.power,state.shot.accuracy,state.shot.aim/Deg,state.shot.spin,state.shot.special,Golf::LieName(state.flight.lie),state.flight.holed?L" HOLED":L"",state.flight.water?L" WATER":state.flight.out?L" OB":L"",
+                       state.flight.beamed?L" BEAM":L"",state.flight.carry,Golf::Flat(state.flight.rest,Course().Pin()));
             state.log+=line;
         }
 
@@ -733,11 +1228,13 @@ namespace MikuMikuDesktopPerch
                                          n==par-1?T(L"バーディー！",L"Birdie!"):n==par?T(L"パー",L"Par"):n==par+1?T(L"ボギー",L"Bogey"):n==par+2?T(L"ダブルボギー",L"Double bogey"):
                                          n==par+3?T(L"トリプルボギー",L"Triple bogey"):Fmt(T(L"+{0}",L"+{0}"),{std::to_wstring(n-par)});
                 Banner(score,(hers?name+L"  ":std::wstring(T(L"あなた  ",L"You  ")))+Fmt(T(L"{0}打",L"{0} strokes"),{std::to_wstring(n)}),2.6);
+                if(!hers)YouHoled(n,par);
                 if(hers){Face(Expression::Smile,3);Happened(7,L"カップイン",1,Fmt(T(L"ゴルフで、{0}がカップに入れた（{1}打）。",L"In the golf game, {0} holed out ({1} strokes)."),{name,std::to_wstring(n)}),{T(L"ナイスイン！",L"Nice putt!")});}
                 else{Face(Expression::Smile,2.5);Happened(7,L"あなたのカップイン",1,Fmt(T(L"ゴルフで、持ち主がカップに入れた（{0}打）。",L"In the golf game, the owner holed out ({0} strokes)."),{std::to_wstring(n)}),{T(L"入った！",L"In!")});}
                 return;
             }
             const bool penalty=f.out||f.water;
+            if(!hers)YouSettled(penalty);
             if(f.out)
             {
                 ++b.strokes;
@@ -757,7 +1254,7 @@ namespace MikuMikuDesktopPerch
                 b.at=f.rest;
                 b.at.y=Course().Height(b.at.x,b.at.z);
                 b.lie=f.lie;
-                if(!putt)Banner(Golf::LieName(b.lie),Fmt(T(L"{0} m　ピンまで {1} m",L"{0} m   {1} m to the pin"),{std::to_wstring(static_cast<int>(Golf::Flat(state.shotFrom,f.rest))),std::to_wstring(static_cast<int>(Golf::Flat(f.rest,Course().Pin())))}),2.0);
+                if(!putt)Banner(Golf::LieName(b.lie),Fmt(T(L"{0}　ピンまで {1}",L"{0}   {1} to the pin"),{YardText(Golf::Flat(state.shotFrom,f.rest)),YardText(Golf::Flat(f.rest,Course().Pin()))}),2.0);
             }
             if(b.strokes>=MostStrokes&&!b.holed)
             {
@@ -787,9 +1284,15 @@ namespace MikuMikuDesktopPerch
         {
             state.phase=Phase::Over;
             state.phaseTime=0;
+            // She stands by the last green, turned to the camera (PlaceCamera: Over).
+            PlaceToWatch(Course().Pin(),PinAim(Course().Tee()));
+            if(state.her.model)state.her.model->Swing(false,0,1);
+            state.nextPoseAt=0.8;   // once the camera has come round to her
+            RoundProgress();
             const int you=Total(You),her=Total(Her);
             const std::wstring name=HerName();
-            const int par=state.pars[0]+state.pars[1]+state.pars[2];
+            int par=0;   // over the holes played (a round may start partway, --golf-hole)
+            for(int h=0;h<RoundLength();++h)if(state.card[You][static_cast<size_t>(h)]>0||state.card[Her][static_cast<size_t>(h)]>0)par+=Golf::HolePar(HoleNo(h));
             auto vsPar=[&](int n){const int d=n-par;return d==0?std::wstring(L"±0"):(d>0?L"+":L"")+std::to_wstring(d);};
             Banner(you<her?T(L"あなたの勝ち！",L"You win!"):her<you?name+T(L"の勝ち",L" wins"):std::wstring(T(L"引き分け",L"A draw")),
                    Fmt(T(L"あなた {0}（{1}）　{2} {3}（{4}）　Enterでもう一度・Escで閉じる",L"You {0} ({1})   {2} {3} ({4})   Enter: again, Esc: close"),
@@ -798,11 +1301,25 @@ namespace MikuMikuDesktopPerch
             if(won)Happened(9,L"勝った",1,Fmt(T(L"{0}と持ち主のゴルフが終わり、{0}が勝った。",L"The golf round between {0} and the owner is over: {0} won."),{name}),{T(L"おつかれさま！",L"Well played!")});
             else if(you<her)Happened(9,L"負けた",1,Fmt(T(L"{0}と持ち主のゴルフが終わり、持ち主が勝った。",L"The golf round between {0} and the owner is over: the owner won."),{name}),{T(L"おめでとう！",L"Congratulations!")});
             else Happened(9,L"引き分け",1,Fmt(T(L"{0}と持ち主のゴルフが終わり、引き分けだった。",L"The golf round between {0} and the owner is over: a draw."),{name}),{T(L"いい勝負！",L"A close one!")});
-            state.afterword=Fmt(T(L"いま、話し相手とゴルフを3ホール回って、デスクトップに戻ってきたところ。結果は{0}（あなた{1}打、相手{2}打）。その感想を、話し相手にひと言（1〜2文）",
-                                  L"You have just played three holes of golf with them and come back to the desktop. {0} (you took {1} strokes, they took {2}). Tell them what you thought of it (one or two sentences)"),
-                                {won?T(L"あなたの勝ち",L"You won"):you<her?T(L"あなたの負け",L"You lost"):T(L"引き分け",L"A draw"),std::to_wstring(her),std::to_wstring(you)});
+            state.afterword=Fmt(T(L"いま、話し相手とゴルフを{3}ホール回って、デスクトップに戻ってきたところ。結果は{0}（あなた{1}打、相手{2}打）。その感想を、話し相手にひと言（1〜2文）",
+                                  L"You have just played {3} holes of golf with them and come back to the desktop. {0} (you took {1} strokes, they took {2}). Tell them what you thought of it (one or two sentences)"),
+                                {won?T(L"あなたの勝ち",L"You won"):you<her?T(L"あなたの負け",L"You lost"):T(L"引き分け",L"A draw"),std::to_wstring(her),std::to_wstring(you),std::to_wstring(RoundLength())});
             state.afterwordLine=won?T(L"ゴルフ、楽しかったね！",L"Golf was fun!"):T(L"くやしいなあ、次は勝つよ！",L"So close... I'll win next time!");
             if(!state.overTold){state.overTold=true;if(state.her.onGameOver)state.her.onGameOver();}
+        }
+
+        // The gauge's speed for your shot: the driver off a poor lie is hard to time (twice as
+        // fast from the rough, four times from a bunker).
+        // The gauge's speed for your shot from a poor lie: the longer the club, the harder to
+        // time (from the rough 2x with the driver down to 1x at the 9 iron; from a bunker twice
+        // the rough's with the driver, 4x, down to 1x as well).
+        float GaugeHaste()
+        {
+            const Lie lie=state.balls[You].lie;
+            if(state.club==Golf::Putter||(lie!=Lie::Rough&&lie!=Lie::Bunker))return 1;
+            const float t=std::clamp((4.0f-static_cast<float>(state.club))/4.0f,0.0f,1.0f);   // 1W 1 .. 9I 0
+            const float rough=1+t;
+            return lie==Lie::Bunker?rough*rough:rough;
         }
 
         // The strike's white zone (half width, in gauge widths): narrow for the long clubs, wide
@@ -823,6 +1340,40 @@ namespace MikuMikuDesktopPerch
         }
 
         // The gauge: clicked (or Space).
+        void LeaveOverhead();
+        // The special shots' menu (S), on your turn while aiming with a club.
+        void OpenSpecialMenu()
+        {
+            if(state.turn!=You||state.phase!=Phase::Aim||state.gauge!=GaugeState::Ready||state.club==Golf::Putter||state.autoplay)return;
+            state.menuOpen=true;
+            state.menuPick=state.special>0?state.special-1:(state.meter[You]>=100?0:2);
+        }
+        // A line of it taken: 0 the boost, 1 the meteor (each a bar of the gauge), 2 none.
+        void ChooseSpecial(int i)
+        {
+            if(i<2&&state.meter[You]<100)return;
+            state.special=i<2?i+1:0;
+            state.menuOpen=false;
+            UpdateLanding();
+        }
+
+        // The 0 view (your landing circle from above): on, or off back to the usual view as it
+        // was at the start of the turn.
+        void ToggleOverhead()
+        {
+            if(state.overhead){LeaveOverhead();return;}
+            if(state.turn!=You||(state.phase!=Phase::Aim&&state.phase!=Phase::Gauge)||state.autoplay)return;
+            state.overhead=true;
+            state.overheadPan={};
+            state.camera={};
+        }
+        void LeaveOverhead()
+        {
+            state.overhead=false;
+            state.overheadPan={};
+            state.camera={};
+        }
+
         void GaugeClick()
         {
             if(state.phase!=Phase::Aim&&state.phase!=Phase::Gauge)return;
@@ -830,6 +1381,7 @@ namespace MikuMikuDesktopPerch
             switch(state.gauge)
             {
             case GaugeState::Ready:
+                state.gaugeSpin=0;
                 state.gauge=GaugeState::Power;
                 state.gaugeAt=0;
                 state.gaugeWay=1;
@@ -845,9 +1397,68 @@ namespace MikuMikuDesktopPerch
             case GaugeState::Impact:
                 state.gaugeAccuracy=AccuracyAt(state.gaugeAt,state.club);
                 state.gauge=GaugeState::Done;
+                // A square strike at half power or more, struck low with ↓ held: the back-spin
+                // shot; struck high with ↑ held: the top-spin shot.
+                state.gaugeSpin=0;
+                if(state.gaugePower>=0.5f&&std::abs(state.gaugeAccuracy)<JustWidth(state.club))
+                {
+                    if(state.spotY<=-0.3f&&GetKeyState(VK_DOWN)<0)state.gaugeSpin=1;
+                    else if(state.spotY>=0.3f&&GetKeyState(VK_UP)<0)state.gaugeSpin=-1;
+                }
                 break;
             default:break;
             }
+        }
+
+        // Diagnostics (--golf-ace): a meteor with backspin from your tee that goes in, found by
+        // trying clubs, powers and aims (coarse, then finer round the nearest).
+        void FindAce()
+        {
+            // The meteor's speed is searched for itself (as the game works it out from the plain
+            // shot's roll, the distance jumps about with the power); the power sets the spin back.
+            state.wind={0,0};
+            const Ball& b=state.balls[You];
+            const V3 pin=Course().Pin();
+            Golf::Shot best;float bestMiss=1e9f;
+            auto tryShot=[&](int club,float meteor,float aim,float power=0.85f){
+                Golf::Shot s;s.club=club;s.power=std::clamp(power,0.5f,1.0f);s.aim=aim;s.accuracy=0;s.spotY=-0.5f;s.spin=1;s.special=2;s.meteor=std::max(meteor,0.2f);
+                const Golf::Flight f=Golf::Fly(Course(),b.at,b.lie,s,state.wind,true,1/60.0f);
+                // (Through the light pillar just above the cup, down behind it, spun back in.)
+                // Not through the pillar: how near it came over the cup (a few metres up);
+                // through it: how near it came to the cup spinning back.
+                float miss;
+                if(f.holed&&f.beamed&&f.spunAt>=0)miss=-1;
+                else if(f.water||f.out||(f.holed&&f.spunAt<0))miss=1e8f;
+                else if(!f.beamed)
+                {
+                    miss=1e7f;
+                    for(const V3& q:f.path)
+                    {
+                        const float up=q.y-Course().Height(q.x,q.z);
+                        if(up>0.3f&&up<5)miss=std::min(miss,10+Golf::Flat(q,pin));
+                    }
+                }
+                else
+                {
+                    miss=5+Golf::Flat(f.rest,pin);
+                    if(f.spunAt>=0)
+                        for(size_t i=static_cast<size_t>(f.spunAt);i<f.path.size();++i)miss=std::min(miss,Golf::Flat(f.path[i],pin));
+                }
+                if(miss<bestMiss){bestMiss=miss;best=s;}
+            };
+            for(int club=0;club<Golf::Putter;++club)
+                for(float m=0.4f;m<=2.5f;m+=0.02f)
+                    for(float a=-0.1f;a<=0.1f;a+=0.004f)tryShot(club,m,a);
+            for(int round=0;round<4&&bestMiss>=0;++round)
+                for(float step=0.01f;step>0.0002f&&bestMiss>=0;step*=0.5f)
+                {
+                    const Golf::Shot c=best;
+                    for(int i=-5;i<=5;++i)for(int j=-5;j<=5;++j)for(int k=-2;k<=2;++k)tryShot(c.club,c.meteor+i*step,c.aim+j*step*0.25f,c.power+k*step*4);
+                }
+            state.club=best.club;state.aim=best.aim;state.gaugePower=best.power;state.gaugeAccuracy=0;
+            state.spotX=0;state.spotY=-0.5f;state.gaugeSpin=1;state.special=2;state.meter[You]=100;state.diagMeteor=best.meteor;
+            state.measured+=Fmt(L"golf: ace search: club {0}, meteor {1}, aim {2} deg, miss {3} m\n",
+                                {std::to_wstring(best.club),std::to_wstring(best.meteor),std::to_wstring(best.aim/Deg),std::to_wstring(bestMiss)});
         }
 
         void ShootYours()
@@ -859,7 +1470,20 @@ namespace MikuMikuDesktopPerch
             state.shot.power=state.gaugePower;
             state.shot.accuracy=state.gaugeAccuracy;
             state.shot.range=Golf::PutterRange(Golf::Flat(b.at,Course().Pin()),Course().Pin().y-b.at.y);
-            if(state.club!=Golf::Putter){state.shot.spotX=state.spotX;state.shot.spotY=state.spotY;}
+            if(state.club!=Golf::Putter)
+            {
+                state.shot.spotX=state.spotX;state.shot.spotY=state.spotY;
+                state.shot.spin=state.gaugeSpin;
+                // The special chosen, paid from the gauge.
+                if(state.special>0&&state.meter[You]>=100)
+                {
+                    state.shot.special=state.special;
+                    state.meter[You]-=100;
+                    if(state.special==2&&state.diagMeteor>0){state.shot.meteor=state.diagMeteor;state.diagMeteor=0;}
+                }
+            }
+            state.special=0;
+            state.gaugeSpin=0;
             Launch();
         }
 
@@ -870,20 +1494,52 @@ namespace MikuMikuDesktopPerch
             return std::clamp(state.care-(lead>=4?0.3f:lead>=2?0.15f:0.0f),0.3f,1.0f);
         }
 
-        // Her swing's stage at seconds into it: the address (until she has chosen), the
-        // backswing, the top, down, through; when it strikes.
-        constexpr double Address=1.6,Back=0.95,Top=0.12,Down=0.28,Through=0.55,HoldFinish=1.5;
-        float SwingStage(double t,double addressEnd)
+        SwingPlan MakePlan(MascotModel& model,float power,bool putter,float launch)
         {
-            if(t<addressEnd)return 0;
+            SwingPlan plan;
+            plan.path.assign(3*SwingPlan::PerStage+1,0);
+            std::array<float,3> last=model.SwingHead(0,power,putter,state.clubLength);
+            for(int i=1;i<=3*SwingPlan::PerStage;++i)
+            {
+                const auto h=model.SwingHead(static_cast<float>(i)/SwingPlan::PerStage,power,putter,state.clubLength);
+                const size_t seg=std::min(state.pathScale.size()-1,static_cast<size_t>((i-0.5f)/SwingPlan::PerStage*state.pathScale.size()/3));
+                plan.path[i]=plan.path[i-1]+(state.pathScale.empty()?1.0f:state.pathScale[seg])*std::sqrt((h[0]-last[0])*(h[0]-last[0])+(h[1]-last[1])*(h[1]-last[1])+(h[2]-last[2])*(h[2]-last[2]))/K;
+                last=h;
+            }
+            const float v=std::max(launch,0.3f);
+            const float down=plan.path[2*SwingPlan::PerStage]-plan.path[SwingPlan::PerStage];
+            const float through=plan.path[3*SwingPlan::PerStage]-plan.path[2*SwingPlan::PerStage];
+            plan.down=std::clamp(3*down/v,0.12f,1.2f);
+            plan.through=std::clamp(3*through/v,0.15f,1.5f);
+            plan.speed=3*down/static_cast<float>(plan.down);
+            plan.back=putter?std::clamp(plan.down*1.5,0.35,1.2):0.65+0.3*power;
+            plan.top=putter?0.05:0.1;
+            return plan;
+        }
+        // The stage where the head has gone so far along its path.
+        float StageAt(const SwingPlan& plan,float metres)
+        {
+            const auto& p=plan.path;
+            const auto it=std::lower_bound(p.begin(),p.end(),metres);
+            if(it==p.begin())return 0;
+            if(it==p.end())return 3;
+            const size_t i=static_cast<size_t>(it-p.begin());
+            const float a=p[i-1],b=p[i],u=b>a?(metres-a)/(b-a):1;
+            return (static_cast<float>(i-1)+u)/SwingPlan::PerStage;
+        }
+        float SwingStage(const SwingPlan& plan,double t,double addressEnd)
+        {
+            if(t<addressEnd||plan.path.empty())return 0;
             t-=addressEnd;
-            if(t<Back){const float u=static_cast<float>(t/Back);return u*u*(3-2*u);}
-            t-=Back;
-            if(t<Top)return 1;
-            t-=Top;
-            if(t<Down){const float u=static_cast<float>(t/Down);return 1+std::pow(u,1.7f);}
-            t-=Down;
-            if(t<Through){const float u=static_cast<float>(t/Through);return 2+(1-(1-u)*(1-u));}
+            const float* p=plan.path.data();
+            const int N=SwingPlan::PerStage;
+            if(t<plan.back){const float u=static_cast<float>(t/plan.back);return StageAt(plan,p[N]*u*u*(3-2*u));}
+            t-=plan.back;
+            if(t<plan.top)return 1;
+            t-=plan.top;
+            if(t<plan.down){const float u=static_cast<float>(t/plan.down);return StageAt(plan,p[N]+(p[2*N]-p[N])*u*u*u);}
+            t-=plan.down;
+            if(t<plan.through){const float u=static_cast<float>(t/plan.through);return StageAt(plan,p[2*N]+(p[3*N]-p[2*N])*(1-(1-u)*(1-u)*(1-u)));}
             return 3;
         }
 
@@ -898,7 +1554,9 @@ namespace MikuMikuDesktopPerch
             if(!state.started&&(!state.prefetching||state.clock>4)&&state.phase!=Phase::Intro)
             {
                 state.started=true;
-                Happened(7,L"始まり",1,Fmt(T(L"{0}と、このパソコンの持ち主のゴルフ（3ホール）が始まる。",L"A three-hole round of golf between {0} and the owner of this computer is about to begin."),{HerName()}),
+                // The opening line suits the day (sunny ones have the plain scene).
+                const wchar_t* opening=state.weather==Rain?L"雨の始まり":state.weather==Dusk?L"夕暮れの始まり":state.weather==Windy?L"強風の始まり":state.weather==HardPin?L"難ピンの始まり":L"始まり";
+                Happened(7,opening,1,Fmt(T(L"{0}と、このパソコンの持ち主のゴルフ（{1}ホール、{2}）が始まる。",L"A {1}-hole round of golf between {0} and the owner of this computer is about to begin ({2})."),{HerName(),std::to_wstring(RoundLength()),WeatherName(state.weather)}),
                          {T(L"がんばれー！",L"Good luck, you two!")});
             }
             if(state.askingQuit||state.posing>=0)return;
@@ -929,6 +1587,17 @@ namespace MikuMikuDesktopPerch
                             UpdateLanding();
                         }
                     }
+                    // The 0 view: up and down move it along your aim (Shift with them: nearer, further).
+                    if(state.overhead&&GetKeyState(VK_CONTROL)>=0&&GetKeyState(VK_SHIFT)>=0)
+                    {
+                        const float ud=(GetKeyState(VK_UP)<0?1.0f:0.0f)-(GetKeyState(VK_DOWN)<0?1.0f:0.0f);
+                        if(ud!=0)
+                        {
+                            const float high=(state.club==Golf::Putter?9.0f:38.0f)*state.camera.zoom;
+                            const V3 dir{std::sin(state.aim),0,std::cos(state.aim)};
+                            state.overheadPan=state.overheadPan+dir*(ud*high*0.9f*static_cast<float>(dt));
+                        }
+                    }
                     if(state.aimKeys!=0&&state.gauge==GaugeState::Ready&&GetKeyState(VK_CONTROL)>=0)
                     {
                         const float speed=(GetKeyState(VK_SHIFT)<0?3.0f:(state.club==Golf::Putter?8.0f:18.0f))*Deg;
@@ -943,12 +1612,25 @@ namespace MikuMikuDesktopPerch
                         state.club=s.club;state.aim=s.aim;
                         state.gaugePower=s.power;state.gaugeAccuracy=s.accuracy;
                         state.gauge=GaugeState::Done;
+                        if(state.diagSpecial>0&&s.club!=Golf::Putter){state.special=state.diagSpecial;state.meter[You]=100;}
+                        if(state.diagAce&&state.balls[You].strokes==0)FindAce();
                     }
                     if(state.frozenPower>=0&&state.phaseTime>0.5)
                     {
                         const std::wstring& f=state.frozenFlags;
                         if(f.find(L"putter")!=std::wstring::npos&&state.club!=Golf::Putter){state.club=Golf::Putter;UpdateLanding();}
                         if(f.find(L"spot")!=std::wstring::npos&&state.spotY==0){state.spotX=-0.5f;state.spotY=-0.5f;UpdateLanding();}
+                        if(f.find(L"green")!=std::wstring::npos&&state.balls[You].lie!=Lie::Green)
+                        {
+                            // Your ball put on the green, 7 m short of the pin (to see a putt).
+                            const V3 pin=Course().Pin(),from=Course().Tee();
+                            V3 d=from-pin;d.y=0;d=d*(7/std::max(Golf::Length(d),1.0f));
+                            state.balls[You].at=pin+d;state.balls[You].at.y=Course().Height(state.balls[You].at.x,state.balls[You].at.z);
+                            state.balls[You].lie=Course().LieAt(state.balls[You].at.x,state.balls[You].at.z);
+                            state.club=Golf::Putter;state.aim=std::atan2(-d.x,-d.z)+0.06f;UpdateLanding();
+                        }
+                        if(f.find(L"album")!=std::wstring::npos){state.album=true;state.albumRow=1;}
+                        if(f.find(L"menu")!=std::wstring::npos&&!state.menuOpen){state.meter[You]=130;state.autoplay=false;OpenSpecialMenu();}
                         state.help=f.find(L"help")!=std::wstring::npos;
                         state.overhead=f.find(L"overhead")!=std::wstring::npos;
                         state.gaugePower=state.frozenPower;
@@ -960,14 +1642,15 @@ namespace MikuMikuDesktopPerch
                     if(state.gauge==GaugeState::Power)
                     {
                         // Out to full power and back; home again with no click: no shot.
-                        state.gaugeAt+=state.gaugeWay*static_cast<float>(dt/PowerSeconds);
+                        state.gaugeAt+=state.gaugeWay*static_cast<float>(dt/PowerSeconds)*GaugeHaste();
                         if(state.gaugeAt>=1){state.gaugeAt=2-state.gaugeAt;state.gaugeWay=-1;}
                         if(state.gaugeAt<=0&&state.gaugeWay<0){state.gaugeAt=0;state.gauge=GaugeState::Ready;state.phase=Phase::Aim;}
                     }
                     else if(state.gauge==GaugeState::Impact)
                     {
-                        state.gaugeAt-=static_cast<float>(dt/ImpactSeconds);
-                        if(state.gaugeAt<-Pink-0.08f){state.gaugeAccuracy=-3.0f;state.gauge=GaugeState::Done;}
+                        state.gaugeAt-=static_cast<float>(dt/ImpactSeconds)*GaugeHaste();
+                        // Past the end with no second press: no shot (back to aiming).
+                        if(state.gaugeAt<-Pink-0.08f){state.gaugeAt=0;state.gauge=GaugeState::Ready;state.phase=Phase::Aim;}
                     }
                     else if(state.gauge==GaugeState::Done)ShootYours();
                 }
@@ -979,8 +1662,17 @@ namespace MikuMikuDesktopPerch
                         state.shot=state.thinking.get();
                         Golf::Execute(state.shot,CareNow(),state.random);
                         state.thought=true;
-                        state.swingPower=state.shot.club==Golf::Putter?std::clamp(0.2f+0.25f*state.shot.power,0.2f,0.45f):std::clamp(0.45f+0.55f*state.shot.power,0.3f,1.0f);
-                        PlaceToSwing(state.balls[Her].at,state.shot.aim);
+                        // Her boost: when even her full shot falls short of the pin and she has a bar.
+                        if(state.shot.club!=Golf::Putter&&state.meter[Her]>=100&&state.shot.power>=0.95f&&
+                           Golf::Flat(state.balls[Her].at,Course().Pin())>Golf::FlatCarry(state.shot.club)*1.15f)
+                        {
+                            state.shot.special=1;
+                            state.meter[Her]-=100;
+                        }
+                        state.swingPower=state.shot.club==Golf::Putter?std::clamp(0.12f+0.88f*state.shot.power,0.12f,1.0f):std::clamp(0.45f+0.55f*state.shot.power,0.3f,1.0f);
+                        PlaceToSwing(state.balls[Her].at,state.shot.aim,state.shot.club);
+                        if(state.her.model)
+                            state.plan=MakePlan(*state.her.model,state.swingPower,state.shot.club==Golf::Putter,Golf::LaunchSpeed(state.shot,state.balls[Her].lie));
                         state.phase=Phase::Swing;
                         state.swingTime=0;
                     }
@@ -990,8 +1682,13 @@ namespace MikuMikuDesktopPerch
             {
                 const double before=state.swingTime;
                 state.swingTime+=dt;
-                const double strike=Address+Back+Top+Down;
-                if(before<strike&&state.swingTime>=strike)Launch();
+                const double strike=Address+state.plan.Strike();
+                // The ball leaves on the frame her posed club head has come to it (near the
+                // strike the head goes some 0.6 m a frame: by the clock alone it left with the
+                // head still short of it).
+                (void)before;
+                const bool atBall=HeadAtBall();   // (every frame, so it knows the head's last step)
+                if(state.swingTime>=strike-0.08&&(atBall||state.swingTime>=strike+0.1))Launch();
                 break;
             }
             case Phase::Flying:
@@ -1003,6 +1700,19 @@ namespace MikuMikuDesktopPerch
                 {
                     state.splashed=true;
                     Splash(state.flight.path.back());
+                }
+                {
+                    const auto& f=state.flight;
+                    const double at=state.flightTime*60;
+                    if(f.spunAt>=0&&!state.spunShown&&at>=f.spunAt){state.spunShown=true;Burst(f.path[static_cast<size_t>(f.spunAt)],40,{1.0f,0.95f,0.55f},2.5f,0.8f,0.03f);}
+                    if(f.beamed&&!state.beamShown&&at>=f.beamAt){state.beamShown=true;Burst(f.path[static_cast<size_t>(std::min<size_t>(f.beamAt,f.path.size()-1))],60,{0.55f,1.0f,0.9f},3.0f,0.7f,0.02f);}
+                    if(f.boomAt>=0&&!state.boomShown&&at>=f.boomAt)
+                    {
+                        // The meteor's landing: a blast of fire and sparks, and a ring of dust.
+                        state.boomShown=true;
+                        const V3 p=f.path[static_cast<size_t>(f.boomAt)];
+                        MeteorBlast(p);
+                    }
                 }
                 const double end=state.flight.path.size()/60.0;
                 if(state.flightTime>=end+0.3)
@@ -1020,11 +1730,23 @@ namespace MikuMikuDesktopPerch
             case Phase::HoleOver:
                 if(state.phaseTime>3.6)
                 {
-                    if(state.hole+1<Holes){++state.hole;StartHole();}
+                    if(state.hole+1<RoundLength()){++state.hole;StartHole();}
                     else RoundOver();
                 }
                 break;
             case Phase::Over:
+                // Her pose at the result, now and again: a thumb up if she won, a hand to the
+                // forehead ("oh no") if she lost.
+                if(state.her.model&&state.phaseTime>=state.nextPoseAt)
+                {
+                    const int you=Total(You),her=Total(Her);
+                    if(you==her)state.nextPoseAt=1e9;
+                    else if(state.her.model->EmoteSeated(her<you?L"thumbsup":L"oops",3.2))
+                    {
+                        state.her.model->SetExpression(her<you?Expression::Smile:Expression::Troubled,false);
+                        state.nextPoseAt=state.phaseTime+7.0;
+                    }
+                }
                 break;
             }
         }
@@ -1044,12 +1766,12 @@ namespace MikuMikuDesktopPerch
 
         // ---- Drawing --------------------------------------------------------------------------
 
-        void PlaceCamera()
+        void PlaceCamera(double dt)
         {
             using namespace DirectX;
             const auto& c=Course();
             XMFLOAT3 eye{},look{};
-            float follow=0.35f;
+            float follow=0.12f;
             auto set=[&](V3 e,V3 l){eye=W(e);look=W(l);};
             if(state.posing>=0)
             {
@@ -1070,12 +1792,21 @@ namespace MikuMikuDesktopPerch
             {
             case Phase::Intro:
             {
-                // Over the hole from the tee toward the green.
-                const float t=static_cast<float>(std::min(state.phaseTime/4.0,1.0));
-                const float z=c.Length()*(0.05f+0.55f*t);
-                const V3 from{c.LineX(z)*0.6f,c.Height(c.LineX(z),z)+38-14*t,z-70};
+                // Over the hole from the tee toward the green: on a straight line from behind the
+                // tee to partway down the fairway's way, eased only at its ends, so it never
+                // swings from side to side (that made one feel sick on the bending holes).
+                const float t0=static_cast<float>(std::min(state.phaseTime/4.0,1.0)),t=t0*t0*(3-2*t0);
+                auto behind=[&](float along){
+                    const V3 at=c.RouteAt(along),ahead=c.RouteAt(along+40);
+                    V3 back=at-ahead;back.y=0;
+                    const float n=std::max(Golf::Length(back),1e-3f);
+                    return at+back*(70/n);
+                };
+                const V3 a0=behind(c.Length()*0.05f),a1=behind(c.Length()*0.6f);
+                V3 from=a0+(a1-a0)*t;
+                from.y=std::max(a0.y,a1.y)+38-14*t;
                 set(from,c.GreenMiddle());
-                follow=0.6f;
+                follow=0.05f;
                 break;
             }
             case Phase::Aim:
@@ -1088,13 +1819,24 @@ namespace MikuMikuDesktopPerch
                     // 0: the circle from high above, a little behind it.
                     const V3 dir{std::sin(state.aim),0,std::cos(state.aim)};
                     const float high=(state.club==Golf::Putter?9.0f:38.0f)*state.camera.zoom;
-                    set(state.landing-dir*(high*0.25f)+V3{0,high,0},state.landing);
+                    const V3 at=state.landing+state.overheadPan;
+                    set(at-dir*(high*0.25f)+V3{0,high,0},at);
                 }
-                else if(state.turn==You||state.phase==Phase::HoleOver||state.phase==Phase::Over)
+                else if(state.phase==Phase::Over)
                 {
-                    const V3 at=state.phase==Phase::HoleOver||state.phase==Phase::Over?c.Pin():b.at;
-                    const float aim=state.phase==Phase::HoleOver||state.phase==Phase::Over?PinAim(c.Tee())+Pi*0.85f:state.aim;
-                    const bool putt=state.club==Golf::Putter&&state.turn==You;
+                    // The result: her, from in front, her upper body and face.
+                    const V3 front{-std::sin(state.herYaw),0,-std::cos(state.herYaw)};
+                    const float a=state.camera.yaw;
+                    const V3 side{std::cos(state.herYaw),0,-std::sin(state.herYaw)};
+                    const V3 toEye=front*std::cos(a)+side*std::sin(a);
+                    const V3 head=state.herAt+V3{0,1.1f,0};
+                    set(head+toEye*(2.4f*state.camera.zoom)+V3{0,0.15f+state.camera.pitch*3,0},head);
+                }
+                else if(state.turn==You||state.phase==Phase::HoleOver)
+                {
+                    const V3 at=state.phase==Phase::HoleOver?c.Pin():b.at;
+                    const float aim=state.phase==Phase::HoleOver?PinAim(c.Tee())+Pi*0.85f:state.aim;
+                    const bool putt=state.club==Golf::Putter&&state.turn==You&&state.phase!=Phase::HoleOver;
                     const float a=aim+state.camera.yaw,back=(putt?3.2f:4.6f)*state.camera.zoom;
                     const V3 dir{std::sin(a),0,std::cos(a)};
                     const float up=(putt?1.3f:1.7f)*state.camera.zoom+state.camera.pitch*3;
@@ -1143,6 +1885,25 @@ namespace MikuMikuDesktopPerch
                     set(mid+front*3.9f*state.camera.zoom+dir*1.2f+V3{0,0.25f,0},mid+dir*0.5f);
                     break;
                 }
+                // A hole in one: in its last moments, down by the cup, the ball coming toward us.
+                const auto& path=state.flight.path;
+                if(state.flight.holed&&state.balls[state.turn].strokes==1&&path.size()>40)
+                {
+                    const double left=static_cast<double>(path.size()-1)/60-state.flightTime;
+                    if(left<AceZoom||state.phase==Phase::Settle)
+                    {
+                        const V3 pin=c.Pin(),from=path[path.size()-30];
+                        V3 toward=pin-from;toward.y=0;
+                        const float n=Golf::Length(toward);
+                        toward=n>0.05f?toward*(1/n):V3{std::sin(state.shot.aim),0,std::cos(state.shot.aim)};
+                        const V3 side{toward.z,0,-toward.x};
+                        V3 e=pin+toward*1.5f+side*0.45f+V3{0,0.38f,0};
+                        e.y=std::max(e.y,c.Height(e.x,e.z)+0.25f);
+                        set(e,pin-toward*0.5f+V3{0,0.03f,0});
+                        follow=0.10f;
+                        break;
+                    }
+                }
                 const V3 p=BallNow(state.turn);
                 const float aim=state.shot.aim;
                 const V3 dir{std::sin(aim),0,std::cos(aim)};
@@ -1155,46 +1916,70 @@ namespace MikuMikuDesktopPerch
                 break;
             }
             }
+            state.cutNow=state.cut;
             if(state.cut){state.eye=eye;state.look=look;state.cut=false;}
             else
             {
-                const float k=static_cast<float>(1.0-std::exp(-1.0/60/std::max(0.02f,follow)));
+                // By the time passed (a fixed share each frame made the camera lag and catch up
+                // unevenly as the frames' times varied: the ball in flight shook).
+                const float k=static_cast<float>(1.0-std::exp(-std::clamp(dt,0.0,0.1)/std::max(0.02f,follow)));
                 auto ease=[&](XMFLOAT3& a,const XMFLOAT3& b){a.x+=(b.x-a.x)*k;a.y+=(b.y-a.y)*k;a.z+=(b.z-a.z)*k;};
                 ease(state.eye,eye);
                 ease(state.look,look);
             }
-            state.renderer->SetCamera(XMLoadFloat3(&state.eye),XMLoadFloat3(&state.look),FovY());
+            // The meteor's landing shakes the view a moment.
+            XMFLOAT3 eyeNow=state.eye,lookNow=state.look;
+            if(state.shake>0)
+            {
+                state.shake=std::max(0.0f,state.shake-static_cast<float>(dt));
+                const float t=static_cast<float>(state.clock),a=state.shake*state.shake*0.9f*K;
+                const float sx=std::sin(t*61)*a,sy=std::sin(t*47+1)*a,sz=std::sin(t*53+2)*a;
+                eyeNow.x+=sx;eyeNow.y+=sy;eyeNow.z+=sz;lookNow.x+=sx;lookNow.y+=sy;lookNow.z+=sz;
+            }
+            state.renderer->SetCamera(XMLoadFloat3(&eyeNow),XMLoadFloat3(&lookNow),FovY());
         }
 
         // The trees in sight this frame, as the renderer's places for each kind: those within
         // the view's cone (with room for their size) or close by. A wood of several hundred is
         // drawn a few hundred at a time.
-        void PlaceTrees()
+        void PlaceTrees(double dt)
         {
             using namespace DirectX;
             std::vector<std::vector<MascotRenderer::SceneryInstance>> groups(Golf::TreeKinds);
             const XMVECTOR eye=XMLoadFloat3(&state.eye);
             const XMVECTOR ahead=XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&state.look),eye));
             RECT rc{};
-            GetClientRect(state.window,&rc);
+            GetClientRect(state.view?state.view:state.window,&rc);
             const float aspect=rc.bottom>rc.top?static_cast<float>(rc.right-rc.left)/static_cast<float>(rc.bottom-rc.top):1.6f;
-            const float half=std::atan(std::tan(FovY()/2)*std::max(1.0f,aspect));   // the wider half-angle
-            const float coneCos=std::cos(std::min(1.5f,half+0.08f));
+            // To the view's corners (a cone as wide as the screen across left the corners out:
+            // trees there sprang up as the view turned or came near).
+            const float half=std::atan(std::tan(FovY()/2)*std::sqrt(1+aspect*aspect));
+            const float coneAngle=std::min(1.5f,half+0.1f);
+            const auto& trees=Course().Trees();
+            if(state.treeFade.size()!=trees.size())state.treeFade.assign(trees.size(),0.0f);
+            // Each tree fades in as it comes into view and out as it leaves (no popping).
+            const float step=static_cast<float>(std::clamp(dt,0.0,0.1)/0.4);
             size_t shown=0;
-            for(const auto& t:Course().Trees())
+            for(size_t i=0;i<trees.size();++i)
             {
+                const auto& t=trees[i];
                 const XMFLOAT3 at=W(V3{t.x,t.y,t.z});
                 const XMVECTOR to=XMVectorSubtract(XMLoadFloat3(&at),eye);
                 const float d=XMVectorGetX(XMVector3Length(to));
                 const float reach=9*K*t.scale;   // a tree's size, round its foot
+                bool seen=true;
                 if(d>reach)
                 {
                     const float c=XMVectorGetX(XMVector3Dot(to,ahead))/d;
                     // Within the cone widened by the angle the tree's size takes at that distance.
-                    if(c<std::cos(std::min(1.5f,std::acos(std::clamp(coneCos,-1.0f,1.0f))+std::asin(std::min(1.0f,reach/d)))))continue;
+                    seen=c>=std::cos(std::min(1.55f,coneAngle+std::asin(std::min(1.0f,reach/d))));
                 }
+                float& fade=state.treeFade[i];
+                if(state.cutNow)fade=seen?1.0f:0.0f;
+                else fade=std::clamp(fade+(seen?step:-step),0.0f,1.0f);
+                if(fade<=0)continue;
                 MascotRenderer::SceneryInstance q;
-                q.x=at.x;q.y=at.y-0.05f*K;q.z=at.z;q.yaw=t.yaw;q.scale=t.scale;
+                q.x=at.x;q.y=at.y-0.05f*K;q.z=at.z;q.yaw=t.yaw;q.scale=t.scale;q.clear=fade>=1?0.0f:1-fade;
                 auto& g=groups[static_cast<size_t>(t.kind)];
                 if(shown<MascotRenderer::MaxSceneryInstances){g.push_back(q);++shown;}
             }
@@ -1213,11 +1998,12 @@ namespace MikuMikuDesktopPerch
 
         // A soft strip of light for the glowing pass (GeometryPS: 9 in minus uv.z, bright along
         // its middle): from a to b, half width w across the view, as bright as ca at a, cb at b.
-        void LightStrip(std::vector<MascotRenderer::GeometryVertex>& out,XMFLOAT3 a,XMFLOAT3 b,float w,const float (&ca)[3],const float (&cb)[3])
+        // flat: laid on the ground (across it level) rather than turned to the view.
+        void LightStrip(std::vector<MascotRenderer::GeometryVertex>& out,XMFLOAT3 a,XMFLOAT3 b,float w,const float (&ca)[3],const float (&cb)[3],bool flat=false)
         {
             using namespace DirectX;
             const XMVECTOR A=XMLoadFloat3(&a),B=XMLoadFloat3(&b);
-            const XMVECTOR toEye=XMVectorSubtract(XMLoadFloat3(&state.eye),XMVectorScale(XMVectorAdd(A,B),0.5f));
+            const XMVECTOR toEye=flat?XMVectorSet(0,1,0,0):XMVectorSubtract(XMLoadFloat3(&state.eye),XMVectorScale(XMVectorAdd(A,B),0.5f));
             XMVECTOR side=XMVector3Cross(XMVectorSubtract(B,A),toEye);
             if(XMVectorGetX(XMVector3LengthSq(side))<1e-10f)return;
             side=XMVectorScale(XMVector3Normalize(side),w);
@@ -1234,7 +2020,7 @@ namespace MikuMikuDesktopPerch
             v(a0,0,ca);v(b1,1,cb);v(b0,0,cb);
         }
 
-        // What glows this frame: the pin's beam up into the sky, and the
+        // What glows this frame: the light pillar up into the sky, and the
         // ball's trail while it is in the air, the brighter the faster it goes.
         std::vector<MascotRenderer::GeometryVertex> BuildGlow()
         {
@@ -1257,31 +2043,193 @@ namespace MikuMikuDesktopPerch
                     LightStrip(out,W(p,h0),W(p,h1),w*0.3f,c0,c1);
                 }
             }
-            // The trail: from the strike to where it first comes down (not along the ground
-            // after), fading behind it, as bright as the ball is fast.
-            if(state.phase==Phase::Flying&&!state.flight.path.empty())
+            // Your aim's circle where the ball comes down at full power: a faint magic circle laid
+            // on the ground, turning (its rings, a six-pointed star one way, runes the other).
+            if(state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge)&&state.landingKnown&&!state.autoplay)
+            {
+                const V3 l=state.landing;
+                const bool putt=state.club==Golf::Putter;
+                const float R=putt?0.2f:1.9f,lift=putt?0.012f:0.06f;
+                const float t=static_cast<float>(state.clock),pulse=0.8f+0.2f*std::sin(t*2.2f);
+                // Its design and colour, as you chose: the hexagram (gold), the pentagram (violet),
+                // the flower (cherry), the cogwheel (blue).
+                const int design=std::clamp(state.progress.chosen[GolfProgress::Circle],0,3);
+                static const float hues[4][3]={{0.75f,0.60f,0.18f},{0.62f,0.35f,0.85f},{0.85f,0.45f,0.60f},{0.30f,0.55f,0.90f}};
+                const float gold[3]={hues[design][0]*pulse,hues[design][1]*pulse,hues[design][2]*pulse},faint[3]={gold[0]*0.6f,gold[1]*0.6f,gold[2]*0.6f};
+                // Seen from far off (the tee), its lines grow, so they are not lost under a pixel.
+                const float far_=std::hypot(state.eye.x/K-l.x,state.eye.z/K-l.z),thick=std::max(1.0f,far_/(R*25));
+                auto P=[&](float x,float z){return XMFLOAT3{x*K,(c.Height(x,z)+lift)*K,z*K};};
+                auto polar=[&](float a,float r){return std::pair<float,float>{l.x+r*std::cos(a),l.z+r*std::sin(a)};};
+                auto line=[&](std::pair<float,float> a,std::pair<float,float> b,float w,const float (&col)[3]){
+                    // In pieces, each laid on the ground under it.
+                    const int n=std::max(1,static_cast<int>(std::hypot(b.first-a.first,b.second-a.second)/(R*0.12f)));
+                    for(int i=0;i<n;++i)
+                    {
+                        const float u0=static_cast<float>(i)/n,u1=static_cast<float>(i+1)/n;
+                        LightStrip(out,P(a.first+(b.first-a.first)*u0,a.second+(b.second-a.second)*u0),P(a.first+(b.first-a.first)*u1,a.second+(b.second-a.second)*u1),w*thick*K,col,col,true);
+                    }
+                };
+                auto ring=[&](float r,float w,const float (&col)[3]){
+                    constexpr int N=48;
+                    for(int i=0;i<N;++i)line(polar(2*Pi*i/N,r),polar(2*Pi*(i+1)/N,r),w,col);
+                };
+                ring(R,R*0.05f,gold);
+                ring(R*0.88f,R*0.025f,faint);
+                ring(R*0.52f,R*0.03f,gold);
+                ring(R*0.16f,R*0.02f,faint);
+                const float turn=t*0.35f,back=-t*0.55f;
+                if(design==0)
+                    for(int k=0;k<2;++k)   // the star: two triangles
+                        for(int i=0;i<3;++i)
+                        {
+                            const float a0=turn+k*Pi/3+i*2*Pi/3,a1=a0+2*Pi/3;
+                            line(polar(a0,R*0.88f),polar(a1,R*0.88f),R*0.016f,gold);
+                        }
+                else if(design==1)
+                    for(int i=0;i<5;++i)   // the pentagram: every second of five points
+                    {
+                        const float a0=turn+i*2*Pi/5,a1=a0+4*Pi/5;
+                        line(polar(a0,R*0.88f),polar(a1,R*0.88f),R*0.016f,gold);
+                    }
+                else if(design==2)
+                    for(int i=0;i<6;++i)   // the flower: six petals, each a small ring
+                    {
+                        const float a=turn+i*Pi/3;
+                        const auto c0=polar(a,R*0.45f);
+                        constexpr int N=20;
+                        for(int k=0;k<N;++k)
+                        {
+                            const float b0=2*Pi*k/N,b1=2*Pi*(k+1)/N;
+                            line({c0.first+R*0.3f*std::cos(b0),c0.second+R*0.3f*std::sin(b0)},{c0.first+R*0.3f*std::cos(b1),c0.second+R*0.3f*std::sin(b1)},R*0.013f,gold);
+                        }
+                    }
+                else
+                    for(int i=0;i<18;++i)   // the cogwheel: teeth round a ring, spokes within
+                    {
+                        const float a0=turn+i*2*Pi/18,a1=a0+Pi/18,a2=a0+2*Pi/18;
+                        line(polar(a0,R*0.72f),polar(a0,R*0.84f),R*0.014f,gold);
+                        line(polar(a0,R*0.84f),polar(a1,R*0.84f),R*0.014f,gold);
+                        line(polar(a1,R*0.84f),polar(a1,R*0.72f),R*0.014f,gold);
+                        line(polar(a1,R*0.72f),polar(a2,R*0.72f),R*0.014f,gold);
+                        if(i%3==0)line(polar(a0,R*0.18f),polar(a0,R*0.5f),R*0.012f,faint);
+                    }
+                for(int i=0;i<4;++i)   // a square inside, the other way
+                {
+                    const float a0=back+i*Pi/2,a1=a0+Pi/2;
+                    line(polar(a0,R*0.52f),polar(a1,R*0.52f),R*0.012f,faint);
+                }
+                for(int i=0;i<24;++i)   // runes round the rim
+                {
+                    const float a=back+i*2*Pi/24;
+                    const float r0=R*0.905f,r1=R*(i%3==0?0.985f:0.95f);
+                    line(polar(a,r0),polar(a,r1),R*0.012f,gold);
+                    if(i%3==1)line(polar(a-0.05f,R*0.94f),polar(a+0.05f,R*0.94f),R*0.01f,faint);
+                }
+            }
+            // Your putt's likely way: dashes along the green, fading as they go.
+            if(state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge)&&state.club==Golf::Putter&&state.puttLine.size()>1&&!state.autoplay)
+            {
+                float along=0;
+                for(size_t i=1;i<state.puttLine.size();++i)
+                {
+                    const V3 a=state.puttLine[i-1],b=state.puttLine[i];
+                    const float d=Golf::Length(b-a);
+                    const float mid=along+d/2;
+                    along+=d;
+                    if(std::fmod(mid+1000-static_cast<float>(state.clock)*0.25f,0.3f)>0.17f)continue;   // dashes, drifting toward the cup
+                    const float k=0.55f*(1-mid/PuttLineShown);
+                    if(k<=0)break;
+                    const float col[3]={0.75f*k,0.9f*k,1.0f*k};
+                    LightStrip(out,XMFLOAT3{a.x*K,(c.Height(a.x,a.z)+0.012f)*K,a.z*K},XMFLOAT3{b.x*K,(c.Height(b.x,b.z)+0.012f)*K,b.z*K},0.025f*K,col,col,true);
+                }
+            }
+            // The meteor's landing: two rings of light racing out over the ground, and a pillar of
+            // fire going up, all fading.
+            if(state.blastAge>=0&&state.blastAge<1.6f)
+            {
+                const V3 b=state.blastAt;
+                for(int ring=0;ring<2;++ring)
+                {
+                    const float t=state.blastAge-ring*0.12f;
+                    if(t<0)continue;
+                    const float r=(ring==0?22.0f:13.0f)*(1-std::exp(-t*3.2f)),fade=std::max(0.0f,1-t/(ring==0?1.0f:1.4f));
+                    const float col[3]={1.0f*fade,(ring==0?0.75f:0.45f)*fade,(ring==0?0.35f:0.12f)*fade};
+                    constexpr int N=64;
+                    for(int i=0;i<N;++i)
+                    {
+                        const float a0=2*Pi*i/N,a1=2*Pi*(i+1)/N;
+                        const float x0=b.x+r*std::cos(a0),z0=b.z+r*std::sin(a0),x1=b.x+r*std::cos(a1),z1=b.z+r*std::sin(a1);
+                        LightStrip(out,XMFLOAT3{x0*K,(c.Height(x0,z0)+0.15f)*K,z0*K},XMFLOAT3{x1*K,(c.Height(x1,z1)+0.15f)*K,z1*K},(ring==0?0.5f:0.9f)*K*(0.4f+fade),col,col,true);
+                    }
+                }
+                const float t=state.blastAge,h=3+18*(1-std::exp(-t*4)),fade=std::max(0.0f,1-t/1.2f);
+                const float core[3]={1.0f*fade,0.8f*fade,0.45f*fade},edge[3]={0.6f*fade,0.18f*fade,0.04f*fade};
+                LightStrip(out,W(b),W(b,h),(2.2f+1.5f*t)*K,core,edge);
+                LightStrip(out,W(b),W(b,h*0.7f),(0.9f+0.6f*t)*K,core,core);
+            }
+            // The trail: behind the ball all the way (bounces and rolling too), fading behind it,
+            // as bright as the ball is fast. Its joints are on fixed frames of the path and its
+            // head is the ball itself between frames, so nothing in it steps from frame to frame
+            // (joints that moved with the newest frame made the head judder).
+            if(state.phase==Phase::Flying&&state.flight.path.size()>1)
             {
                 const auto& path=state.flight.path;
-                const size_t now=std::min(static_cast<size_t>(state.flightTime*60),path.size()-1);
-                const size_t end=std::min(now,static_cast<size_t>(std::max(0,state.flight.landing)));
-                const size_t from=now>150?now-150:0;
+                const double nowT=std::min(state.flightTime*60,static_cast<double>(path.size()-1));
+                constexpr double Long=150;   // frames of trail
+                const double tailT=std::max(0.0,nowT-Long);
                 const bool hers=state.turn==Her;
-                const float tint[3]={hers?1.0f:0.55f,hers?0.55f:0.8f,hers?0.8f:1.0f};
-                for(size_t i=from;i+3<=end;i+=3)
+                float tint[3]={hers?1.0f:0.55f,hers?0.55f:0.8f,hers?0.8f:1.0f};
+                const int trailLook=hers?0:state.progress.chosen[GolfProgress::Trail];
                 {
-                    const V3 a=path[i],b=path[i+3];
-                    const float speed=Golf::Length(b-a)*20;   // m/s
-                    const float age=static_cast<float>(i-from)/std::max<size_t>(1,now-from);
-                    const float k=std::clamp(speed/55.0f,0.0f,1.0f)*age*0.9f;
-                    if(k<0.01f)continue;
-                    const float ca[3]={tint[0]*k,tint[1]*k,tint[2]*k};
-                    LightStrip(out,W(a),W(b),(0.03f+0.05f*age)*K,ca,ca);
+                    static const float looks[4][3]={{0.55f,0.8f,1.0f},{1.0f,0.82f,0.35f},{0.35f,1.0f,0.6f},{0.8f,0.5f,1.0f}};
+                    if(trailLook>0&&trailLook<4)for(int k=0;k<3;++k)tint[k]=looks[trailLook][k];
                 }
+                // The specials' trails: the boost gold, the meteor fire.
+                if(state.shot.special==1){tint[0]=1.0f;tint[1]=0.85f;tint[2]=0.35f;}
+                else if(state.shot.special==2){const auto fl=FlameColour(hers);tint[0]=fl[0];tint[1]=fl[1];tint[2]=fl[2];}
+                const bool rainbow=trailLook==4&&state.shot.special==0;
+                auto at=[&](double i){
+                    const size_t a=static_cast<size_t>(i),b=std::min(a+1,path.size()-1);
+                    return path[a]+(path[b]-path[a])*static_cast<float>(i-a);
+                };
+                auto speedAt=[&](double i){   // m/s, over 3 frames round i
+                    const double a=std::max(0.0,i-1.5),b=std::min(static_cast<double>(path.size()-1),a+3);
+                    return b>a?Golf::Length(at(b)-at(a))*60/static_cast<float>(b-a):0.0f;
+                };
+                double i=std::floor(tailT/3)*3;
+                if(i<tailT)i=std::min(i+3,nowT);
+                while(i<nowT)
+                {
+                    const double j=std::min(i+3,nowT);
+                    const float age=static_cast<float>((i+j)/2-tailT)/static_cast<float>(Long);
+                    const float k=std::clamp(speedAt((i+j)/2)/55.0f,0.0f,1.0f)*std::clamp(age,0.0f,1.0f)*0.9f;
+                    if(k>=0.01f)
+                    {
+                        float tc[3]={tint[0],tint[1],tint[2]};
+                        if(rainbow)
+                        {
+                            // The rainbow: the hue running along the trail.
+                            const float hue=static_cast<float>(std::fmod(i/40.0,1.0))*6;
+                            tc[0]=std::clamp(std::abs(hue-3)-1,0.0f,1.0f);tc[1]=std::clamp(2-std::abs(hue-2),0.0f,1.0f);tc[2]=std::clamp(2-std::abs(hue-4),0.0f,1.0f);
+                        }
+                        const float ca[3]={tc[0]*k,tc[1]*k,tc[2]*k};
+                        LightStrip(out,W(at(i)),W(at(j)),(state.shot.special==2?0.12f+0.3f*age:0.03f+0.05f*age)*K,ca,ca);
+                    }
+                    i=j;
+                }
+            }
+            // The rain: each drop a thin streak along its fall (a little light against the grey).
+            for(const auto& d:state.drops)
+            {
+                if(!d.rain)continue;
+                const float k=0.75f*std::min(1.0f,(d.life-d.age)*4);
+                const float head[3]={0.20f*k,0.22f*k,0.25f*k},tail[3]={0,0,0};
+                LightStrip(out,W(d.at),W(d.at-d.v*0.045f),0.010f*K,head,tail);
             }
             return out;
         }
 
-        // The sparks this frame: rising round the pin's beam, glittering along a square strike's
+        // The sparks this frame: rising round the light pillar, glittering along a square strike's
         // trail, the water thrown up where a ball fell in.
         std::vector<MascotRenderer::Particle> BuildSparks(double dt)
         {
@@ -1335,24 +2283,155 @@ namespace MikuMikuDesktopPerch
                         out.push_back(q);
                     }
             }
+            // The meteor in the air breathes fire: flames streaming off behind it, rising as
+            // they fade.
+            if(state.phase==Phase::Flying&&state.shot.special==2&&state.flight.path.size()>2&&
+               (state.flight.boomAt<0||state.flightTime*60<state.flight.boomAt))
+            {
+                const V3 p=BallNow(state.turn);
+                const double i=std::min(state.flightTime*60,static_cast<double>(state.flight.path.size()-2));
+                const V3 v=(state.flight.path[static_cast<size_t>(i)+1]-state.flight.path[static_cast<size_t>(i)])*60;
+                std::uniform_real_distribution<float> u(0,1),pm(-1,1);
+                // Its blazing core, white at the heart, and two ember spirals winding round its way.
+                {
+                    MascotRenderer::Particle q;
+                    q.position={p.x*K,p.y*K,p.z*K};
+                    const auto fl=FlameColour(state.turn==Her);
+                    q.size=(0.9f+0.15f*std::sin(t*40))*K;q.color={std::min(1.0f,fl[0]+0.3f),std::min(1.0f,fl[1]+0.4f),std::min(1.0f,fl[2]+0.4f),0.9f};q.glow=true;
+                    out.push_back(q);
+                    q.size=0.45f*K;q.color={1.0f,1.0f,0.9f,1.0f};
+                    out.push_back(q);
+                    const V3 dir=Golf::Normalized(v);
+                    V3 side=Golf::Normalized(Golf::Cross(dir,V3{0,1,0}));
+                    if(Golf::Length(side)<0.5f)side={1,0,0};
+                    const V3 up=Golf::Cross(side,dir);
+                    for(int arm=0;arm<2;++arm)
+                        for(int k=0;k<14;++k)
+                        {
+                            const float behind=k*0.35f,a=t*14+arm*Pi+k*0.55f,r=0.5f+0.05f*k;
+                            const V3 at=p-dir*behind+side*(std::cos(a)*r)+up*(std::sin(a)*r);
+                            MascotRenderer::Particle e;
+                            e.position={at.x*K,at.y*K,at.z*K};
+                            e.size=(0.22f-0.011f*k)*K;
+                            e.color={arm==0?1.0f:0.55f,arm==0?0.55f:0.85f,arm==0?0.15f:1.0f,0.9f*(1-k/14.0f)};
+                            e.glow=true;
+                            out.push_back(e);
+                        }
+                }
+                const int n=static_cast<int>(dt*360+u(state.random));
+                for(int k=0;k<n;++k)
+                {
+                    Drop d;
+                    const float back=u(state.random);
+                    d.at=p-v*(back*0.02f)+V3{pm(state.random)*0.15f,pm(state.random)*0.15f,pm(state.random)*0.15f};
+                    d.v=v*(-0.08f-0.1f*u(state.random))+V3{pm(state.random)*1.5f,1.0f+u(state.random)*1.5f,pm(state.random)*1.5f};
+                    d.life=0.25f+0.35f*u(state.random);
+                    d.size=0.14f+0.18f*u(state.random);
+                    const float hot=u(state.random);
+                    const auto fl=FlameColour(state.turn==Her);
+                    d.rgb[0]=std::min(1.0f,fl[0]+0.3f*hot);d.rgb[1]=std::min(1.0f,fl[1]+0.4f*hot);d.rgb[2]=std::min(1.0f,fl[2]+0.3f*hot*hot);
+                    d.fall=-2;   // flames rise
+                    state.drops.push_back(d);
+                }
+            }
+            // Rain: streaks falling round the camera.
+            if(state.weather==Rain)
+            {
+                std::uniform_real_distribution<float> u(0,1);
+                const int n=static_cast<int>(dt*1400+u(state.random));
+                for(int k=0;k<n;++k)
+                {
+                    Drop d;
+                    const float a=u(state.random)*2*Pi,r=1.5f+u(state.random)*22;
+                    d.at=V3{state.eye.x/K+std::cos(a)*r,state.eye.y/K+4+u(state.random)*8,state.eye.z/K+std::sin(a)*r};
+                    d.v={0.8f,-14,0.3f};
+                    d.life=0.9f;d.size=0.022f;
+                    d.rgb[0]=0.30f;d.rgb[1]=0.33f;d.rgb[2]=0.38f;d.fall=0;d.rain=true;
+                    state.drops.push_back(d);
+                }
+            }
             // The splash: drops thrown up, falling back.
             for(auto& d:state.drops)
             {
                 d.age+=static_cast<float>(dt);
-                d.v.y-=9.81f*static_cast<float>(dt);
+                d.v.y-=d.fall*static_cast<float>(dt);
                 d.at=d.at+d.v*static_cast<float>(dt);
             }
             state.drops.erase(std::remove_if(state.drops.begin(),state.drops.end(),[](const Drop& d){return d.age>d.life;}),state.drops.end());
             for(const auto& d:state.drops)
             {
+                if(d.rain)continue;   // drawn as streaks (BuildGlow)
                 MascotRenderer::Particle q;
                 q.position={d.at.x*K,d.at.y*K,d.at.z*K};
                 q.size=d.size*K;
-                q.color={0.85f,0.93f,1.0f,0.85f*(1-d.age/d.life)};
+                q.color={d.rgb[0],d.rgb[1],d.rgb[2],0.85f*(1-d.age/d.life)};
                 q.glow=true;
                 out.push_back(q);
             }
             return out;
+        }
+
+        // The meteor's fire, yours in the look you chose (hers orange).
+        std::array<float,3> FlameColour(bool hers)
+        {
+            static const std::array<float,3> looks[4]={{1.0f,0.42f,0.12f},{0.30f,0.55f,1.0f},{0.75f,0.30f,1.0f},{0.30f,1.0f,0.45f}};
+            return looks[hers?0:std::clamp(state.progress.chosen[GolfProgress::Flame],0,3)];
+        }
+
+        // Sparks thrown out from p (an effect): n of them in colour rgb, at up to speed m/s, lasting
+        // about life seconds, size metres.
+        void Burst(V3 p,int n,const std::array<float,3>& rgb,float speed,float life,float size)
+        {
+            std::uniform_real_distribution<float> u(0,1);
+            for(int i=0;i<n;++i)
+            {
+                const float a=u(state.random)*2*Pi,up=u(state.random),out=std::sqrt(std::max(0.0f,1-up*up));
+                const float sp=speed*(0.3f+0.7f*u(state.random));
+                Drop d;
+                d.at=p+V3{0,0.1f,0};
+                d.v={std::cos(a)*out*sp,up*sp,std::sin(a)*out*sp};
+                d.life=life*(0.6f+0.8f*u(state.random));
+                d.size=size*(0.6f+0.8f*u(state.random));
+                d.rgb[0]=rgb[0];d.rgb[1]=rgb[1];d.rgb[2]=rgb[2];
+                d.fall=3;
+                state.drops.push_back(d);
+            }
+        }
+
+        // The meteor comes down at p: a white flash, a fireball, fire and sparks thrown up and
+        // out, clods of earth flung high, smoke rolling up, the view shaken, rings racing out
+        // (BuildGlow).
+        void MeteorBlast(V3 p)
+        {
+            state.blastAt=p;state.blastAge=0;state.shake=0.9f;
+            auto still=[&](float size,float life,const std::array<float,3>& rgb){
+                Drop d;d.at=p+V3{0,0.6f,0};d.v={};d.life=life;d.size=size;d.rgb[0]=rgb[0];d.rgb[1]=rgb[1];d.rgb[2]=rgb[2];d.fall=0;
+                state.drops.push_back(d);
+            };
+            still(9.0f,0.25f,{1.0f,1.0f,0.95f});    // the flash
+            still(5.5f,0.6f,{1.0f,0.7f,0.3f});      // the fireball
+            const auto fl=FlameColour(state.turn==Her);
+            Burst(p,220,{fl[0],std::min(1.0f,fl[1]+0.1f),fl[2]},16.0f,1.2f,0.16f);
+            Burst(p,160,{1.0f,0.9f,0.5f},10.0f,0.7f,0.07f);
+            Burst(p,120,{0.55f,0.85f,1.0f},12.0f,0.9f,0.05f);
+            std::uniform_real_distribution<float> u(0,1),pm(-1,1);
+            for(int i=0;i<70;++i)   // clods, falling back hard
+            {
+                Drop d;d.at=p+V3{0,0.2f,0};
+                d.v={pm(state.random)*7,9+u(state.random)*12,pm(state.random)*7};
+                d.life=1.4f+u(state.random);d.size=0.12f+0.12f*u(state.random);
+                d.rgb[0]=0.35f;d.rgb[1]=0.22f;d.rgb[2]=0.12f;d.fall=14;
+                state.drops.push_back(d);
+            }
+            for(int i=0;i<60;++i)   // smoke, rolling up slowly
+            {
+                Drop d;d.at=p+V3{pm(state.random)*2,0.5f+u(state.random)*2,pm(state.random)*2};
+                d.v={pm(state.random)*1.5f,2+u(state.random)*3,pm(state.random)*1.5f};
+                d.life=2.0f+1.5f*u(state.random);d.size=1.0f+1.4f*u(state.random);
+                const float grey=0.22f+0.12f*u(state.random);
+                d.rgb[0]=grey;d.rgb[1]=grey*0.95f;d.rgb[2]=grey*0.9f;d.fall=-0.6f;
+                state.drops.push_back(d);
+            }
         }
 
         // A ball fell into the pond at p: rings spread, water is thrown up.
@@ -1422,11 +2501,28 @@ namespace MikuMikuDesktopPerch
             {
                 // pink: it curves; white: square; each edged dark, as the bar is
                 const float px0=GaugeX(bar,-Pink),px1=GaugeX(bar,Pink);
-                rect(px0-1.5f*s,y0-4.5f*s,px1+1.5f*s,y1+4.5f*s,0.06f,0.10f,0.16f);
-                rect(px0,y0-3*s,px1,y1+3*s,0.98f,0.42f,0.70f);
+                // (as tall as the blue)
+                rect(px0-1.5f*s,y0-2*s,px1+1.5f*s,y1+2*s,0.06f,0.10f,0.16f);
+                rect(px0,y0,px1,y1,0.98f,0.42f,0.70f);
                 const float jw=std::max(1.2f*s,GaugeX(bar,JustWidth(state.club))-GaugeX(bar,0));
-                rect(GaugeX(bar,0)-jw-1.5f*s,y0-5.5f*s,GaugeX(bar,0)+jw+1.5f*s,y1+5.5f*s,0.06f,0.10f,0.16f);
-                rect(GaugeX(bar,0)-jw,y0-4*s,GaugeX(bar,0)+jw,y1+4*s,1,1,1);
+                rect(GaugeX(bar,0)-jw-1.5f*s,y0-2*s,GaugeX(bar,0)+jw+1.5f*s,y1+2*s,0.06f,0.10f,0.16f);
+                rect(GaugeX(bar,0)-jw,y0,GaugeX(bar,0)+jw,y1,1,1,1);
+            }
+            // The cup's plain distance on the bar (no slope, wind or lie): a red pin with its flag,
+            // at the share of full power's reach it takes (at the end when it is further).
+            {
+                const Ball& yours=state.balls[You];
+                const float toPin=Golf::Flat(yours.at,Course().Pin());
+                const float full=putt?Golf::PutterRange(toPin,Course().Pin().y-yours.at.y):Golf::FlatCarry(state.club,state.spotX,state.spotY);
+                if(full>0)
+                {
+                    const float x=GaugeX(bar,std::min(1.0f,toPin/full));
+                    rect(x-1.2f*s,y0-10*s,x+1.2f*s,y1+3*s,0.95f,0.20f,0.18f);
+                    const float col[4]={0.95f,0.20f,0.18f,Unlit};
+                    D-=0.05f;
+                    const Mesh::V a=at(x+1.2f*s,y0-10*s),b=at(x+9*s,y0-7*s),c=at(x+1.2f*s,y0-4*s);
+                    m.Vertex(a,{n.x,n.y,n.z},col);m.Vertex(b,{n.x,n.y,n.z},col);m.Vertex(c,{n.x,n.y,n.z},col);
+                }
             }
             // The ball and where you strike it, the mark easing after the spot.
             if(!putt)
@@ -1484,7 +2580,12 @@ namespace MikuMikuDesktopPerch
                 const float ground=c.Height(p.x,p.z)*K;
                 const bool cup=Golf::Flat(p,c.Pin())<0.08f;
                 const float bottom=cup?(p.y-Golf::BallRadius)*K:std::max((p.y-Golf::BallRadius)*K,ground);
-                m.Sphere({p.x*K,bottom+r,p.z*K},r,white,4,10,6);
+                {
+                    // Your ball in the look you chose.
+                    static const float looks[5][4]={{0.97f,0.97f,0.97f,1},{1.0f,0.80f,0.30f,1},{1.0f,0.66f,0.78f,1},{0.55f,0.80f,1.0f,1},{0.10f,0.10f,0.14f,1}};
+                    const int look=who==You?std::clamp(state.progress.chosen[GolfProgress::BallLook],0,4):0;
+                    m.Sphere({p.x*K,bottom+r,p.z*K},r,looks[look],4,10,6);
+                }
                 // Its shadow on the ground under it.
                 const float g=ground+0.02f*K;
                 const float s=r*(1.2f+std::min(2.0f,(p.y*K-g)/(6*K)));
@@ -1495,8 +2596,9 @@ namespace MikuMikuDesktopPerch
                     m.Vertex({p.x*K+s*std::cos(a1),g,p.z*K+s*std::sin(a1)},{0,1,0},shadow);
                     m.Vertex({p.x*K+s*std::cos(a0),g,p.z*K+s*std::sin(a0)},{0,1,0},shadow);
                 }
-                // A mark over the other's ball, so it is found (pink hers, blue yours).
-                if(!(who==state.turn&&state.phase==Phase::Flying))
+                // A mark over the other's ball, so it is found (pink hers, blue yours); none over
+                // the ball being played (seen from behind it, it stood on the putt's line).
+                if(who!=state.turn||state.phase==Phase::Settle||state.phase==Phase::HoleOver)
                 {
                     const float col[4]={who==Her?1.0f:0.35f,who==Her?0.45f:0.65f,who==Her?0.7f:1.0f,Unlit};
                     m.Cylinder(p.x*K,p.z*K,(p.y+0.5f)*K,(p.y+0.8f)*K,0.06f*K,0,col,4,6,false);
@@ -1531,60 +2633,139 @@ namespace MikuMikuDesktopPerch
                     }
                 }
             }
-            // Your aim: a ring where the ball comes down at full power.
-            if(state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge)&&state.landingKnown&&!state.autoplay)
-            {
-                const V3 l=state.landing;
-                const float col[4]={1.0f,0.92f,0.35f,Unlit};
-                const bool putt=state.club==Golf::Putter;
-                const float r0=(putt?0.12f:1.6f)*K,r1=r0*1.35f,lift=(putt?0.02f:0.12f)*K;
-                // Laid on the ground as it rises and falls under it (a flat ring sank into slopes).
-                auto on=[&](float a,float r){
-                    const float x=l.x*K+r*std::cos(a),z=l.z*K+r*std::sin(a);
-                    return Mesh::V{x,c.Height(x/K,z/K)*K+lift,z};
-                };
-                for(int i=0;i<32;++i)
-                {
-                    const float a0=2*Pi*i/32,a1=2*Pi*(i+1)/32;
-                    m.QuadN(on(a0,r1),on(a1,r1),on(a1,r0),on(a0,r0),{0,1,0},col);
-                }
-            }
-            // The club in her hands: from her grip along the way the swing holds it.
-            std::array<float,3> middle{},along{},club{};
-            if(state.herSwinging&&model.Grip(0,middle,along)&&model.SwingClub(club))
+            // Diagnostics: her skeleton, joint to joint (left blue, right orange).
+            if(state.bonesView)
             {
                 const XMMATRIX world=HerWorld(model);
-                const XMVECTOR g=XMVector3Transform(XMVectorSet(middle[0],middle[1],middle[2],1),world);
-                const XMVECTOR d=XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(club[0],club[1],club[2],0),world));
-                const XMVECTOR top=XMVectorSubtract(g,XMVectorScale(d,0.06f*K));
-                const XMVECTOR end=XMVectorAdd(g,XMVectorScale(d,state.clubLength));
-                const float shaft[4]={0.75f,0.76f,0.80f,1},grip[4]={0.10f,0.10f,0.12f,1},headCol[4]={0.55f,0.56f,0.60f,1},wood[4]={0.12f,0.12f,0.14f,1};
-                auto rod=[&](FXMVECTOR a,FXMVECTOR b,float r,const float (&col)[4]){
-                    const XMVECTOR ax=XMVector3Normalize(XMVectorSubtract(b,a));
-                    XMVECTOR u=XMVector3Cross(ax,XMVectorSet(0,1,0,0));
+                for(const auto& b:model.BoneSegments())
+                {
+                    const float col[4]={b.side==0?0.30f:b.side==1?0.98f:0.35f,b.side==0?0.55f:b.side==1?0.58f:0.36f,b.side==0?0.98f:b.side==1?0.22f:0.40f,Unlit};
+                    const XMVECTOR a=XMVector3Transform(XMVectorSet(b.from[0],b.from[1],b.from[2],1),world),c=XMVector3Transform(XMVectorSet(b.to[0],b.to[1],b.to[2],1),world);
+                    const XMVECTOR ax=XMVectorSubtract(c,a);
+                    if(XMVectorGetX(XMVector3LengthSq(ax))<1e-8f)continue;
+                    const XMVECTOR axn=XMVector3Normalize(ax);
+                    XMVECTOR u=XMVector3Cross(axn,XMVectorSet(0,1,0,0));
                     if(XMVectorGetX(XMVector3LengthSq(u))<1e-6f)u=XMVectorSet(1,0,0,0);
                     u=XMVector3Normalize(u);
-                    const XMVECTOR v=XMVector3Cross(ax,u);
+                    const XMVECTOR v=XMVector3Cross(axn,u);
+                    const float r=std::min(0.012f*K,0.18f*XMVectorGetX(XMVector3Length(ax)));
                     for(int i=0;i<6;++i)
                     {
                         const float a0=2*Pi*i/6,a1=2*Pi*(i+1)/6;
                         const XMVECTOR o0=XMVectorScale(XMVectorAdd(XMVectorScale(u,std::cos(a0)),XMVectorScale(v,std::sin(a0))),r);
                         const XMVECTOR o1=XMVectorScale(XMVectorAdd(XMVectorScale(u,std::cos(a1)),XMVectorScale(v,std::sin(a1))),r);
-                        XMFLOAT3 p0,p1,q0,q1;
+                        XMFLOAT3 p0,p1,q0,q1,nn;
                         XMStoreFloat3(&p0,XMVectorAdd(a,o0));XMStoreFloat3(&p1,XMVectorAdd(a,o1));
-                        XMStoreFloat3(&q0,XMVectorAdd(b,o0));XMStoreFloat3(&q1,XMVectorAdd(b,o1));
-                        m.Quad({p0.x,p0.y,p0.z},{p1.x,p1.y,p1.z},{q1.x,q1.y,q1.z},{q0.x,q0.y,q0.z},col);
-                        m.Quad({q0.x,q0.y,q0.z},{q1.x,q1.y,q1.z},{p1.x,p1.y,p1.z},{p0.x,p0.y,p0.z},col);
+                        XMStoreFloat3(&q0,XMVectorAdd(c,o0));XMStoreFloat3(&q1,XMVectorAdd(c,o1));
+                        XMStoreFloat3(&nn,XMVector3Normalize(XMVectorAdd(o0,o1)));
+                        m.QuadN({p0.x,p0.y,p0.z},{p1.x,p1.y,p1.z},{q1.x,q1.y,q1.z},{q0.x,q0.y,q0.z},{nn.x,nn.y,nn.z},col);
+                    }
+                    const float joint[4]={0.92f,0.92f,0.95f,Unlit};
+                    XMFLOAT3 j;XMStoreFloat3(&j,a);
+                    m.Sphere({j.x,j.y,j.z},r*1.5f,joint,4,8,5);
+                }
+            }
+            // The club in her hands: held in her left fist, so it goes as her wrist does. A
+            // rubber grip, a tapering shaft (steel, graphite for the woods), and its head: a
+            // lofted blade for an iron, a round head with a dark crown and a bright face for a
+            // wood, a flat blade for the putter; the face turns with her left palm.
+            std::array<float,3> middle{},club{},palm{};
+            const size_t held=static_cast<size_t>(state.herClub);
+            if(state.herSwinging&&model.ClubInHand(middle,club,state.herPutting?0.0f:state.clubTilt[held],&palm))
+            {
+                const XMMATRIX world=HerWorld(model);
+                const XMVECTOR g=XMVector3Transform(XMVectorSet(middle[0],middle[1],middle[2],1),world);
+                const XMVECTOR d=XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(club[0],club[1],club[2],0),world));
+                const float len=state.herPutting?state.putterLength:state.clubLen[held];
+                const XMVECTOR top=XMVectorSubtract(g,XMVectorScale(d,0.06f*K));
+                const XMVECTOR end=XMVectorAdd(g,XMVectorScale(d,len));
+                const bool putter=state.herPutting,wood=!putter&&state.herClub<=1;
+                const float rubber[4]={0.08f,0.08f,0.09f,1},steel[4]={0.78f,0.79f,0.83f,1},graphite[4]={0.20f,0.21f,0.24f,1},
+                            chrome[4]={0.80f,0.81f,0.85f,1},crown[4]={0.06f,0.06f,0.08f,1},face[4]={0.70f,0.72f,0.76f,1},ferrule[4]={0.85f,0.85f,0.85f,1};
+                auto P=[](FXMVECTOR v){XMFLOAT3 f;XMStoreFloat3(&f,v);return Mesh::V{f.x,f.y,f.z};};
+                // A tapering rod from a (radius ra) to b (radius rb), closed both sides round.
+                auto rod=[&](FXMVECTOR a,FXMVECTOR b,float ra,float rb,const float (&col)[4]){
+                    const XMVECTOR ax=XMVector3Normalize(XMVectorSubtract(b,a));
+                    XMVECTOR u=XMVector3Cross(ax,XMVectorSet(0,1,0,0));
+                    if(XMVectorGetX(XMVector3LengthSq(u))<1e-6f)u=XMVectorSet(1,0,0,0);
+                    u=XMVector3Normalize(u);
+                    const XMVECTOR v=XMVector3Cross(ax,u);
+                    constexpr int Sides=8;
+                    for(int i=0;i<Sides;++i)
+                    {
+                        const float a0=2*Pi*i/Sides,a1=2*Pi*(i+1)/Sides;
+                        const XMVECTOR o0=XMVectorAdd(XMVectorScale(u,std::cos(a0)),XMVectorScale(v,std::sin(a0)));
+                        const XMVECTOR o1=XMVectorAdd(XMVectorScale(u,std::cos(a1)),XMVectorScale(v,std::sin(a1)));
+                        const auto p0=P(XMVectorAdd(a,XMVectorScale(o0,ra))),p1=P(XMVectorAdd(a,XMVectorScale(o1,ra)));
+                        const auto q0=P(XMVectorAdd(b,XMVectorScale(o0,rb))),q1=P(XMVectorAdd(b,XMVectorScale(o1,rb)));
+                        m.Quad(p0,p1,q1,q0,col);
+                        m.Quad(q0,q1,p1,p0,col);
                     }
                 };
-                const bool putter=state.shot.club==Golf::Putter&&state.phase!=Phase::Aim;
-                rod(top,XMVectorAdd(g,XMVectorScale(d,0.2f*K)),0.014f*K,grip);
-                rod(XMVectorAdd(g,XMVectorScale(d,0.2f*K)),end,0.007f*K,shaft);
-                // The head: a block at the end, its face toward the target.
-                const XMVECTOR aim=XMVector3TransformNormal(XMVectorSet(1,0,0,0),world);
-                const XMVECTOR toe=XMVector3Normalize(XMVector3Cross(aim,XMVectorSet(0,1,0,0)));
-                const float big=putter?0.05f:state.shot.club<=1?0.06f:0.04f;
-                rod(XMVectorSubtract(end,XMVectorScale(toe,0.02f*K)),XMVectorAdd(end,XMVectorScale(toe,(putter?0.1f:0.09f)*K)),big*K,state.shot.club<=1&&!putter?wood:headCol);
+                rod(top,XMVectorAdd(g,XMVectorScale(d,0.2f*K)),0.0125f*K,0.0098f*K,rubber);
+                rod(XMVectorAdd(g,XMVectorScale(d,0.2f*K)),XMVectorAdd(g,XMVectorScale(d,0.215f*K)),0.0075f*K,0.0072f*K,ferrule);
+                rod(XMVectorAdd(g,XMVectorScale(d,0.215f*K)),end,0.0068f*K,0.0042f*K,wood?graphite:steel);
+                // The head's frame: N its face's way (the left palm's, square to the shaft), T
+                // toward its toe (the shaft turned up through the club's lie), Y up its face.
+                XMVECTOR N=XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(palm[0]*state.faceSign,palm[1]*state.faceSign,palm[2]*state.faceSign,0),world));
+                const XMVECTOR U=XMVector3Normalize(XMVector3Cross(N,d));
+                const float lie=(putter?72.0f:wood?57.0f:61.0f)*Deg;
+                const XMVECTOR T=XMVector3Normalize(XMVectorAdd(XMVectorScale(d,std::cos(lie)),XMVectorScale(U,std::sin(lie))));
+                const XMVECTOR Y=XMVector3Normalize(XMVector3Cross(N,T));
+                const float loft=(putter?3.0f:Golf::ClubOf(state.herClub).loft)*Deg;
+                // The sole sits a little under the shaft's end (the hosel rises from the heel).
+                const XMVECTOR heel=XMVectorSubtract(end,XMVectorScale(Y,0.012f*K));
+                auto at=[&](float t,float y,float n){return XMVectorAdd(heel,XMVectorAdd(XMVectorScale(T,t*K),XMVectorAdd(XMVectorScale(Y,y*K),XMVectorScale(N,n*K))));};
+                // A six-sided piece from its eight corners (bottom face then top, each heel then toe,
+                // face side then back).
+                auto block=[&](const std::array<XMVECTOR,8>& c,const float (&col)[4]){
+                    const int faces[6][4]={{0,1,3,2},{4,6,7,5},{0,4,5,1},{2,3,7,6},{0,2,6,4},{1,5,7,3}};
+                    for(const auto& f:faces)
+                    {
+                        m.Quad(P(c[f[0]]),P(c[f[1]]),P(c[f[2]]),P(c[f[3]]),col);
+                        m.Quad(P(c[f[3]]),P(c[f[2]]),P(c[f[1]]),P(c[f[0]]),col);
+                    }
+                };
+                if(putter)
+                {
+                    block({at(-0.01f,0,0.006f),at(0.095f,0,0.006f),at(-0.01f,0,-0.022f),at(0.095f,0,-0.022f),
+                           at(-0.01f,0.026f,0.006f),at(0.095f,0.026f,0.006f),at(-0.01f,0.026f,-0.016f),at(0.095f,0.026f,-0.016f)},chrome);
+                }
+                else if(!wood)
+                {
+                    // The blade: its face lofted back, its toe higher than its heel, thicker at the sole.
+                    const float back=std::tan(loft);
+                    const float hh=0.034f,ht=0.05f;
+                    block({at(0,0,0.004f),at(0.078f,0,0.004f),at(0,0,-0.016f),at(0.078f,0,-0.016f),
+                           at(0,hh,0.004f-hh*back),at(0.078f,ht,0.004f-ht*back),at(0,hh,-0.002f-hh*back),at(0.078f,ht,-0.002f-ht*back)},chrome);
+                    rod(end,XMVectorSubtract(end,XMVectorScale(d,0.05f*K)),0.0075f*K,0.0068f*K,chrome);   // the hosel
+                }
+                else
+                {
+                    // The wood: a rounded head, its crown dark, its face bright; the driver's larger.
+                    const float k=state.herClub==Golf::Driver?1.0f:0.78f;
+                    const float rt=0.058f*k,ry=0.03f*k,rn=0.05f*k;
+                    const XMVECTOR mid=at(rt*0.95f,ry,-rn*0.85f);
+                    constexpr int Around=14,Up=8;
+                    auto pt=[&](int i,int j,XMVECTOR& n){
+                        const float a=2*Pi*i/Around,b=Pi*j/Up-Pi/2;
+                        const float x=std::cos(b)*std::cos(a),z=std::cos(b)*std::sin(a),y=std::sin(b);
+                        n=XMVector3Normalize(XMVectorAdd(XMVectorScale(T,x/rt),XMVectorAdd(XMVectorScale(N,z/rn),XMVectorScale(Y,y/ry))));
+                        return XMVectorAdd(mid,XMVectorScale(XMVectorAdd(XMVectorScale(T,x*rt),XMVectorAdd(XMVectorScale(N,z*rn),XMVectorScale(Y,y*ry*(y<0?0.75f:1.0f)))),K));
+                    };
+                    for(int i=0;i<Around;++i)
+                        for(int j=0;j<Up;++j)
+                        {
+                            XMVECTOR n0,n1,n2,n3;
+                            const XMVECTOR p0=pt(i,j,n0),p1=pt(i+1,j,n1),p2=pt(i+1,j+1,n2),p3=pt(i,j+1,n3);
+                            const float facing=XMVectorGetX(XMVector3Dot(XMVectorAdd(XMVectorAdd(n0,n1),XMVectorAdd(n2,n3)),N))*0.25f;
+                            const float up=XMVectorGetX(XMVector3Dot(XMVectorAdd(XMVectorAdd(n0,n1),XMVectorAdd(n2,n3)),Y))*0.25f;
+                            const float (&col)[4]=facing>0.72f?face:up>0.15f?crown:graphite;
+                            m.Quad(P(p0),P(p1),P(p2),P(p3),col);
+                            m.Quad(P(p3),P(p2),P(p1),P(p0),col);
+                        }
+                    rod(end,XMVectorSubtract(end,XMVectorScale(d,0.04f*K)),0.0072f*K,0.0066f*K,crown);
+                }
             }
             if(state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge)&&!state.autoplay)BuildGauge(m);
             return std::move(m.out);
@@ -1627,6 +2808,63 @@ namespace MikuMikuDesktopPerch
 
         float ViewYaw(){return std::atan2(state.look.x-state.eye.x,state.look.z-state.eye.z);}
 
+        // The album (C): what you have achieved, your records, her rank, and the looks to choose.
+        void DrawAlbum(Graphics& g,float W,float H,float s)
+        {
+            const Color white(255,240,244,248),soft(255,150,162,178),gold(255,246,212,120),pink(255,255,150,190);
+            const auto& pr=state.progress;
+            const float bw=std::min(W-30*s,1060*s),bh=std::min(H-30*s,760*s);
+            const RectF box(W/2-bw/2,H/2-bh/2,bw,bh);
+            Panel(g,box,s,230);
+            const float x=box.X+20*s;
+            float y=box.Y+12*s;
+            Text(g,T(L"アルバム",L"Album"),RectF(x,y,bw-40*s,30*s),20*s,gold,true,StringAlignmentNear);
+            Text(g,Fmt(T(L"ラウンド {0}　勝ち {1}　★ {2}　{3}の段位 {4}",L"Rounds {0}   Wins {1}   Stars {2}   {3}'s rank {4}"),
+                       {std::to_wstring(pr.rounds),std::to_wstring(pr.wins),std::to_wstring(pr.stars),HerName(),std::to_wstring(pr.rank)}),
+                 RectF(x+180*s,y+4*s,bw-220*s,24*s),13*s,white,false,StringAlignmentNear);
+            y+=40*s;
+            // Achievements in two columns.
+            int got=0;
+            for(bool b:pr.got)got+=b?1:0;
+            Text(g,Fmt(T(L"実績 {0}/{1}",L"Achievements {0}/{1}"),{std::to_wstring(got),std::to_wstring(GolfProgress::AchievementCount)}),RectF(x,y,300*s,20*s),13*s,soft,true,StringAlignmentNear);
+            y+=22*s;
+            const float colW=(bw-40*s)/2,lineH=std::min(24*s,(bh*0.56f)/((GolfProgress::AchievementCount+1)/2));
+            for(int a=0;a<GolfProgress::AchievementCount;++a)
+            {
+                const auto& info=GolfProgress::InfoOf(a);
+                const bool has=pr.got[static_cast<size_t>(a)];
+                const float cx=x+(a%2)*colW,cy=y+(a/2)*lineH;
+                Text(g,std::wstring(has?L"✓ ":L"・ ")+T(info.jp,info.en),RectF(cx,cy,colW*0.42f,lineH),12*s,has?gold:soft,has,StringAlignmentNear);
+                Text(g,T(info.howJp,info.howEn),RectF(cx+colW*0.42f,cy,colW*0.58f,lineH),10.5f*s,has?white:soft,false,StringAlignmentNear);
+            }
+            y+=((GolfProgress::AchievementCount+1)/2)*lineH+10*s;
+            // Records.
+            std::wstring holes=T(L"ホールのベスト　",L"Best per hole   ");
+            for(int h=0;h<9;++h)holes+=std::to_wstring(h+1)+L":"+(pr.bestHole[static_cast<size_t>(h)]>0?std::to_wstring(pr.bestHole[static_cast<size_t>(h)]):std::wstring(L"-"))+L"  ";
+            Text(g,holes,RectF(x,y,bw-40*s,20*s),12*s,white,false,StringAlignmentNear);
+            y+=22*s;
+            auto vs=[&](int v){if(v==0)return std::wstring(L"-");const int d=v-100;return d==0?std::wstring(L"±0"):(d>0?L"+":L"")+std::to_wstring(d);};
+            Text(g,Fmt(T(L"ラウンドのベスト（パーとの差）　3ホール {0}　6ホール {1}　9ホール {2}",L"Best rounds (against par)   3 holes {0}   6 holes {1}   9 holes {2}"),
+                       {vs(pr.bestRound[0]),vs(pr.bestRound[1]),vs(pr.bestRound[2])}),RectF(x,y,bw-40*s,20*s),12*s,white,false,StringAlignmentNear);
+            y+=30*s;
+            // Looks.
+            const wchar_t* kinds[GolfProgress::LookKindCount]={T(L"軌跡",L"Trail"),T(L"魔法陣",L"Circle"),T(L"ボール",L"Ball"),T(L"メテオの炎",L"Meteor fire")};
+            for(int k=0;k<GolfProgress::LookKindCount;++k)
+            {
+                const auto& list=GolfProgress::LooksOf(k);
+                int open=0;
+                for(int i=0;i<static_cast<int>(list.size());++i)open+=pr.Unlocked(k,i)?1:0;
+                const auto& now=list[static_cast<size_t>(std::clamp(pr.chosen[static_cast<size_t>(k)],0,static_cast<int>(list.size())-1))];
+                const RectF row(x,y,bw-40*s,24*s);
+                if(k==state.albumRow){SolidBrush lit(Color(70,246,212,120));g.FillRectangle(&lit,row);}
+                Text(g,kinds[k],RectF(x+8*s,y,140*s,24*s),13*s,k==state.albumRow?gold:white,k==state.albumRow,StringAlignmentNear);
+                Text(g,std::wstring(L"◀  ")+T(now.jp,now.en)+L"  ▶",RectF(x+150*s,y,240*s,24*s),13*s,white,true,StringAlignmentNear);
+                Text(g,Fmt(T(L"（{0}/{1} 解放）",L"({0}/{1} unlocked)"),{std::to_wstring(open),std::to_wstring(list.size())}),RectF(x+400*s,y,200*s,24*s),11*s,soft,false,StringAlignmentNear);
+                y+=26*s;
+            }
+            Text(g,T(L"↑↓ 選ぶ　←→ 見た目を変える　C・Esc 閉じる",L"Up/down: choose   Left/right: change the look   C/Esc: close"),RectF(x,box.Y+bh-30*s,bw-40*s,22*s),12*s,pink,false,StringAlignmentNear);
+        }
+
         void DrawHud(Graphics& g,int w,int h,float s)
         {
             g.SetSmoothingMode(SmoothingModeAntiAlias);
@@ -1634,13 +2872,16 @@ namespace MikuMikuDesktopPerch
             const Color white(255,240,244,248),soft(255,176,190,206),gold(255,246,212,120),pink(255,255,150,190),blue(255,140,190,255);
             const auto& c=Course();
             const float W=static_cast<float>(w),H=static_cast<float>(h);
+            // The day over everything: a grey veil for rain, a warm one at dusk.
+            if(state.weather==Rain){SolidBrush veil(Color(46,40,48,60));g.FillRectangle(&veil,0.0f,0.0f,W,H);}
+            else if(state.weather==Dusk){SolidBrush veil(Color(58,120,55,15));g.FillRectangle(&veil,0.0f,0.0f,W,H);}
             // The hole, the wind.
             {
                 const RectF box(10*s,10*s,250*s,92*s);
                 Panel(g,box,s);
-                Text(g,Fmt(T(L"{0}/{1}番ホール　パー{2}",L"Hole {0}/{1}   Par {2}"),{std::to_wstring(state.hole+1),std::to_wstring(Holes),std::to_wstring(c.Par())}),
+                Text(g,Fmt(T(L"{0}番ホール　パー{1}　（{2}/{3}）",L"Hole {0}   Par {1}   ({2}/{3})"),{std::to_wstring(HoleNo()),std::to_wstring(c.Par()),std::to_wstring(state.hole+1),std::to_wstring(RoundLength())}),
                      RectF(box.X+12*s,box.Y+6*s,box.Width-20*s,24*s),15*s,white,true,StringAlignmentNear);
-                Text(g,Fmt(T(L"{0} m",L"{0} m"),{std::to_wstring(static_cast<int>(c.Length()))}),RectF(box.X+12*s,box.Y+30*s,120*s,22*s),13*s,soft,false,StringAlignmentNear);
+                Text(g,YardText(c.Length())+(state.weather!=Sunny?std::wstring(L"　")+WeatherName(state.weather):std::wstring()),RectF(box.X+12*s,box.Y+30*s,168*s,22*s),13*s,state.weather!=Sunny?gold:soft,false,StringAlignmentNear);
                 // The wind's arrow, as the camera sees it (up: away from the camera).
                 const PointF mid(box.X+box.Width-46*s,box.Y+52*s);
                 const float a=state.wind.toward-ViewYaw();
@@ -1648,36 +2889,119 @@ namespace MikuMikuDesktopPerch
                 Pen ring(Color(120,200,210,220),1.5f*s);
                 g.DrawEllipse(&ring,mid.X-r-4*s,mid.Y-r-4*s,2*r+8*s,2*r+8*s);
                 const PointF tip(mid.X+r*std::sin(a),mid.Y-r*std::cos(a)),tail(mid.X-r*std::sin(a),mid.Y+r*std::cos(a));
-                Pen arrow(Color(255,120,200,255),4*s);
-                arrow.SetEndCap(LineCapArrowAnchor);
-                g.DrawLine(&arrow,tail,tip);
+                // Thicker the stronger the wind; a big head, so its way is plain.
+                const float thick=(2.5f+std::min(state.wind.speed,10.0f)*0.7f)*s;
+                const PointF neck(mid.X+r*0.25f*std::sin(a),mid.Y-r*0.25f*std::cos(a));
+                Pen arrow(Color(255,120,200,255),thick);
+                g.DrawLine(&arrow,tail,neck);
+                const float hw=std::max(9*s,thick*1.6f);
+                const PointF side(std::cos(a),std::sin(a));
+                const PointF head[3]={PointF(tip.X+r*0.15f*std::sin(a),tip.Y-r*0.15f*std::cos(a)),PointF(neck.X+side.X*hw,neck.Y+side.Y*hw),PointF(neck.X-side.X*hw,neck.Y-side.Y*hw)};
+                SolidBrush headFill(Color(255,120,200,255));
+                g.FillPolygon(&headFill,head,3);
                 wchar_t speed[32];
                 swprintf_s(speed,L"%.1f m/s",state.wind.speed);
                 Text(g,std::wstring(T(L"風 ",L"Wind "))+speed,RectF(box.X+12*s,box.Y+54*s,140*s,24*s),14*s,white,false,StringAlignmentNear);
             }
+            // The special gauges: two bars each (the boost takes one, the meteor both), and what
+            // you have chosen with S for this shot.
+            {
+                const RectF box(10*s,108*s,250*s,state.special>0?84*s:62*s);
+                Panel(g,box,s);
+                for(int who:{You,Her})
+                {
+                    const float y=box.Y+(who==You?10:34)*s;
+                    Text(g,who==You?std::wstring(T(L"あなた",L"You")):HerName(),RectF(box.X+10*s,y-4*s,80*s,22*s),12*s,who==You?blue:pink,true,StringAlignmentNear);
+                    const float m=state.meter[static_cast<size_t>(who)];
+                    for(int bar=0;bar<2;++bar)
+                    {
+                        const RectF r(box.X+92*s+bar*74*s,y,70*s,12*s);
+                        SolidBrush back(Color(255,40,52,64));
+                        g.FillRectangle(&back,r);
+                        const float fill=std::clamp((m-100.0f*bar)/100,0.0f,1.0f);
+                        const bool full=fill>=1;
+                        SolidBrush bright(full?Color(255,255,200,90):Color(255,120,170,210));
+                        g.FillRectangle(&bright,RectF(r.X,r.Y,r.Width*fill,r.Height));
+                        Pen edge(Color(160,220,230,240),1*s);
+                        g.DrawRectangle(&edge,r);
+                    }
+                }
+                if(state.special>0)
+                    Text(g,state.special==2?T(L"メテオショット（S で選び直し）",L"Meteor shot (S to choose again)"):T(L"ブーストショット（S で選び直し）",L"Boost shot (S to choose again)"),
+                         RectF(box.X+10*s,box.Y+56*s,box.Width-20*s,22*s),13*s,gold,true,StringAlignmentNear);
+            }
+            // This hole's mission.
+            const float missionY=(state.special>0?200:178)*s;
+            if(state.mission>=0&&!state.autoplay&&state.phase!=Phase::Over)
+            {
+                const RectF box(10*s,missionY,250*s,40*s);
+                Panel(g,box,s);
+                Text(g,std::wstring(state.missionDone?L"★ ":L"☆ ")+MissionText(state.mission),RectF(box.X+10*s,box.Y,box.Width-16*s,box.Height),12*s,state.missionDone?gold:white,state.missionDone,StringAlignmentNear);
+            }
+            // The special shots' menu.
+            if(state.menuOpen)
+            {
+                const RectF box(10*s,missionY+48*s,250*s,150*s);
+                Panel(g,box,s,215);
+                Text(g,T(L"スペシャルショット（ゲージ1本）",L"Special shot (one bar)"),RectF(box.X+12*s,box.Y+8*s,box.Width-24*s,22*s),13*s,soft,false,StringAlignmentNear);
+                const bool can=state.meter[You]>=100;
+                const wchar_t* names[3]={T(L"ブースト：いつもより遠く",L"Boost: further"),T(L"メテオ：ずっと遠く、落ちて止まる",L"Meteor: much further, stops dead"),T(L"キャンセル",L"Cancel")};
+                for(int i=0;i<3;++i)
+                {
+                    const RectF r(box.X+8*s,box.Y+(34+i*36)*s,box.Width-16*s,32*s);
+                    state.menuBoxes[i]=r;
+                    if(i==state.menuPick)
+                    {
+                        GraphicsPath path;
+                        RoundRect(path,r,6*s);
+                        SolidBrush lit(Color(150,246,212,120));
+                        g.FillPath(&lit,&path);
+                    }
+                    const bool off=i<2&&!can;
+                    Text(g,names[i],RectF(r.X+10*s,r.Y,r.Width-20*s,r.Height),14*s,off?Color(255,110,118,128):white,i==state.menuPick,StringAlignmentNear);
+                }
+                if(!can)Text(g,T(L"ゲージが足りません",L"Not enough gauge"),RectF(box.X+12*s,box.Y+box.Height+2*s,box.Width,20*s),12*s,pink,false,StringAlignmentNear);
+            }
+            // How far the ball has gone, while it flies and rolls (flat from where it was struck).
+            if((state.phase==Phase::Flying||state.phase==Phase::Settle)&&!state.flight.path.empty())
+            {
+                const std::wstring gone=YardText(Golf::Flat(state.shotFrom,BallNow(state.turn)),true);
+                const RectF box(W/2-110*s,64*s,220*s,56*s);
+                Panel(g,box,s,150);
+                Text(g,gone,box,30*s,white,true);
+            }
             // The card: strokes per hole, the total against par.
             {
-                const float cw=58*s,rw=150*s,bw=rw+cw*(Holes+1)+20*s,bh=86*s;
+                const int n=RoundLength();
+                const float cw=40*s,rw=110*s,bw=rw+cw*(n+1)+20*s,bh=104*s;
                 const RectF box(W-bw-10*s,10*s,bw,bh);
                 Panel(g,box,s);
                 const float x0=box.X+10*s;
-                Text(g,T(L"ホール",L"Hole"),RectF(x0,box.Y+4*s,rw,22*s),12*s,soft,false,StringAlignmentNear);
-                for(int h2=0;h2<Holes;++h2)
-                    Text(g,std::to_wstring(h2+1)+L" (P"+std::to_wstring(state.pars[h2]?state.pars[h2]:0)+L")",RectF(x0+rw+cw*h2,box.Y+4*s,cw,22*s),12*s,soft);
-                Text(g,T(L"計",L"Total"),RectF(x0+rw+cw*Holes,box.Y+4*s,cw,22*s),12*s,soft);
+                Text(g,T(L"ホール",L"Hole"),RectF(x0,box.Y+4*s,rw,20*s),12*s,soft,false,StringAlignmentNear);
+                Text(g,T(L"パー",L"Par"),RectF(x0,box.Y+22*s,rw,20*s),12*s,soft,false,StringAlignmentNear);
+                int parTotal=0;
+                for(int h2=0;h2<n;++h2)
+                {
+                    Text(g,std::to_wstring(HoleNo(h2)),RectF(x0+rw+cw*h2,box.Y+4*s,cw,20*s),12*s,h2==state.hole?white:soft,h2==state.hole);
+                    const int par=Golf::HolePar(HoleNo(h2));
+                    parTotal+=par;
+                    Text(g,std::to_wstring(par),RectF(x0+rw+cw*h2,box.Y+22*s,cw,20*s),11*s,soft);
+                }
+                Text(g,T(L"計",L"Total"),RectF(x0+rw+cw*n,box.Y+4*s,cw,20*s),12*s,soft);
+                Text(g,std::to_wstring(parTotal),RectF(x0+rw+cw*n,box.Y+22*s,cw,20*s),11*s,soft);
                 for(int who:{You,Her})
                 {
-                    const float y=box.Y+(who==You?28:54)*s;
+                    const float y=box.Y+(who==You?46:72)*s;
                     Text(g,who==You?std::wstring(T(L"あなた",L"You")):HerName(),RectF(x0,y,rw,24*s),14*s,who==You?blue:pink,true,StringAlignmentNear);
-                    for(int h2=0;h2<Holes;++h2)
+                    for(int h2=0;h2<n;++h2)
                     {
-                        int n=state.card[who][h2];
-                        if(h2==state.hole&&n==0&&state.phase!=Phase::Over)n=state.balls[who].strokes;
-                        if(n>0||h2<=state.hole)Text(g,n>0?std::to_wstring(n):L"-",RectF(x0+rw+cw*h2,y,cw,24*s),15*s,white,h2==state.hole);
+                        int strokes=state.card[who][h2];
+                        if(h2==state.hole&&strokes==0&&state.phase!=Phase::Over)strokes=state.balls[who].strokes;
+                        if(strokes>0||h2<=state.hole)Text(g,strokes>0?std::to_wstring(strokes):L"-",RectF(x0+rw+cw*h2,y,cw,24*s),15*s,white,h2==state.hole);
                     }
                     int total=0;
-                    for(int h2=0;h2<Holes;++h2)total+=h2==state.hole&&state.card[who][h2]==0?state.balls[who].strokes:state.card[who][h2];
-                    Text(g,std::to_wstring(total),RectF(x0+rw+cw*Holes,y,cw,24*s),15*s,gold,true);
+                    for(int h2=0;h2<n;++h2)total+=h2==state.hole&&state.card[who][h2]==0?state.balls[who].strokes:state.card[who][h2];
+                    Text(g,std::to_wstring(total),RectF(x0+rw+cw*n,y,cw,24*s),15*s,gold,true);
                 }
             }
             // The hole from above, bottom right: the balls, your aim.
@@ -1716,7 +3040,7 @@ namespace MikuMikuDesktopPerch
                 const RectF box(10*s,H-112*s,300*s,102*s);
                 Panel(g,box,s);
                 Text(g,Golf::ClubName(state.club),RectF(box.X+12*s,box.Y+6*s,box.Width-90*s,28*s),19*s,gold,true,StringAlignmentNear);
-                std::wstring info=std::wstring(Golf::LieName(b.lie))+T(L"　ピンまで ",L"   to the pin ")+std::to_wstring(static_cast<int>(toPin+0.5f))+L" m";
+                std::wstring info=std::wstring(Golf::LieName(b.lie))+T(L"　ピンまで ",L"   to the pin ")+YardText(toPin);
                 Text(g,info,RectF(box.X+12*s,box.Y+36*s,box.Width-90*s,22*s),14*s,white,false,StringAlignmentNear);
                 if(state.club==Golf::Putter)
                 {
@@ -1740,8 +3064,7 @@ namespace MikuMikuDesktopPerch
                 const RectF bar=GaugeBar(W,H,s);
                 const float full=state.club==Golf::Putter?Golf::PutterRange(toPin,c.Pin().y-b.at.y):Golf::FlatCarry(state.club,state.spotX,state.spotY);
                 auto number=[&](float at,float metres,bool bold){
-                    wchar_t t[32];
-                    swprintf_s(t,metres<20?L"%.1f m":L"%.0f m",metres);
+                    const std::wstring t=YardText(metres,Yards(metres)<20);
                     Text(g,t,RectF(GaugeX(bar,at)-40*s,bar.Y-24*s,80*s,18*s),12*s,bold?gold:white,bold);
                 };
                 if(gauge)
@@ -1758,7 +3081,7 @@ namespace MikuMikuDesktopPerch
                 const V3 from=state.balls[state.turn].at;
                 const float d=Golf::Flat(from,c.Pin()),rise=c.Pin().y-from.y;
                 wchar_t t[80];
-                swprintf_s(t,T(L"%.1f m　%ls%.1f m",L"%.1f m   %ls%.1f m"),d,rise>=0?L"↑":L"↓",std::abs(rise));
+                swprintf_s(t,T(L"%.1fy　%ls%.1f m",L"%.1f yd   %ls%.1f m"),Yards(d),rise>=0?L"↑":L"↓",std::abs(rise));
                 const float tx=static_cast<float>(state.beamTop.x),ty=static_cast<float>(state.beamTop.y);
                 const RectF box(tx-80*s,std::max(4*s,ty-34*s),160*s,26*s);
                 Panel(g,box,s,150);
@@ -1773,7 +3096,11 @@ namespace MikuMikuDesktopPerch
                     T(L"Ctrl＋矢印　打点（下で高く少し遠く・止まる、上で低く転がる、左で右へ・右で左へ曲がる）",L"Ctrl+arrows   spot (low: high, a little further, stops; high: low, rolls; left: curves right; right: curves left)"),
                     T(L"Space／クリック　スタート → パワー → インパクト（白で真っすぐ、ピンクで曲がる）",L"Space/click   start, power, strike (white: straight; pink: it curves)"),
                     T(L"パターはパワーを決めたら打ちます",L"The putter strikes once the power is set"),
-                    T(L"0　黄色い輪を上から見る",L"0   see the yellow circle from above"),
+                    T(L"パワー半分以上・白で：下打点で↓を押したまま→バックスピン、上打点で↑→トップスピン",L"Half power or more, struck in the white: low spot with ↓ held: backspin; high spot with ↑: topspin"),
+                    T(L"S　スペシャルショットのメニュー（ブースト・メテオ、ゲージ1本。もう一度Sでやめる）",L"S   special shot menu (boost or meteor, one bar; S again: none)"),
+                    T(L"0の視点で Shift＋↑↓　近づく・離れる",L"In the 0 view, Shift+↑↓   nearer, further"),
+                    T(L"C　アルバム（実績・記録・見た目を選ぶ）",L"C   album (achievements, records, choose looks)"),
+                    T(L"0／右クリック　黄色い輪を上から見る（もう一度・Spaceで戻る、中ドラッグで動かす）",L"0/right click   the yellow circle from above (again or Space: back; middle drag: move)"),
                     T(L"右ドラッグ・ホイール　カメラ（F1で戻す）",L"Right drag, wheel   camera (F1 puts it back)"),
                     T(L"Esc　やめる　　Tab　この説明を閉じる",L"Esc   stop      Tab   close this")};
                 const float bw=std::min(W-40*s,720*s),lh=26*s,bh=lh*std::size(lines)+28*s;
@@ -1781,6 +3108,14 @@ namespace MikuMikuDesktopPerch
                 Panel(g,box,s,215);
                 for(size_t i=0;i<std::size(lines);++i)
                     Text(g,lines[i],RectF(box.X+18*s,box.Y+14*s+lh*i,box.Width-36*s,lh),14*s,white,false,StringAlignmentNear);
+            }
+            // A notice (achievement, mission), one at a time.
+            if(!state.toasts.empty())
+            {
+                const float bw=std::min(W-40*s,640*s);
+                const RectF box(W/2-bw/2,128*s,bw,40*s);
+                Panel(g,box,s,200);
+                Text(g,state.toasts.front(),box,15*s,gold,true);
             }
             // Her words beside her head.
             const bool herSeen=state.besideHead.x>=0&&state.besideHead.x<w&&state.headScreen.y>0&&state.headScreen.y<h&&state.phase!=Phase::Intro;
@@ -1790,11 +3125,15 @@ namespace MikuMikuDesktopPerch
                 const float most=std::max(160*s,W*0.32f);
                 const WordsBubble bubble(g,said,s,most);
                 const float bw=bubble.Width(),bh=bubble.Height();
-                const bool beside=true;
-                const float x=std::clamp(beside?static_cast<float>(state.besideHead.x):W/2+60*s,14*s,W-14*s-bw);
-                const float headY=beside?static_cast<float>(state.headScreen.y):H*0.3f;
+                // Beside her head on the right, or on the left when the right has no room for it
+                // (pushed back over her face it hid her).
+                const float right=static_cast<float>(state.besideHead.x);
+                const float left=static_cast<float>(2*state.headScreen.x-state.besideHead.x);
+                const bool onLeft=right+bw>W-14*s&&left-bw>=14*s;
+                const float x=onLeft?left-bw:std::clamp(right,14*s,W-14*s-bw);
+                const float headY=static_cast<float>(state.headScreen.y);
                 const float y=std::clamp(headY-bh*0.6f,110*s,std::max(110*s,H-bh-140*s));
-                bubble.Draw(g,x,y,std::clamp(headY,y+12*s,y+bh-12*s),ShownWords());
+                bubble.Draw(g,x,y,std::clamp(headY,y+12*s,y+bh-12*s),ShownWords(),onLeft);
             }
             // Whose turn, when it is hers.
             if(state.turn==Her&&(state.phase==Phase::Aim||state.phase==Phase::Swing))
@@ -1804,7 +3143,8 @@ namespace MikuMikuDesktopPerch
             {
                 const float bw=std::min(W-40*s,560*s),bh=state.bannerNote.empty()?64*s:96*s;
                 // (Low during the look over the hole, which shows the clubhouse in the middle.)
-                const RectF box(W/2-bw/2,(state.phase==Phase::Intro?H*0.62f:H*0.36f)-bh/2,bw,bh);
+                // (Low on the screen at the intro and at the result, clear of her face.)
+                const RectF box(W/2-bw/2,(state.phase==Phase::Intro?H*0.62f:state.phase==Phase::Over?H*0.86f:H*0.36f)-bh/2,bw,bh);
                 Panel(g,box,s,205);
                 Text(g,state.banner,RectF(box.X,box.Y+8*s,box.Width,state.bannerNote.empty()?box.Height-16*s:48*s),26*s,gold,true);
                 if(!state.bannerNote.empty())Text(g,state.bannerNote,RectF(box.X,box.Y+56*s,box.Width,30*s),14*s,white);
@@ -1843,7 +3183,13 @@ namespace MikuMikuDesktopPerch
                                L"|"+std::to_wstring(state.besideHead.x/12)+L","+std::to_wstring(state.headScreen.y/12)+(state.askingQuit?L"a":L"")+
                                std::to_wstring(state.balls[0].strokes)+std::to_wstring(state.balls[1].strokes)+
                                L"|"+std::to_wstring(static_cast<int>(state.spotX*4))+L","+std::to_wstring(static_cast<int>(state.spotY*4))+(state.help?L"h":L"")+
-                               L"|"+std::to_wstring(state.beamTop.x/6)+L","+std::to_wstring(state.beamTop.y/6);
+                               L"|"+std::to_wstring(state.beamTop.x/6)+L","+std::to_wstring(state.beamTop.y/6)+
+                               // (the special menu and gauges: without them, the menu came up only when something else changed)
+                               L"|"+std::to_wstring(state.menuOpen?state.menuPick:-1)+L","+std::to_wstring(state.special)+L","+
+                               std::to_wstring(static_cast<int>(state.meter[0]))+L","+std::to_wstring(static_cast<int>(state.meter[1]))+
+                               L"|"+(state.toasts.empty()?std::wstring():state.toasts.front())+(state.album?L"A"+std::to_wstring(state.albumRow):L"")+
+                               std::to_wstring(state.progress.chosen[0]*1000+state.progress.chosen[1]*100+state.progress.chosen[2]*10+state.progress.chosen[3])+
+                               (state.missionDone?L"m":L"")+std::to_wstring(state.mission)+std::to_wstring(state.weather);
             if(moving)shown+=L"|"+std::to_wstring(now/40);
             if(shown==state.hudShown)return;
             if(moving&&now-state.hudAt<33)return;
@@ -1854,6 +3200,7 @@ namespace MikuMikuDesktopPerch
                 Graphics gr(&canvas);
                 gr.Clear(Color(0,0,0,0));
                 DrawHud(gr,w,h,Scale());
+                if(state.album)DrawAlbum(gr,static_cast<float>(w),static_cast<float>(h),Scale());   // over everything
             }
             ImageRgba8 picture;
             picture.levels.resize(1);
@@ -1884,6 +3231,10 @@ namespace MikuMikuDesktopPerch
             auto& c=state.camera;
             switch(message)
             {
+            case WM_MOUSEACTIVATE:
+                // A click on an inactive window only brings it up (no shot, no camera).
+                if(GetForegroundWindow()!=state.window)state.activating=true;
+                return MA_ACTIVATE;
             case WM_LBUTTONDOWN:
             case WM_LBUTTONDBLCLK:
                 SetFocus(state.window);
@@ -1891,8 +3242,11 @@ namespace MikuMikuDesktopPerch
             case WM_RBUTTONDOWN:
             case WM_MBUTTONDOWN:
                 SetFocus(state.window);
-                state.dragging=1;
+                if(state.activating){state.activating=false;return 0;}
+                // The middle button in the 0 view moves it; otherwise either turns the camera.
+                state.dragging=message==WM_MBUTTONDOWN&&state.overhead?2:1;
                 state.dragFrom={GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
+                if(message==WM_RBUTTONDOWN)state.dragStart=state.dragFrom;
                 SetCapture(hwnd);
                 return 0;
             case WM_MOUSEMOVE:
@@ -1901,12 +3255,28 @@ namespace MikuMikuDesktopPerch
                     const float dx=static_cast<float>(GET_X_LPARAM(lParam)-state.dragFrom.x),dy=static_cast<float>(GET_Y_LPARAM(lParam)-state.dragFrom.y);
                     state.dragFrom={GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
                     const float k=1/Scale();
-                    c.yaw+=dx*k*0.008f;
-                    c.pitch=std::clamp(c.pitch+dy*k*0.004f,-0.3f,1.5f);
+                    if(state.dragging==2)
+                    {
+                        // The ground follows the mouse: across and along the aim, by how high the view is.
+                        const float high=(state.club==Golf::Putter?9.0f:38.0f)*c.zoom;
+                        const V3 dir{std::sin(state.aim),0,std::cos(state.aim)},side{std::cos(state.aim),0,-std::sin(state.aim)};
+                        const float m=high*0.0016f*k;
+                        state.overheadPan=state.overheadPan-side*(dx*m)+dir*(dy*m);
+                    }
+                    else
+                    {
+                        c.yaw+=dx*k*0.008f;
+                        c.pitch=std::clamp(c.pitch+dy*k*0.004f,-0.3f,1.5f);
+                    }
                 }
                 return 0;
             case WM_RBUTTONUP:
             case WM_MBUTTONUP:
+                if(state.dragging&&message==WM_RBUTTONUP&&std::abs(GET_X_LPARAM(lParam)-state.dragStart.x)+std::abs(GET_Y_LPARAM(lParam)-state.dragStart.y)<5)
+                {
+                    // A right click without a drag: as the 0 key (the turn it made, undone).
+                    ToggleOverhead();
+                }
                 state.dragging=0;
                 ReleaseCapture();
                 return 0;
@@ -2003,7 +3373,7 @@ namespace MikuMikuDesktopPerch
             {
                 state.afterword=Fmt(T(L"いま、話し相手とゴルフをしていたが、途中でやめてデスクトップに戻ってきたところ（{0}番ホールまで、あなた{1}打、相手{2}打だった）。そのことを話し相手にひと言（1〜2文）",
                                       L"You were playing golf with them, but they stopped before the end and you have come back to the desktop (up to hole {0}, you had taken {1} strokes, they {2}). Say a word about it to them (one or two sentences)"),
-                                    {std::to_wstring(state.hole+1),std::to_wstring(Total(Her)+state.balls[Her].strokes),std::to_wstring(Total(You)+state.balls[You].strokes)});
+                                    {std::to_wstring(HoleNo()),std::to_wstring(Total(Her)+state.balls[Her].strokes),std::to_wstring(Total(You)+state.balls[You].strokes)});
                 state.afterwordLine=T(L"また今度、続きを回ろうね。",L"Let's finish the round another time.");
             }
             if(MascotModel* model=state.her.model)
@@ -2030,16 +3400,58 @@ namespace MikuMikuDesktopPerch
                     if(wParam=='N'||wParam==VK_ESCAPE)state.askingQuit=false;
                     return 0;
                 }
+                if(state.album)
+                {
+                    // The album: up and down pick a kind of look, left and right go through those
+                    // unlocked; C or Esc closes it.
+                    if(wParam=='C'||wParam==VK_ESCAPE)state.album=false;
+                    else if(wParam==VK_UP)state.albumRow=(state.albumRow+GolfProgress::LookKindCount-1)%GolfProgress::LookKindCount;
+                    else if(wParam==VK_DOWN)state.albumRow=(state.albumRow+1)%GolfProgress::LookKindCount;
+                    else if(wParam==VK_LEFT||wParam==VK_RIGHT)
+                    {
+                        const int k=state.albumRow,n=static_cast<int>(GolfProgress::LooksOf(k).size());
+                        int& now=state.progress.chosen[static_cast<size_t>(k)];
+                        for(int step=1;step<=n;++step)
+                        {
+                            const int next=((now+(wParam==VK_RIGHT?step:-step))%n+n)%n;
+                            if(state.progress.Unlocked(k,next)){now=next;break;}
+                        }
+                        SaveProgress();
+                    }
+                    return 0;
+                }
+                if(wParam=='C'&&!state.askingQuit&&!(lParam&0x40000000)){state.album=true;state.menuOpen=false;return 0;}
+                if(state.menuOpen)
+                {
+                    // The special shots' menu: up and down pick, Space or Enter takes it, S again
+                    // (or Esc) puts it away with no special.
+                    if(wParam=='S'||wParam==VK_ESCAPE){state.menuOpen=false;state.special=0;UpdateLanding();}
+                    else if(wParam==VK_UP)state.menuPick=(state.menuPick+2)%3;
+                    else if(wParam==VK_DOWN)state.menuPick=(state.menuPick+1)%3;
+                    else if((wParam==VK_SPACE||wParam==VK_RETURN)&&!(lParam&0x40000000))ChooseSpecial(state.menuPick);
+                    return 0;
+                }
                 if(wParam==VK_ESCAPE)
                 {
                     if(state.phase==Phase::Over)Finish();
                     else state.askingQuit=true;
                 }
-                else if(wParam==VK_RETURN&&state.phase==Phase::Over){state.firstSeed+=104729u;NewRound();}
+                else if(wParam==VK_RETURN&&state.phase==Phase::Over){state.firstSeed+=104729u;++state.round;NewRound();}
                 else if(wParam==VK_F1)state.camera={};
-                else if(wParam==VK_SPACE&&!(lParam&0x40000000))GaugeClick();
+                else if(wParam==VK_SPACE&&!(lParam&0x40000000))
+                {
+                    // From the 0 view, Space only comes back to the usual one.
+                    if(state.overhead)LeaveOverhead();
+                    else GaugeClick();
+                }
                 else if(wParam==VK_TAB)state.help=!state.help;
-                else if((wParam=='0'||wParam==VK_NUMPAD0)&&state.turn==You&&(state.phase==Phase::Aim||state.phase==Phase::Gauge))state.overhead=!state.overhead;
+                else if(wParam=='S'&&!(lParam&0x40000000))OpenSpecialMenu();
+                else if(state.overhead&&GetKeyState(VK_CONTROL)>=0&&(wParam==VK_UP||wParam==VK_DOWN))
+                {
+                    // In the 0 view up and down move the view (in the tick); with Shift, nearer or further.
+                    if(GetKeyState(VK_SHIFT)<0)state.camera.zoom=std::clamp(state.camera.zoom*(wParam==VK_UP?0.85f:1.0f/0.85f),0.25f,4.0f);
+                }
+                else if(wParam=='0'||wParam==VK_NUMPAD0)ToggleOverhead();
                 else if(state.turn==You&&state.phase==Phase::Aim&&state.gauge==GaugeState::Ready&&GetKeyState(VK_CONTROL)<0&&
                         (wParam==VK_LEFT||wParam==VK_RIGHT||wParam==VK_UP||wParam==VK_DOWN))
                 {
@@ -2074,8 +3486,19 @@ namespace MikuMikuDesktopPerch
                     if(state.askButtons[1].Contains(x,y))state.askingQuit=false;
                     return 0;
                 }
+                if(state.activating){state.activating=false;return 0;}   // the click that brought the window up
+                if(state.menuOpen)
+                {
+                    const float x=static_cast<float>(GET_X_LPARAM(lParam)),y=static_cast<float>(GET_Y_LPARAM(lParam));
+                    for(int i=0;i<3;++i)if(state.menuBoxes[i].Contains(x,y)){ChooseSpecial(i);return 0;}
+                    return 0;
+                }
+                if(state.overhead){LeaveOverhead();return 0;}
                 GaugeClick();
                 return 0;
+            case WM_MOUSEACTIVATE:
+                if(GetForegroundWindow()!=hwnd)state.activating=true;
+                return MA_ACTIVATE;
             case WM_PAINT:
             {
                 PAINTSTRUCT ps;
@@ -2123,8 +3546,10 @@ namespace MikuMikuDesktopPerch
             registered=true;
         }
         state.her=her;
+        state.progressFile=her.progressFile;
+        GolfProgress::Load(state.progressFile,state.progress);
         state.onEnd=std::move(onEnd);
-        state.ground=Golf::LoadGround();
+        state.ground=Golf::LoadGround(1);
         if(!state.ground)
         {
             Log(L"golf: the course model could not be read");
@@ -2181,21 +3606,46 @@ namespace MikuMikuDesktopPerch
         dt=std::min(dt,0.1);
         Step(dt);
         // Her: swinging at her ball (its stage by the clock), or watching yours.
+        if(!state.swingVmd.empty())
+        {
+            // Half a second at the address, the swing at the game's pace, a second at the finish.
+            // Timed for a 7 iron (the putter: a 10 m roll) at that power.
+            Golf::Shot shot;
+            shot.club=state.posePutter?Golf::Putter:3;
+            shot.power=state.posePower;
+            shot.range=10;
+            const SwingPlan plan=MakePlan(model,state.posePower,state.posePutter,Golf::LaunchSpeed(shot,state.posePutter?Lie::Green:Lie::Fairway));
+            // The address held long enough (half a second or a little more) that the strike falls
+            // on a frame of its own.
+            const double address=std::ceil((0.5+plan.Strike())*30-1e-6)/30-plan.Strike();
+            std::vector<float> stages;
+            for(int n=0;n*(1.0/30)<address+plan.Length()+1.0;++n)stages.push_back(SwingStage(plan,n/30.0,address));
+            PlaceToSwing(state.balls[Her].at,PinAim(state.balls[Her].at),state.posePutter?Golf::Putter:3);
+            std::wstring report;
+            const bool ok=model.RecordSwing(state.swingVmd,stages,state.posePower,state.posePutter,report,state.clubLength);
+            wchar_t timing[200];
+            swprintf_s(timing,L"; back %.2f s, top %.2f s, down %.2f s, through %.2f s, head %.1f m/s at the strike (frame %d)",plan.back,plan.top,plan.down,plan.through,plan.speed,static_cast<int>((address+plan.Strike())*30+0.5));
+            report+=timing;
+            state.log+=L"swing vmd "+state.swingVmd+(ok?L": ":L": failed, ")+report+L"\n";
+            Log(L"golf: swing vmd %s: %s",state.swingVmd.c_str(),report.c_str());
+            state.swingVmd.clear();
+            state.posing=0;
+        }
         if(state.posing>=0)
         {
-            PlaceToSwing(state.balls[Her].at,PinAim(state.balls[Her].at));
-            model.Swing(true,state.posing,1);
+            PlaceToSwing(state.balls[Her].at,PinAim(state.balls[Her].at),state.posePutter?Golf::Putter:3);
+            model.Swing(true,state.posing,state.posePower,state.posePutter);
         }
         else if(state.turn==Her&&(state.phase==Phase::Aim||state.phase==Phase::Swing||state.phase==Phase::Flying||state.phase==Phase::Settle))
         {
-            const float stage=state.phase==Phase::Aim?0.0f:SwingStage(state.swingTime,Address);
-            const bool hold=state.swingTime<Address+Back+Top+Down+Through+HoldFinish||state.phase==Phase::Aim;
-            model.Swing(hold,stage,state.swingPower);
+            const float stage=state.phase==Phase::Aim?0.0f:SwingStage(state.plan,state.swingTime,Address);
+            const bool hold=state.swingTime<Address+state.plan.Length()+HoldFinish||state.phase==Phase::Aim;
+            model.Swing(hold,stage,state.swingPower,state.herPutting);
             if(!hold)state.herSwinging=false;   // the club put down
         }
         else
         {
-            model.Swing(false,0,1);
+            model.Swing(false,0,1,false);
             if(state.herSwinging&&state.phase!=Phase::Settle)
             {
                 // Off to watch your ball, once she has put her club down.
@@ -2213,17 +3663,29 @@ namespace MikuMikuDesktopPerch
         }
         if(state.moved){state.moved=false;model.ResetPhysics();}
         state.renderer->SetModelTransform(HerWorld(model));
-        PlaceCamera();
+        state.renderer->SetModelHidden(state.bonesView);
+        PlaceCamera(dt);
         {
             const float ease=1-std::exp(-14*static_cast<float>(dt));
             state.spotShownX+=(state.spotX-state.spotShownX)*ease;
             state.spotShownY+=(state.spotY-state.spotShownY)*ease;
         }
         state.renderer->SetMovingGeometry(BuildMoving(model));
-        PlaceTrees();
+        PlaceTrees(dt);
         state.renderer->SetGlowGeometry(BuildGlow());
         state.renderer->SetParticles(BuildSparks(dt));
         for(auto& r:state.ripples)r.age+=static_cast<float>(dt);
+        if(state.blastAge>=0){state.blastAge+=static_cast<float>(dt);if(state.blastAge>3)state.blastAge=-1;}
+        // The notices, one after another, 3.2 s each.
+        if(!state.toasts.empty())
+        {
+            if(state.toastUntil==0)state.toastUntil=state.clock+3.2;
+            else if(state.clock>state.toastUntil)
+            {
+                state.toasts.erase(state.toasts.begin());
+                state.toastUntil=state.toasts.empty()?0:state.clock+3.2;
+            }
+        }
         state.ripples.erase(std::remove_if(state.ripples.begin(),state.ripples.end(),[](const MascotRenderer::Ripple& r){return r.age>7;}),state.ripples.end());
         state.renderer->SetWater(true,static_cast<float>(state.clock),state.ripples);
         {
@@ -2241,7 +3703,7 @@ namespace MikuMikuDesktopPerch
             const XMVECTOR forward=XMVectorSubtract(XMLoadFloat3(&state.look),XMLoadFloat3(&state.eye));
             if(XMVectorGetX(XMVector3Dot(forward,XMVectorSubtract(at,XMLoadFloat3(&state.eye))))<0)state.headScreen=state.besideHead={-1,-1};
         }
-        // The top of the pin's beam, for the distance written there.
+        // The top of the light pillar, for the distance written there.
         {
             const V3 p=Course().Pin();
             const XMFLOAT3 top=W(p,BeamHigh);
@@ -2281,8 +3743,22 @@ namespace MikuMikuDesktopPerch
 
     void PlayGolfForTest(){state.autoplay=true;}
     bool SaveGolfView(const std::wstring& path){return state.renderer&&state.renderer->SaveLastFrame(path);}
-    void SetGolfSwingPose(float stage,float yaw){state.posing=stage;state.poseYaw=yaw;}
+    void SetGolfBones(bool on){state.bonesView=on;}
+    void SetGolfSwingVmd(const std::wstring& path,float power,bool putter){state.swingVmd=path;state.posePower=power;state.posePutter=putter;state.posing=0;}
+    void SetGolfSwingPose(float stage,float yaw,float power,bool putter){state.posing=stage;state.poseYaw=yaw;state.posePower=power;state.posePutter=putter;}
     void SetGolfSeed(std::uint32_t seed){state.firstSeed=seed;}
+    void SetGolfHole(int hole){state.startHole=hole-1;}
+    void SetGolfRound(int holes,bool random){state.roundHoles=std::clamp(holes,1,Holes);state.roundRandom=random;}
+    void SetGolfSpecial(int special){state.diagSpecial=special;}
+    void SetGolfAce(){state.diagAce=true;state.wind={0,0};}
+    void SetGolfWeather(int weather)
+    {
+        // For this round too, if it has begun (the course's pins stay as they were placed).
+        state.forcedWeather=weather;
+        state.weather=weather;
+        Golf::SetWet(weather==2);
+        if(state.renderer)state.renderer->SetLight(35,weather==3?12.0f:50.0f);
+    }
     void SetGolfGauge(float power,float at,const std::wstring& flags){state.frozenPower=power;state.frozenAt=at;state.frozenFlags=flags;}
 
     std::wstring DescribeGolf()
@@ -2291,12 +3767,21 @@ namespace MikuMikuDesktopPerch
         std::wstring text;
         wchar_t line[300];
         const char* phases[]={"intro","aim","gauge","swing","flying","settle","hole over","over"};
-        swprintf_s(line,L"golf: hole %d par %d (seed %u), phase %hs, turn %ls, you %d her %d this hole, totals you %d her %d, frames %d, shots %d\n",state.hole+1,Course().Par(),Course().Seed(),
+        swprintf_s(line,L"golf: hole %d par %d (seed %u), phase %hs, turn %ls, you %d her %d this hole, totals you %d her %d, frames %d, shots %d\n",HoleNo(),Course().Par(),Course().Seed(),
                    phases[static_cast<int>(state.phase)],state.turn==You?L"you":L"her",state.balls[You].strokes,state.balls[Her].strokes,Total(You),Total(Her),state.frames,state.shots);
         text+=line;
         swprintf_s(line,L"golf: her hips %.1f upper %.1f, club %.2f m, ball %.2f,%.2f from her (m); at %.1f,%.1f yaw %.0f, swinging %d\n",state.hips,state.upper,state.clubLength/K,state.head[0]/K,state.head[2]/K,
                    state.herAt.x,state.herAt.z,state.herYaw/Deg,state.herSwinging?1:0);
         text+=line;
+        text+=state.measured;
+        swprintf_s(line,L"golf: ground shade: %d of %d vertices under trees\n",state.shadedVertices,state.groundVertices);
+        text+=line;
+        for(int c=0;c<Golf::Putter;++c)
+        {
+            swprintf_s(line,L"golf: %ls length %.2f m, tilt %.1f deg, ball %.2f,%.2f m from her\n",Golf::ClubOf(c).en,state.clubLen[static_cast<size_t>(c)]/K,
+                       state.clubTilt[static_cast<size_t>(c)]/Deg,state.clubHead[static_cast<size_t>(c)][0]/K,state.clubHead[static_cast<size_t>(c)][2]/K);
+            text+=line;
+        }
         swprintf_s(line,L"golf: %zu trees, %zu drawn this frame\n",Course().Trees().size(),state.treesShown);
         text+=line;
         text+=L"golf play:\n"+state.log;

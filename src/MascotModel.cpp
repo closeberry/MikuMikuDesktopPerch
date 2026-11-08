@@ -775,6 +775,8 @@ namespace MikuMikuDesktopPerch
         PMX::Pose shotPose;
         double shotFrame=0;
         float shotWeight=0;
+        // RecordSwing: each frame's keys of the motion layer's bones, while it is recording.
+        std::vector<std::vector<PMX::VMDMotionLite>>* recording=nullptr;
         bool shotActive=false,shotEnding=false,shotIsClick=false;
         // A built-in idle clip playing as a gesture (not the user's opened motion), and the
         // frame it is held at for diagnostics (-1: playing).
@@ -2628,6 +2630,89 @@ namespace MikuMikuDesktopPerch
         return !impl->shotActive&&impl->motion.Reach(side,DirectX::XMFLOAT3(fromHead[0],fromHead[1],fromHead[2]),seconds,tap);
     }
 
+    bool MascotModel::ClubInHand(std::array<float,3>& grip,std::array<float,3>& shaft,float tilt,std::array<float,3>* palm) const
+    {
+        using namespace DirectX;
+        const auto& m=*impl;
+        if(!m.solver)return false;
+        XMFLOAT3 local{};
+        float chirality=1;
+        if(!m.motion.ClubInHand(0,local,chirality))return false;
+        const int wrist=m.FindBone({L"左手首"}),middle=m.FindBone({L"左中指１",L"左中指1"});
+        const int index=m.FindBone({L"左人指１",L"左人指1",L"左人差指１"}),little=m.FindBone({L"左小指１",L"左小指1"});
+        const size_t count=m.solver->boneMatrices.size();
+        for(int b:{wrist,middle,index,little})if(b<0||static_cast<size_t>(b)>=count)return false;
+        auto at=[&](int bone){return XMVector3Transform(XMLoadFloat3(&m.pmx->bones[bone].position),XMMatrixTranspose(m.solver->boneMatrices[bone]));};
+        // The hand's frame as GeneratedMotion's rig takes it: fingers from the wrist, across the
+        // knuckles toward the little finger, the palm's normal.
+        const XMVECTOR w=at(wrist),f=XMVector3Normalize(XMVectorSubtract(at(middle),w));
+        XMVECTOR l=XMVectorSubtract(at(little),at(index));
+        l=XMVector3Normalize(XMVectorSubtract(l,XMVectorScale(f,XMVectorGetX(XMVector3Dot(l,f)))));
+        const XMVECTOR n=XMVectorScale(XMVector3Cross(f,l),chirality);
+        const XMVECTOR g=XMVectorAdd(w,XMVectorAdd(XMVectorAdd(XMVectorScale(f,local.x),XMVectorScale(l,local.y)),XMVectorScale(n,local.z)));
+        const float a=GeneratedMotion::ShaftTilt+tilt;
+        const XMVECTOR d=XMVector3Normalize(XMVectorAdd(XMVectorScale(l,-std::cos(a)),XMVectorScale(f,std::sin(a))));   // past the index finger
+        grip={XMVectorGetX(g),XMVectorGetY(g),XMVectorGetZ(g)};
+        shaft={XMVectorGetX(d),XMVectorGetY(d),XMVectorGetZ(d)};
+        if(palm)
+        {
+            const XMVECTOR q=XMVector3Normalize(XMVectorSubtract(n,XMVectorScale(d,XMVectorGetX(XMVector3Dot(n,d)))));
+            *palm={XMVectorGetX(q),XMVectorGetY(q),XMVectorGetZ(q)};
+        }
+        return true;
+    }
+
+    void MascotModel::SwingStrain(std::array<float,2>& bend,std::array<float,2>& twist,std::array<float,2>& inBody) const{impl->motion.SwingStrain(bend,twist,inBody);}
+
+    std::vector<MascotModel::BoneSegment> MascotModel::BoneSegments() const
+    {
+        using namespace DirectX;
+        const auto& m=*impl;
+        std::vector<BoneSegment> out;
+        if(!m.solver)return out;
+        auto at=[&](int bone){
+            const XMVECTOR p=XMVector3Transform(XMLoadFloat3(&m.pmx->bones[bone].position),XMMatrixTranspose(m.solver->boneMatrices[bone]));
+            return std::array<float,3>{XMVectorGetX(p),XMVectorGetY(p),XMVectorGetZ(p)};
+        };
+        auto add=[&](std::initializer_list<const wchar_t*> a,std::initializer_list<const wchar_t*> b,int side){
+            const int i=m.FindBone(a),j=m.FindBone(b);
+            const size_t n=m.solver->boneMatrices.size();
+            if(i>=0&&j>=0&&static_cast<size_t>(i)<n&&static_cast<size_t>(j)<n)out.push_back({at(i),at(j),side});
+        };
+        add({L"下半身"},{L"上半身"},2);
+        add({L"上半身"},{L"上半身2",L"首"},2);
+        add({L"上半身2"},{L"首"},2);
+        add({L"首"},{L"頭"},2);
+        for(int side=0;side<2;++side)
+        {
+            const std::wstring s=side==0?L"左":L"右";
+            std::wstring arm=s+L"腕",elbow=s+L"ひじ",wrist=s+L"手首",shoulder=s+L"肩",leg=s+L"足",knee=s+L"ひざ",ankle=s+L"足首",toe=s+L"つま先";
+            add({L"首"},{shoulder.c_str()},side);
+            add({shoulder.c_str()},{arm.c_str()},side);
+            add({arm.c_str()},{elbow.c_str()},side);
+            add({elbow.c_str()},{wrist.c_str()},side);
+            for(const wchar_t* finger:{L"親指",L"人指",L"中指",L"薬指",L"小指"})
+            {
+                std::wstring j1=s+finger+L"１",j2=s+finger+L"２",j3=s+finger+L"３",j0=s+finger+L"０";
+                add({wrist.c_str()},{j0.c_str(),j1.c_str()},side);
+                add({j0.c_str()},{j1.c_str()},side);
+                add({j1.c_str()},{j2.c_str()},side);
+                add({j2.c_str()},{j3.c_str()},side);
+            }
+            add({L"下半身"},{leg.c_str()},side);
+            add({leg.c_str()},{knee.c_str()},side);
+            add({knee.c_str()},{ankle.c_str()},side);
+            add({ankle.c_str()},{toe.c_str()},side);
+        }
+        return out;
+    }
+
+    std::array<float,3> MascotModel::SwingHead(float stage,float power,bool putter,float clubLength) const
+    {
+        const auto h=impl->motion.SwingHead(stage,power,putter,clubLength);
+        return {h.x,h.y,h.z};
+    }
+
     bool MascotModel::Grip(int side,std::array<float,3>& middle,std::array<float,3>& along) const
     {
         const auto& m=*impl;
@@ -2696,6 +2781,16 @@ namespace MikuMikuDesktopPerch
         m.motion.SetGesturesAllowed(!m.shotActive);
         m.motion.SetClipCount(static_cast<int>(m.builtinClips.size()));
         m.motion.Apply(m.solver->solvedPose,dt);
+        if(m.recording)
+        {
+            // As the model is posed with them: with the T-stance correction (ApplyArmCorrection)
+            // in the arms' keys, so the file plays the same on this model in MMD.
+            PMX::Pose corrected=m.solver->solvedPose;
+            m.ApplyArmCorrection(corrected);
+            auto& frame=m.recording->emplace_back();
+            for(const int b:m.motion.Overrides())
+                frame.push_back(b>=0&&static_cast<size_t>(b)<corrected.boneKeys.size()?corrected.boneKeys[b]:PMX::VMDMotionLite{});
+        }
         // A built-in clip the gestures picked starts over the standing pose; it lets go as soon
         // as she stops standing there (walks, is picked up, ...) or an idle motion is set.
         if(const int clip=m.motion.TakeClipRequest();clip>=0&&!m.shotActive&&m.motion.CurrentActivity()==Activity::Idle&&m.idleClips.empty())
@@ -2815,10 +2910,104 @@ namespace MikuMikuDesktopPerch
         impl->motion.Hold(side,{wrist[0],wrist[1],wrist[2]},on,style);
     }
 
-    void MascotModel::Swing(bool on,float stage,float power)
+    bool MascotModel::RecordSwing(const std::wstring& path,const std::vector<float>& stages,float power,bool putter,std::wstring& report,float clubLength)
+    {
+        auto& m=*impl;
+        if(!m.solver||!m.pmx||stages.empty())return false;
+        constexpr double Dt=1.0/30;
+        for(int i=0;i<30;++i){Swing(true,stages.front(),power,putter);Update(Dt);}
+        std::vector<std::vector<PMX::VMDMotionLite>> frames;
+        m.recording=&frames;
+        std::vector<std::array<float,3>> heads;
+        std::array<float,2> worstBend{},worstTwist{},worstIn{};
+        std::wstring perFrame;
+        std::array<int,2> worstBendAt{},worstInAt{};
+        for(const float s:stages)
+        {
+            Swing(true,s,power,putter);
+            Update(Dt);
+            std::array<float,3> g{},d{};
+            if(clubLength>0&&ClubInHand(g,d))heads.push_back({g[0]+d[0]*clubLength,g[1]+d[1]*clubLength,g[2]+d[2]*clubLength});
+            std::array<float,2> bend{},twist{},in{};
+            SwingStrain(bend,twist,in);
+            {
+                wchar_t t[160];
+                std::array<float,2> fl{},sw{};
+                m.motion.SwingWrists(fl,sw);
+                const auto eb=m.motion.SwingElbows();
+                swprintf_s(t,L"\n%zu: bend %.0f/%.0f (flex %.0f/%.0f side %.0f/%.0f) twist %.0f/%.0f in %.2f/%.2f elbows %.0f/%.0f",heads.size(),bend[0],bend[1],fl[0],fl[1],sw[0],sw[1],twist[0],twist[1],in[0],in[1],eb[0],eb[1]);
+                perFrame+=t;
+                if(heads.size()<=2||heads.size()==38)perFrame+=L" "+m.motion.swingDebug;
+            }
+            for(int k=0;k<2;++k)
+            {
+                if(bend[k]>worstBend[k]){worstBend[k]=bend[k];worstBendAt[k]=static_cast<int>(heads.size());}
+                worstTwist[k]=std::max(worstTwist[k],twist[k]);
+                if(in[k]>worstIn[k]){worstIn[k]=in[k];worstInAt[k]=static_cast<int>(heads.size());}
+            }
+        }
+        m.recording=nullptr;
+        std::wstring speeds;
+        std::wstring strain;
+        {
+            wchar_t t[240];
+            swprintf_s(t,L"; wrists bend at most %.0f (frame %d) / %.0f (frame %d) deg, twist %.0f / %.0f deg; arms in the body at most %.3f (frame %d) / %.3f (frame %d) leg lengths (left / right)",
+                       worstBend[0],worstBendAt[0],worstBend[1],worstBendAt[1],worstTwist[0],worstTwist[1],worstIn[0],worstInAt[0],worstIn[1],worstInAt[1]);
+            strain=t;
+        }
+        if(heads.size()==stages.size()&&heads.size()>1)
+        {
+            // m/s (12.5 units a metre) between each frame and the next.
+            float fastest=0;size_t at=0;
+            speeds=L"\nhead m/s by frame:";
+            for(size_t i=0;i+1<heads.size();++i)
+            {
+                const float dx=heads[i+1][0]-heads[i][0],dy=heads[i+1][1]-heads[i][1],dz=heads[i+1][2]-heads[i][2];
+                const float v=std::sqrt(dx*dx+dy*dy+dz*dz)*30/12.5f;
+                if(v>fastest){fastest=v;at=i;}
+                wchar_t t[16];swprintf_s(t,L" %.1f",v);speeds+=t;
+            }
+            wchar_t t[80];swprintf_s(t,L"; fastest %.1f m/s, frames %zu-%zu",fastest,at,at+1);
+            speeds=t+speeds;
+        }
+        const auto& bones=m.motion.Overrides();
+        PMX::VMD vmd;
+        vmd.modelName=m.pmx->name;
+        int kept=0;
+        for(size_t i=0;i<bones.size();++i)
+        {
+            const int b=bones[i];
+            if(b<0||static_cast<size_t>(b)>=m.pmx->bones.size())continue;
+            // Left out when it stays at rest throughout.
+            bool moves=false;
+            for(const auto& f:frames)
+            {
+                const auto& k=f[i];
+                if(std::abs(k.position.x)+std::abs(k.position.y)+std::abs(k.position.z)>1e-4f||1-std::abs(k.rotation.w)>1e-6f){moves=true;break;}
+            }
+            if(!moves)continue;
+            ++kept;
+            for(size_t n=0;n<frames.size();++n)
+            {
+                PMX::VMDMotion key;
+                static_cast<PMX::VMDMotionLite&>(key)=frames[n][i];
+                key.iFrame=static_cast<int>(n);
+                key.name=m.pmx->bones[static_cast<size_t>(b)].name;
+                for(int j=0;j<4;++j){key.bezier.X[j]=key.bezier.Y[j]=key.bezier.Z[j]=key.bezier.R[j]=j<2?20:107;}
+                key.method[0]=key.method[1]=key.method[2]=key.method[3]=0;
+                vmd.motionKeys.push_back(key);
+            }
+        }
+        try{vmd.Save(false,path,932);}
+        catch(...){report=L"could not write "+path;return false;}
+        report=std::to_wstring(frames.size())+L" frames, "+std::to_wstring(kept)+L" bones, model "+m.pmx->name+strain+speeds+perFrame;
+        return true;
+    }
+
+    void MascotModel::Swing(bool on,float stage,float power,bool putter)
     {
         if(on&&impl->shotActive){impl->shotFrozen=-1;impl->shotEnding=true;}
-        impl->motion.Swing(on,stage,power);
+        impl->motion.Swing(on,stage,power,putter);
     }
 
     bool MascotModel::SwingClub(std::array<float,3>& along) const

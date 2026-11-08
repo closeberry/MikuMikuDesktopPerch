@@ -102,7 +102,7 @@ namespace MikuMikuDesktopPerch
         // group >= 0: drawn once at each of that group's places (SetSceneryInstances).
         struct SceneryDraw {UINT start=0,count=0;int texture=-1;int group=-1;};
         // A place for an instanced stretch: where (world), turned about the up axis, how big.
-        struct SceneryInstance {float x=0,y=0,z=0,yaw=0,scale=1,pad[3]{};};
+        struct SceneryInstance {float x=0,y=0,z=0,yaw=0,scale=1,clear=0,pad[2]{};};   // clear: 0 solid .. 1 gone (dithered)
         static constexpr size_t MaxSceneryInstances=4096;
         // This frame's places for each group of instanced stretches (the trees in view).
         void SetSceneryInstances(std::vector<std::vector<SceneryInstance>> groups){sceneryInstances=std::move(groups);}

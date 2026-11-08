@@ -513,11 +513,22 @@ float WaveHeight(float2 m, float t)
     const float speed = length(wind);
     const float2 dir = speed > 0.05 ? wind / speed : float2(0.6, 0.8);
     const float2 side = float2(-dir.y, dir.x);
-    const float a = 0.003 + 0.010 * saturate(speed / 6);
-    float h = a * sin(dot(m, dir) * 1.7 - t * 2.3);
-    h += a * 0.6 * sin(dot(m, normalize(dir + 0.45 * side)) * 2.9 - t * 3.2 + 1.3);
-    h += a * 0.45 * sin(dot(m, normalize(dir - 0.55 * side)) * 4.6 - t * 4.1 + 2.1);
-    h += a * 0.8 * (Noise(m * 1.9 - dir * t * 0.9) - 0.5) + 0.002 * (Noise(m * 6.0 + t * 0.7) - 0.5);
+    // Wind-blown chop, not rows of waves: layers of noise, finer ones smaller and quicker,
+    // stretched along the wind (crests longer across it), each bent by a slower noise of its
+    // own so no crest runs straight; gusts make some patches rougher than others.
+    const float a = 0.0025 + 0.008 * saturate(speed / 6);
+    const float2 q = float2(dot(m, dir), dot(m, side)) * float2(1.0, 0.5);
+    const float gust = 0.55 + 0.9 * Noise(q * 0.12 - float2(t * 0.25, 0));
+    float h = 0, amp = a * gust, freq = 1.3;
+    [unroll] for (int o = 0; o < 5; ++o)
+    {
+        float2 p = q * freq - float2(t * (0.8 + 0.35 * o), 0) + float2(o * 17.3, o * 5.1);
+        p += 0.9 * float2(Noise(p * 0.37 + 11.0 + t * 0.1), Noise(p * 0.37 - 7.0 - t * 0.1)) - 0.45;
+        h += amp * (Noise(p) - 0.5) * 2;
+        freq *= 1.85;
+        amp *= 0.55;
+    }
+    h += 0.0015 * (Noise(m * 7.0 + t * 0.9) - 0.5);
     [unroll] for (int k = 0; k < 16; ++k)
     {
         const float4 r = Ripples[k];
@@ -529,23 +540,52 @@ float WaveHeight(float2 m, float t)
     return h;
 }
 
-// The pond: its own waves bend the sky it mirrors (more at a low angle), the sun glints on
-// it, and the water's own dark colour shows through where it is seen from above.
-float3 CourseWater(float3 deep, float3 world)
+// The pond: it mirrors what stands round it (mirrored: a panorama painted for the hole, looked
+// up along the reflected ray, the azimuth across and the elevation up; else a sky of its own),
+// its small waves bending the image; more mirror at a low angle, the water's own dark green
+// showing through from above, the sun glinting.
+// The pond: clear light-blue water. Seen from above, its pale bottom shows through under a
+// shifting net of light; toward a low angle it turns the sky's pale blue; its small waves
+// shade it and the sun glints on them. (A mirror of what stands round it was tried: painted on
+// a flat panorama, trees and the clubhouse smeared over so wide a pond.)
+float3 CourseWater(float3 water, float3 world)
 {
     const float2 m = world.xz / 12.5;
     const float t = Water.y, e = 0.04;
     const float h = WaveHeight(m, t), hx = WaveHeight(m + float2(e, 0), t), hz = WaveHeight(m + float2(0, e), t);
-    const float3 n = normalize(float3(-(hx - h) / e, 1, -(hz - h) / e));
+    // Far off the small waves blur away (seen across many of them a pixel).
+    const float far = length(CourseEye() - world) / 12.5;
+    const float3 n = normalize(lerp(float3(0, 1, 0), normalize(float3(-(hx - h) / e, 1, -(hz - h) / e)), 1 / (1 + far / 45)));
     const float3 v = normalize(CourseEye() - world);
-    const float3 r = reflect(-v, n);
-    const float3 sky = lerp(float3(0.74, 0.82, 0.90), float3(0.30, 0.50, 0.82), saturate(r.y * 1.8)) +
-                       float3(0.25, 0.25, 0.25) * smoothstep(0.55, 0.85, Noise(r.xz / max(r.y, 0.08) * 1.5));
-    const float fresnel = 0.03 + 0.97 * pow(1 - saturate(dot(n, v)), 5);
     const float3 sun = -normalize(LightDir);
-    const float3 body = deep * (0.55 + 0.45 * saturate(dot(n, sun)));
-    float3 c = lerp(body, sky, saturate(fresnel * 1.1 + 0.22));
-    c += float3(1.0, 0.96, 0.88) * pow(saturate(dot(n, normalize(sun + v))), 260) * 2.2;
+    // The bottom through the water: sand-pale, deeper-looking toward the middle of the view's
+    // slant, with light gathered into bright threads by the waves above it.
+    const float2 q = m * 0.9 + n.xz * 1.5;
+    const float net = pow(1 - abs(Noise(q * 1.7 + t * 0.15) * 2 - 1), 6) + 0.6 * pow(1 - abs(Noise(q * 3.1 - t * 0.2) * 2 - 1), 8);
+    const float3 bottom = float3(0.20, 0.33, 0.32) + float3(0.15, 0.18, 0.15) * net * (1 / (1 + far / 60));
+    const float down = saturate(dot(n, v));
+    float3 c = lerp(water, bottom, 0.4 * down * down);
+    // Toward a low angle, the sky's pale blue.
+    const float fresnel = 0.02 + 0.98 * pow(1 - down, 5);
+    c = lerp(c, float3(0.27, 0.43, 0.54), saturate(fresnel * 0.85));
+    // The waves' slopes shade it a little, and the sun glints.
+    c *= 0.82 + 0.36 * saturate(dot(n, sun)) + 0.25 * (n.y < 0.9995 ? (dot(normalize(n.xz + 1e-5), normalize(v.xz + 1e-5)) * length(n.xz) * 6) : 0);
+    const float3 hv = normalize(sun + v);
+    c += float3(1.0, 0.97, 0.9) * (pow(saturate(dot(n, hv)), 220) * 1.8 + pow(saturate(dot(n, hv)), 30) * 0.12);
+    // Glitter: the chop's tiny facets, each tilted its own way and rocking, flash the sun at
+    // the eye as sharp points, thickest along the sun's path on the water (two sizes of facet).
+    float glitter = 0;
+    [unroll] for (int k = 0; k < 2; ++k)
+    {
+        const float size = k == 0 ? 7.0 : 19.0;
+        const float2 g = m * size, cell = floor(g), f = frac(g) - 0.5;
+        const float r1 = Hash(cell + k * 31.7), r2 = Hash(cell + 17.1 + k * 5.3), r3 = Hash(cell + 3.7 + k * 11.9);
+        const float rock = 0.55 + 0.45 * sin(t * (2.5 + 5 * r3) + r3 * 40);
+        const float3 facet = normalize(n + float3(r1 - 0.5, 0, r2 - 0.5) * 2.4 * rock);
+        const float spot = smoothstep(0.45, 0.05, length(f + (float2(r2, r1) - 0.5) * 0.4));
+        glitter += pow(saturate(dot(facet, hv)), 160) * spot * (k == 0 ? 1.0 : 0.7);
+    }
+    c += float3(1.0, 0.98, 0.92) * glitter * 5 * (0.45 + 0.55 * pow(saturate(dot(reflect(-v, float3(0, 1, 0)), sun)), 4));
     return c;
 }
 
@@ -587,7 +627,12 @@ float4 main(VSOutput i) : SV_Target
         // Tiled, and cut out where the picture is clear (leaves).
         const float4 picture = Picture.Sample(WrapSampler, i.uv.xy);
         clip(picture.a - 0.5);
-        rgb *= picture.rgb;
+        // A colour over 1 (the golf sky, unlit) is an exposure: the picture's middle tones
+        // lifted, its whites kept white (a photograph of the sky looked dim drawn as it is).
+        if (pattern == 1 && i.color.r > 1.01)
+            rgb = (1 - exp(-i.color.r * picture.rgb)) / (1 - exp(-i.color.r));
+        else
+            rgb *= picture.rgb;
     }
     else if (i.uv.z > 0)
         rgb *= Picture.Sample(ClampSampler, i.uv.xy).rgb;

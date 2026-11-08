@@ -266,10 +266,29 @@ namespace MikuMikuDesktopPerch
         void Hold(int side,const std::array<float,3>& wrist,bool on,int style=0);
         // A golf club in both hands, standing side-on to the target (+X, her left): see
         // GeneratedMotion::Swing (stage 0 address, 1 top, 2 impact, 3 finish; power 0.2-1).
-        void Swing(bool on,float stage,float power);
+        void Swing(bool on,float stage,float power,bool putter=false);
         // The club's way from the grip toward its head (model space), as posed last; false when
         // she holds none.
         bool SwingClub(std::array<float,3>& along) const;
+        // The golf club as her left fist holds it (it goes with the wrist): the grip's middle and
+        // the shaft's way to the head, model space.
+        // tilt: the shaft turned further in the hand (radians; a longer club lies flatter).
+        // palm (if given): the left palm's normal, square to the shaft (the club face goes with it).
+        bool ClubInHand(std::array<float,3>& grip,std::array<float,3>& shaft,float tilt=0,std::array<float,3>* palm=nullptr) const;
+        // Diagnostics: the main skeleton as it is posed now, joint to joint (model space); side
+        // 0 left, 1 right, 2 the middle.
+        struct BoneSegment {std::array<float,3> from,to;int side;};
+        std::vector<BoneSegment> BoneSegments() const;
+        // Diagnostics: the swing's wrists now (degrees: bend, twist) and arms in the body (leg lengths), left then right.
+        void SwingStrain(std::array<float,2>& bend,std::array<float,2>& twist,std::array<float,2>& inBody) const;
+        // Where the swing (GeneratedMotion::SwingHead) puts the club's head at a stage, model space.
+        std::array<float,3> SwingHead(float stage,float power,bool putter,float clubLength) const;
+        // Diagnostics: the swing played through stages (one a frame at 30 fps) at power, the
+        // bones the motion layer writes saved as a VMD (every frame keyed; bones that never
+        // move left out). After a second at the first stage, so it has settled.
+        // clubLength > 0: the report also gives the club head's speed (as her fist holds it), its
+        // fastest and on each frame.
+        bool RecordSwing(const std::wstring& path,const std::vector<float>& stages,float power,bool putter,std::wstring& report,float clubLength=0);
         // The arm's own pose for style 2: 腕, 腕捩, ひじ, 手捩, 手首 (x, y, z, w as keyed in MMD);
         // null: worked out to the wrist point.
         void HoldPose(int side,const std::array<std::array<float,4>,5>* keys);

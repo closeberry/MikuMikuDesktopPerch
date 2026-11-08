@@ -31,6 +31,9 @@ namespace MikuMikuDesktopPerch
         std::function<void(const std::wstring& facts,int weight,const std::wstring& fallback)> onEvent;
         std::function<bool(const std::wstring& ask)> prefetch;
         std::wstring linesFile,styleKey;
+        // Where golf's progress (achievements, records, looks, her rank) is kept: one file for the
+        // user, not per character (empty: none kept).
+        std::wstring progressFile;
         std::wstring ownLinesFile;
         std::function<void(const std::wstring& line)> speak;
     };
@@ -50,7 +53,21 @@ namespace MikuMikuDesktopPerch
     std::wstring DescribeGolf();
     // Diagnostics (--golf-swing stage [yaw]): she stands at the first tee frozen at this stage of
     // her swing (0 address .. 3 finish), the camera round her by yaw (0: in front of her).
-    void SetGolfSwingPose(float stage,float yaw);
+    void SetGolfSwingPose(float stage,float yaw,float power=1,bool putter=false);
+    // Diagnostics: her swing written as a VMD (her model, 30 fps, the game's timing), then she stands at the address.
+    void SetGolfSwingVmd(const std::wstring& path,float power,bool putter);
+    // Diagnostics: her skeleton drawn instead of her (left blue, right orange), to see the pose.
+    void SetGolfBones(bool on);
+    // Diagnostics: the round starts at this hole (1-9).
+    void SetGolfHole(int hole);
+    // The round the next golf window plays: how many holes (1-9), the first ones or drawn at random.
+    void SetGolfRound(int holes,bool random);
+    // Diagnostics: your autoplayed shots use this special (1 boost, 2 meteor).
+    void SetGolfSpecial(int special);
+    // Diagnostics: no wind, and your first tee shot a meteor with backspin that goes in.
+    void SetGolfAce();
+    // Diagnostics: the day's conditions (0 sunny, 1 windy, 2 rain, 3 dusk, 4 hard pins).
+    void SetGolfWeather(int weather);
     // Diagnostics (--golf-seed n): the first hole's seed.
     void SetGolfSeed(std::uint32_t seed);
     // Diagnostics (--golf-gauge power at [flags]): your first shot's gauge held there (power 0:

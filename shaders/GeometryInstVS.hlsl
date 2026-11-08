@@ -6,7 +6,7 @@
 struct Instance
 {
     float4 place;   // x, y, z (world), turn about the up axis (radians)
-    float4 size;    // x: how much bigger than the mesh
+    float4 size;    // x: how much bigger than the mesh, y: how clear (fading in or out, 0 solid)
 };
 StructuredBuffer<Instance> Instances : register(t0);
 
@@ -43,5 +43,6 @@ VSOutput main(VSInput i)
     o.color = i.color;
     o.local = i.wall.xyw;
     o.uv = i.uv;
+    o.uv.w = max(i.uv.w, k.size.y);
     return o;
 }

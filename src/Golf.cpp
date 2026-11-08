@@ -7,6 +7,8 @@
 #include <cwchar>
 #include <cstring>
 #include <tuple>
+#include <atomic>
+#include <random>
 
 namespace MikuMikuDesktopPerch::Golf
 {
@@ -21,15 +23,19 @@ namespace MikuMikuDesktopPerch::Golf
         // How the ground takes the ball: how much of its speed into the ground comes back, how
         // much of its speed along the ground a bounce takes, how hard it is to roll on.
         struct Turf {float bounce,grab,roll;};
+        std::atomic<bool> wetCourse{false};   // a rainy day (SetWet)
         Turf TurfOf(Lie lie)
         {
+            Turf t;
             switch(lie)
             {
-            case Lie::Green:return {0.25f,0.26f,0.065f};
-            case Lie::Rough:return {0.18f,0.55f,0.30f};
-            case Lie::Bunker:return {0.04f,0.90f,1.20f};
-            default:return {0.30f,0.32f,0.13f};   // fairway, tee
+            case Lie::Green:t={0.25f,0.26f,0.065f};break;
+            case Lie::Rough:t={0.18f,0.55f,0.30f};break;
+            case Lie::Bunker:t={0.04f,0.90f,1.20f};break;
+            default:t={0.30f,0.32f,0.13f};break;   // fairway, tee
             }
+            if(wetCourse&&lie!=Lie::Bunker){t.bounce*=0.7f;t.grab=std::min(0.95f,t.grab*1.15f);t.roll*=1.6f;}
+            return t;
         }
 
         // The spot struck, up and down (-1 below .. 1 above): how fast the ball leaves and how
@@ -47,6 +53,8 @@ namespace MikuMikuDesktopPerch::Golf
             {L"PW",L"PW",45.0f,37.0f,8800},
             {L"SW",L"SW",56.0f,30.0f,9600},
             {L"PT",L"PT",2.0f,0,0}};
+
+        constexpr float MeteorLaunch=36*Deg;   // the meteor goes up this steep, a wood too
 
         // Lie: speed and spin the ball leaves with, from there, with a club.
         void LieEffect(Lie lie,int club,float& speed,float& spin)
@@ -137,7 +145,7 @@ namespace MikuMikuDesktopPerch::Golf
     struct Ground
     {
         std::vector<V3> points;
-        struct Tri {int a,b,c;Lie lie;};
+        struct Tri {int a,b,c;Lie lie;bool hard=false;};   // hard: the cart path
         std::vector<Tri> tris;
         std::vector<int> greens;            // the green's triangles
         static constexpr float Cell=2;
@@ -146,6 +154,8 @@ namespace MikuMikuDesktopPerch::Golf
         std::vector<std::uint32_t> start;   // per cell, where its triangles start in list (and the next's)
         std::vector<int> list;
         V3 tee,cup,clubhouse;
+        int hole=1,par=3;
+        std::vector<V3> route;   // the fairway's way, tee to the green's middle (LoadGround)
         // In bounds, a metre a cell from (x0, z0): what can be reached from the tee without
         // crossing the out-of-bounds band (or the ground's end).
         std::vector<std::uint8_t> inside;
@@ -176,15 +186,47 @@ namespace MikuMikuDesktopPerch::Golf
             }
             return found;
         }
+        // Whether the ground at (x, z) is the hard cart path.
+        bool Hard(float x,float z) const
+        {
+            const int i=static_cast<int>(std::floor((x-x0)/Cell)),j=static_cast<int>(std::floor((z-z0)/Cell));
+            if(i<0||j<0||i>=nx||j>=nz)return false;
+            const size_t c=static_cast<size_t>(j)*nx+i;
+            float best=-1e9f;bool hard=false;
+            for(std::uint32_t k=start[c];k<start[c+1];++k)
+            {
+                const Tri& t=tris[static_cast<size_t>(list[k])];
+                const V3 &a=points[t.a],&b=points[t.b],&d=points[t.c];
+                const float det=(b.z-d.z)*(a.x-d.x)+(d.x-b.x)*(a.z-d.z);
+                if(std::abs(det)<1e-9f)continue;
+                const float u=((b.z-d.z)*(x-d.x)+(d.x-b.x)*(z-d.z))/det,v=((d.z-a.z)*(x-d.x)+(a.x-d.x)*(z-d.z))/det,w=1-u-v;
+                if(u<-1e-5f||v<-1e-5f||w<-1e-5f)continue;
+                const float y=u*a.y+v*b.y+w*d.y;
+                if(y>best){best=y;hard=t.hard;}
+            }
+            return hard;
+        }
     };
 
-    std::shared_ptr<const Ground> LoadGround()
+    int HolePar(int hole)
     {
-        static std::shared_ptr<const Ground> made;
+        // The par of each hole as the course was laid out (short 3, middle 4, long 5).
+        static constexpr int Pars[HoleCount]={3,4,3,5,4,4,3,5,4};
+        return Pars[std::clamp(hole,1,HoleCount)-1];
+    }
+
+    std::shared_ptr<const Ground> LoadGround(int hole)
+    {
+        static std::array<std::shared_ptr<const Ground>,HoleCount> loaded;
+        hole=std::clamp(hole,1,HoleCount);
+        auto& made=loaded[static_cast<size_t>(hole-1)];
         if(made)return made;
         SceneModel m;
-        if(!LoadScene(L"COURSE",m))return nullptr;
+        const std::wstring name=L"HOLE"+std::to_wstring(hole);
+        if(!LoadScene(name.c_str(),m))return nullptr;
         auto g=std::make_shared<Ground>();
+        g->hole=hole;
+        g->par=HolePar(hole);
         constexpr float M=1/12.5f;
         const size_t n=m.vertices.size()/8;
         g->points.resize(n);
@@ -214,7 +256,7 @@ namespace MikuMikuDesktopPerch::Golf
             for(std::uint32_t i=mt.first;i+2<mt.first+mt.count;i+=3)
             {
                 if(lie==Lie::Green)g->greens.push_back(static_cast<int>(g->tris.size()));
-                g->tris.push_back({static_cast<int>(m.indices[i]),static_cast<int>(m.indices[i+1]),static_cast<int>(m.indices[i+2]),lie});
+                g->tris.push_back({static_cast<int>(m.indices[i]),static_cast<int>(m.indices[i+1]),static_cast<int>(m.indices[i+2]),lie,mt.kind==7});
                 for(int k=0;k<3;++k)
                 {
                     const V3& p=g->points[m.indices[i+k]];
@@ -273,15 +315,70 @@ namespace MikuMikuDesktopPerch::Golf
             g->inLo[1]=std::min(g->inLo[1],g->z0+j);g->inHi[1]=std::max(g->inHi[1],g->z0+j+1);
             todo.push_back({i+1,j});todo.push_back({i-1,j});todo.push_back({i,j+1});todo.push_back({i,j-1});
         }
+        // The fairway's way: the fairway's middle at each distance from the tee (in steps), from
+        // the tee to the green's middle.
+        {
+            constexpr float Step=15;
+            std::vector<V3> sums;std::vector<int> counts;
+            V3 green;int greenCount=0;
+            for(const auto& t:g->tris)
+            {
+                const V3 c=(g->points[t.a]+g->points[t.b]+g->points[t.c])*(1.0f/3);
+                if(t.lie==Lie::Green){green=green+c;++greenCount;continue;}
+                if(t.lie!=Lie::Fairway)continue;
+                const size_t k=static_cast<size_t>(Flat(c,g->tee)/Step);
+                if(k>=sums.size()){sums.resize(k+1);counts.resize(k+1,0);}
+                sums[k]=sums[k]+c;++counts[k];
+            }
+            if(greenCount)green=green*(1.0f/greenCount);
+            g->route.push_back(g->tee);
+            const float toGreen=Flat(g->tee,green);
+            for(size_t k=0;k<sums.size();++k)
+            {
+                if(counts[k]<3)continue;
+                const V3 c=sums[k]*(1.0f/counts[k]);
+                // Not past the green, and onward from the last point.
+                if(Flat(c,g->tee)>toGreen-10||Flat(c,g->tee)<Flat(g->route.back(),g->tee)+Step*0.5f)continue;
+                g->route.push_back(c);
+            }
+            if(greenCount)g->route.push_back(green);
+        }
         made=g;
         return made;
     }
 
-    Course::Course(std::shared_ptr<const Ground> g,std::uint32_t s):ground(std::move(g)),seed(s)
+    void SetWet(bool wet){wetCourse=wet;}
+
+    Course::Course(std::shared_ptr<const Ground> g,std::uint32_t s,bool hard):ground(std::move(g)),seed(s)
     {
         pin=ground->cup;
         if(seed!=0&&!ground->greens.empty())
         {
+            // A hard pin: near the edge (green 1.6 m round it, not all of it 4 m out).
+            bool placed=false;
+            if(hard)
+            {
+                std::mt19937 r(seed*2246822519u+5u);
+                std::uniform_real_distribution<float> u(0,1);
+                for(int tries=0;tries<1500;++tries)
+                {
+                    const auto& t=ground->tris[static_cast<size_t>(ground->greens[std::min(ground->greens.size()-1,static_cast<size_t>(u(r)*ground->greens.size()))])];
+                    float a=u(r),b=u(r);
+                    if(a+b>1){a=1-a;b=1-b;}
+                    const V3& p0=ground->points[t.a];
+                    const V3 q=p0+(ground->points[t.b]-p0)*a+(ground->points[t.c]-p0)*b;
+                    bool inside=true,edge=false;
+                    for(int k=0;k<8;++k)
+                    {
+                        const float an=k*Pi/4;
+                        if(LieAt(q.x+1.6f*std::cos(an),q.z+1.6f*std::sin(an))!=Lie::Green)inside=false;
+                        if(LieAt(q.x+4*std::cos(an),q.z+4*std::sin(an))!=Lie::Green)edge=true;
+                    }
+                    if(inside&&edge){pin=q;placed=true;break;}
+                }
+            }
+            if(!placed)
+            {
             // Somewhere on the green, a few metres in from its edge and away from the model's cup.
             std::mt19937 r(seed*2654435761u+17u);
             std::uniform_real_distribution<float> u(0,1);
@@ -300,6 +397,7 @@ namespace MikuMikuDesktopPerch::Golf
                 }
                 if(fits){pin=q;break;}
             }
+            }
         }
         pin.y=Height(pin.x,pin.z);
         static std::weak_ptr<const Ground> plantedOn;
@@ -309,6 +407,93 @@ namespace MikuMikuDesktopPerch::Golf
     }
 
     V3 Course::Tee() const {return {ground->tee.x,Height(ground->tee.x,ground->tee.z),ground->tee.z};}
+    int Course::Hole() const {return ground->hole;}
+    bool Course::Hard(float x,float z) const {return ground->Hard(x,z);}
+    int Course::Par() const {return ground->par;}
+
+    namespace
+    {
+        // The way with its last stretch to the pin instead of the green's middle.
+        std::vector<V3> WayTo(const std::vector<V3>& route,V3 pin)
+        {
+            std::vector<V3> w;
+            for(size_t i=0;i+1<route.size();++i)
+                if(i==0||Flat(route[i],pin)>20)w.push_back(route[i]);
+            w.push_back(pin);
+            return w;
+        }
+    }
+    float Course::Length() const
+    {
+        const auto w=WayTo(ground->route,pin);
+        float L=0;
+        for(size_t i=0;i+1<w.size();++i)L+=Flat(w[i],w[i+1]);
+        return L;
+    }
+    V3 Course::RouteAt(float metres) const
+    {
+        const auto w=WayTo(ground->route,pin);
+        for(size_t i=0;i+1<w.size();++i)
+        {
+            const float seg=Flat(w[i],w[i+1]);
+            if(metres<=seg||i+2==w.size())
+            {
+                const float t=seg>0?std::clamp(metres/seg,0.0f,1.0f):0;
+                V3 p=w[i]+(w[i+1]-w[i])*t;
+                p.y=Height(p.x,p.z);
+                return p;
+            }
+            metres-=seg;
+        }
+        return pin;
+    }
+    V3 Course::AimPoint(V3 p,float ahead) const
+    {
+        // Where p is beside the way (the nearest point on it), and so far on from there.
+        const auto w=WayTo(ground->route,pin);
+        float best=1e9f,along=0,walked=0;
+        for(size_t i=0;i+1<w.size();++i)
+        {
+            const V3 a=w[i],b=w[i+1];
+            const float seg=Flat(a,b);
+            const float t=seg>0?std::clamp(((p.x-a.x)*(b.x-a.x)+(p.z-a.z)*(b.z-a.z))/(seg*seg),0.0f,1.0f):0;
+            const V3 q=a+(b-a)*t;
+            const float dist=Flat(p,q);
+            if(dist<best){best=dist;along=walked+t*seg;}
+            walked+=seg;
+        }
+        if(Flat(p,pin)<=ahead)return pin;
+        return RouteAt(along+ahead);
+    }
+    float Course::PlayDistance(V3 p) const
+    {
+        const float straight=Flat(p,pin);
+        // Straight when the line stays in bounds.
+        const int n=static_cast<int>(straight/6);
+        bool clear=true;
+        for(int i=1;i<n&&clear;++i)
+        {
+            const V3 q=p+(pin-p)*(static_cast<float>(i)/n);
+            if(!ground->In(q.x,q.z))clear=false;
+        }
+        if(clear)return straight;
+        // Otherwise to the way, then along it.
+        const auto w=WayTo(ground->route,pin);
+        float best=1e9f,result=straight;
+        float walked=0;
+        std::vector<float> from(w.size(),0);
+        for(size_t i=w.size()-1;i-->0;)from[i]=from[i+1]+Flat(w[i],w[i+1]);
+        for(size_t i=0;i+1<w.size();++i)
+        {
+            const V3 a=w[i],b=w[i+1];
+            const float seg=Flat(a,b);
+            const float t=seg>0?std::clamp(((p.x-a.x)*(b.x-a.x)+(p.z-a.z)*(b.z-a.z))/(seg*seg),0.0f,1.0f):0;
+            const float dist=Flat(p,a+(b-a)*t);
+            if(dist<best){best=dist;result=dist+from[i+1]+(1-t)*seg;}
+            walked+=seg;
+        }
+        return std::max(straight,result);
+    }
     V3 Course::ModelCup() const {return ground->cup;}
     V3 Course::Clubhouse() const {return ground->clubhouse;}
     V3 Course::GreenMiddle() const
@@ -322,12 +507,6 @@ namespace MikuMikuDesktopPerch::Golf
     float Course::MaxX() const {return ground->inHi[0]+4;}
     float Course::MinZ() const {return ground->inLo[1]-4;}
     float Course::MaxZ() const {return ground->inHi[1]+4;}
-    float Course::LineX(float z) const
-    {
-        const V3 t=ground->tee;
-        const float span=pin.z-t.z;
-        return std::abs(span)<1e-3f?t.x:t.x+(pin.x-t.x)*std::clamp((z-t.z)/span,0.0f,1.0f);
-    }
 
     // The trees' shapes, measured once on the five models (TREE1-5): the leaves' middle height,
     // their reach across and up and down, the trunk's radius at the ground (metres).
@@ -513,41 +692,122 @@ namespace MikuMikuDesktopPerch::Golf
         return std::hypot(l.x,l.z);
     }
 
-    V3 FlatLanding(int club,float spotX,float spotY)
+    namespace
     {
-        if(club==Putter)return {};
-        // As Fly launches it, flown over level ground until it comes back down to it.
-        const Club& c=ClubOf(club);
-        float launch=c.loft*(club<=1?0.95f:0.86f)*Deg-spotY*4*Deg;
-        const float speed=c.speed*SpotSpeed(spotY);
-        const float back=c.spin*SpotSpin(spotY);
-        const V3 d{0,0,1},up{0,1,0};
-        V3 p,v=d*(std::cos(launch)*speed)+up*(std::sin(launch)*speed);
-        V3 spin=Normalized(Cross(d,up))*(back*2*Pi/60)+up*(-spotX*1800*2*Pi/60);
-        constexpr float step=1/120.0f;
-        for(int i=0;i<12000;++i)
+        // The softer strike flies a little higher.
+        float SoftLaunch(float u){return u<0.6f?(0.6f-u)*6:0;}
+
+        // Flown over level ground at u of the club's full speed until it comes back down to it.
+        V3 FlatLandingAt(int club,float spotX,float spotY,float u)
         {
-            const float va=Length(v);
-            V3 a{0,-G,0};
-            const float s=BallRadius*Length(spin)/va;
-            const float cl=std::min(0.25f,0.9f*s+0.05f),cd=0.21f+0.25f*std::min(s,0.4f);
-            a=a-v*(AirK*cd*va);
-            if(Length(spin)>1)a=a+Normalized(Cross(spin,v))*(AirK*cl*va*va);
-            spin=spin*std::exp(-step/14);
-            v=v+a*step;
-            const V3 before=p;
-            p=p+v*step;
-            if(p.y<0&&v.y<0)
+            if(club==Putter)return {};
+            // As Fly launches it.
+            const Club& c=ClubOf(club);
+            float launch=(c.loft*(club<=1?0.95f:0.86f)+SoftLaunch(u)-spotY*4)*Deg;
+            const float speed=c.speed*u*SpotSpeed(spotY);
+            const float back=c.spin*(0.55f+0.45f*std::min(u,1.0f))*SpotSpin(spotY);
+            const V3 d{0,0,1},up{0,1,0};
+            V3 p,v=d*(std::cos(launch)*speed)+up*(std::sin(launch)*speed);
+            V3 spin=Normalized(Cross(d,up))*(back*2*Pi/60)+up*(-spotX*1800*2*Pi/60);
+            constexpr float step=1/120.0f;
+            for(int i=0;i<12000;++i)
             {
-                const float t=before.y/(before.y-p.y);
-                return {before.x+(p.x-before.x)*t,0,before.z+(p.z-before.z)*t};
+                const float va=std::max(Length(v),1e-3f);
+                V3 a{0,-G,0};
+                const float s=BallRadius*Length(spin)/va;
+                const float cl=std::min(0.25f,0.9f*s+0.05f),cd=0.21f+0.25f*std::min(s,0.4f);
+                a=a-v*(AirK*cd*va);
+                if(Length(spin)>1)a=a+Normalized(Cross(spin,v))*(AirK*cl*va*va);
+                spin=spin*std::exp(-step/14);
+                v=v+a*step;
+                const V3 before=p;
+                p=p+v*step;
+                if(p.y<0&&v.y<0)
+                {
+                    const float t=before.y/(before.y-p.y);
+                    return {before.x+(p.x-before.x)*t,0,before.z+(p.z-before.z)*t};
+                }
+            }
+            return {p.x,0,p.z};
+        }
+
+        // Level carries by speed share (0 to 1.3 by 0.05) for spots -1 to 1 by 0.25, per club:
+        // made once (a static, so safe from her thinking thread).
+        constexpr int Spots=9,Shares=27;
+        struct CarryTable {float carry[ClubCount][Spots][Shares];};
+        const CarryTable& Carries()
+        {
+            static const CarryTable table=[]{
+                CarryTable t{};
+                for(int c=0;c<ClubCount;++c)
+                    for(int i=0;i<Spots;++i)
+                        for(int k=0;k<Shares;++k)
+                        {
+                            const V3 l=c==Putter?V3{}:FlatLandingAt(c,0,-1+0.25f*i,0.05f*k);
+                            t.carry[c][i][k]=std::hypot(l.x,l.z);
+                        }
+                return t;
+            }();
+            return table;
+        }
+    }
+
+    V3 FlatLanding(int club,float spotX,float spotY){return FlatLandingAt(club,spotX,spotY,1);}
+
+    float SpeedShare(int club,float power,float spotY)
+    {
+        if(club==Putter||club<0||club>=ClubCount)return power;
+        const auto& t=Carries();
+        const float fi=std::clamp((spotY+1)/0.25f,0.0f,static_cast<float>(Spots-1));
+        const int i0=std::min(static_cast<int>(fi),Spots-2);
+        const float fy=fi-i0;
+        auto carry=[&](int k){return t.carry[club][i0][k]*(1-fy)+t.carry[club][i0+1][k]*fy;};
+        const float want=std::max(0.0f,power)*carry(20);
+        for(int k=0;k+1<Shares;++k)
+        {
+            const float a=carry(k),b=carry(k+1);
+            if(want<=b||k+2==Shares)
+            {
+                const float f=b>a?(want-a)/(b-a):0;
+                return std::max(0.0f,0.05f*(k+f));
             }
         }
-        return {p.x,0,p.z};
+        return power;
+    }
+
+    float LaunchSpeed(const Shot& shot,Lie lie)
+    {
+        float speedK=1,spinK=1;
+        LieEffect(lie,shot.club,speedK,spinK);
+        const float power=std::max(0.0f,shot.power);
+        if(shot.club==Putter)return std::sqrt(2*TurfOf(Lie::Green).roll*G*(shot.range>0?shot.range:10.0f)*power)*(lie==Lie::Green?1.0f:1.08f);
+        return ClubOf(shot.club).speed*SpeedShare(shot.club,power,shot.spotY)*speedK*SpotSpeed(shot.spotY);
     }
 
     Flight Fly(const Course& course,V3 from,Lie lie,const Shot& shot,const Wind& wind,bool keepPath,float step)
     {
+        // The meteor: launched high whatever the club, as fast as carries it 1.2 times as far as
+        // the same shot plain would go (its roll counted).
+        if(shot.special==2&&shot.meteor<=0&&shot.club!=Putter)
+        {
+            Shot plain=shot;
+            plain.special=0;plain.spin=0;
+            const Flight pf=Fly(course,from,lie,plain,wind,false,step);
+            const float want=1.2f*std::max(pf.carry,Flat(from,pf.rest));
+            Shot m=shot;
+            float lo=0.2f,hi=3.0f;
+            for(int i=0;i<16;++i)
+            {
+                m.meteor=0.5f*(lo+hi);
+                m.spin=0;
+                const Flight t=Fly(course,from,lie,m,wind,false,step);
+                const float got=t.carry>0?t.carry:Flat(from,t.rest);
+                (got<want?lo:hi)=m.meteor;
+            }
+            m.meteor=0.5f*(lo+hi);
+            m.spin=shot.spin;
+            return Fly(course,from,lie,m,wind,keepPath,step);
+        }
         Flight f;
         const Club& club=ClubOf(shot.club);
         const V3 up{0,1,0},pin=course.Pin();
@@ -567,15 +827,19 @@ namespace MikuMikuDesktopPerch::Golf
         }
         else
         {
-            speed=club.speed*power*speedK;
+            const float u=SpeedShare(shot.club,power,shot.spotY);
+            speed=club.speed*u*speedK;
             // Over full power the strike suffers: higher, less control (the timing errs too).
             // The spot struck: below climbs and spins (and goes a little further), above flies
             // low and rolls; to one side the ball curves the other way.
             speed*=SpotSpeed(shot.spotY);
-            launch=(club.loft*(shot.club<=1?0.95f:0.86f)+(power<0.6f?(0.6f-power)*6:0)-shot.spotY*4)*Deg;
-            back=club.spin*(0.55f+0.45f*power)*spinK*SpotSpin(shot.spotY);
+            launch=(club.loft*(shot.club<=1?0.95f:0.86f)+SoftLaunch(u)-shot.spotY*4)*Deg;
+            back=club.spin*(0.55f+0.45f*std::min(u,1.0f))*spinK*SpotSpin(shot.spotY);
             side=shot.accuracy*2300*std::min(1.0f,speed/55)-shot.spotX*1800*std::min(1.0f,speed/40);
             aim+=shot.accuracy*3.5f*Deg;
+            // The boost goes a little further; the meteor much further, a little higher.
+            if(shot.special==1)speed*=1.12f;
+            else if(shot.special==2){speed*=shot.meteor;launch=std::max(launch,MeteorLaunch);}
         }
         const V3 d{std::sin(aim),0,std::cos(aim)};
         V3 v=d*(std::cos(launch)*speed)+up*(std::sin(launch)*speed);
@@ -583,6 +847,30 @@ namespace MikuMikuDesktopPerch::Golf
         const V3 w=WindVector(wind);
         bool rolling=launch==0,landed=false;
         V3 lastLand=p;
+        // The special spins: the back-spin shot stops dead at its third bounce and spins back
+        // a little; the top-spin shot runs on a little after it would stop.
+        int bounces=0;
+        bool spinDone=false;
+        auto spinBack=[&](Lie at){
+            spinDone=true;
+            const float mu=course.Hard(p.x,p.z)?0.05f:TurfOf(at).roll;
+            float back=1.5f+2.5f*power;
+            V3 way=d*-1.0f;
+            // A ball the light pillar brought down near the cup spins back toward it, only just
+            // past it (the pillar's own spin shot).
+            const float toPin=Flat(p,pin);
+            if(f.beamed&&toPin<6&&toPin>0.05f){way=V3{pin.x-p.x,0,pin.z-p.z}*(1/toPin);back=toPin+0.5f;}
+            v=way*std::sqrt(2*mu*G*back);
+            rolling=true;
+            f.spunAt=static_cast<int>(f.path.size());
+        };
+        auto runOn=[&](Lie at){
+            spinDone=true;
+            const float mu=course.Hard(p.x,p.z)?0.05f:TurfOf(at).roll,more=2+3*power;
+            v=d*std::sqrt(2*mu*G*more);
+            rolling=true;
+            f.spunAt=static_cast<int>(f.path.size());
+        };
         if(keepPath)f.path.push_back(p);
         const int steps=static_cast<int>(40/step);
         for(int i=0;i<steps;++i)
@@ -608,6 +896,20 @@ namespace MikuMikuDesktopPerch::Golf
                 p=p+v*step;
                 course.ThroughTrees(p,v,spin,step);
                 ground=course.Height(p.x,p.z);
+                // The light pillar draws a ball in the air down and in, like a strong suction: a
+                // slow ball drops into the cup, a fast one is pulled but carries on past.
+                {
+                    const float dx=p.x-pin.x,dz=p.z-pin.z,r2=dx*dx+dz*dz;
+                    constexpr float Beam=0.6f;
+                    if(r2<Beam*Beam&&p.y-ground>0.25f)
+                    {
+                        const float k=std::exp(-6*step);
+                        v.x=v.x*k-dx*45*step;
+                        v.z=v.z*k-dz*45*step;
+                        v.y-=70*step;
+                        if(!f.beamed){f.beamed=true;f.beamAt=static_cast<int>(f.path.size());}
+                    }
+                }
                 if(p.y-BallRadius<=ground)
                 {
                     const Lie at=course.LieAt(p.x,p.z);
@@ -617,9 +919,22 @@ namespace MikuMikuDesktopPerch::Golf
                     const V3 n=course.Normal(p.x,p.z);
                     const float vn=Dot(v,n);
                     p.y=ground+BallRadius;
+                    // The meteor stops where it comes down, slope or not (then spins, if it was
+                    // struck so).
+                    if(shot.special==2&&f.boomAt<0)
+                    {
+                        f.boomAt=static_cast<int>(f.path.size());
+                        v={};
+                        if(shot.spin==1)spinBack(at);
+                        else if(shot.spin==-1)runOn(at);
+                        else{f.rest=p;f.lie=at;if(keepPath)f.path.push_back(p);return f;}
+                        if(keepPath)f.path.push_back(p);
+                        continue;
+                    }
                     if(vn<0)
                     {
-                        const Turf g=TurfOf(at);
+                        // The cart path is hard: a high bounce, little slowed.
+                        const Turf g=course.Hard(p.x,p.z)?Turf{0.58f,0.10f,0.05f}:TurfOf(at);
                         const V3 along=v-n*vn;
                         if(-vn>1.3f)
                         {
@@ -629,8 +944,13 @@ namespace MikuMikuDesktopPerch::Golf
                             if(at!=Lie::Rough&&at!=Lie::Bunker)grab+=std::min(0.5f,Length(spin)*60/(2*Pi)/(at==Lie::Green?14000.0f:13000.0f));
                             v=along*(1-std::min(grab,0.95f))-n*(vn*g.bounce);
                             spin=spin*0.4f;
+                            if(shot.spin==1&&!spinDone&&++bounces>=3)spinBack(at);
                         }
-                        else{v=along;rolling=true;}
+                        else
+                        {
+                            v=along;rolling=true;
+                            if(shot.spin==1&&!spinDone)spinBack(at);
+                        }
                     }
                 }
                 else if(course.LieAt(p.x,p.z)!=Lie::Water)lastLand=p;
@@ -645,9 +965,10 @@ namespace MikuMikuDesktopPerch::Golf
                 const V3 n=course.Normal(p.x,p.z);
                 v=v-n*Dot(v,n);
                 const V3 slope=V3{0,-G,0}-n*(-G*n.y);
-                const float mu=TurfOf(at).roll*(at==Lie::Fairway&&course.LieAt(p.x,p.z)==Lie::Fairway?1.0f:1.0f);
+                const float mu=course.Hard(p.x,p.z)?0.05f:TurfOf(at).roll;
                 const float s=Length(v);
-                if(s<0.04f&&Length(slope)<mu*1.25f*G*n.y)
+                if(s<0.04f&&Length(slope)<mu*1.25f*G*n.y&&shot.spin==-1&&!spinDone)runOn(at);
+                else if(s<0.04f&&Length(slope)<mu*1.25f*G*n.y)
                 {
                     f.rest=p;f.lie=at;
                     if(keepPath)f.path.push_back(p);
@@ -666,7 +987,9 @@ namespace MikuMikuDesktopPerch::Golf
                 t=std::clamp(t,0.0f,1.0f);
                 const float cx=before.x+sx*t-pin.x,cz=before.z+sz*t-pin.z;
                 const float above=p.y-course.Height(p.x,p.z);
-                if(cx*cx+cz*cz<CupRadius*CupRadius*0.8f&&Length(v)<1.35f&&above<0.12f)
+                // (A ball the light pillar brought down goes in when it is not going on fast across.)
+                const bool dunk=f.beamed&&std::hypot(v.x,v.z)<2.5f;
+                if(cx*cx+cz*cz<CupRadius*CupRadius*(dunk?1.6f:0.8f)&&(Length(v)<1.35f||dunk)&&above<0.12f)
                 {
                     f.holed=true;
                     f.rest=pin;
@@ -709,8 +1032,9 @@ namespace MikuMikuDesktopPerch::Golf
 
     float StrokesLeft(const Course& course,V3 p,Lie lie)
     {
-        const float d=Flat(p,course.Pin());
-        if(lie==Lie::Green)return d<0.3f?1.0f:1.0f+0.95f*(1-std::exp(-d/4))+d/80;
+        const float straight=Flat(p,course.Pin());
+        if(lie==Lie::Green)return straight<0.3f?1.0f:1.0f+0.95f*(1-std::exp(-straight/4))+straight/80;
+        const float d=course.PlayDistance(p);
         float s=2.25f+d/165;
         if(d<18)s=std::min(s,2.2f+d/60);
         if(lie==Lie::Rough)s+=0.25f;
@@ -779,13 +1103,23 @@ namespace MikuMikuDesktopPerch::Golf
             const float reach=Flat(from,f.rest);
             if(reach<d*0.45f&&club>Driver+1)continue;
             if(f.carry>d*1.6f&&club<Wedge)continue;
-            for(float a=-12;a<=12.01f;a+=2.0f)
-                for(float pw=0.35f;pw<=1.001f;pw+=0.065f)
-                {
-                    Shot s;s.club=club;s.aim=toward+a*Deg;s.power=pw;
-                    const float sc=score(s,{{0.0f,2.0f},{0.35f,1.0f},{-0.35f,1.0f}},1/30.0f);
-                    if(sc<bestScore){bestScore=sc;best=s;}
-                }
+            // Round the pin, and (on a bending hole) round the fairway's way as far as it carries.
+            const V3 way=course.AimPoint(from,std::max(30.0f,reach));
+            const float alongWay=std::atan2(way.x-from.x,way.z-from.z);
+            float turn=alongWay-toward;
+            while(turn>Pi)turn-=2*Pi;
+            while(turn<-Pi)turn+=2*Pi;
+            for(const float centre:{toward,std::abs(turn)>8*Deg?alongWay:1e9f})
+            {
+                if(centre>1e8f)continue;
+                for(float a=-12;a<=12.01f;a+=2.0f)
+                    for(float pw=0.35f;pw<=1.001f;pw+=0.065f)
+                    {
+                        Shot s;s.club=club;s.aim=centre+a*Deg;s.power=pw;
+                        const float sc=score(s,{{0.0f,2.0f},{0.35f,1.0f},{-0.35f,1.0f}},1/30.0f);
+                        if(sc<bestScore){bestScore=sc;best=s;}
+                    }
+            }
         }
         return best;
     }
@@ -853,6 +1187,24 @@ namespace MikuMikuDesktopPerch::Golf
                 swprintf_s(line,L"  7I struck %-6ls flat carry %5.1f m; here carry %5.1f m, total %5.1f m, apex %4.1f m, across %+5.1f m\n",name,FlatCarry(3,sx,sy),f.carry,Flat(c.Tee(),f.rest),top,f.rest.x-c.Tee().x);
                 out+=line;
             }
+            // The spin and special shots (7 iron and driver, full power).
+            for(int club:{3,0})
+                for(const auto& [spin,special,name]:{std::tuple<int,int,const wchar_t*>{0,0,L"plain"},{1,0,L"backspin"},{-1,0,L"topspin"},{0,1,L"boost"},{0,2,L"meteor"},{1,2,L"meteor+back"},{-1,2,L"meteor+top"}})
+                {
+                    Shot s;s.club=club;s.power=1;s.aim=0;s.spin=spin;s.special=special;s.spotY=spin==1?-1.0f:spin==-1?1.0f:0.0f;
+                    const Flight f=Fly(c,c.Tee(),Lie::Tee,s,{},true);
+                    swprintf_s(line,L"  %-4ls %-12ls carry %5.1f m, total %5.1f m, spun at %d, boom at %d of %d\n",ClubOf(club).en,name,f.carry,Flat(c.Tee(),f.rest),f.spunAt,f.boomAt,static_cast<int>(f.path.size()));
+                    out+=line;
+                }
+            // Power is a share of the level carry: what the gauge promises against what flies.
+            for(int club:{6,3,0})
+                for(float pw:{0.3f,0.5f,0.8f})
+                {
+                    Shot s;s.club=club;s.power=pw;s.aim=0;
+                    const Flight f=Fly(c,c.Tee(),Lie::Tee,s,{},false);
+                    swprintf_s(line,L"  %-4ls power %.1f: gauge %5.1f m, carry here %5.1f m (speed share %.2f)\n",ClubOf(club).en,pw,pw*FlatCarry(club),f.carry,SpeedShare(club,pw));
+                    out+=line;
+                }
             // Putts on level-ish green: the range.
             for(float r:{3.0f,10.0f,30.0f})
             {
@@ -868,7 +1220,10 @@ namespace MikuMikuDesktopPerch::Golf
         double thinking=0;
         for(int h=0;h<holes;++h)
         {
-            const Course c(ground,h==0?0:seed*7919u+static_cast<std::uint32_t>(h));
+            // The nine holes in turn (the model's own cups first time round, then pins moved).
+            const auto holeGround=LoadGround(1+h%HoleCount);
+            if(!holeGround){++wrong;out+=L"hole "+std::to_wstring(1+h%HoleCount)+L" did not load WRONG\n";continue;}
+            const Course c(holeGround,h<HoleCount?0:seed*7919u+static_cast<std::uint32_t>(h));
             const int par=c.Par();
             std::wstring problem;
             if(c.LieAt(c.Tee().x,c.Tee().z)!=Lie::Tee)problem+=L" tee not tee;";
@@ -879,7 +1234,7 @@ namespace MikuMikuDesktopPerch::Golf
             int n=0;
             bool holed=false;
             std::wstring way;
-            while(n<12&&!holed)
+            while(n<14&&!holed)
             {
                 LARGE_INTEGER t0,t1,rate;
                 QueryPerformanceCounter(&t0);
@@ -899,7 +1254,7 @@ namespace MikuMikuDesktopPerch::Golf
                 swprintf_s(line,L"%ls %.1fm",LieName(lie),Flat(ball,c.Pin()));
                 way+=line;
             }
-            if(!holed)problem+=L" not holed in 12;";
+            if(!holed)problem+=L" not holed in 14;";
             if(!problem.empty())++wrong;
             strokes+=n;pars+=par;
             swprintf_s(line,L"hole %d (seed %u) par %d, %.0f m, pin %.1f,%.1f: %d strokes:%ls%ls\n",h+1,c.Seed(),par,c.Length(),c.Pin().x,c.Pin().z,n,way.c_str(),problem.empty()?L"":(L" WRONG"+problem).c_str());

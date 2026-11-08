@@ -105,11 +105,12 @@ namespace MikuMikuDesktopPerch
 
     WordsBubble::~WordsBubble()=default;
 
-    void WordsBubble::Draw(Gdiplus::Graphics& g,float x,float y,float tailY,const std::wstring& shown) const
+    void WordsBubble::Draw(Gdiplus::Graphics& g,float x,float y,float tailY,const std::wstring& shown,bool tailRight) const
     {
         using namespace Gdiplus;
         const Color paper(240,255,252,246),line(255,214,170,120);
-        const PointF tail[3]={PointF(x+2*s,tailY-9*s),PointF(x-16*s,tailY+4*s),PointF(x+2*s,tailY+9*s)};
+        const float e=tailRight?x+width:x,o=tailRight?-1.0f:1.0f;
+        const PointF tail[3]={PointF(e+o*2*s,tailY-9*s),PointF(e-o*16*s,tailY+4*s),PointF(e+o*2*s,tailY+9*s)};
         SolidBrush fill(paper);
         Pen edge(line,1.5f*s);
         g.FillPolygon(&fill,tail,3);

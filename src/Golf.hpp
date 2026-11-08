@@ -65,7 +65,12 @@ namespace MikuMikuDesktopPerch::Golf
     // The course model's ground, for the ball: its surface triangles (metres) and what each is,
     // found quickly by a grid; the tee, the model's own cup, the clubhouse's place.
     struct Ground;
-    std::shared_ptr<const Ground> LoadGround();   // made once from the COURSE resource (null: none)
+    // The course's holes (resources HOLE1-9), each its own model with the tee at the origin.
+    constexpr int HoleCount=9;
+    std::shared_ptr<const Ground> LoadGround(int hole=1);   // made once per hole (null: none)
+    // A rainy day: the ground takes the ball softer (it bounces less and rolls shorter).
+    void SetWet(bool wet);
+    int HolePar(int hole);   // 1-9
 
     // A tree's shape (metres, at its own size): its leaves' middle height, reach across, half
     // their height; the trunk's radius.
@@ -77,23 +82,32 @@ namespace MikuMikuDesktopPerch::Golf
     class Course
     {
     public:
-        Course(std::shared_ptr<const Ground> ground,std::uint32_t seed);
+        // hard: the pin near the green's edge (a hard-pin day).
+        Course(std::shared_ptr<const Ground> ground,std::uint32_t seed,bool hard=false);
         float Height(float x,float z) const;
         V3 Normal(float x,float z) const;
         Lie LieAt(float x,float z) const;
+        bool Hard(float x,float z) const;   // the cart path (it bounces high and rolls on)
         V3 Tee() const;
         V3 Pin() const {return pin;}
         V3 ModelCup() const;            // the model's own cup (filled in when the pin is elsewhere)
         V3 Clubhouse() const;           // where the clubhouse stands (its ground's middle)
         V3 GreenMiddle() const;
-        int Par() const {return 3;}
-        float Length() const {return Flat(Tee(),pin);}
+        int Hole() const;               // 1-9
+        int Par() const;
+        float Length() const;           // along the fairway's way to the pin, metres
+        // The fairway's way from the tee to the green: the point so far along it, and where to aim
+        // from p (about so far down the way from where p is beside it; the pin when it is nearer).
+        V3 RouteAt(float metres) const;
+        V3 AimPoint(V3 p,float ahead) const;
+        // How far the pin is to play from p: straight, unless that line leaves the course; then
+        // round by the fairway's way.
+        float PlayDistance(V3 p) const;
         // Bounds of play (beyond them, and on the clubhouse's ground, out of bounds), metres.
         float MinX() const;
         float MaxX() const;
         float MinZ() const;
         float MaxZ() const;
-        float LineX(float z) const;     // the straight line from the tee to the pin, across at z
         // The wood round the course: the trees out of bounds (where, turned, how big, which of
         // the five), the same for every hole.
         struct Tree {float x,y,z,yaw,scale;int kind;};
@@ -132,6 +146,11 @@ namespace MikuMikuDesktopPerch::Golf
         // Where on the ball the club meets it (-1 to 1): +x its right (it curves left), +y its
         // top (lower, less spin, rolls further); below, it climbs, flies a little further, stops.
         float spotX=0,spotY=0;
+        // Special strikes: spin 1 the back-spin shot (it stops dead at the third bounce and
+        // spins back), -1 the top-spin shot (it runs on a little after it would stop); special
+        // 1 the boost (a little further), 2 the meteor (much further, and it stops where it lands).
+        int spin=0,special=0;
+        float meteor=0;     // (the meteor's speed, as Fly works it out: 0 not yet)
     };
 
     // The ball's way from a lie, struck so: where it is each 1/60 s, where it stops, how it ended.
@@ -143,6 +162,10 @@ namespace MikuMikuDesktopPerch::Golf
         bool holed=false,water=false,out=false;
         float carry=0;         // across the ground to where it first came down
         int landing=0;         // path index where it first came down
+        bool beamed=false;     // drawn in by the light pillar
+        int spunAt=-1;         // path index where a spin shot took hold (stopped and spun back, or ran on)
+        int boomAt=-1;         // path index where a meteor shot came down
+        int beamAt=0;          // path index where the beam took it
         V3 drop;               // in the water: the last place on land it crossed (dropped there)
     };
     // keepPath false: only where it ends (quicker; her thinking). step: seconds a step.
@@ -154,7 +177,12 @@ namespace MikuMikuDesktopPerch::Golf
     float PutterRange(float distance,float rise=0);
     // A club's carry at full power from a good lie on level ground with no wind (the gauge's
     // numbers), struck at that spot.
+    // How fast the ball leaves the face (m/s), as Fly launches it (her swing's head is as fast there).
+    float LaunchSpeed(const Shot& shot,Lie lie);
     float FlatCarry(int club,float spotX=0,float spotY=0);
+    // The share of the club's full speed that power sends the ball with: power is a share of the
+    // full carry on level ground (half power, half as far), not of the speed.
+    float SpeedShare(int club,float power,float spotY=0);
     // Where it comes down on level ground with no wind, struck square at full power: x across
     // (aimed along +z), z ahead (metres).
     V3 FlatLanding(int club,float spotX=0,float spotY=0);
