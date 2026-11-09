@@ -17,6 +17,7 @@ Win32 + Direct3D 12 + DirectComposition で動作し、モデルが描かれて�
 
 - Windows 10/11（64bit）
 - DirectX 12に対応したGPU
+- 最新のグラフィックドライバ。表示が崩れる、起動しない、落ちるといった場合は、まずGPUのメーカー（NVIDIA・AMD・Intel）のサイトから最新のドライバを入れてください
 - Microsoft Visual C++ 再頒布可能パッケージ（Visual Studio 2015〜2022以降、x64）。起動時に `MSVCP140.dll` や `VCRUNTIME140.dll` が見つからないと表示される場合は、[Microsoftのページ](https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist)から `vc_redist.x64.exe` をダウンロードしてインストールしてください。Visual Studioが入っていても、C++のワークロードを入れていない環境では必要です
 
 ## ビルド

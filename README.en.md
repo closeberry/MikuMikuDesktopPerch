@@ -17,6 +17,7 @@ This software includes neither models nor motions (VMD). Prepare the models and 
 
 - Windows 10/11 (64-bit)
 - A GPU that supports DirectX 12
+- An up-to-date graphics driver. If the display looks broken, the app does not start, or it crashes, first install the latest driver from your GPU maker's site (NVIDIA, AMD or Intel)
 - Microsoft Visual C++ Redistributable (Visual Studio 2015–2022 or later, x64). If it says `MSVCP140.dll` or `VCRUNTIME140.dll` cannot be found when starting, download and install `vc_redist.x64.exe` from [Microsoft's page](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). It is needed even with Visual Studio installed, if the C++ workload is not
 
 ## Building
