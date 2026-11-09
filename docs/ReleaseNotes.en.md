@@ -2,6 +2,21 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.1
+
+### New
+
+- **Page One**: "Mini games" → "Play Page One" in the right-click menu lets you play Page One, a traditional card game, against the character. Play a card of the same suit or rank as the top of the pile; the first to play out their hand wins the hand, and the first to 150 points wins the game
+  - A 2 makes the other draw two (answered with a 2 of your own), J skips, A reverses, an 8 names the suit, and the joker names the suit and makes the other draw four
+  - Call "Page one!" as you play down to your last card; forget, get caught, and you draw two
+  - Tab shows the rules in the game; the design (in Japanese): docs/PageOne.md
+- **Mahjong solitaire**: "Start over" (R) plays the same deal again from the start, also from the end screen
+- Auto-update downloads now try up to three times, waiting a little, when GitHub's servers are busy (502, 503, 504)
+
+### Fixed
+
+- Chess could be opened while a gin rummy game was going on
+
 ## 1.7.0
 
 ### New
