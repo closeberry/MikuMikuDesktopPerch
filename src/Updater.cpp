@@ -51,9 +51,10 @@ namespace MikuMikuDesktopPerch
         }
 
         // GET over HTTPS from GitHub (github.com and api.github.com; redirects to GitHub's
-        // download hosts are followed), at most limit bytes.
-        std::wstring HttpsGet(const std::wstring& address,const wchar_t* accept,size_t limit,std::string& body)
+        // download hosts are followed), at most limit bytes; status: the HTTP status (0: none came).
+        std::wstring HttpsGetOnce(const std::wstring& address,const wchar_t* accept,size_t limit,std::string& body,DWORD& status)
         {
+            status=0;
             Url url;
             if(!Crack(address,url)||!url.secure||(url.host!=L"github.com"&&url.host!=L"api.github.com"))return T(L"更新の確認先が正しくありません。",L"The update address is not valid.");
             HINTERNET session=WinHttpOpen((L"MikuMikuDesktopPerch/"+CurrentVersion()).c_str(),WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
@@ -70,7 +71,7 @@ namespace MikuMikuDesktopPerch
                 error=T(L"GitHubに接続できませんでした。",L"Could not connect to GitHub.");
             else
             {
-                DWORD status=0,size=sizeof(status);
+                DWORD size=sizeof(status);
                 WinHttpQueryHeaders(request,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&size,WINHTTP_NO_HEADER_INDEX);
                 if(status!=200)error=Fmt(T(L"GitHubから受け取れませんでした（{0}）。",L"Could not get it from GitHub ({0})."),{std::to_wstring(status)});
                 for(DWORD available=0;error.empty()&&WinHttpQueryDataAvailable(request,&available)&&available>0;)
@@ -86,6 +87,24 @@ namespace MikuMikuDesktopPerch
             if(request)WinHttpCloseHandle(request);
             if(connection)WinHttpCloseHandle(connection);
             WinHttpCloseHandle(session);
+            return error;
+        }
+
+        // HttpsGetOnce, tried again while GitHub's gateway is busy (502, 503, 504: under load it
+        // times out now and then), three tries in all, a few seconds apart.
+        std::wstring HttpsGet(const std::wstring& address,const wchar_t* accept,size_t limit,std::string& body)
+        {
+            constexpr int Tries=3;
+            constexpr DWORD Wait[Tries-1]={3000,6000};
+            std::wstring error;
+            for(int i=0;i<Tries;++i)
+            {
+                body.clear();
+                DWORD status=0;
+                error=HttpsGetOnce(address,accept,limit,body,status);
+                if(error.empty()||(status!=502&&status!=503&&status!=504))break;
+                if(i+1<Tries)Sleep(Wait[i]);
+            }
             return error;
         }
 
