@@ -132,7 +132,7 @@ namespace MikuMikuDesktopPerch
         // above toward the point, in front of the chest (the hand flat, palm down, no leaning),
         // as when a tile is warped by a touch. A reach under way is replaced. False when it
         // cannot now.
-        bool Reach(int side,const DirectX::XMFLOAT3& fromHead,double seconds,bool tap=false);
+        bool Reach(int side,const DirectX::XMFLOAT3& fromHead,double seconds,bool tap=false,bool cast=false);
         // Hold something on a table (the hover hockey mallet, docs/HoverHockey.md): the wrist on side
         // kept at wrist (model space) every frame, palm down and the fingers round a grip, the
         // body bent forward (18 degrees, up to 35 toward a point far off), over whatever else the arm does. It
@@ -397,6 +397,7 @@ namespace MikuMikuDesktopPerch
         int reactionSide=0;
         DirectX::XMFLOAT3 reachOffset{};            // Reach's point, from the head
         bool reachTap=false;                        // Reach: only a fingertip's touch toward it
+        bool reachCast=false;                       // Reach: the open palm turned toward it (casting a spell)
         bool reactionSlow=false;                    // the reaction eases in and out slowly (EmoteSeated)
         bool chairGrip=false;                       // SetChairGrip
         float chairGripAmount=0;

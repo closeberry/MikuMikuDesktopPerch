@@ -991,7 +991,7 @@ namespace MikuMikuDesktopPerch
         return true;
     }
 
-    bool GeneratedMotion::Reach(int side,const XMFLOAT3& fromHead,double seconds,bool tap)
+    bool GeneratedMotion::Reach(int side,const XMFLOAT3& fromHead,double seconds,bool tap,bool cast)
     {
         if(overrides.empty()||(activity!=Activity::Idle&&activity!=Activity::Sit))return false;
         if(reaction!=Gesture::None&&reaction!=Gesture::Reach)return false;
@@ -999,6 +999,7 @@ namespace MikuMikuDesktopPerch
         reactionSide=side==0?0:1;
         reachOffset=fromHead;
         reachTap=tap;
+        reachCast=cast&&!tap;
         reactionTime=0;
         reactionLength=seconds;
         reactionWeight=0;
@@ -1190,6 +1191,16 @@ namespace MikuMikuDesktopPerch
                 // The hand flat and relaxed, palm down, for the pat.
                 AimHand(g,s,XMVectorSet(-out*0.15f,-0.3f,-1,0),XMVectorSet(0,-1,0,0));
                 CurlFingers(g,s,{0.12f,0.15f,0.2f,0.25f});
+            }
+            else if(reachCast)
+            {
+                // The hand open, its palm turned to the front (toward the point, only a little
+                // down), the fingers up: a spell cast at it.
+                const XMVECTOR way=XMVector3Normalize(XMVectorMultiply(XMVectorSubtract(target,shoulder),XMVectorSet(1,0.3f,1,0)));
+                const XMVECTOR up=XMVectorSet(-out*0.15f,1,0,0);
+                const XMVECTOR fingers=XMVector3Normalize(XMVectorSubtract(up,XMVectorScale(way,XMVectorGetX(XMVector3Dot(up,way)))));
+                AimHand(g,s,fingers,way);
+                CurlFingers(g,s,{0.05f,0.06f,0.08f,0.1f});
             }
             else
             {

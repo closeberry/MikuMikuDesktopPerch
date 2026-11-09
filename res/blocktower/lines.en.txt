@@ -1,0 +1,114 @@
+# English drafts of the block tower's lines (plain speech, anyone's).
+# One a line; a "[scene]" line begins each scene's lines. The scene names are used by the code:
+# keep them (and the same number of lines as lines.txt). Said again in her own way by the LLM.
+# "They" is the owner of this computer.
+
+[始まり] The game begins (taking wooden blocks out of a tower by magic and laying them on top; whoever brings it down loses)
+Block tower, let's go!
+Whoever knocks it down loses.
+Time to show off my magic.
+The trick is to go slowly.
+I won't lose!
+Let's build it up high.
+I wonder who'll knock it over.
+Here we go.
+
+[考える] She thinks which block to take on her turn (now and then; to herself)
+Hmm... which one will come out?
+Let me think...
+This one looks loose.
+Hmm... which one?
+I'd better avoid the heavy ones.
+Careful, careful...
+This one... no, maybe that one.
+I have to choose well.
+
+[抜く] Her magic starts drawing a block out (now and then)
+I'll take this one.
+Here goes... gently.
+Slowly, with magic...
+Right, this one.
+Please don't move...
+Focus, focus.
+Quietly now...
+Easy does it.
+
+[危ない] The tower sways hard while she draws a block out
+Whoa, it's swaying!
+Wait, wait!
+That's close!
+Don't fall...!
+Eek!
+Please hold on!
+That gave me a scare...
+Calm down, calm down...
+
+[抜けた] She drew a block out and laid it on top (especially after a scare)
+Phew, it's out!
+Safe!
+There, it worked.
+My heart was racing...
+That's a relief.
+Your turn now.
+How about that?
+Close one, but it's out.
+
+[見守る] They chose a block and start drawing it out (now and then)
+That one, huh...
+Gently, gently.
+This is exciting.
+Will it be okay?
+I'm watching.
+Take it slow.
+Can you do it?
+Concentrate.
+
+[相手が危ない] The tower sways hard while they draw a block out
+It's swaying!
+Careful!
+Is it going to fall?
+Whoa...!
+That was scary!
+Is that okay?
+That shook a lot!
+Stop, stop...!
+
+[相手が抜いた] They drew a block out and laid it on top, though the tower swayed
+Wow, you got it out!
+You held on well.
+My heart was pounding.
+You're good at this.
+I thought it would fall...
+Nice one!
+Phew, I was scared just watching.
+My turn next... no pressure.
+
+[高くなった] The tower has grown tall
+It's getting really tall.
+It's so wobbly now...
+I never thought it'd get this high.
+It might be near its limit.
+The top looks scary.
+How high can we go?
+What a height!
+Who'll knock it down first...?
+
+[崩した] She brought the tower down and lost
+Oh no, it fell...!
+Ugh, I lost...
+I did it again...
+So frustrating!
+I was being so careful...
+Crash... I lost.
+I want another go!
+I won't knock it over next time.
+
+[相手が崩した] They brought the tower down: she won
+It fell! I win!
+Yes, I won!
+Too bad!
+Oh, down it went.
+That was a good game!
+I won.
+That was a thrill!
+Let's play again.
