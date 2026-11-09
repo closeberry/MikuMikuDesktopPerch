@@ -2,6 +2,16 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.2
+
+### New
+
+- **Block tower**: "Mini games" → "Play the block tower" in the right-click menu lets you play the block tower against the character (3D view only). From a tower of 18 levels of wooden blocks, three to a level, you take turns drawing one block out by magic and laying it on the top; whoever brings the tower down loses
+  - Click a block and drag it, and it slides along its length (or use W and S). Once out it floats over the top: click where it goes
+  - The tower moves by physics, friction and all. A block carrying weight is tight (the resistance shows it); forcing it drags the levels around it, the tower sways and falls. While less than a third is out, a block can go back (B)
+  - She thinks which blocks are loose, then holds out her hand and draws one out by magic
+  - Tab shows the rules in the game; the design (in Japanese): docs/BlockTower.md
+
 ## 1.7.1
 
 ### New
