@@ -51,7 +51,7 @@ namespace MikuMikuDesktopPerch
         constexpr float BaseWidth=1180,BaseHeight=840;
         constexpr float HerColumn=0.24f;           // her column at the right, a share of the window's width
         constexpr float StripHeight=54;            // the row of buttons above the tiles
-        enum Action {Hint,Undo,Shuffle,Fresh,ActionCount};
+        enum Action {Hint,Undo,Shuffle,Again,Fresh,ActionCount};
 
         // How a pair goes (one chosen at random each time).
         enum TakeStyle {Rise,Spin,Meet,Shatter,Petals,Burst,TakeStyles};
@@ -1010,6 +1010,8 @@ namespace MikuMikuDesktopPerch
             if(onEnd)onEnd();
         }
 
+        void Dealt();
+
         // A deal to show behind the choosing screen, or a game begun.
         void Deal(Mode mode,int layout)
         {
@@ -1022,6 +1024,12 @@ namespace MikuMikuDesktopPerch
                 state.nextFirst=1-first;
             }
             state.table.NewGame(device(),mode,layout,first,std::max(LeastCare,Care-LessPerBond*state.her.bond-LessPerLoss*state.lost));
+            Dealt();
+        }
+
+        // The board shown afresh, for a deal new or started over.
+        void Dealt()
+        {
             state.hover=state.cursor=state.selected=-1;
             state.hint=state.herPick={};
             state.hintUntil=0;
@@ -1033,12 +1041,14 @@ namespace MikuMikuDesktopPerch
             state.layerKey.clear();
         }
 
-        void StartGame()
+        // again: the same deal from the start (the same first to take together).
+        void StartGame(bool again=false)
         {
             state.choosing=false;
             state.playedAny=true;
             state.gameOverTold=false;
-            Deal(state.modeChosen,state.layoutChosen<Solitaire::LayoutCount()?state.layoutChosen:static_cast<int>(state.fxRandom()%Solitaire::LayoutCount()));
+            if(again){state.table.Restart();Dealt();}
+            else Deal(state.modeChosen,state.layoutChosen<Solitaire::LayoutCount()?state.layoutChosen:static_cast<int>(state.fxRandom()%Solitaire::LayoutCount()));
             state.confirmQuit=false;
             state.said.clear();
             state.nextAt=GetTickCount64()+HerPlayWait;
@@ -1760,9 +1770,10 @@ namespace MikuMikuDesktopPerch
         bool ActionOn(int action)
         {
             auto& t=state.table;
-            if(!YourMoveNow()&&action!=Fresh)return false;
+            if(!YourMoveNow()&&action!=Fresh&&action!=Again)return false;
             switch(action)
             {
+            case Again:return !state.choosing&&(t.Taken()>0||t.Shuffles()>0||t.Hints()>0||t.Now()==Phase::GameOver);
             case Hint:return t.GameMode()==Mode::Alone&&!t.Stuck();
             case Undo:return t.CanUndo();
             case Shuffle:return t.GameMode()==Mode::Alone&&t.Left()>=2;
@@ -1805,6 +1816,11 @@ namespace MikuMikuDesktopPerch
                 // (Tiles left that lie only on each other can't be laid out to clear.)
                 else Tell(T(L"この形は混ぜ直せません。戻してください",L"These can't be shuffled. Undo instead"));
                 break;
+            case Again:
+                // A game together over counts as at Enter (how she eases next comes from it).
+                if(t.Now()==Phase::GameOver&&t.GameMode()==Mode::Together)state.lost=t.Winner()==Solitaire::Her?state.lost+1:0;
+                StartGame(true);
+                break;
             case Fresh:
                 state.modeChosen=t.GameMode();
                 if(state.layoutChosen<Solitaire::LayoutCount())state.layoutChosen=t.Layout();
@@ -1825,11 +1841,11 @@ namespace MikuMikuDesktopPerch
             const bool alone=t.GameMode()==Mode::Alone;
             float x=12*s;
             static const std::pair<int,std::pair<const wchar_t*,const wchar_t*>> labels[]={
-                {Hint,{L"ヒント (H)",L"Hint (H)"}},{Undo,{L"戻す (Z)",L"Undo (Z)"}},{Shuffle,{L"混ぜ直す (S)",L"Shuffle (S)"}},{Fresh,{L"新規 (N)",L"New (N)"}}};
+                {Hint,{L"ヒント (H)",L"Hint (H)"}},{Undo,{L"戻す (Z)",L"Undo (Z)"}},{Shuffle,{L"混ぜ直す (S)",L"Shuffle (S)"}},{Again,{L"最初から (R)",L"Start over (R)"}},{Fresh,{L"新規 (N)",L"New (N)"}}};
             for(auto& box:state.actionButtons)box=RectF();
             for(const auto& [action,words]:labels)
             {
-                if(!alone&&action!=Fresh)continue;
+                if(!alone&&action!=Fresh&&action!=Again)continue;
                 const std::wstring label=T(words.first,words.second);
                 const float w=TextWidth(g,label,15*s,true)+24*s;
                 const RectF box(x,by,w,bh);
@@ -1959,7 +1975,7 @@ namespace MikuMikuDesktopPerch
                 Text(g,drawn?std::wstring(T(L"牌を全部取り切りました",L"All the tiles were taken")):Fmt(T(L"{0}の番に取れる組がありませんでした（残り{1}枚）",L"No pair left for {0} to take ({1} tiles remain)"),{loser,std::to_wstring(t.Left())}),
                      RectF(box.X,y,w,30*s),18*s,white,false,StringAlignmentCenter);
             }
-            Text(g,T(L"Enter：もう一度　N：遊び方を変える　Esc：閉じる",L"Enter: again   N: change the game   Esc: close"),RectF(box.X,box.GetBottom()-44*s,w,30*s),16*s,soft,false,StringAlignmentCenter);
+            Text(g,T(L"Enter：もう一度　R：同じ配牌で　N：遊び方を変える　Esc：閉じる",L"Enter: again   R: the same deal   N: change the game   Esc: close"),RectF(box.X,box.GetBottom()-44*s,w,30*s),16*s,soft,false,StringAlignmentCenter);
         }
 
         void Paint(HDC dc,const RECT& dirty)
@@ -2234,6 +2250,7 @@ namespace MikuMikuDesktopPerch
             {
                 if((key==VK_RETURN||key==VK_SPACE)&&EndShown())Continue();
                 else if(key=='N'&&EndShown())DoAction(Fresh);
+                else if(key=='R'&&EndShown())DoAction(Again);
                 else if(key==VK_ESCAPE)Finish();
                 return;
             }
@@ -2245,6 +2262,7 @@ namespace MikuMikuDesktopPerch
                 return;
             }
             if(key=='N')DoAction(Fresh);
+            if(key=='R')DoAction(Again);
             if(!YourMoveNow())return;
             if(key=='H')DoAction(Hint);
             else if(key=='Z'||key==VK_BACK)DoAction(Undo);

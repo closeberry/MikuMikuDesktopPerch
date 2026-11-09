@@ -410,6 +410,29 @@ namespace MikuMikuDesktopPerch::Solitaire
                 break;
             }
         }
+        dealt=faces;
+        dealtSolution=solution;
+        Ended();
+    }
+
+    void Table::Restart()
+    {
+        if(!geometry)return;
+        Join();
+        faces=dealt;
+        solution=dealtSolution;
+        toMove=first;
+        phase=toMove==You?Phase::YourMove:Phase::HerTurn;
+        winner=-1;
+        taken=shuffles=hints=0;
+        lastWho=-1;
+        last={};
+        lastFaces={-1,-1};
+        history.clear();
+        thoughtDone=false;
+        next={};
+        certain=0;
+        ++version;
         Ended();
     }
 
@@ -666,6 +689,14 @@ namespace MikuMikuDesktopPerch::Solitaire
             for(const Pair& q:order)if(!t.Take(q))clears=false;
             check(clears&&t.Left()==0,L"a shuffled board clears");
             check(t.Now()==Phase::GameOver&&t.Winner()==You,L"cleared is won");
+            // Starting over: the deal as it was, the counts begun again, and it still clears.
+            t.Restart();
+            bool dealt=true;
+            for(int i=0;i<TileCount;++i)if(t.FaceAt(i)!=before[static_cast<size_t>(i)])dealt=false;
+            check(dealt&&t.Left()==TileCount&&t.Taken()==0&&t.Shuffles()==0&&t.Now()==Phase::YourMove&&!t.CanUndo(),L"starting over gives the same deal from the start");
+            bool again=true;
+            for(const Pair& q:std::vector<Pair>(t.Solution()))if(!t.Take(q))again=false;
+            check(again&&t.Left()==0&&t.Winner()==You,L"the deal started over clears by its order");
         }
         // Together: turns go back and forth; the one with no pair loses, an empty board included.
         {
@@ -696,6 +727,8 @@ namespace MikuMikuDesktopPerch::Solitaire
                 else t.PlayForYou(true);
             }
             check(t.Now()==Phase::GameOver,L"a game together comes to an end");
+            t.Restart();
+            check(t.Now()==Phase::HerTurn&&t.ToMove()==Her&&t.Left()==TileCount&&t.Winner()==-1,L"together, starting over keeps who takes first");
         }
         // No pair with tiles left: the one to move has lost.
         {

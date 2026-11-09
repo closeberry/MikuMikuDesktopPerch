@@ -50,6 +50,9 @@ namespace MikuMikuDesktopPerch::Solitaire
 
         // first: who takes first together (unused alone). care: how carefully she plays (0-1).
         void NewGame(std::uint32_t seed,Mode mode,int layout,int first,double care);
+        // The same deal from the start again (the same first to take together); the counts
+        // of pairs taken, shuffles and hints begin again too.
+        void Restart();
 
         Mode GameMode() const {return mode;}
         int Layout() const {return layout;}
@@ -101,7 +104,8 @@ namespace MikuMikuDesktopPerch::Solitaire
         void Join();
         void Ended();
         std::shared_ptr<const Geometry> geometry;
-        std::array<std::int8_t,TileCount> faces{};
+        std::array<std::int8_t,TileCount> faces{},dealt{};   // (dealt: as the game began)
+        std::vector<Pair> dealtSolution;
         Mode mode=Mode::Alone;
         Phase phase=Phase::YourMove;
         int layout=0,first=You,toMove=You,winner=-1,version=0,taken=0,lastWho=-1,shuffles=0,hints=0;
