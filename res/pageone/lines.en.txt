@@ -1,0 +1,213 @@
+# The Page One lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+# "They" is the owner of this computer, whom she is talking to.
+
+[始まり] The game is beginning (play a card of the pile's suit or rank; the first to play out all their cards wins the hand; first to 150 points)
+Let's play Page One!
+Whoever plays out first wins, okay?
+I won't lose.
+Don't forget to say "page one"!
+All right, let's start.
+I wonder who'll go out first.
+Nice to play with you.
+I'm not going easy on you.
+
+[配る] Seven cards each have been dealt (now and then)
+Let's see...
+How about this time?
+Did you get anything good?
+Mm, I see.
+Heh, not bad at all.
+Now, where do I start?
+I hope I've got an eight.
+Okay, here I go.
+
+[考える] It is her turn and she is unsure what to play (now and then; to herself, not a question to them)
+Hmm... which one should I play?
+Let me think...
+Mmm...
+Which suit should I go with?
+Maybe I'll hold on to this one...
+Ugh, this is a tough one.
+Just a moment.
+This one, I think.
+
+[出せない] She has nothing to play and draws from the stock (now and then)
+Nothing fits... I'll draw one.
+Ugh, I don't have one.
+Guess I have to draw.
+Huh, nothing matches...
+Hmph, from the stock then.
+Please be a good one.
+Oh well, drawing.
+What a mean suit!
+
+[攻める] She plays a 2 or the joker and makes them draw (now and then)
+Here, draw these!
+Sorry, two for you.
+How about that!
+Heh, take these.
+Can you answer that?
+Let me give you a few more.
+Take that!
+That's got to hurt.
+
+[攻められた] They played a 2 or the joker and she is about to draw (now and then)
+What? That's mean!
+Whoa, you went there...
+Hey, that's not fair!
+Mmm, you got me...
+Ugh, my hand's growing...
+You'll pay for that.
+Can I answer it...?
+I can't believe you played that!
+
+[飛ばす] She plays a J or an ace and has another turn (now and then)
+My turn again.
+I'll skip you.
+I'm playing again.
+Sorry, wait a moment.
+I'm not done yet.
+Heh, one more.
+Still my turn.
+Two in a row.
+
+[飛ばされた] They played a J or an ace and her turn was passed over (now and then)
+Hey, you skipped me!
+What about my turn?
+No fair.
+Ugh, I have to wait...
+Come on, two in a row?
+Pass it over already.
+Mmm, so that's your plan.
+Aw, I wanted to play.
+
+[色を変える] She plays an 8 and names the next suit (now and then)
+I'll change the suit.
+Let's switch to this one.
+Here comes my eight.
+Okay, this suit next.
+Heh, I changed it.
+You can play this suit, right?
+I was saving this eight.
+Time to change the flow.
+
+[相手が色を変えた] She has few cards left and they changed the suit with an 8 (now and then)
+What, that suit?!
+Oh no, you changed it...
+So that's how it is...
+I was almost there.
+Mmm, I don't have that one...
+That's so mean.
+Not bad...
+Ugh, that's a problem.
+
+[ページワン] She plays down to one card and says "page one"
+Page one!
+Page one! Just one left!
+There, page one.
+Page one! I'm almost out.
+Page one. I said it, okay?
+Heh, page one!
+Page one! Can you stop me?
+One card left, page one!
+
+[指摘する] They forgot to say "page one" and she calls it out
+You didn't say page one!
+You forgot, didn't you? Two cards.
+I don't miss a thing!
+You didn't say page one, right?
+Heh, draw two.
+You forgot to call it.
+I was listening closely.
+Caught you!
+
+[指摘された] She forgot to say "page one" and they called it out
+Oh no, I forgot!
+Ugh, I forgot to say it...
+Oops... two cards then.
+You caught me...
+I was just about to say it!
+Hmph, you were watching.
+I should have said it...
+You're so picky.
+
+[相手がもうすぐ] They are down to their last card (now and then)
+One card left?! Uh oh...
+Wait, are you about to go out?
+I won't let you.
+I have to stop you...
+Only one left, huh...
+I want to stop you here.
+What, just one card?
+You won't go out that easily.
+
+[たくさん引いた] She was made to draw four or more with 2s or the joker (now and then)
+Whoa, so many more...
+That's way too many...
+My hand's so full...
+That really hurts.
+It's not over yet.
+I can barely hold them all...
+I have to win this back.
+That's so cruel...
+
+[たくさん引かせた] They drew four or more for 2s or the joker (now and then)
+Heh, that's a lot to draw.
+Sorry, that's quite a few.
+Your hand got bigger.
+That's a big one.
+I won't let you go out yet.
+Looking good!
+Better get those down.
+Did I overdo it?
+
+[上がり] She played out all her cards first
+I'm out!
+Yes, all gone!
+This hand is mine!
+Heh, just right.
+I'm out!
+Good, things are going my way!
+The last card went down nicely.
+Yay, I'm out!
+
+[相手の上がり] They played out all their cards first
+Oh no, you went out...
+Ugh, you got me.
+I was so close.
+You're good at this.
+So frustrating... next time I'll win.
+I can't believe you played them all...
+Not bad at all.
+Mmm, next time.
+
+[流れた] The hand went on too long with no winner and does not count
+No one won that one.
+That was long... this hand doesn't count.
+Kind of like a draw, I guess.
+Let's settle it next time.
+That just kept going.
+Back to the start, then.
+Phew, I'm tired.
+I'll go out faster next time.
+
+[勝って終わる] The game is over and she won
+I win!
+Yay, I won!
+That was fun, thank you.
+Heh, that was a good game.
+Let's play again next time.
+I won! I'm so happy.
+Let's play again sometime.
+Good game!
+
+[負けて終わる] The game is over and they won (she lost)
+I lost...
+You're really good.
+I won't lose next time.
+So frustrating! One more!
+Congratulations.
+That was a good game.
+You're good at Page One.
+Good game!
