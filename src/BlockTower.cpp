@@ -514,7 +514,9 @@ namespace MikuMikuDesktopPerch::BlockTower
     }
 
     // The tower down: a block (not the one being moved) has dropped by half its thickness or more,
-    // or tipped over.
+    // or tipped over. (Tipped: its face turned from the way it faced up; a block only turned
+    // round on its level, as one dragged by a pulled block's friction, still lies flat: counting
+    // that turn as a fall called the tower down while it stood.)
     void Game::CheckFall()
     {
         float most=0;
@@ -524,12 +526,16 @@ namespace MikuMikuDesktopPerch::BlockTower
             const Block& k=blocks[static_cast<size_t>(b)];
             const auto& r=rest[static_cast<size_t>(b)];
             most=std::max(most,std::hypot(k.at[0]-r[0],k.at[2]-r[2]));
-            const float tilt=Q(k.turn).angleShortestPath(Q(restTurn[static_cast<size_t>(b)]));
+            const btVector3 up=quatRotate(Q(k.turn),btVector3(0,1,0)),wasUp=quatRotate(Q(restTurn[static_cast<size_t>(b)]),btVector3(0,1,0));
+            // (The block just laid may come to lie askew on a neighbour turned on the top level: it
+            // has fallen only if it drops off.)
+            const float tilt=b==active?0.0f:up.angle(wasUp);
             if(k.at[1]<r[1]-FallDrop||tilt>FallTilt)
             {
-                fallSeen=Fmt(L"block {0} level {1} slot {2} dropped {3} tilted {4} ({5} s into phase {6}, laid {7}, active {8})",
+                fallSeen=Fmt(L"block {0} level {1} slot {2} dropped {3} tilted {4} turned {9} ({5} s into phase {6}, laid {7}, active {8})",
                              {std::to_wstring(b),std::to_wstring(k.level),std::to_wstring(k.slot),std::to_wstring(r[1]-k.at[1]),std::to_wstring(tilt),
-                              std::to_wstring(phaseTime),std::to_wstring(static_cast<int>(phase)),std::to_wstring(laid),std::to_wstring(active)});
+                              std::to_wstring(phaseTime),std::to_wstring(static_cast<int>(phase)),std::to_wstring(laid),std::to_wstring(active),
+                              std::to_wstring(Q(k.turn).angleShortestPath(Q(restTurn[static_cast<size_t>(b)])))});
                 Fell(toMove);
                 return;
             }
