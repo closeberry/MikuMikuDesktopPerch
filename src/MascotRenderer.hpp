@@ -187,8 +187,9 @@ namespace MikuMikuDesktopPerch
         // Draw on the GPU with this id; empty, or one not found: the one Windows picks for this
         // app (its graphics settings decide). Takes effect when the shared device is made.
         static void PreferGpu(std::wstring id){preferredGpu=std::move(id);}
-        // Diagnostics: act as if on an old Intel driver ("old-driver") or a GPU that can only
-        // resolve whole MSAA targets ("whole-resolve"). Before the shared device is made.
+        // Diagnostics: act as if on an old Intel driver ("old-driver"), a GPU that can only
+        // resolve whole MSAA targets ("whole-resolve"), or one that draws nothing with MSAA
+        // ("msaa-draws-nothing"). Before the shared device is made.
         static void SimulateQuirk(const std::wstring& quirk){simulatedQuirks+=quirk+L";";}
         // Why the GPU stopped taking work (TDR, a driver update or crash), S_OK while it runs.
         // Once set, nothing more is drawn: the device would have to be made again.
@@ -196,6 +197,9 @@ namespace MikuMikuDesktopPerch
         // An Intel GPU with a driver too old to trust with MSAA (see SharedGpu): its id and
         // driver version ("8086:0412 20.19.15.4531"), empty otherwise. Anti-aliasing is off then.
         const std::wstring& OldDriver() const {return gpu?gpu->oldDriver:none;}
+        // Draw without MSAA from now on: for a GPU whose driver draws nothing with it. False
+        // when already without it, or when the targets could not be made again (DeviceLost set).
+        bool DropMsaa(std::wstring& error);
 
         // Alpha (0-255) of the pixel under clientPoint, sampled a couple of frames ago.
         // Returns -1 while no sample is available.

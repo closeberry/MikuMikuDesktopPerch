@@ -152,15 +152,19 @@ namespace MikuMikuDesktopPerch
         if(auto existing=shared.lock())return existing;
         auto gpu=std::make_shared<Gpu>();
         HRESULT hr;
+        // The D3D12 debug layer (Graphics Tools must be installed): always in a debug build, and
+        // in a release one when MIKUMIKUDESKTOPPERCH_D3D12_DEBUG is set. Its messages go to the log.
 #if defined(_DEBUG)
+        const bool debugLayer=true;
+#else
+        const bool debugLayer=GetEnvironmentVariableW(L"MIKUMIKUDESKTOPPERCH_D3D12_DEBUG",nullptr,0)>0;
+#endif
+        if(debugLayer)
         {
             ComPtr<ID3D12Debug> debug;
             if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))debug->EnableDebugLayer();
         }
-        const UINT factoryFlags=DXGI_CREATE_FACTORY_DEBUG;
-#else
-        const UINT factoryFlags=0;
-#endif
+        const UINT factoryFlags=debugLayer?DXGI_CREATE_FACTORY_DEBUG:0;
         if(FAILED(hr=CreateDXGIFactory2(factoryFlags,IID_PPV_ARGS(&gpu->factory)))){error=HrText(L"DXGI factory",hr);return nullptr;}
 
         // In the order Windows prefers for this app (its graphics settings), the one chosen in
@@ -218,6 +222,16 @@ namespace MikuMikuDesktopPerch
             else Log(L"  no Direct3D 12 device (0x%08X)",static_cast<unsigned>(created));
         }
         if(!gpu->device){error=T(L"D3D12 に対応した GPU が見つかりません。",L"No GPU supporting Direct3D 12 was found.");return nullptr;}
+        // The debug layer's messages into the log as well (no debugger needed to see them).
+        if(ComPtr<ID3D12InfoQueue1> info;debugLayer&&SUCCEEDED(gpu->device.As(&info)))
+        {
+            DWORD cookie=0;
+            info->RegisterMessageCallback([](D3D12_MESSAGE_CATEGORY,D3D12_MESSAGE_SEVERITY severity,D3D12_MESSAGE_ID id,LPCSTR text,void*)
+            {
+                if(severity>D3D12_MESSAGE_SEVERITY_WARNING)return;
+                Log(L"  D3D12 %s %d: %S",severity<=D3D12_MESSAGE_SEVERITY_ERROR?L"error":L"warning",static_cast<int>(id),text);
+            },D3D12_MESSAGE_CALLBACK_FLAG_NONE,nullptr,&cookie);
+        }
         // ResolveSubresourceRegion came with programmable sample positions (ID3D12GraphicsCommandList1)
         // and is only listed as supported from that feature's tier 1; without it, whole resolves.
         {
@@ -1167,6 +1181,23 @@ namespace MikuMikuDesktopPerch
         return {static_cast<LONG>((XMVectorGetX(ndc)*0.5f+0.5f)*windowWidth),static_cast<LONG>((0.5f-XMVectorGetY(ndc)*0.5f)*windowHeight)};
     }
 
+    bool MascotRenderer::DropMsaa(std::wstring& error)
+    {
+        if(sampleCount==1||deviceLost!=S_OK)return false;
+        WaitIdle();
+        Log(L"  MSAA x%u: drawing without it from now on",sampleCount);
+        sampleCount=1;
+        for(auto& b:backBuffers)b.Reset();
+        msaaTarget.Reset();msaaMotion.Reset();sceneColor.Reset();sceneMotion.Reset();blurredColor.Reset();depthTarget.Reset();
+        for(auto& f:frames){f.hitPoint={-1,-1};f.fenceValue=0;}
+        clearWhole.fill(true);
+        lastAlpha=-1;
+        history=false;
+        if(CreateRenderTargets(error)&&CreatePipelines(error))return true;
+        deviceLost=E_FAIL;
+        return false;
+    }
+
     int MascotRenderer::AlphaAt(POINT p)
     {
         const UINT index=swapChain?swapChain->GetCurrentBackBufferIndex():0;
@@ -1470,11 +1501,14 @@ namespace MikuMikuDesktopPerch
         // Only the drawn area is cleared and resolved; the rest of a back buffer stays clear,
         // except right after the drawn area shrank (clearWhole).
         const D3D12_RECT drawn{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
-        const bool wholeBuffer=sampleCount==1&&!offscreen&&clearWhole[index];
+        // Multisampled targets and the depth are always cleared whole: Intel's driver (UHD 730,
+        // 32.0.101.7092) left a multisampled depth cleared by rectangle uncleared, so every
+        // triangle failed the depth test and nothing was drawn with MSAA on.
+        const bool wholeBuffer=sampleCount>1||(!offscreen&&clearWhole[index]);
         commandList->ClearRenderTargetView(rtv,background.data(),wholeBuffer?0:1,wholeBuffer?nullptr:&drawn);
-        if(blur)commandList->ClearRenderTargetView(motionRtv,ClearColor,1,&drawn);
-        commandList->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,1,&drawn);
-        if(wholeBuffer)clearWhole[index]=false;
+        if(blur)commandList->ClearRenderTargetView(motionRtv,ClearColor,sampleCount>1?0:1,sampleCount>1?nullptr:&drawn);
+        commandList->ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1.0f,0,0,nullptr);
+        if(wholeBuffer&&sampleCount==1&&!offscreen)clearWhole[index]=false;
         D3D12_VIEWPORT viewport{0,0,static_cast<float>(width),static_cast<float>(height),0,1};
         D3D12_RECT scissor{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
         commandList->RSSetViewports(1,&viewport);
@@ -1555,7 +1589,9 @@ namespace MikuMikuDesktopPerch
             commandList->SetPipelineState(modelCullPso.Get());
         }
         ID3D12PipelineState* current=modelCullPso.Get();
-        for(size_t i=0;!modelHidden&&i<materialCount&&i<materials.size();++i)
+        // Diagnostics: a driver that draws nothing with MSAA (--gpu-quirk msaa-draws-nothing).
+        const bool hidden=modelHidden||(sampleCount>1&&simulatedQuirks.find(L"msaa-draws-nothing;")!=std::wstring::npos);
+        for(size_t i=0;!hidden&&i<materialCount&&i<materials.size();++i)
         {
             const auto& m=materials[i];
             if(m.indexCount==0||m.diffuse[3]<=0.0f)continue;
@@ -1565,7 +1601,7 @@ namespace MikuMikuDesktopPerch
             commandList->SetGraphicsRootDescriptorTable(3,D3D12_GPU_DESCRIPTOR_HANDLE{srvGpu.ptr+i*3*srvStride});
             commandList->DrawIndexedInstanced(m.indexCount,1,m.indexStart,0,0);
         }
-        if(edgeScale>0.0f&&!modelHidden)
+        if(edgeScale>0.0f&&!hidden)
         {
             commandList->SetPipelineState(edgePso.Get());
             for(size_t i=0;i<materialCount&&i<materials.size();++i)

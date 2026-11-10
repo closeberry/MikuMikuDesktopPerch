@@ -6931,7 +6931,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             }
             else if(arg==L"--gpu-quirk"&&i+1<argc)
             {
-                MascotRenderer::SimulateQuirk(argv[++i]);   // old-driver or whole-resolve
+                MascotRenderer::SimulateQuirk(argv[++i]);   // old-driver, whole-resolve or msaa-draws-nothing
             }
             else if(arg==L"--window-clip"&&i+1<argc)
             {
@@ -8117,6 +8117,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     Log(L"character %zu: alpha drawn at the chest %d (%s), frame at %ld,%ld",m.slot,alpha,
                         alpha>=200?L"drawn":alpha<0?L"no sample":L"not drawn there",WindowPixel(m).x,WindowPixel(m).y);
                     m.drawnCheck=-1;
+                    // Nothing at all there with MSAA: a driver that draws nothing with it is
+                    // likelier than a hole in the model. Without it from now on, and checked again.
+                    if(alpha==0&&m.renderer.SampleCount()>1)
+                    {
+                        std::wstring error;
+                        if(m.renderer.DropMsaa(error))m.drawnCheck=0;
+                        else if(!error.empty())Log(L"character %zu: drawing without MSAA failed (%s)",m.slot,error.c_str());
+                    }
                 }
             }
 

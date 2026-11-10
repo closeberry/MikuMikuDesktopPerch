@@ -18,7 +18,7 @@ Win32 + Direct3D 12 + DirectComposition で動作し、モデルが描かれて�
 - Windows 10/11（64bit）
 - DirectX 12に対応したGPU
 - 最新のグラフィックドライバ。表示が崩れる、起動しない、落ちるといった場合は、まずGPUのメーカー（NVIDIA・AMD・Intel）のサイトから最新のドライバを入れてください
-- Microsoft Visual C++ 再頒布可能パッケージ（Visual Studio 2015〜2022以降、x64）。起動時に `MSVCP140.dll` や `VCRUNTIME140.dll` が見つからないと表示される場合は、[Microsoftのページ](https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist)から `vc_redist.x64.exe` をダウンロードしてインストールしてください。Visual Studioが入っていても、C++のワークロードを入れていない環境では必要です
+- Microsoft Visual C++ 再頒布可能パッケージ（x64）の **14.44 以降**（Visual Studio 2017〜2026 共通の「14.x」系。最新版を推奨）。このアプリは Visual Studio 2022 17.14（MSVC 14.44）でビルドしているので、それより古いランタイムでは起動しない・すぐ落ちることがあります。入っている版は「設定 → アプリ → インストールされているアプリ」の「Microsoft Visual C++ 2015-2022 Redistributable (x64)」（新しい版では「Microsoft Visual C++ v14 Redistributable (x64)」）の名前の後ろの数字で確かめられます。入っていない、または14.44より古い場合や、起動時に `MSVCP140.dll`・`VCRUNTIME140.dll`・`VCRUNTIME140_1.dll` が見つからないと表示される場合は、[Microsoftのページ](https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist)から最新の `vc_redist.x64.exe` をダウンロードしてインストールしてください。Visual Studioが入っていても、C++のワークロードを入れていない環境では必要です
 
 ## ビルド
 
@@ -380,7 +380,7 @@ with requests.get("http://127.0.0.1:50080/events?chat=external", stream=True) as
 
 GPUが応答しなくなって（ドライバのリセットなど）描画できなくなったときは、その旨を表示して再起動するか尋ねます。
 
-**アンチエイリアスを入れるとモデルが消える**：古いインテルのGPUのドライバでは、アンチエイリアス（MSAA）でモデルが描かれないことがあります。そのため、インテルのGPUでドライバが2020年より前のもの（バージョンの最初の数字が27より小さいもの。例：20.19.15.x、26.20.100.x）のときは、設定にかかわらずアンチエイリアスなしで描き、キャラクターが一度だけ、ドライバを更新するよう知らせます。インテルのサイト（またはパソコンのメーカーのサイト）からドライバを更新すると、アンチエイリアスが使えるようになります。ほかのGPUでも、選んだサンプル数に対応していなかったり、描画の準備に失敗したりしたときは、アンチエイリアスなしで描きます。どの場合も、`log.txt` に `MSAA` で始まる行（または `drawing: MSAA x1`）が残ります。それでも消えるときは、設定の「詳細」でアンチエイリアスを「なし」にして、`log.txt` を添えて知らせてください。
+**アンチエイリアスを入れるとモデルが消える**：古いインテルのGPUのドライバでは、アンチエイリアス（MSAA）でモデルが描かれないことがあります。そのため、インテルのGPUでドライバが2020年より前のもの（バージョンの最初の数字が27より小さいもの。例：20.19.15.x、26.20.100.x）のときは、設定にかかわらずアンチエイリアスなしで描き、キャラクターが一度だけ、ドライバを更新するよう知らせます。インテルのサイト（またはパソコンのメーカーのサイト）からドライバを更新すると、アンチエイリアスが使えるようになります。ほかのGPUでも、選んだサンプル数に対応していなかったり、描画の準備に失敗したりしたときは、アンチエイリアスなしで描きます。また、起動して3秒後にキャラクターの胸のあたりがまったく描かれていないときは、MSAAで何も描けないドライバとみなして、それ以降はアンチエイリアスなしで描きます（`log.txt` に `MSAA x4: drawing without it from now on` が残ります）。どの場合も、`log.txt` に `MSAA` で始まる行（または `drawing: MSAA x1`）が残ります。それでも消えるときは、設定の「詳細」でアンチエイリアスを「なし」にして、`log.txt` を添えて知らせてください。
 
 ## 診断用オプション
 
@@ -395,7 +395,7 @@ MikuMikuDesktopPerch.exe --snapshot out.png [frames]
 `--plan-test <in.txt> <out.txt>` で、in.txt（UTF-8）の1行ずつを、タイマー・リマインダー・やることの頼みとしてどう読み取るかを書き出します（行の先頭に `~` を付けると、一覧の画面で追加するときの読み方になります）。
 `--banter` で起動の5秒後にキャラクター同士のおしゃべりを始め、`--pretend-version <バージョン>` でこのexeをそのバージョンとみなして更新の確認から更新までを試せ（すぐに確認します）、`--reading <文> <out.txt>` で口パクに使う読みを書き出せます。
 `--voice-test <VOICEVOXのフォルダ|http://エンジンの接続先> <声のID> <out.wav> [スタイルの強さ]` で VOICEVOX のファイルを直接使って（または音声エンジンで）1文話させ（結果と、音節ごとの時刻は `out.wav.txt`）、`--light <左右> <高さ>` で太陽の位置を、`--self-shadow 0|1` でセルフシャドウを切り替え、`--doze` でうとうとした姿を撮れ、`--walk-motion <vmd>`・`--run-motion <vmd>` で歩く・走るモーションを、`--own-lines <json>` でミニゲームのセリフファイルを指定できます（読んだ結果はスナップショットの `.txt` に出ます）。
-`--gpu-quirk old-driver` で古いインテルのドライバのとき（アンチエイリアスなし、知らせが1回）を、`--gpu-quirk whole-resolve` で描いた範囲だけのMSAAの解決（ResolveSubresourceRegion）ができないGPUのときを試せます。`out.png.txt` の `gpu=` の行に、実際に使ったサンプル数が出ます。
+`--gpu-quirk old-driver` で古いインテルのドライバのとき（アンチエイリアスなし、知らせが1回）を、`--gpu-quirk whole-resolve` で描いた範囲だけのMSAAの解決（ResolveSubresourceRegion）ができないGPUのときを、`--gpu-quirk msaa-draws-nothing` でMSAAのときモデルが何も描かれないGPUのとき（ふつうに起動すると、3秒後にアンチエイリアスなしに切り替わります）を試せます。`out.png.txt` の `gpu=` の行に、実際に使ったサンプル数が出ます。環境変数 `MIKUMIKUDESKTOPPERCH_D3D12_DEBUG` に何か値を入れて起動すると、リリースビルドでもD3D12のデバッグレイヤーを使い（Windowsの「グラフィックツール」が必要）、その警告とエラーを `log.txt` に書きます。
 
 ```
 MikuMikuDesktopPerch.exe --check-list <list.txt> <out.tsv>
