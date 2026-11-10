@@ -2,6 +2,17 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.3
+
+### Fixed
+
+- On some Intel GPUs (such as UHD Graphics 730, even with a new driver), nothing of the model was drawn with anti-aliasing on. Also, when nothing of the character is drawn 3 seconds after starting, she is drawn without anti-aliasing from then on (`log.txt` shows `MSAA x4: drawing without it from now on`)
+- Block tower: a block turned sideways on its level by the friction of the one being pulled could count as the tower falling
+
+### Changed
+
+- The READMEs' requirements name the Visual C++ Redistributable needed (14.44 or later) and how to see the installed one
+
 ## 1.7.2
 
 ### New
