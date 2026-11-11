@@ -1,0 +1,154 @@
+# The table tennis lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The match is beginning
+All right, let's play!
+I won't lose!
+I'm not going easy on you, okay?
+Come on, let's start!
+Let's make it a good match.
+I wonder who'll win. This'll be fun!
+Here we go, ready or not!
+I'm playing for real today.
+Are you ready?
+It's been a while since I played table tennis.
+Let's keep the rallies going.
+Keep your eye on the ball.
+
+[決めた] The character's shot got past you: a point for the character
+Yes, that's in!
+All right, a point!
+Hehe, nice placement, right?
+Just where I aimed.
+You couldn't reach that one.
+Okay, let's keep this up!
+That felt good!
+How was that?
+That one slipped right past.
+Yay, a point for me!
+
+[決められた] Your shot got past the character: a point for you
+Ah, you got me!
+Ugh, I couldn't reach it...
+I can't get to that.
+Whoa, nice placement.
+Not bad, that was a good ball.
+Argh, there goes a point.
+Wow, you hit it there?
+That one stings.
+I'll get that one back.
+Hmm, did you read me?
+
+[相手のミス] Your ball hit the net or went out: a point for the character (kindly, not blaming)
+Never mind, never mind!
+So close, just a little off.
+Lucky me, I'll take that point.
+That was a near thing.
+A bit too much power, maybe?
+Oh dear, what a shame.
+Don't worry, on to the next one.
+Take it easy, you've got this.
+
+[自分のミス] The character's ball hit the net or went out: a point for you
+Ah, I messed that up!
+Oops, I swung too hard...
+Aw, what a waste.
+That one was my own mistake.
+Ugh, into the net.
+Huh, it didn't go in.
+Sorry, can we forget that one? No?
+Calm down, calm down.
+
+[スマッシュを決めた] The character won a point with a smash
+That smash went in!
+Yes, clean as you like!
+How about that smash?
+Hehe, I never miss a high ball.
+That felt great!
+All right, I nailed it!
+That was my best shot yet.
+A floating ball is mine!
+
+[スマッシュを決められた] You won a point with a smash
+Whoa, so fast!
+What a smash!
+I can't react to that.
+Eek, that startled me!
+I let that ball float up, didn't I.
+That was a good smash.
+I didn't even see it...
+Nobody could get that one.
+
+[長い打ち合いで決めた] The character won a point after a long rally
+That was a long one, nice rally!
+Finally, it's in!
+What a long rally, that was fun!
+Hanging in there paid off!
+Phew, that took a while.
+A point at the end of a good rally.
+I outlasted you!
+I enjoyed that rally.
+
+[長い打ち合いで決められた] You won a point after a long rally
+And it was such a good rally!
+Ugh, after all that...
+A long rally, and you took it.
+That rally stings.
+Ah, you got it right at the end.
+You really hung in there.
+A good rally, but you got me.
+That was fun, though. Next one.
+
+[デュース] The game has reached deuce at 10 all (from here it goes on until one leads by two)
+It's deuce!
+From here, it's two clear points to win.
+Who caught up with whom, I wonder.
+This is getting tense.
+The real match starts here.
+This is turning into a great game!
+We can't drop a single point now.
+My heart is pounding.
+
+[あと1点で勝ち] The character needs one more point to win (match point)
+One more point!
+It's match point!
+I want to finish it here!
+Almost there, almost there.
+One more point and I win. Here goes!
+This next point matters.
+This is the moment!
+One more and it's over.
+
+[あと1点で負け] You need one more point to win (your match point)
+Uh-oh, one more and I lose...
+Not yet, it starts here!
+Match point? This is bad.
+I have to hold on here.
+One point at a time. Stay calm.
+I'm not giving up yet!
+Now it gets serious.
+Phew, this is the crunch.
+
+[勝った] The match is over and the character won
+I won! That was fun!
+Yay, I win!
+That was a good match!
+That was fun, thank you!
+I'm so glad I won.
+Hehe, today was my day.
+Nice game!
+Let's play again!
+What a good match.
+Hooray, I won!
+
+[負けた] The match is over and you won
+I lost... but that was fun!
+So frustrating! One more game!
+Ah, I lost.
+Good match. I'll win next time!
+Fun, but it stings a little.
+You're strong, as I thought!
+Next time I'll win for sure.
+I lost, but it was a good match.
+Congratulations, today is your win.
+I'm beaten, you got me!

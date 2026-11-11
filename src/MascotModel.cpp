@@ -2713,6 +2713,39 @@ namespace MikuMikuDesktopPerch
         return {h.x,h.y,h.z};
     }
 
+    bool MascotModel::Fist(int side,std::array<float,3>& middle,std::array<float,3>& racket,std::array<float,3>& palm,std::array<float,3>* wristAt,std::array<float,3>* elbowAt) const
+    {
+        const auto& m=*impl;
+        if(!m.solver)return false;
+        const int wrist=side==0?m.FindBone({L"左手首"}):m.FindBone({L"右手首"});
+        const int index=side==0?m.FindBone({L"左人指１",L"左人指1"}):m.FindBone({L"右人指１",L"右人指1"});
+        const int little=side==0?m.FindBone({L"左小指１",L"左小指1"}):m.FindBone({L"右小指１",L"右小指1"});
+        const size_t count=m.solver->boneMatrices.size();
+        for(int b:{wrist,index,little})if(b<0||static_cast<size_t>(b)>=count)return false;
+        auto at=[&](int bone){
+            return DirectX::XMVector3Transform(DirectX::XMLoadFloat3(&m.pmx->bones[bone].position),DirectX::XMMatrixTranspose(m.solver->boneMatrices[bone]));
+        };
+        const auto grip=DirectX::XMVectorLerp(at(wrist),DirectX::XMVectorLerp(at(index),at(little),0.5f),0.8f);
+        const auto knuckles=DirectX::XMVectorLerp(at(index),at(little),0.5f);
+        const auto thumb=DirectX::XMVector3Normalize(DirectX::XMVectorSubtract(at(index),at(little)));
+        const auto hand=DirectX::XMVector3Normalize(DirectX::XMVectorSubtract(knuckles,at(wrist)));
+        // (More on along the hand than up: the blade lies beyond the hand, a little above the forearm's line.)
+        const auto way=DirectX::XMVector3Normalize(DirectX::XMVectorAdd(DirectX::XMVectorScale(thumb,0.55f),hand));
+        // (The palm's side of the hand: the left hand's and the right's are mirror images.)
+        const auto face=DirectX::XMVector3Normalize(DirectX::XMVectorScale(DirectX::XMVector3Cross(thumb,hand),side==0?1.0f:-1.0f));
+        middle={DirectX::XMVectorGetX(grip),DirectX::XMVectorGetY(grip),DirectX::XMVectorGetZ(grip)};
+        racket={DirectX::XMVectorGetX(way),DirectX::XMVectorGetY(way),DirectX::XMVectorGetZ(way)};
+        palm={DirectX::XMVectorGetX(face),DirectX::XMVectorGetY(face),DirectX::XMVectorGetZ(face)};
+        if(wristAt)*wristAt={DirectX::XMVectorGetX(at(wrist)),DirectX::XMVectorGetY(at(wrist)),DirectX::XMVectorGetZ(at(wrist))};
+        if(elbowAt)
+        {
+            const int elbow=side==0?m.FindBone({L"左ひじ"}):m.FindBone({L"右ひじ"});
+            if(elbow<0||static_cast<size_t>(elbow)>=count)return false;
+            *elbowAt={DirectX::XMVectorGetX(at(elbow)),DirectX::XMVectorGetY(at(elbow)),DirectX::XMVectorGetZ(at(elbow))};
+        }
+        return true;
+    }
+
     bool MascotModel::Grip(int side,std::array<float,3>& middle,std::array<float,3>& along) const
     {
         const auto& m=*impl;
@@ -2902,6 +2935,13 @@ namespace MikuMikuDesktopPerch
         for(size_t k=0;k<5;++k)q[k]={(*keys)[k][0],(*keys)[k][1],(*keys)[k][2],(*keys)[k][3]};
         impl->motion.HoldPose(side,&q);
     }
+
+    float MascotModel::HoldInBody(int side) const {return impl->motion.HoldInBody(side);}
+    void MascotModel::HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet)
+    {
+        impl->motion.HoldFree(side,at,{point[0],point[1],point[2]},{DirectX::XMFLOAT3{feet[0][0],feet[0][1],feet[0][2]},DirectX::XMFLOAT3{feet[1][0],feet[1][1],feet[1][2]}});
+    }
+    void MascotModel::HoldBody(int side,float down,float forward,float turn,float lean,float hips,float elbow){impl->motion.HoldBody(side,down,forward,turn,lean,hips,elbow);}
 
     void MascotModel::Hold(int side,const std::array<float,3>& wrist,bool on,int style)
     {

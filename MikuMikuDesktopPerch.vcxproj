@@ -99,6 +99,8 @@
     <ClCompile Include="src\DungeonWindow.cpp" />
     <ClCompile Include="src\AirHockey.cpp" />
     <ClCompile Include="src\AirHockeyWindow.cpp" />
+    <ClCompile Include="src\TableTennis.cpp" />
+    <ClCompile Include="src\TableTennisWindow.cpp" />
     <ClCompile Include="src\Ruins.cpp" />
     <ClCompile Include="src\RuinsWindow.cpp" />
     <ClCompile Include="src\Hanafuda.cpp" />
@@ -186,6 +188,8 @@
     <ClInclude Include="src\DungeonWindow.hpp" />
     <ClInclude Include="src\AirHockey.hpp" />
     <ClInclude Include="src\AirHockeyWindow.hpp" />
+    <ClInclude Include="src\TableTennis.hpp" />
+    <ClInclude Include="src\TableTennisWindow.hpp" />
     <ClInclude Include="src\Ruins.hpp" />
     <ClInclude Include="src\RuinsWindow.hpp" />
     <ClInclude Include="src\Hanafuda.hpp" />

@@ -82,6 +82,8 @@ namespace MikuMikuDesktopPerch
         std::wstring albumFolder;
         int airHockeyPuck=2;        // the hover hockey puck's top speed, 1 (slowest) to 4 (fastest); keys 1-4 in its window
         int airHockeySize=3;        // its puck's and mallets' size, 1 (a real table's) to 4 (largest); keys 5-8 there
+        int tableTennisLevel=2;     // how strong the table tennis opponent is, 1 (easy) to 3 (strong); keys 1-3 in its window
+        bool tableTennisLeftHanded=false;   // your racket hand there (H in its window)
         bool dungeonLight=false;    // draw the dungeon's 3D view light (no MSAA, small textures, fewer pixels)   // where the pictures go (empty: LOCALAPPDATA\MikuMikuDesktopPerch\album)
         bool chatInitiative=true;   // greet, welcome back and now and then say something first
         // With chatInitiative: about how often (minutes, varied by a third either way) one says a

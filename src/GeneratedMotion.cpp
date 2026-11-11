@@ -770,11 +770,13 @@ namespace MikuMikuDesktopPerch
         // moving the wrist moves the elbow too.
         // Short of a solid it went into before (StopArm).
         XMVECTOR wrist=Stopped(side,wristTarget);
+        const bool whole=clearUpperArm&&clear;
+        if(whole)holdInBody[side]=0;
         if(clear&&!rig.body.empty())
-            for(int pass=0;pass<2;++pass)
+            for(int pass=0,passes=whole?6:2;pass<passes;++pass)
             {
                 std::vector<Key> trial=keys;
-                XMVECTOR elbow=XMVectorZero(),reached=wrist;
+                XMVECTOR elbow=XMVectorZero(),reached=wrist,from=XMLoadFloat3(&rig.shoulderPos[side]);
                 ReachArm(trial,side,wrist,pole,shoulderAmount,false);
                 // Where the elbow went: from the arm's key and the shoulder's.
                 {
@@ -783,13 +785,36 @@ namespace MikuMikuDesktopPerch
                     XMVECTOR root=XMLoadFloat3(&rig.shoulderPos[side]);
                     if(rig.shoulder[side]>=0){const XMVECTOR pivot=XMLoadFloat3(&rig.claviclePos[side]);root=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(root,pivot),sh));}
                     elbow=XMVectorAdd(root,XMVector3Rotate(XMVectorScale(XMLoadFloat3(&rig.armRestDir[side]),rig.upperArm),arm));
+                    from=root;
                 }
                 const XMVECTOR along=XMVectorSubtract(reached,elbow);
-                float push=0;
+                float push=0,sideways=0;
                 for(float f=0.3f;f<=1.45f;f+=0.15f)
                     push=std::max(push,IntoBody(XMVectorAdd(elbow,XMVectorScale(along,f)),0.045f*rig.legLength));
+                if(whole)
+                {
+                    // The upper arm too, where it has come in from its own shoulder toward the
+                    // middle (beside the body it is where it hangs: the sleeve and the side of
+                    // the chest are not in its way there).
+                    const float out=side==0?1.0f:-1.0f,inside=out*rig.shoulderPos[side].x*0.75f;
+                    const XMVECTOR upper=XMVectorSubtract(elbow,from);
+                    // (With the hand out at her own side the elbow hangs by the body as an arm
+                    // does: only an arm taken in across the body is looked at.)
+                    const bool across=out*XMVectorGetX(wrist)<out*rig.shoulderPos[side].x;
+                    for(float f=0.55f;across&&f<=1.0f;f+=0.15f)
+                    {
+                        const XMVECTOR p=XMVectorAdd(from,XMVectorScale(upper,f));
+                        if(out*XMVectorGetX(p)<inside)sideways=std::max(sideways,IntoBody(p,0.04f*rig.legLength));
+                    }
+                    // The upper arm in: the wrist goes out toward its own side as well as forward
+                    // (forward alone straightens the arm but leaves the elbow before the chest).
+                    push=std::max(push,sideways);
+                    sideways*=out*0.7f;
+                    holdInBody[side]=push/rig.legLength;
+                    if(pass==passes-1)break;   // (the last look only measures what is left)
+                }
                 if(push<=0.002f*rig.legLength)break;
-                wrist=Stopped(side,XMVectorSubtract(wrist,XMVectorSet(0,0,push,0)));
+                wrist=Stopped(side,XMVectorSubtract(wrist,XMVectorSet(-sideways,0,push,0)));
             }
         const float a=rig.upperArm,b=rig.forearm;
         // Two-bone IK from the arm's root: the elbow, and where the wrist gets to.
@@ -1841,7 +1866,7 @@ namespace MikuMikuDesktopPerch
     {
         if(side<0||side>1)return;
         holds[side].on=on;
-        if(on){holds[side].wrist=wrist;holds[side].upright=style!=0;holds[side].raised=style==2;}
+        if(on){holds[side].wrist=wrist;holds[side].upright=style==1||style==2;holds[side].raised=style==2;holds[side].wholeArm=style==3;}
     }
 
     void GeneratedMotion::HoldPose(int side,const std::array<XMFLOAT4,5>* keys)
@@ -1863,7 +1888,7 @@ namespace MikuMikuDesktopPerch
             // The other arm, when it holds nothing, hangs loose at her side, nearly straight:
             // bent forward (as she stands, or in a gesture still playing) it would reach into what
             // she leans over, and the stops would then keep her from leaning far enough to reach.
-            if(const int o=1-s;!h.upright&&rig.arm[o]>=0&&!holds[o].on)
+            if(const int o=1-s;!h.upright&&!h.wholeArm&&rig.arm[o]>=0&&!holds[o].on)
             {
                 SetRotation(g,rig.arm[o],XMQuaternionRotationRollPitchYaw(0,0,rig.armLower[o]));
                 if(rig.elbow[o]>=0)SetRotation(g,rig.elbow[o],Rotation(rig.elbowBendAxis[o],10.0f*Deg));
@@ -1877,6 +1902,9 @@ namespace MikuMikuDesktopPerch
             // The wrist is asked for where she is (model space, her walks' travel included); the
             // arm is worked out from where her body is before that travel goes on (AddRootOffset).
             XMVECTOR target=XMVectorSubtract(XMLoadFloat3(&h.wrist),XMVectorSet(rootOffset,0,0,0));
+            // The body moved for the stroke (style 3): the arm is worked out from where that puts it.
+            const XMVECTOR moved=h.wholeArm?XMVectorSet(0,-h.body[0],-h.body[1],0):XMVectorZero();
+            target=XMVectorSubtract(target,moved);
             // Held up while sitting: the body is lowered (グルーブ), and the arm is worked out
             // from where the shoulders are standing.
             if((h.upright||activity==Activity::Sit)&&rig.groove>=0)target=XMVectorSubtract(target,XMLoadFloat3(&KeyOf(keys,rig.groove).position));
@@ -1890,6 +1918,7 @@ namespace MikuMikuDesktopPerch
                 lastLean=(18.0f+std::clamp((d-0.7f*reach)/(0.8f*reach),0.0f,1.0f)*17.0f)*Deg;
                 leanDriven=true;
                 lean=std::min(lastLean,leanLimit);
+                if(h.wholeArm)lean+=h.body[3];
             }
             // Turned from the waist toward the hand's way (part of it, eased: the shoulders lead
             // the arm a little, and the legs stay as they are).
@@ -1897,12 +1926,21 @@ namespace MikuMikuDesktopPerch
             const float twist=h.upright?0.0f:std::clamp(0.45f*std::atan2(-dx,std::max(-dz,0.1f*reach)),-22.0f*Deg,22.0f*Deg);
             h.twist+=(twist-h.twist)*static_cast<float>(1.0-std::exp(-dt/0.22));
             // Only that lean and turn: the idle motion's sway of the upper body would carry the hand about.
-            const XMVECTOR bend=XMQuaternionRotationRollPitchYaw(-lean,h.twist,0);
+            const XMVECTOR bend=XMQuaternionRotationRollPitchYaw(-lean,h.wholeArm?std::clamp(h.twist+h.body[2],-55.0f*Deg,55.0f*Deg):h.twist,0);
             if(rig.upperBody>=0&&!h.upright)XMStoreFloat4(&KeyOf(g,rig.upperBody).rotation,bend);
+            if(h.wholeArm)
+            {
+                if(rig.groove>=0&&slot[rig.groove]>=0)
+                {
+                    XMFLOAT3& at=KeyOf(g,rig.groove).position;
+                    XMStoreFloat3(&at,XMVectorAdd(XMLoadFloat3(&at),moved));
+                }
+                if(rig.lowerBody>=0&&slot[rig.lowerBody]>=0)SetRotation(g,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,h.body[4],0));
+            }
             // Where the point is as the bent body sees it, and no further than the arm goes.
             target=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(target,pivot),XMQuaternionConjugate(bend)));
             const XMVECTOR to=XMVectorSubtract(target,shoulder);
-            const float far=0.95f*reach,dist=XMVectorGetX(XMVector3Length(to));
+            const float far=(h.wholeArm?0.99f:0.95f)*reach,dist=XMVectorGetX(XMVector3Length(to));
             if(dist>far)
             {
                 // Out of reach: short of it across and along, at its height (the hand stays over
@@ -1950,7 +1988,58 @@ namespace MikuMikuDesktopPerch
                     SetRotation(g,rig.arm[s],armNew);
                 }
             }
-            else ReachArm(g,s,target,XMVectorSet(out*0.8f,-1,0.2f,0),0.6f,true);
+            else
+            {
+                clearUpperArm=h.wholeArm;
+                // The elbow out to the side; or (style 3, a forehand) down and back by the body,
+                // so the forearm goes out from it to the hand.
+                const float in=h.wholeArm?h.elbowIn:0.0f;
+                ReachArm(g,s,target,XMVectorSet(out*(0.8f+0.2f*in),-1+0.35f*in,0.2f+0.1f*in,0),0.6f,true);   // (the forehand's elbow out to the side and a little up, no higher than the wrist: the forearm about level)
+                clearUpperArm=false;
+                if(const int o=1-s;h.wholeArm&&rig.arm[o]>=0&&!holds[o].on)
+                {
+                    // Her other hand: under a ball to be served (palm up), or held before her
+                    // with the elbow bent, going with her body as it turns.
+                    XMVECTOR to;
+                    if(h.freeAt)
+                    {
+                        to=XMVectorSubtract(XMVectorSubtract(XMLoadFloat3(&h.freePoint),XMVectorSet(rootOffset,0,0,0)),moved);
+                        to=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(to,pivot),XMQuaternionConjugate(bend)));
+                    }
+                    else to=XMVectorAdd(XMLoadFloat3(&rig.shoulderPos[o]),XMVectorSet(out*0.25f*rig.upperArm,-0.80f*rig.upperArm,-0.85f*rig.forearm,0));
+                    ReachArm(g,o,to,XMVectorSet(-out*0.8f,-1,0.2f,0),0.6f,true);
+                    const XMVECTOR undo=XMQuaternionConjugate(bend);
+                    if(h.freeAt)
+                    {
+                        // The wrist straight (the hand goes on along the forearm) and the palm turned
+                        // up as far as the forearm's twist goes: no sharp bend at the wrist.
+                        auto turnOf=[&](int bone){return bone>=0&&slot[bone]>=0?XMLoadFloat4(&g[slot[bone]].rotation):XMQuaternionIdentity();};
+                        const XMVECTOR lower=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(
+                            turnOf(rig.elbow[o]),turnOf(rig.armTwist[o])),turnOf(rig.arm[o])),turnOf(rig.shoulder[o])),turnOf(rig.upperBody));
+                        XMVECTOR pointing=XMVector3Normalize(XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[o]),lower));
+                        const XMVECTOR upward=XMVector3Rotate(XMVectorSet(0,1,0,0),undo);
+                        XMVECTOR open=XMVectorSubtract(upward,XMVectorScale(pointing,XMVectorGetX(XMVector3Dot(upward,pointing))));
+                        open=XMVectorGetX(XMVector3LengthSq(open))>1e-4f?XMVector3Normalize(open):XMVectorSet(0,0,-1,0);
+                        XMVECTOR small=XMVectorZero();
+                        HandWithinReach(g,o,pointing,open,small);
+                        AimHand(g,o,pointing,open);
+                        CurlFingers(g,o,{0.1f,0.12f,0.14f,0.16f});
+                    }
+                    else
+                    {
+                        for(const int bone:{rig.wrist[o],rig.handTwist[o]})
+                            if(bone>=0&&slot[bone]>=0)SetRotation(g,bone,XMQuaternionIdentity());
+                        CurlFingers(g,o,{0.3f,0.35f,0.4f,0.45f});
+                    }
+                }
+                if(h.wholeArm)
+                    for(int f=0;f<2;++f)
+                        if(rig.legIK[f]>=0&&slot[rig.legIK[f]]>=0)
+                        {
+                            XMFLOAT3& at=KeyOf(g,rig.legIK[f]).position;
+                            XMStoreFloat3(&at,XMVectorAdd(XMLoadFloat3(&at),XMLoadFloat3(&h.feet[f])));
+                        }
+            }
             // (As the bent body sees them, as the target is: so the fingers lie over the knob
             // however far she leans, not tipped down into it.)
             const XMVECTOR unbend=XMQuaternionConjugate(bend);
@@ -1962,6 +2051,59 @@ namespace MikuMikuDesktopPerch
                 // other and toward her (the wrists turned to her), loosely closed round it.
                 AimHand(g,s,XMVector3Normalize(XMVectorSet(-out*0.12f,1,-0.15f,0)),XMVector3Normalize(XMVectorSet(-out*0.6f,0,1,0)));
                 CurlFingers(g,s,{0.2f,0.25f,0.3f,0.35f});
+            }
+            else if(h.wholeArm)
+            {
+                // A racket held as a hand is shaken: the wrist straight (the hand goes on along
+                // the forearm, wherever the arm has put that), and only the forearm turned
+                // (手捩) so that the thumb is up and the racket stands. The palm is turned
+                // toward the one she plays as far as that allows: with the forearm out to her
+                // side (a forehand) it faces forward, with the forearm in across her (a
+                // backhand) the back of the hand does, and with the forearm pointing forward
+                // the palm faces in, the racket edge on. No bend of the wrist is asked for.
+                auto turn=[&](int bone){return bone>=0&&slot[bone]>=0?XMLoadFloat4(&g[slot[bone]].rotation):XMQuaternionIdentity();};
+                const XMVECTOR forearm=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(
+                    turn(rig.elbow[s]),turn(rig.armTwist[s])),turn(rig.arm[s])),turn(rig.shoulder[s])),turn(rig.upperBody));
+                const XMVECTOR fingers=XMVector3Normalize(XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[s]),forearm));
+                const float in=h.elbowIn;
+                // The palm that has the thumb up, for a hand pointing that way: level, and square
+                // to the hand (the right hand's palm faces forward when it points out to her
+                // right, toward her when it points in across her).
+                auto thumbUp=[&](FXMVECTOR pointing){
+                    XMVECTOR level=XMVector3Cross(pointing,XMVectorSet(0,-out,0,0));
+                    if(XMVectorGetX(XMVector3LengthSq(level))<1e-4f)level=XMVectorSet(-out,0,0,0);   // (pointing straight up or down)
+                    return XMVector3Normalize(level);
+                };
+                const XMVECTOR palm=thumbUp(fingers);
+                XMVECTOR aimed=fingers,facing=palm,little=XMVectorZero();
+                // In a stroke the wrist is laid back a little (up to 40 degrees, none between
+                // balls) to bring the racket's face square to the one she plays, where the
+                // forearm's turn alone leaves it aside.
+                if(const float most=40.0f*Deg*std::abs(2*in-1);most>0.01f)
+                {
+                    // (Only round the upright: the hand's heading is turned toward the side, so
+                    // the palm can face her; how far the hand points up or down stays the
+                    // forearm's, or the racket would be laid over.)
+                    const XMVECTOR square=XMVector3Normalize(XMVector3Rotate(XMVectorSet(0,0,1-2*in,0),unbend));
+                    const float rise=XMVectorGetY(fingers);
+                    const XMVECTOR flat=XMVectorSetY(fingers,0);
+                    const float run=XMVectorGetX(XMVector3Length(flat));
+                    XMVECTOR aside=XMVectorSetY(XMVectorSubtract(flat,XMVectorScale(square,XMVectorGetX(XMVector3Dot(flat,square)))),0);
+                    // (A forearm pointing straight at her: out to the racket's side on the forehand, in across her on the backhand.)
+                    if(XMVectorGetX(XMVector3LengthSq(aside))<0.02f*run*run)aside=XMVectorSet(out*(2*in-1),0,0,0);
+                    if(run>0.05f)
+                    {
+                        const XMVECTOR heading=XMVectorScale(flat,1/run);
+                        aside=XMVector3Normalize(aside);
+                        const float angle=std::acos(std::clamp(XMVectorGetX(XMVector3Dot(heading,aside)),-1.0f,1.0f));
+                        const XMVECTOR turned=angle>most?XMVector3Normalize(XMVectorLerp(heading,aside,most/angle)):aside;
+                        aimed=XMVector3Normalize(XMVectorSetY(XMVectorScale(turned,run),rise));
+                        facing=thumbUp(aimed);
+                    }
+                }
+                HandWithinReach(g,s,aimed,facing,little);   // (no further than the wrist and the forearm's twist go)
+                AimHand(g,s,aimed,facing);
+                CurlFingers(g,s,{0.55f,0.6f,0.65f,0.7f});   // closed round the handle
             }
             else
             {
@@ -1980,6 +2122,22 @@ namespace MikuMikuDesktopPerch
                     XMStoreFloat3(&h.smooth[i].position,XMVectorLerp(XMLoadFloat3(&h.smooth[i].position),XMLoadFloat3(&g[i].position),follow));
                 }
                 g=h.smooth;
+            }
+            // Style 3 (a whole body playing a stroke): eased a second time, so each bone's turn
+            // and move gathers speed and loses it gradually rather than setting off at once.
+            if(h.wholeArm)
+            {
+                if(h.smoother.size()!=g.size()||h.weight<=static_cast<float>(dt/0.4)+1e-4f)h.smoother=g;
+                else
+                {
+                    const float follow=static_cast<float>(1.0-std::exp(-dt/0.035));
+                    for(size_t i=0;i<g.size();++i)
+                    {
+                        XMStoreFloat4(&h.smoother[i].rotation,XMQuaternionSlerp(XMLoadFloat4(&h.smoother[i].rotation),XMLoadFloat4(&g[i].rotation),follow));
+                        XMStoreFloat3(&h.smoother[i].position,XMVectorLerp(XMLoadFloat3(&h.smoother[i].position),XMLoadFloat3(&g[i].position),follow));
+                    }
+                    g=h.smoother;
+                }
             }
             for(size_t i=0;i<keys.size();++i)
             {

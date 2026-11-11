@@ -189,6 +189,11 @@ namespace MikuMikuDesktopPerch
         // in it points (along the forearm, tipped toward the thumb). False on a model without
         // those bones.
         bool Grip(int side,std::array<float,3>& middle,std::array<float,3>& along) const;
+        // The same fist's middle, the way a racket held in it as a hand is shaken points (model
+        // space: up past the thumb and on the way the hand points, its handle lying across the
+        // palm), and the way the palm faces.
+        // wrist, elbow (if given): where the wrist is (what Hold places), and the elbow.
+        bool Fist(int side,std::array<float,3>& middle,std::array<float,3>& racket,std::array<float,3>& palm,std::array<float,3>* wrist=nullptr,std::array<float,3>* elbow=nullptr) const;
         void EndGestures();   // the gesture and reaction playing fade out
         // At once, out of sight (a game's window opening): no gesture, reaction or clip, and the
         // arms' stops forgotten, so her hands are back in the standing pose's places.
@@ -264,6 +269,12 @@ namespace MikuMikuDesktopPerch
         // style: 0 leaning over it, palm down (the mallet); 1 sitting up, palm down; 2 sitting up,
         // holding something up before her (cards).
         void Hold(int side,const std::array<float,3>& wrist,bool on,int style=0);
+        // Her other hand and her feet with what side holds (style 3); see GeneratedMotion::HoldFree.
+        void HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet);
+        // The body moved with the stroke of what side holds (style 3); see GeneratedMotion::HoldBody.
+        void HoldBody(int side,float down,float forward,float turn,float lean,float hips,float elbow=0);
+        // Diagnostics: how far the arm held with style 3 was still in the body (leg lengths).
+        float HoldInBody(int side) const;
         // A golf club in both hands, standing side-on to the target (+X, her left): see
         // GeneratedMotion::Swing (stage 0 address, 1 top, 2 impact, 3 finish; power 0.2-1).
         void Swing(bool on,float stage,float power,bool putter=false);

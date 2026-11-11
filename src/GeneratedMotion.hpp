@@ -138,12 +138,36 @@ namespace MikuMikuDesktopPerch
         // body bent forward (18 degrees, up to 35 toward a point far off), over whatever else the arm does. It
         // eases in (on) and out (off) in 0.4 s. Standing or sitting.
         // style: 0 leaning over what it holds (palm down), 1 sitting up (palm down), 2 sitting
-        // up and holding something up before her (cards: the wrist nearly straight).
+        // up and holding something up before her (cards: the wrist nearly straight), 3 as 0 with
+        // the upper arm kept out of the body too (a racket taken across the body: by the model's
+        // own surface, so each model's build and rest pose are allowed for).
         void Hold(int side,const DirectX::XMFLOAT3& wrist,bool on,int style=0);
         // The arm's own pose for style 2 (腕, 腕捩, ひじ, 手捩, 手首 as keyed in MMD) in place of
         // one worked out to a wrist point; none: worked out.
         void HoldPose(int side,const std::array<DirectX::XMFLOAT4,5>* keys);
         bool Holding(int side) const {return side>=0&&side<2&&holds[side].on;}
+        // With what side holds (style 3): her other hand, and her feet. at: the other hand's
+        // wrist at point (model space, as Hold's), palm up (a ball on it); otherwise it is
+        // held before her, the elbow bent, as one keeps one's balance. feet: each foot (left,
+        // right) from where it stands at rest (model units; on 足ＩＫ): apart, as one stands to
+        // play, and lifted and set down again as she steps.
+        void HoldFree(int side,bool at,const DirectX::XMFLOAT3& point,const std::array<DirectX::XMFLOAT3,2>& feet)
+        {
+            if(side<0||side>1)return;
+            holds[side].freeAt=at;holds[side].freePoint=point;holds[side].feet=feet;
+        }
+        // The body as it plays a stroke with what side holds (style 3): lowered by down and
+        // moved forward (model units; グルーブ, or センター without it: the feet stay, the knees
+        // bend), the upper body turned by turn (radians; positive toward her right) and leant
+        // lean further forward, the hips (下半身) turned by hips. The hand still goes where Hold put it.
+        // elbow: 0 the elbow out to the side and the forearm in across the body (a backhand),
+        // 1 the elbow in by the body and the forearm out to the hand at her side (a forehand).
+        void HoldBody(int side,float down,float forward,float turn,float lean,float hips,float elbow=0)
+        {
+            if(side>=0&&side<2){holds[side].body={down,forward,turn,lean,hips};holds[side].elbowIn=elbow<0?0.0f:elbow>1?1.0f:elbow;}
+        }
+        // Diagnostics: how far a held arm (style 3) was still in the body after it was moved clear (leg lengths).
+        float HoldInBody(int side) const {return side>=0&&side<2?holdInBody[side]:0.0f;}
         // A golf club in both hands (docs/Golf.md): standing side-on to where the ball goes (+X,
         // her left), bent from the hips over the ball. stage: 0 the address, 1 the top of the
         // backswing, 2 the ball struck, 3 the finish (any stage between, as the caller times it);
@@ -428,11 +452,24 @@ namespace MikuMikuDesktopPerch
             float twist=0;             // the upper body turned toward the hand (radians, eased)
             bool upright=false;        // the hand only: no lean or turn, the other arm left as it is
             bool raised=false;         // holding something up (style 2)
+            bool wholeArm=false;       // the upper arm kept out of the body too (style 3)
+            // Style 3: the body moved with the stroke (HoldBody): down and forward (model units,
+            // on グルーブ), the upper body's turn and further lean, the hips' turn (radians).
+            std::array<float,5> body{};
+            float elbowIn=0;           // style 3: 0 the elbow out to the side, 1 in by the body (the forearm then points outward)
+            // Style 3: the other hand (HoldFree): at a point palm up (a ball held to be served),
+            // else held before her for balance; and each foot set this far out to its side.
+            bool freeAt=false;
+            DirectX::XMFLOAT3 freePoint{};
+            std::array<DirectX::XMFLOAT3,2> feet{};   // each foot from where it stands at rest (model units: left, right)
             bool posed=false;          // with these keys (HoldPose)
             std::array<DirectX::XMFLOAT4,5> pose{};
             std::vector<Key> smooth;   // the held pose as last given, eased toward each new one (no trembling)
+            std::vector<Key> smoother; // style 3: that eased once more, so no bone starts or stops at once
         };
         std::array<HoldArm,2> holds{};
+        bool clearUpperArm=false;      // ReachArm's clear: the upper arm too, this call
+        std::array<float,2> holdInBody{};   // diagnostics: how far the held arm was still in the body (leg lengths)
         void ApplyHold(std::vector<Key>& keys,double dt);
         bool swingOn=false;
         float swingStage=0,swingPower=1,swingWeight=0;
