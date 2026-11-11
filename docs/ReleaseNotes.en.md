@@ -2,6 +2,17 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.4
+
+### New
+
+- **Table tennis**: "Mini games" → "Play table tennis" in the right-click menu lets you play table tennis against the character (first to 11, two clear from 10 all; 3D view only). She stands at the far end with her racket; on your side only your racket is seen
+  - The mouse moves your racket forward, back and sideways (its height follows the ball). The left button strikes, the right button cuts, Space or the mouse's back button smashes (a high ball). A swinging racket goes up to a racket's width sideways to the ball by itself
+  - On the half of the table away from your racket hand the racket turns to the backhand (H changes hand). The ball goes the way the mouse is moving as you strike, and a cut bends sideways
+  - She goes to where the ball comes, chooses forehand or backhand and plays with her whole body. She throws the ball up with her other hand to serve. A ball her hand does not reach, she swings at and misses
+  - Keys 1-3 choose how strong she is. P pauses; drag with the middle button to turn the camera
+  - The design (in Japanese): docs/TableTennis.md
+
 ## 1.7.3
 
 ### Fixed
