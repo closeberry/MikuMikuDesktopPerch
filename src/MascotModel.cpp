@@ -2937,9 +2937,9 @@ namespace MikuMikuDesktopPerch
     }
 
     float MascotModel::HoldInBody(int side) const {return impl->motion.HoldInBody(side);}
-    void MascotModel::HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet)
+    void MascotModel::HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet,const std::array<float,3>& lead)
     {
-        impl->motion.HoldFree(side,at,{point[0],point[1],point[2]},{DirectX::XMFLOAT3{feet[0][0],feet[0][1],feet[0][2]},DirectX::XMFLOAT3{feet[1][0],feet[1][1],feet[1][2]}});
+        impl->motion.HoldFree(side,at,{point[0],point[1],point[2]},{DirectX::XMFLOAT3{feet[0][0],feet[0][1],feet[0][2]},DirectX::XMFLOAT3{feet[1][0],feet[1][1],feet[1][2]}},{lead[0],lead[1],lead[2]});
     }
     void MascotModel::HoldBody(int side,float down,float forward,float turn,float lean,float hips,float elbow){impl->motion.HoldBody(side,down,forward,turn,lean,hips,elbow);}
 

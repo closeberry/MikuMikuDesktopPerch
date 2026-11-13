@@ -270,7 +270,8 @@ namespace MikuMikuDesktopPerch
         // holding something up before her (cards).
         void Hold(int side,const std::array<float,3>& wrist,bool on,int style=0);
         // Her other hand and her feet with what side holds (style 3); see GeneratedMotion::HoldFree.
-        void HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet);
+        // lead: the held-before hand moved from its place (arm lengths: toward the holding side, up, forward).
+        void HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet,const std::array<float,3>& lead={});
         // The body moved with the stroke of what side holds (style 3); see GeneratedMotion::HoldBody.
         void HoldBody(int side,float down,float forward,float turn,float lean,float hips,float elbow=0);
         // Diagnostics: how far the arm held with style 3 was still in the body (leg lengths).

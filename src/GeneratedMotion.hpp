@@ -151,10 +151,12 @@ namespace MikuMikuDesktopPerch
         // held before her, the elbow bent, as one keeps one's balance. feet: each foot (left,
         // right) from where it stands at rest (model units; on 足ＩＫ): apart, as one stands to
         // play, and lifted and set down again as she steps.
-        void HoldFree(int side,bool at,const DirectX::XMFLOAT3& point,const std::array<DirectX::XMFLOAT3,2>& feet)
+        // lead: where the held-before hand is moved from its place, in arm lengths: toward the
+        // holding side, up, forward (it plays its part in a stroke).
+        void HoldFree(int side,bool at,const DirectX::XMFLOAT3& point,const std::array<DirectX::XMFLOAT3,2>& feet,const DirectX::XMFLOAT3& lead={})
         {
             if(side<0||side>1)return;
-            holds[side].freeAt=at;holds[side].freePoint=point;holds[side].feet=feet;
+            holds[side].freeAt=at;holds[side].freePoint=point;holds[side].feet=feet;holds[side].freeLead=lead;
         }
         // The body as it plays a stroke with what side holds (style 3): lowered by down and
         // moved forward (model units; グルーブ, or センター without it: the feet stay, the knees
@@ -461,6 +463,7 @@ namespace MikuMikuDesktopPerch
             // else held before her for balance; and each foot set this far out to its side.
             bool freeAt=false;
             DirectX::XMFLOAT3 freePoint{};
+            DirectX::XMFLOAT3 freeLead{};   // the held-before hand moved by this (arm lengths: toward the holding side, up, forward)
             std::array<DirectX::XMFLOAT3,2> feet{};   // each foot from where it stands at rest (model units: left, right)
             bool posed=false;          // with these keys (HoldPose)
             std::array<DirectX::XMFLOAT4,5> pose{};

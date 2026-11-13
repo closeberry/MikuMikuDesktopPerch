@@ -70,6 +70,8 @@ namespace MikuMikuDesktopPerch
             float yourHeight=0.18f;   // your racket's height over the table (it goes with the ball)
             float yourShift=0;        // your racket taken across to the ball as it swings (metres, eased)
             float inBody=0;           // diagnostics: the most her racket arm was left in her body (leg lengths)
+            std::array<float,4> inBodyBy{};    // the same by her forehand drive's way (drive, loop, block) and anything else
+            std::array<double,4> inBodyAt{};   // (when: the game's clock)
 
             // The 3D table. World units: the table's top at y = top, its middle over (0, 0); x
             // across, the table's length along world z (toward her), k world units to a metre.
@@ -118,6 +120,17 @@ namespace MikuMikuDesktopPerch
             int steps=0;   // diagnostics
             float depthSpeed=0;    // how fast she is moving toward or away from the table (herZ)
             Stroke strokeKind=Stroke::Drive;
+            // Her forehand drive is played one of three ways, chosen for each ball (by its
+            // height, the time she has, and chance): the drive, a loop brushed up from low
+            // (a low ball), a short block (little time). Shapes measured on human strokes.
+            enum class Fore {Drive,Loop,Block};
+            Fore fore=Fore::Drive;
+            double foreFor=-9;   // the ball it was chosen for (Brain::HitAt)
+            // Her other hand with the stroke (MascotModel::HoldFree's lead, arm lengths: toward her
+            // racket side, up, forward), eased as springs.
+            std::array<float,3> lead{},leadSpeed{};
+            std::mt19937 foreRandom{20261113};
+            std::array<int,3> foreCount{};   // diagnostics
             bool within=true;      // her blade was where it was to be when her swing began
             int strikes=0,whiffs=0;      // diagnostics: her strokes, and her swings that missed for want of her hand
             double holding=0;      // seconds she has held it
@@ -1678,8 +1691,25 @@ namespace MikuMikuDesktopPerch
                     // (Her left of her racket arm's elbow as it is now: nearer her body than
                     // that, a forehand would have her arm folded up against her.)
                     state.backhand=state.brain->Spot().x*k>state.herElbow-0.12f*k;   // (and a little outside it: before her body is the backhand's)
-                    state.words.told+=Fmt(L"  she takes it on the {0}: the ball {1} m to the left of her elbow\n",{state.backhand?L"backhand":L"forehand",
-                                          std::to_wstring((state.brain->Spot().x*k-state.herElbow)/k)});
+                    // Which forehand: a loop for a low ball, a block when the ball is on her
+                    // quickly, otherwise mostly the drive, now and then one of the others.
+                    // Once a ball (HitAt moves a little as she sees it better: that is the same ball).
+                    if(std::abs(state.brain->HitAt()-state.foreFor)>0.30)
+                    {
+                        state.foreFor=state.brain->HitAt();
+                        using Fore=decltype(state.fore);
+                        const float height=state.brain->Height(),left=static_cast<float>(state.brain->HitAt()-g.Clock());
+                        const float roll=std::uniform_real_distribution<float>(0,1)(state.foreRandom);
+                        // (She sees where a ball goes some 0.25-0.6 s before she meets it, 0.05-0.4 m over the table.)
+                        state.fore=height<0.20f?(roll<0.70f?Fore::Loop:Fore::Drive):
+                                   left<0.24f?(roll<0.70f?Fore::Block:Fore::Drive):
+                                   roll<0.50f?Fore::Drive:roll<0.75f?Fore::Loop:Fore::Block;
+                        if(!state.backhand&&state.brain->Planned()==Stroke::Drive)++state.foreCount[static_cast<int>(state.fore)];
+                        state.words.told+=Fmt(L"  she takes it on the {0}: the ball {1} m to the left of her elbow, {2} m over the table, {3} s off, at {5}{4}\n",{state.backhand?L"backhand":L"forehand",
+                                              std::to_wstring((state.brain->Spot().x*k-state.herElbow)/k),std::to_wstring(height),std::to_wstring(left),
+                                              state.backhand||state.brain->Planned()!=Stroke::Drive?L"":state.fore==Fore::Loop?L" (loop)":state.fore==Fore::Block?L" (block)":L" (drive)",
+                                              std::to_wstring(state.brain->HitAt())});
+                    }
                 }
             }
             else if(g.SwingAge(Her)>0.40f)state.backhand=false;
@@ -1827,8 +1857,20 @@ namespace MikuMikuDesktopPerch
             const bool smash=stroke==Stroke::Smash,cut=stroke==Stroke::Cut;
             const float side=state.backhand?-1.0f:1.0f;   // (her racket side is toward -x)
             // (As far as your racket goes round its elbow: some 0.25 m back and 0.45 m through.)
-            const Vec3 back{-side*(cut?0.05f:0.11f),smash?0.28f:cut?0.12f:0.22f,smash?0.26f:cut?0.12f:-0.07f};
-            const Vec3 through{side*(smash?0.50f:cut?0.30f:0.54f),smash?-0.52f:cut?-0.32f:-0.42f,smash?-0.20f:cut?-0.14f:0.28f};   // (across: her arm comes round late, so it is sent on early)
+            Vec3 back{-side*(cut?0.05f:0.11f),smash?0.28f:cut?0.12f:0.22f,smash?0.26f:cut?0.12f:-0.07f};
+            Vec3 through{side*(smash?0.50f:cut?0.30f:0.54f),smash?-0.52f:cut?-0.32f:-0.42f,smash?-0.20f:cut?-0.14f:0.28f};   // (across: her arm comes round late, so it is sent on early)
+            // Her forehand drives each their own way (as measured on people: the drive drawn back
+            // low and swept up and across to the other shoulder, the loop from lower still up over
+            // her head, the block short and level).
+            if(!state.backhand&&stroke==Stroke::Drive)
+            {
+                using Fore=decltype(state.fore);
+                // (Her eased arm comes some half way to these: asked for further than it is to go.)
+                // (The drive's finish goes up over her other shoulder: further across, lower, her arm went through her chest.)
+                if(state.fore==Fore::Drive){back={-0.14f,0.28f,-0.22f};through={0.72f,-0.36f,0.88f};}
+                else if(state.fore==Fore::Loop){back={-0.14f,0.42f,-0.34f};through={0.50f,-0.40f,0.70f};}
+                else{back={-0.07f,0.20f,-0.06f};through={0.26f,-0.26f,0.20f};}
+            }
 
             auto ease=[](float t){t=std::clamp(t,0.0f,1.0f);return t*t*(3-2*t);};
             float bx=0,by=0,bz=0;
@@ -1838,7 +1880,9 @@ namespace MikuMikuDesktopPerch
                 // the ball is met, and kept there until it has been (her eased arm follows a
                 // little late: so it is on the ball as the ball is struck); then on through,
                 // and back.
-                const float in=1-ease((timed+Begins)/0.15f),on=ease((timed-0.04f)/0.14f)*(1-ease((timed-0.20f)/0.22f));
+                // (The drive is held up at its finish a little longer, over the other shoulder.)
+                const float held=!state.backhand&&stroke==Stroke::Drive&&state.fore==decltype(state.fore)::Drive?0.26f:0.20f;
+                const float in=1-ease((timed+Begins)/0.15f),on=ease((timed-0.04f)/0.14f)*(1-ease((timed-held)/(0.42f-held)));
                 bx=back.x*in+through.x*on;by=back.y*in+through.y*on;bz=back.z*in+through.z*on;
             }
             else{bx=back.x*drawn;by=back.y*drawn;bz=back.z*drawn;}
@@ -1855,10 +1899,19 @@ namespace MikuMikuDesktopPerch
             auto ease=[](float t){t=std::clamp(t,0.0f,1.0f);return t*t*(3-2*t);};
             const Stroke stroke=swinging?state.strokeKind:state.brain->Planned();
             const bool smash=stroke==Stroke::Smash,cut=stroke==Stroke::Cut;
-            const float back=XMConvertToRadians(smash?38.0f:cut?16.0f:30.0f)*way,through=-XMConvertToRadians(smash?46.0f:cut?20.0f:36.0f)*way;
+            using Fore=decltype(state.fore);
+            const Fore fore=!state.backhand&&stroke==Stroke::Drive?state.fore:Fore::Drive;
+            const bool styled=!state.backhand&&stroke==Stroke::Drive,loop=styled&&fore==Fore::Loop,block=styled&&fore==Fore::Block;
+            // (The forehand's hips turn with the shoulders more than they did: people turn them
+            // half as far again; a loop most, a block hardly.)
+            const float back=XMConvertToRadians(smash?38.0f:cut?16.0f:loop?40.0f:block?12.0f:styled?34.0f:30.0f)*way,
+                        through=-XMConvertToRadians(smash?46.0f:cut?20.0f:loop?50.0f:block?16.0f:styled?44.0f:36.0f)*way;
+            const float hipShare=loop?0.75f:block?0.40f:styled?0.65f:0.45f;
             const float low=std::clamp((0.26f-state.herHeight)/0.20f,0.0f,1.0f);
-            // (Lower on the forehand: her shoulder comes down toward the ball's height, so her forearm lies level.)
-            float down=(0.05f+0.05f*low+(coming&&!state.backhand?0.06f:0.0f))*Leg,forward=0,turn=0,lean=XMConvertToRadians(-5.0f);   // (more upright than one leaning over a table: her shoulders stay over her feet)
+            // (Lower on the forehand: her shoulder comes down toward the ball's height, so her
+            // forearm lies level. A loop crouches low and leans over the ball; a block stands taller.)
+            float down=(0.05f+0.05f*low+(coming&&!state.backhand?(loop?0.26f:styled?0.0f:0.06f):0.0f))*Leg,forward=0,turn=0,
+                  lean=XMConvertToRadians(-5.0f+(coming&&styled?(loop?30.0f:block?2.0f:6.0f):0.0f));   // (more upright than one leaning over a table: her shoulders stay over her feet)
             if(swinging)
             {
                 // (Her body turns through as the ball is met and after, not before: turned sooner, it carried her arm on ahead of the ball.)
@@ -1871,6 +1924,13 @@ namespace MikuMikuDesktopPerch
                     forward+=0.13f*Leg*t*home;
                 }
                 else if(cut)down+=0.05f*Leg*t*home;
+                else if(loop)
+                {
+                    // Up out of the crouch through the ball, and forward into it.
+                    down+=(0.03f-0.22f*t)*Leg*home;
+                    forward+=0.08f*Leg*t*home;
+                }
+                else if(block)forward+=0.03f*Leg*t*home;
                 else
                 {
                     down+=(0.03f-0.07f*t)*Leg*home;
@@ -1885,7 +1945,7 @@ namespace MikuMikuDesktopPerch
             // On the forehand her elbow is in by her body and her forearm points out to the
             // racket; on the backhand the elbow is out and the forearm comes in across her.
             // Between balls, half way: the forearm forward, the racket edge on (as a hand held out to be shaken).
-            const float want[6]={std::max(down,0.0f),forward,turn,lean,turn*0.45f,state.backhand?0.0f:coming||swinging?1.0f:0.55f};
+            const float want[6]={std::max(down,0.0f),forward,turn,lean,turn*hipShare,state.backhand?0.0f:coming||swinging?1.0f:0.55f};
             // Each follows as a spring that just does not overshoot (quicker in the stroke): it
             // gathers speed and loses it, with no sudden start or stop.
             if(live)
@@ -1993,7 +2053,38 @@ namespace MikuMikuDesktopPerch
                     feet[f]={std::clamp(foot.x-state.herX,-most,most),lift,std::clamp(foot.z-state.herZ,-most,most)};
                 }
             }
-            if(g.Now()!=Phase::Over)model.HoldFree(HerHand,serving,under,feet);
+            // Her other hand plays its part, as people's does: held further forward as a ball comes,
+            // reaching forward and across toward the ball as she draws back, then pulled back and
+            // out to her side (the elbow folding) as the racket goes through, which turns her
+            // shoulders the more. Most in a loop or a smash, little in a block or a cut; on the
+            // backhand less.
+            {
+                auto ease=[](float t){t=std::clamp(t,0.0f,1.0f);return t*t*(3-2*t);};
+                const Stroke stroke=swinging?state.strokeKind:state.brain->Planned();
+                const bool forehandDrive=!state.backhand&&stroke==Stroke::Drive;
+                const bool loop=forehandDrive&&state.fore==decltype(state.fore)::Loop;
+                const float size=state.backhand?0.4f:stroke==Stroke::Smash?1.2f:stroke==Stroke::Cut?0.5f:
+                                 !forehandDrive?1.0f:loop?1.2f:state.fore==decltype(state.fore)::Block?0.8f:1.0f;
+                const float back=swinging?1-ease((timed+Begins)/0.15f):drawn;
+                const float on=swinging?ease((timed-0.02f)/0.16f)*(1-ease((timed-0.28f)/0.14f)):0.0f;
+                // (Held well before her while she plays, as people do; further in a loop, as her lean
+                // would otherwise bring it back to her side.)
+                const float play=coming||swinging?1.0f:0.0f,ahead=(loop?0.48f:0.34f)*play;
+                const float want[3]={size*(0.21f*back-0.26f*on)+0.04f*play,size*(0.10f*back-0.14f*on)+0.04f*play,size*(0.10f*back-0.30f*on)+ahead};
+                if(live&&!serving)
+                {
+                    const int steps=std::max(1,static_cast<int>(std::ceil(dt*240)));
+                    const float h=static_cast<float>(dt)/steps,W=swinging?18.0f:10.0f;
+                    for(int i=0;i<3;++i)
+                        for(int n=0;n<steps;++n)
+                        {
+                            state.leadSpeed[i]+=(W*W*(want[i]-state.lead[i])-2*W*state.leadSpeed[i])*h;
+                            state.lead[i]+=state.leadSpeed[i]*h;
+                        }
+                }
+                else if(serving){state.lead={};state.leadSpeed={};}
+            }
+            if(g.Now()!=Phase::Over)model.HoldFree(HerHand,serving,under,feet,state.lead);
             else model.HoldFree(HerHand,false,{},{});
         }
         // Not across her body while she is still on her way to the side: no further toward her
@@ -2039,7 +2130,14 @@ namespace MikuMikuDesktopPerch
             else if(!striking)for(float& t:state.handTrim)t*=static_cast<float>(std::exp(-dt/1.2));
             // (Style 3: her whole arm kept out of her body, by her own model's surface.)
             model.Hold(HerHand,{point[0]+state.holdOffset[0]+state.handTrim[0],point[1]+state.holdOffset[1]+state.handTrim[1],point[2]+state.holdOffset[2]+state.handTrim[2]},true,3);
-            if(state.holding>1)state.inBody=std::max(state.inBody,model.HoldInBody(HerHand));
+            if(state.holding>1)
+            {
+                const float in=model.HoldInBody(HerHand);
+                state.inBody=std::max(state.inBody,in);
+                // (By what she is playing: her forehand drive's three ways, anything else.)
+                const int by=(coming||swinging)&&!state.backhand&&state.strokeKind==Stroke::Drive?static_cast<int>(state.fore):3;
+                if(in>state.inBodyBy[by]){state.inBodyBy[by]=in;state.inBodyAt[by]=g.Clock();}
+            }
         }
         else
         {
@@ -2142,6 +2240,10 @@ namespace MikuMikuDesktopPerch
                    state.poseFrames[0]?state.slopeSum[0]/state.poseFrames[0]:0.0,state.poseFrames[1]?state.slopeSum[1]/state.poseFrames[1]:0.0);
         text+=line;
         swprintf_s(line,L"tabletennis: her feet took %d steps\n",state.steps);
+        text+=line;
+        swprintf_s(line,L"tabletennis: her forehand drives: %d drive, %d loop, %d block; her arm in her body at most %.3f (at %.2f), %.3f (at %.2f), %.3f (at %.2f), anything else %.3f (at %.2f)\n",
+                   state.foreCount[0],state.foreCount[1],state.foreCount[2],state.inBodyBy[0],state.inBodyAt[0],state.inBodyBy[1],state.inBodyAt[1],
+                   state.inBodyBy[2],state.inBodyAt[2],state.inBodyBy[3],state.inBodyAt[3]);
         text+=line;
         swprintf_s(line,L"tabletennis: her blade's height shakes %.2f mm a frame while she waits, %.2f at most (%d frames)\n",
                    state.shakeFrames?state.shake/state.shakeFrames*1000:0.0,state.shakeMost*1000,state.shakeFrames);

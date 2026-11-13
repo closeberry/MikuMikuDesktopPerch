@@ -2006,7 +2006,11 @@ namespace MikuMikuDesktopPerch
                         to=XMVectorSubtract(XMVectorSubtract(XMLoadFloat3(&h.freePoint),XMVectorSet(rootOffset,0,0,0)),moved);
                         to=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(to,pivot),XMQuaternionConjugate(bend)));
                     }
-                    else to=XMVectorAdd(XMLoadFloat3(&rig.shoulderPos[o]),XMVectorSet(out*0.25f*rig.upperArm,-0.80f*rig.upperArm,-0.85f*rig.forearm,0));
+                    else
+                    {
+                        const float A=rig.upperArm+rig.forearm;
+                        to=XMVectorAdd(XMLoadFloat3(&rig.shoulderPos[o]),XMVectorSet(out*(0.25f*rig.upperArm+h.freeLead.x*A),-0.80f*rig.upperArm+h.freeLead.y*A,-0.85f*rig.forearm-h.freeLead.z*A,0));
+                    }
                     ReachArm(g,o,to,XMVectorSet(-out*0.8f,-1,0.2f,0),0.6f,true);
                     const XMVECTOR undo=XMQuaternionConjugate(bend);
                     if(h.freeAt)
