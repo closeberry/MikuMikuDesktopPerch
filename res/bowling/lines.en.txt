@@ -1,0 +1,122 @@
+# The bowling lines in English: the same scenes as lines.txt (keep the names in [ ] as they are).
+# Said as they are until the LLM has said them again in the character's own way (docs/GameLines.md).
+
+[始まり] The game is beginning
+All right, let's bowl!
+I won't lose!
+I'm going to throw lots of strikes!
+Come on, let's start!
+Let's make it a good game.
+I wonder who'll win. This'll be fun!
+This ball feels just right.
+I think I'm on form today!
+Ten frames. Let's do our best.
+It's been ages since I bowled!
+
+[ストライクを取った] She threw a strike
+Yes, a strike!
+Did you see? They all went down!
+All right, strike!
+Hehe, that felt great!
+Right where I aimed!
+How about that?
+What a sound!
+The pins just exploded!
+Yay, I got it!
+I'll keep this going!
+
+[ダブル] She threw strikes in a row
+A double! A double!
+All of them down again!
+Strikes in a row!
+I can't be stopped!
+I'm really on form today!
+I'm not done yet!
+Wow, again!
+I think I can do the next one too!
+
+[スペアを取った] She knocked down the rest with her second ball
+All right, a spare!
+Picked them up!
+Phew, got the spare.
+Cleaned them up!
+Knocked them down nicely!
+Spares matter too, you know.
+Good, I got it!
+Aimed and hit!
+
+[ピンが残った] She left pins standing at the end of her frame
+Ah, some are left...
+So close, just a little more!
+Hmm, one stayed up.
+I'll get them next time.
+That was a bit off.
+Ugh, that's annoying!
+My aim was too loose there.
+Well, these things happen.
+
+[ガターだった] Her ball fell into the gutter
+Oh, a gutter ball...
+Whoa, it fell in!
+Pretend you didn't see that!
+It curved too much...
+How embarrassing...
+My hand slipped.
+Next time for sure!
+A gutter? That stings!
+
+[ストライクを取られた] You threw a strike
+Ooh, a strike!
+Wow, they all went down!
+Nice, that was a good ball!
+Wow, you're good!
+Nice strike!
+Argh, you got me!
+What a sound!
+That was beautiful.
+
+[スペアを取られた] You picked up a spare
+Nice spare!
+You picked them up!
+Good one!
+Cleanly done.
+Nice, a spare!
+You're staying calm.
+
+[相手のガター] Your ball fell into the gutter
+Oh, a gutter!
+Never mind, never mind!
+So close, it curved too much.
+There's always the next one!
+Hehe, that might be my chance.
+Don't worry about it!
+
+[最後のフレーム] The tenth frame is beginning
+Here we are, the last frame.
+This is where it counts!
+I'll finish strong!
+Win or lose, this is the last one.
+Focus, focus...
+Last frame. Let's do this!
+
+[勝った] The game is over and she won
+Yay, I won!
+Hehe, this time it's my win!
+That was a good game!
+That was fun! Let's bowl again.
+Those strikes felt so good.
+I won, I'm so happy!
+
+[負けた] The game is over and you won
+Aw, I lost...
+So frustrating! I'll win next time!
+You're strong. Congratulations!
+That was a good game.
+Want to play another game?
+Today it's your win.
+
+[引き分け] The game is over in a tie
+It's a tie!
+A draw? That was a close one.
+Exactly the same score, amazing!
+We'll settle it next time.

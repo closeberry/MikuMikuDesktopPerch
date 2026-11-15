@@ -140,7 +140,8 @@ namespace MikuMikuDesktopPerch
         // style: 0 leaning over what it holds (palm down), 1 sitting up (palm down), 2 sitting
         // up and holding something up before her (cards: the wrist nearly straight), 3 as 0 with
         // the upper arm kept out of the body too (a racket taken across the body: by the model's
-        // own surface, so each model's build and rest pose are allowed for).
+        // own surface, so each model's build and rest pose are allowed for), 4 as 3 with the
+        // forearm left where it goes (a bowling arm swung back past the hip and coat).
         void Hold(int side,const DirectX::XMFLOAT3& wrist,bool on,int style=0);
         // The arm's own pose for style 2 (腕, 腕捩, ひじ, 手捩, 手首 as keyed in MMD) in place of
         // one worked out to a wrist point; none: worked out.
@@ -455,6 +456,7 @@ namespace MikuMikuDesktopPerch
             bool upright=false;        // the hand only: no lean or turn, the other arm left as it is
             bool raised=false;         // holding something up (style 2)
             bool wholeArm=false;       // the upper arm kept out of the body too (style 3)
+            bool swinging=false;       // style 4: as 3, but the forearm not moved out of the body (an arm swung back past the hip, which the clearing pushed forward)
             // Style 3: the body moved with the stroke (HoldBody): down and forward (model units,
             // on グルーブ), the upper body's turn and further lean, the hips' turn (radians).
             std::array<float,5> body{};

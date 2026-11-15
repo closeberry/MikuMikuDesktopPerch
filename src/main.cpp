@@ -16,6 +16,8 @@
 #include "AirHockeyWindow.hpp"
 #include "TableTennis.hpp"
 #include "TableTennisWindow.hpp"
+#include "Bowling.hpp"
+#include "BowlingWindow.hpp"
 #include "Hanafuda.hpp"
 #include "HanafudaWindow.hpp"
 #include "Othello.hpp"
@@ -96,7 +98,7 @@ namespace
     enum MenuId:UINT {IdOpenModel=100,IdOpenMotion,IdCloseMotion,IdOpenIdleMotion,IdAddIdleMotion,IdCloseIdleMotion,
                       IdOpenClickMotion,IdCloseClickMotion,IdWindowMode,IdStayPut,IdWalkLeft,IdWalkRight,IdSettings,IdExit,IdTalk,
                       IdOpenWalkMotion,IdOpenRunMotion,IdCloseGaitMotion,IdOpenFaceMotion,IdCloseFaceMotion,IdAddCharacter,IdRemoveCharacter,IdPlanner,IdCancelTimers,IdFocus,
-                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdTableTennis,IdRuins,IdHanafuda,IdOthello,IdGomoku,IdShogi,IdHexWar,IdBlackjack,IdOldMaid,IdPoker,IdGinRummy,IdPageOne,IdBlockTower,IdChess,IdSolitaire,IdForts,IdGolf,IdGolf3,IdGolf3Random,IdGolf6};
+                      IdOpenWindowMotion,IdAddWindowMotion,IdCloseWindowMotion,IdResetPose,IdResetPoseAll,IdAlbumShot,IdOpenAlbum,IdDungeon,IdMahjong,IdAirHockey,IdTableTennis,IdBowling,IdRuins,IdHanafuda,IdOthello,IdGomoku,IdShogi,IdHexWar,IdBlackjack,IdOldMaid,IdPoker,IdGinRummy,IdPageOne,IdBlockTower,IdChess,IdSolitaire,IdForts,IdGolf,IdGolf3,IdGolf3Random,IdGolf6};
     constexpr UINT IdTimerMinutes=300;      // + minutes: the menu's quick timers
     constexpr UINT IdTreasure=600;          // + the treasure's place in Dungeon::TreasureBook: look at it
     constexpr double LookIdleSeconds=8.0;   // stop following a cursor that has not moved for this long
@@ -178,6 +180,7 @@ namespace
         // At the mahjong table (docs/Mahjong.md): the same, her model drawn in its window.
         bool inMahjong=false;
         bool inAirHockey=false;   // at the hover hockey table (off the desktop meanwhile)
+        bool inBowling=false;    // at the bowling alley (docs/Bowling.md), her model drawn in its window
         bool inTableTennis=false; // at the table tennis table (docs/TableTennis.md), her model drawn in its window
         bool inOldMaid=false;     // at the Old Maid table (docs/OldMaid.md), her model drawn in its window
         bool inForts=false;       // at the Three Forts table (docs/Forts.md), her model drawn in its window
@@ -817,7 +820,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inTableTennis||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inBlockTower||other.inPageOne||other.inChess||other.inSolitaire||other.inForts||other.inRuins||other.inGolf)continue;   // away (room is made again when she is back)
+            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inTableTennis||other.inBowling||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inBlockTower||other.inPageOne||other.inChess||other.inSolitaire||other.inForts||other.inRuins||other.inGolf)continue;   // away (room is made again when she is back)
             const bool going=other.place==Place::Warping||other.place==Place::Jumping||other.travel!=Travel::None;
             if(std::abs((going?other.destinationLine:FeetLine(other))-line)>4)continue;
             const Activity a=other.model.CurrentActivity();
@@ -960,7 +963,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inTableTennis||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inBlockTower||other.inPageOne||other.inChess||other.inSolitaire||other.inForts||other.inRuins||other.inGolf||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
+            if(&other==&m||other.inDungeon||other.inMahjong||other.inAirHockey||other.inTableTennis||other.inBowling||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inBlockTower||other.inPageOne||other.inChess||other.inSolitaire||other.inForts||other.inRuins||other.inGolf||!still(other)||std::abs(FeetLine(other)-line)>4)continue;
             if(std::abs(CenterX(other)-CenterX(m))>=(ModelHalfWidthPixels(m)+ModelHalfWidthPixels(other))*0.6)continue;
             if(movable(other)&&other.slot>m.slot)continue;   // that one steps aside instead
             double left,right;
@@ -976,11 +979,11 @@ namespace
 
     // A game the others watch (mahjong, hover hockey or the ruins, its window up and not minimized), and where
     // its window is.
-    bool GameWindowRect(RECT& r){return MahjongWindowRect(r)||HanafudaWindowRect(r)||OthelloWindowRect(r)||GomokuWindowRect(r)||ShogiWindowRect(r)||HexWarWindowRect(r)||BlackjackWindowRect(r)||OldMaidWindowRect(r)||PokerWindowRect(r)||GinRummyWindowRect(r)||PageOneWindowRect(r)||BlockTowerWindowRect(r)||FortsWindowRect(r)||ChessWindowRect(r)||SolitaireWindowRect(r)||AirHockeyWindowRect(r)||TableTennisWindowRect(r)||RuinsWindowRect(r)||GolfWindowRect(r);}
+    bool GameWindowRect(RECT& r){return MahjongWindowRect(r)||HanafudaWindowRect(r)||OthelloWindowRect(r)||GomokuWindowRect(r)||ShogiWindowRect(r)||HexWarWindowRect(r)||BlackjackWindowRect(r)||OldMaidWindowRect(r)||PokerWindowRect(r)||GinRummyWindowRect(r)||PageOneWindowRect(r)||BlockTowerWindowRect(r)||FortsWindowRect(r)||ChessWindowRect(r)||SolitaireWindowRect(r)||AirHockeyWindowRect(r)||TableTennisWindowRect(r)||BowlingWindowRect(r)||RuinsWindowRect(r)||GolfWindowRect(r);}
     bool GameWindowForeground()
     {
         const HWND front=GetForegroundWindow();
-        return front&&((MahjongWindowOpen()&&front==MahjongWindowHandle())||(HanafudaWindowOpen()&&front==HanafudaWindowHandle())||(OthelloWindowOpen()&&front==OthelloWindowHandle())||(GomokuWindowOpen()&&front==GomokuWindowHandle())||(ShogiWindowOpen()&&front==ShogiWindowHandle())||(HexWarWindowOpen()&&front==HexWarWindowHandle())||(BlackjackWindowOpen()&&front==BlackjackWindowHandle())||(OldMaidWindowOpen()&&front==OldMaidWindowHandle())||(PokerWindowOpen()&&front==PokerWindowHandle())||(GinRummyWindowOpen()||BlockTowerWindowOpen()&&front==GinRummyWindowHandle())||(PageOneWindowOpen()&&front==PageOneWindowHandle())||(BlockTowerWindowOpen()&&front==BlockTowerWindowHandle())||(ChessWindowOpen()&&front==ChessWindowHandle())||(SolitaireWindowOpen()&&front==SolitaireWindowHandle())||(AirHockeyWindowOpen()&&front==AirHockeyWindowHandle())||(TableTennisWindowOpen()&&front==TableTennisWindowHandle())||(RuinsWindowOpen()&&front==RuinsWindowHandle())||(GolfWindowOpen()&&front==GolfWindowHandle()));
+        return front&&((MahjongWindowOpen()&&front==MahjongWindowHandle())||(HanafudaWindowOpen()&&front==HanafudaWindowHandle())||(OthelloWindowOpen()&&front==OthelloWindowHandle())||(GomokuWindowOpen()&&front==GomokuWindowHandle())||(ShogiWindowOpen()&&front==ShogiWindowHandle())||(HexWarWindowOpen()&&front==HexWarWindowHandle())||(BlackjackWindowOpen()&&front==BlackjackWindowHandle())||(OldMaidWindowOpen()&&front==OldMaidWindowHandle())||(PokerWindowOpen()&&front==PokerWindowHandle())||(GinRummyWindowOpen()||BlockTowerWindowOpen()&&front==GinRummyWindowHandle())||(PageOneWindowOpen()&&front==PageOneWindowHandle())||(BlockTowerWindowOpen()&&front==BlockTowerWindowHandle())||(ChessWindowOpen()&&front==ChessWindowHandle())||(SolitaireWindowOpen()&&front==SolitaireWindowHandle())||(AirHockeyWindowOpen()&&front==AirHockeyWindowHandle())||(TableTennisWindowOpen()&&front==TableTennisWindowHandle())||(BowlingWindowOpen()&&front==BowlingWindowHandle())||(RuinsWindowOpen()&&front==RuinsWindowHandle())||(GolfWindowOpen()&&front==GolfWindowHandle()));
     }
 
     // While another one plays mahjong or hover hockey (its window up and not minimized), one standing on the
@@ -990,7 +993,7 @@ namespace
     void UpdateWatching(Mascot& m)
     {
         RECT r{};
-        const bool watch=!m.inMahjong&&!m.inDungeon&&!m.inAirHockey&&!m.inTableTennis&&!m.inHanafuda&&!m.inOthello&&!m.inGomoku&&!m.inShogi&&!m.inHexWar&&!m.inBlackjack&&!m.inOldMaid&&!m.inPoker&&!m.inGinRummy&&!m.inBlockTower&&!m.inPageOne&&!m.inChess&&!m.inSolitaire&&!m.inForts&&!m.inRuins&&!m.inGolf&&m.place==Place::Ground&&m.travel==Travel::None&&!m.dozing&&GameWindowRect(r);
+        const bool watch=!m.inMahjong&&!m.inDungeon&&!m.inAirHockey&&!m.inTableTennis&&!m.inBowling&&!m.inHanafuda&&!m.inOthello&&!m.inGomoku&&!m.inShogi&&!m.inHexWar&&!m.inBlackjack&&!m.inOldMaid&&!m.inPoker&&!m.inGinRummy&&!m.inBlockTower&&!m.inPageOne&&!m.inChess&&!m.inSolitaire&&!m.inForts&&!m.inRuins&&!m.inGolf&&m.place==Place::Ground&&m.travel==Travel::None&&!m.dozing&&GameWindowRect(r);
         if(watch!=m.watchingMahjong)
         {
             m.watchingMahjong=watch;
@@ -1762,6 +1765,7 @@ namespace
             AppendMenuW(games,MF_STRING,IdForts,T(L"三つの砦をする",L"Play Three Forts"));
             AppendMenuW(games,MF_STRING,IdAirHockey,T(L"ホバーホッケーをする",L"Play hover hockey"));
             AppendMenuW(games,MF_STRING,IdTableTennis,T(L"卓球をする",L"Play table tennis"));
+            AppendMenuW(games,MF_STRING,IdBowling,T(L"ボウリングをする",L"Go bowling"));
             {
                 // Golf: how long a round.
                 HMENU golf=CreatePopupMenu();
@@ -1783,7 +1787,7 @@ namespace
             {
                 std::wstring label=t.name+L"　"+(t.found.date.empty()?std::wstring(T(L"（日付不明）",L"(date unknown)")):DateText(t.found.date));
                 if(t.found.count>1)label+=Fmt(T(L"　×{0}",L"  x{0}"),{std::to_wstring(t.found.count)});
-                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon&&!m.inMahjong&&!m.inAirHockey&&!m.inTableTennis&&!m.inHanafuda&&!m.inOthello&&!m.inGomoku&&!m.inShogi&&!m.inHexWar&&!m.inBlackjack&&!m.inOldMaid&&!m.inPoker&&!m.inGinRummy&&!m.inBlockTower&&!m.inPageOne&&!m.inChess&&!m.inSolitaire&&!m.inForts&&!m.inRuins&&!m.inGolf?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
+                AppendMenuW(treasures,MF_STRING|(grounded&&!m.inDungeon&&!m.inMahjong&&!m.inAirHockey&&!m.inTableTennis&&!m.inBowling&&!m.inHanafuda&&!m.inOthello&&!m.inGomoku&&!m.inShogi&&!m.inHexWar&&!m.inBlackjack&&!m.inOldMaid&&!m.inPoker&&!m.inGinRummy&&!m.inBlockTower&&!m.inPageOne&&!m.inChess&&!m.inSolitaire&&!m.inForts&&!m.inRuins&&!m.inGolf?0:MF_GRAYED),IdTreasure+static_cast<UINT>(t.index),label.c_str());
             }
             if(owned.empty())AppendMenuW(treasures,MF_STRING|MF_GRAYED,0,T(L"（まだありません。ダンジョンの宝物庫やボスから持ち帰れます）",L"(None yet: bring some home from the dungeon's vaults and bosses)"));
             AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(treasures),T(L"お宝を眺める",L"Look at a treasure"));
@@ -2329,7 +2333,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             const Mascot& each=*owned;
-            if(each.inDungeon||each.inMahjong||each.inAirHockey||each.inTableTennis||each.inHanafuda||each.inOthello||each.inGomoku||each.inShogi||each.inHexWar||each.inBlackjack||each.inOldMaid||each.inPoker||each.inGinRummy||each.inBlockTower||each.inPageOne||each.inChess||each.inSolitaire||each.inForts||each.inRuins||each.inGolf)continue;   // she is away; the others may still speak first
+            if(each.inDungeon||each.inMahjong||each.inAirHockey||each.inTableTennis||each.inBowling||each.inHanafuda||each.inOthello||each.inGomoku||each.inShogi||each.inHexWar||each.inBlackjack||each.inOldMaid||each.inPoker||each.inGinRummy||each.inBlockTower||each.inPageOne||each.inChess||each.inSolitaire||each.inForts||each.inRuins||each.inGolf)continue;   // she is away; the others may still speak first
             if((each.chat&&each.chat->Busy())||each.bubble.Visible()||each.chatInput.IsOpen()||each.speech.Speaking())return;
             if(each.place==Place::Ground&&each.model.CurrentActivity()!=Activity::Grabbed&&each.travel==Travel::None)free.push_back(owned.get());
         }
@@ -2484,7 +2488,7 @@ namespace
             {
                 m.replyFeelingSet=true;
                 // No gesture with it in a game (her arms are the game's there).
-                m.model.SetExpression(feeling->expression,!(m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf));
+                m.model.SetExpression(feeling->expression,!(m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf));
                 // Eases out a while after (UpdateFeeling holds it on while she talks). Not
                 // left unset: a quick answer can end before a frame sees the chat busy, and
                 // her face then kept the feeling for good (smiling eyes through a whole game).
@@ -2670,7 +2674,7 @@ namespace
     {
         // One in the dungeon talks there, not over the ones on the desktop.
         return std::any_of(app.mascots.begin(),app.mascots.end(),[](const auto& m){
-            return !m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inTableTennis&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inBlockTower&&!m->inPageOne&&!m->inChess&&!m->inSolitaire&&!m->inForts&&!m->inRuins&&!m->inGolf&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
+            return !m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inTableTennis&&!m->inBowling&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inBlockTower&&!m->inPageOne&&!m->inChess&&!m->inSolitaire&&!m->inForts&&!m->inRuins&&!m->inGolf&&((m->chat&&m->chat->Busy())||m->bubble.Visible()||m->chatInput.IsOpen()||m->speech.Speaking());});
     }
 
     void EndBanter(const wchar_t* why)
@@ -2724,7 +2728,7 @@ namespace
     // Free to talk: standing on a surface with nothing else to do.
     bool FreeToTalk(Mascot& c)
     {
-        return !c.inDungeon&&!c.inMahjong&&!c.inAirHockey&&!c.inTableTennis&&!c.inHanafuda&&!c.inOthello&&!c.inGomoku&&!c.inShogi&&!c.inHexWar&&!c.inBlackjack&&!c.inOldMaid&&!c.inPoker&&!c.inGinRummy&&!c.inBlockTower&&!c.inPageOne&&!c.inChess&&!c.inSolitaire&&!c.inForts&&!c.inRuins&&!c.inGolf&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
+        return !c.inDungeon&&!c.inMahjong&&!c.inAirHockey&&!c.inTableTennis&&!c.inBowling&&!c.inHanafuda&&!c.inOthello&&!c.inGomoku&&!c.inShogi&&!c.inHexWar&&!c.inBlackjack&&!c.inOldMaid&&!c.inPoker&&!c.inGinRummy&&!c.inBlockTower&&!c.inPageOne&&!c.inChess&&!c.inSolitaire&&!c.inForts&&!c.inRuins&&!c.inGolf&&c.place==Place::Ground&&c.travel==Travel::None&&c.model.CurrentActivity()==Activity::Idle&&
                !MotionBusy(c)&&!c.dozing&&!c.chatInput.IsOpen();
     }
 
@@ -3486,7 +3490,7 @@ namespace
         {
             Mascot& c=*owned;
             if(!model.empty()&&c.modelPath!=model)continue;
-            if(c.inDungeon||c.inMahjong||c.inAirHockey||c.inTableTennis||c.inHanafuda||c.inOthello||c.inGomoku||c.inShogi||c.inHexWar||c.inBlackjack||c.inOldMaid||c.inPoker||c.inGinRummy||c.inBlockTower||c.inPageOne||c.inChess||c.inSolitaire||c.inForts||c.inRuins||c.inGolf)continue;
+            if(c.inDungeon||c.inMahjong||c.inAirHockey||c.inTableTennis||c.inBowling||c.inHanafuda||c.inOthello||c.inGomoku||c.inShogi||c.inHexWar||c.inBlackjack||c.inOldMaid||c.inPoker||c.inGinRummy||c.inBlockTower||c.inPageOne||c.inChess||c.inSolitaire||c.inForts||c.inRuins||c.inGolf)continue;
             if((&c==app.asker||&c==app.alarmTeller)&&waited<30)continue;
             const bool busy=(c.chat&&c.chat->Busy())||c.bubble.Talking()||c.speech.Speaking()||(c.planChat&&c.planChat->Busy());
             if(waited>=30||(waited>=8&&c.place==Place::Ground)||(FreeToTalk(c)&&!busy))free.push_back(&c);
@@ -3710,7 +3714,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if((only&&only!=&m)||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)continue;
+            if((only&&only!=&m)||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)continue;
             AlbumLayer character;
             UINT width=0,height=0;
             if(!m.renderer.ReadLastFrame(character.pixels,width,height))continue;
@@ -3849,7 +3853,7 @@ namespace
     {
         const auto owned=TreasuresOf(m.modelPath);
         const auto t=std::find_if(owned.begin(),owned.end(),[&](const OwnedTreasure& o){return o.index==index;});
-        if(t==owned.end()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf||m.place!=Place::Ground)return;
+        if(t==owned.end()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf||m.place!=Place::Ground)return;
         if(!app.showing.model.empty()){app.picture.Hide();app.showing={};}
         StopGroundActivity(m);
         const RECT work=WorkAreaOfWindow(m);
@@ -3902,7 +3906,7 @@ namespace
         const bool talking=m.speech.Active()||m.speech.Speaking()||m.bubble.Talking()||(m.chat&&m.chat->Busy());
         if(talking)s.quietSince=-1;
         else if(s.quietSince<0)s.quietSince=app.clock;
-        const bool away=m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
+        const bool away=m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf||m.place!=Place::Ground||m.model.CurrentActivity()!=Activity::Idle;
         if(s.endAt<0&&(away||age>30||(age>7&&s.quietSince>=0&&app.clock-s.quietSince>3)))
         {
             s.endAt=app.clock;
@@ -3928,7 +3932,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& other=*owned;
-            if(&other==&m||other.place!=Place::Ground||other.inDungeon||other.inMahjong||other.inAirHockey||other.inTableTennis||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inBlockTower||other.inPageOne||other.inChess||other.inSolitaire||other.inForts||other.inRuins||other.inGolf)continue;
+            if(&other==&m||other.place!=Place::Ground||other.inDungeon||other.inMahjong||other.inAirHockey||other.inTableTennis||other.inBowling||other.inHanafuda||other.inOthello||other.inGomoku||other.inShogi||other.inHexWar||other.inBlackjack||other.inOldMaid||other.inPoker||other.inGinRummy||other.inBlockTower||other.inPageOne||other.inChess||other.inSolitaire||other.inForts||other.inRuins||other.inGolf)continue;
             other.nextDecision=std::max(other.nextDecision,app.clock+5);
             if(!s.peeked&&age>=1.3&&FreeToTalk(other)&&!InBanter(other))other.model.Emote(L"peek");
         }
@@ -3977,7 +3981,7 @@ namespace
     }
 
     // The mini games at a table she plays with the user (her words there, the watchers').
-    enum class TableGame {Mahjong,AirHockey,TableTennis,Hanafuda,Othello,Gomoku,Shogi,HexWar,Blackjack,OldMaid,Poker,GinRummy,PageOne,BlockTower,Chess,Solitaire,Forts,Golf};
+    enum class TableGame {Mahjong,AirHockey,TableTennis,Bowling,Hanafuda,Othello,Gomoku,Shogi,HexWar,Blackjack,OldMaid,Poker,GinRummy,PageOne,BlockTower,Chess,Solitaire,Forts,Golf};
 
     // docs/Mahjong.md (しゃべる麻雀), docs/HoverHockey.md: a word of hers at the table about
     // situation (a stage direction), in her own voice, streamed to the table's bubble
@@ -3994,7 +3998,7 @@ namespace
         if(English())
             messages.push_back({L"system",
                 L"You are \""+m.character.name+L"\".\n"+m.character.persona+L"\n"+bond+L"\n"
-                L"You are now playing "+(mahjong?L"two-player mahjong":game==TableGame::Hanafuda?L"hanafuda (koi-koi)":game==TableGame::Othello?L"Reversi":game==TableGame::Gomoku?L"gomoku":game==TableGame::Shogi?L"shogi":game==TableGame::HexWar?L"Hex Front (a war game of moving units on a map of hexagons)":game==TableGame::Blackjack?L"blackjack (you are the dealer)":game==TableGame::Solitaire?L"mahjong solitaire":game==TableGame::Chess?L"chess":game==TableGame::Forts?L"Three Forts (a card game of holding forts)":game==TableGame::Golf?L"golf (three holes of stroke play)":game==TableGame::GinRummy?L"gin rummy":game==TableGame::BlockTower?L"the block tower (taking wooden blocks one by one out of a tower by magic and laying them on top; whoever brings it down loses)":game==TableGame::PageOne?L"Page One (a card game: play a card of the suit or rank on the pile; the first to play out all their cards wins the hand)":game==TableGame::Poker?L"poker (Texas hold'em)":game==TableGame::OldMaid?L"Old Maid (babanuki)":game==TableGame::TableTennis?L"table tennis":L"hover hockey")+L" at a table against "+(user.empty()?std::wstring(L"the person you talk with"):L"\""+user+L"\"")+
+                L"You are now playing "+(mahjong?L"two-player mahjong":game==TableGame::Hanafuda?L"hanafuda (koi-koi)":game==TableGame::Othello?L"Reversi":game==TableGame::Gomoku?L"gomoku":game==TableGame::Shogi?L"shogi":game==TableGame::HexWar?L"Hex Front (a war game of moving units on a map of hexagons)":game==TableGame::Blackjack?L"blackjack (you are the dealer)":game==TableGame::Solitaire?L"mahjong solitaire":game==TableGame::Chess?L"chess":game==TableGame::Forts?L"Three Forts (a card game of holding forts)":game==TableGame::Golf?L"golf (three holes of stroke play)":game==TableGame::GinRummy?L"gin rummy":game==TableGame::BlockTower?L"the block tower (taking wooden blocks one by one out of a tower by magic and laying them on top; whoever brings it down loses)":game==TableGame::PageOne?L"Page One (a card game: play a card of the suit or rank on the pile; the first to play out all their cards wins the hand)":game==TableGame::Poker?L"poker (Texas hold'em)":game==TableGame::OldMaid?L"Old Maid (babanuki)":game==TableGame::TableTennis?L"table tennis":game==TableGame::Bowling?L"bowling (ten frames each, taking turns frame by frame)":L"hover hockey")+L" at a table against "+(user.empty()?std::wstring(L"the person you talk with"):L"\""+user+L"\"")+
                 L", in a little game on their computer. Your words appear in a speech bubble at the table. "
                 L"Write only your own line, in English, as short casual speech. No names, stage directions, anything in ( ), Markdown, lists, emoji or emoticons."+
                 (mahjong?L" Never tell what tiles you hold or wait on.":game==TableGame::Hanafuda?L" Never tell what cards you hold.":L"")+L"\n"
@@ -4002,7 +4006,7 @@ namespace
         else
             messages.push_back({L"system",
                 L"あなたは「"+m.character.name+L"」です。\n"+m.character.persona+L"\n"+bond+L"\n"
-                L"いま、"+(user.empty()?std::wstring(L"話し相手"):L"話し相手の「"+user+L"」")+L"と、パソコンのミニゲームで"+(mahjong?L"2人打ちの麻雀を打っています。":game==TableGame::Hanafuda?L"花札（こいこい）をしています。":game==TableGame::Othello?L"リバーシをしています。":game==TableGame::Gomoku?L"五目並べをしています。":game==TableGame::Shogi?L"将棋を指しています。":game==TableGame::HexWar?L"ヘックス戦線（ヘックスの地図でユニットを動かして戦う戦術ゲーム）をしています。":game==TableGame::Blackjack?L"ブラックジャックをしています（あなたがディーラー）。":game==TableGame::Solitaire?L"麻雀ソリティアをしています。":game==TableGame::Chess?L"チェスをしています。":game==TableGame::Forts?L"三つの砦（砦を取り合うカードゲーム）":game==TableGame::Golf?L"ゴルフ（3ホールのストロークプレー）をしています。":game==TableGame::GinRummy?L"ジンラミーをしています。":game==TableGame::BlockTower?L"ブロックタワー（積んだ木のブロックを魔法で1本ずつ抜いて上に積み、崩した人が負け）をしています。":game==TableGame::PageOne?L"トランプのページワン（場札と同じマークか数のカードを出していき、先に手札を出し切った人がその回の勝ち）をしています。":game==TableGame::Poker?L"ポーカー（テキサスホールデム）をしています。":game==TableGame::OldMaid?L"ババ抜きをしています。":game==TableGame::TableTennis?L"卓球をしています。":L"ホバーホッケーをしています。")+
+                L"いま、"+(user.empty()?std::wstring(L"話し相手"):L"話し相手の「"+user+L"」")+L"と、パソコンのミニゲームで"+(mahjong?L"2人打ちの麻雀を打っています。":game==TableGame::Hanafuda?L"花札（こいこい）をしています。":game==TableGame::Othello?L"リバーシをしています。":game==TableGame::Gomoku?L"五目並べをしています。":game==TableGame::Shogi?L"将棋を指しています。":game==TableGame::HexWar?L"ヘックス戦線（ヘックスの地図でユニットを動かして戦う戦術ゲーム）をしています。":game==TableGame::Blackjack?L"ブラックジャックをしています（あなたがディーラー）。":game==TableGame::Solitaire?L"麻雀ソリティアをしています。":game==TableGame::Chess?L"チェスをしています。":game==TableGame::Forts?L"三つの砦（砦を取り合うカードゲーム）":game==TableGame::Golf?L"ゴルフ（3ホールのストロークプレー）をしています。":game==TableGame::GinRummy?L"ジンラミーをしています。":game==TableGame::BlockTower?L"ブロックタワー（積んだ木のブロックを魔法で1本ずつ抜いて上に積み、崩した人が負け）をしています。":game==TableGame::PageOne?L"トランプのページワン（場札と同じマークか数のカードを出していき、先に手札を出し切った人がその回の勝ち）をしています。":game==TableGame::Poker?L"ポーカー（テキサスホールデム）をしています。":game==TableGame::OldMaid?L"ババ抜きをしています。":game==TableGame::TableTennis?L"卓球をしています。":game==TableGame::Bowling?L"ボウリング（1フレームずつ交代で10フレーム）をしています。":L"ホバーホッケーをしています。")+
                 L"あなたのセリフは、台の上の吹き出しに表示されます。"
                 L"あなたのセリフだけを、短い話し言葉で書いてください。名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。"+
                 (mahjong?L"自分の手牌や待ちは言わないでください。":game==TableGame::Hanafuda?L"自分の手札は言わないでください。":L"")+L"\n"
@@ -4030,7 +4034,7 @@ namespace
         {
             messages.push_back({L"system",
                 L"You are \""+c.character.name+L"\".\n"+c.character.persona+L"\n\n"
-                L"You are standing on the desktop beside "+(mahjong?L"a mahjong":game==TableGame::Hanafuda?L"a hanafuda":game==TableGame::Othello?L"a Reversi":game==TableGame::Gomoku?L"a gomoku":game==TableGame::Shogi?L"a shogi":game==TableGame::HexWar?L"a war game's":game==TableGame::Blackjack?L"a blackjack":game==TableGame::Solitaire?L"a mahjong solitaire":game==TableGame::Chess?L"a chess":game==TableGame::Forts?L"Three Forts (a card game of holding forts)":game==TableGame::Golf?L"a golf":game==TableGame::GinRummy?L"a gin rummy":game==TableGame::BlockTower?L"a block tower":game==TableGame::PageOne?L"a Page One (card game)":game==TableGame::Poker?L"a poker":game==TableGame::OldMaid?L"an Old Maid":game==TableGame::TableTennis?L"a table tennis":L"a hover hockey")+L" game's window, watching the game between another character and the owner of this computer"+
+                L"You are standing on the desktop beside "+(mahjong?L"a mahjong":game==TableGame::Hanafuda?L"a hanafuda":game==TableGame::Othello?L"a Reversi":game==TableGame::Gomoku?L"a gomoku":game==TableGame::Shogi?L"a shogi":game==TableGame::HexWar?L"a war game's":game==TableGame::Blackjack?L"a blackjack":game==TableGame::Solitaire?L"a mahjong solitaire":game==TableGame::Chess?L"a chess":game==TableGame::Forts?L"Three Forts (a card game of holding forts)":game==TableGame::Golf?L"a golf":game==TableGame::GinRummy?L"a gin rummy":game==TableGame::BlockTower?L"a block tower":game==TableGame::PageOne?L"a Page One (card game)":game==TableGame::Poker?L"a poker":game==TableGame::OldMaid?L"an Old Maid":game==TableGame::TableTennis?L"a table tennis":game==TableGame::Bowling?L"a bowling":L"a hover hockey")+L" game's window, watching the game between another character and the owner of this computer"+
                 (user.empty()?std::wstring():L" (\""+user+L"\")")+L". Your word appears in a speech bubble over your head. "
                 L"Write only your own line, in English: one short, casual spoken line, like a friend watching and cheering or commenting. "
                 L"No names in front, stage directions, anything in ( ), Markdown, lists, emoji or emoticons.\n"
@@ -4041,7 +4045,7 @@ namespace
         {
             messages.push_back({L"system",
                 L"あなたは「"+c.character.name+L"」です。\n"+c.character.persona+L"\n\n"
-                L"いま、デスクトップの上で"+(mahjong?L"麻雀":game==TableGame::Hanafuda?L"花札":game==TableGame::Othello?L"リバーシ":game==TableGame::Gomoku?L"五目並べ":game==TableGame::Shogi?L"将棋":game==TableGame::HexWar?L"戦術ゲーム":game==TableGame::Blackjack?L"ブラックジャック":game==TableGame::Solitaire?L"麻雀ソリティア":game==TableGame::Chess?L"チェス":game==TableGame::Forts?L"三つの砦（砦を取り合うカードゲーム）":game==TableGame::Golf?L"ゴルフ":game==TableGame::GinRummy?L"ジンラミー":game==TableGame::BlockTower?L"ブロックタワー":game==TableGame::PageOne?L"ページワン（トランプ）":game==TableGame::Poker?L"ポーカー":game==TableGame::OldMaid?L"ババ抜き":game==TableGame::TableTennis?L"卓球":L"ホバーホッケー")+L"のウィンドウの横に立って、ほかのキャラクターとこのパソコンの持ち主"+
+                L"いま、デスクトップの上で"+(mahjong?L"麻雀":game==TableGame::Hanafuda?L"花札":game==TableGame::Othello?L"リバーシ":game==TableGame::Gomoku?L"五目並べ":game==TableGame::Shogi?L"将棋":game==TableGame::HexWar?L"戦術ゲーム":game==TableGame::Blackjack?L"ブラックジャック":game==TableGame::Solitaire?L"麻雀ソリティア":game==TableGame::Chess?L"チェス":game==TableGame::Forts?L"三つの砦（砦を取り合うカードゲーム）":game==TableGame::Golf?L"ゴルフ":game==TableGame::GinRummy?L"ジンラミー":game==TableGame::BlockTower?L"ブロックタワー":game==TableGame::PageOne?L"ページワン（トランプ）":game==TableGame::Poker?L"ポーカー":game==TableGame::OldMaid?L"ババ抜き":game==TableGame::TableTennis?L"卓球":game==TableGame::Bowling?L"ボウリング":L"ホバーホッケー")+L"のウィンドウの横に立って、ほかのキャラクターとこのパソコンの持ち主"+
                 (user.empty()?std::wstring():L"（「"+user+L"」）")+L"の対戦を観戦しています。あなたのセリフは、あなたの頭上の吹き出しに表示されます。"
                 L"観戦している友だちとして、応援や実況・解説のひと言を、短い話し言葉で1つだけ書いてください。"
                 L"名前、ト書き、（ ）書き、Markdown、箇条書き、絵文字、顔文字は使わないでください。\n"
@@ -4066,7 +4070,7 @@ namespace
         for(const auto& owned:app.mascots)
         {
             Mascot& c=*owned;
-            if(!c.watchingMahjong||c.inMahjong||c.inAirHockey||c.inTableTennis||c.inHanafuda||c.inOthello||c.inGomoku||c.inShogi||c.inHexWar||c.inBlackjack||c.inOldMaid||c.inPoker||c.inGinRummy||c.inBlockTower||c.inPageOne||c.inChess||c.inSolitaire||c.inForts||c.inRuins||c.inGolf||c.dozing||c.chatInput.IsOpen()||InBanter(c)||c.bubble.Visible())continue;
+            if(!c.watchingMahjong||c.inMahjong||c.inAirHockey||c.inTableTennis||c.inBowling||c.inHanafuda||c.inOthello||c.inGomoku||c.inShogi||c.inHexWar||c.inBlackjack||c.inOldMaid||c.inPoker||c.inGinRummy||c.inBlockTower||c.inPageOne||c.inChess||c.inSolitaire||c.inForts||c.inRuins||c.inGolf||c.dozing||c.chatInput.IsOpen()||InBanter(c)||c.bubble.Visible())continue;
             if(c.chat&&c.chat->Busy())continue;
             free.push_back(&c);
         }
@@ -4197,7 +4201,7 @@ namespace
     void OpenAirHockey(Mascot& m)
     {
         if(AirHockeyWindowOpen()){ShowAirHockeyWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f hover hockey: start (%s)",app.clock,model.c_str());
         AirHockeyOpponent her;
@@ -4258,7 +4262,7 @@ namespace
     void OpenTableTennis(Mascot& m)
     {
         if(TableTennisWindowOpen()){ShowTableTennisWindow(m.hwnd,{},{});return;}
-        if(MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f table tennis: start (%s)",app.clock,model.c_str());
         TableTennisOpponent her;
@@ -4315,11 +4319,64 @@ namespace
         });
     }
 
+    // docs/Bowling.md: a game of bowling in its own window, she bowling her own frames on the same lane.
+    void OpenBowling(Mascot& m)
+    {
+        if(BowlingWindowOpen()){ShowBowlingWindow(m.hwnd,{},{});return;}
+        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        const std::wstring model=m.modelPath;
+        Trace(L"%.1f bowling: start (%s)",app.clock,model.c_str());
+        BowlingOpponent her;
+        her.name=DungeonHeroOf(m).name;
+        her.level=app.settings.bowlingLevel;
+        her.onLevel=[](int level){
+            app.settings.bowlingLevel=level;
+            if(!app.diagnostic)app.settings.Save(app.settingsPath);
+        };
+        her.model=&m.model;
+        her.toonDir=app.settings.toonDir;
+        her.edgeScale=app.settings.edgeScale;
+        her.msaa=std::min(app.settings.msaa,4);
+        her.maxTexture=app.settings.maxTextureSize>0?std::min(static_cast<unsigned>(app.settings.maxTextureSize),1024u):1024u;
+        her.light=app.settings.dungeonLight;
+        her.onEvent=[](const std::wstring& facts,int weight,const std::wstring& fallback){WatchersHear(TableGame::Bowling,facts,weight,fallback);};
+        her.linesFile=app.diagnostic?std::wstring():CharacterDataFile(m.modelPath,L".bowling.lines.txt",true);
+        her.styleKey=m.character.name+L"\n"+m.character.persona;
+        her.ownLinesFile=OwnLinesFile(m.modelPath);
+        her.speak=[model](const std::wstring& line){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inBowling)GameSpeak(*owned,line);
+        };
+        her.prefetch=[model](const std::wstring& ask){
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inBowling)return PrefetchLines(*owned,ask);
+            return false;
+        };
+        EnterGame(m);
+        m.inBowling=true;
+        ShowWindow(m.hwnd,SW_HIDE);
+        ShowBowlingWindow(m.hwnd,her,[model]{
+            for(const auto& owned:app.mascots)
+                if(owned->modelPath==model&&owned->inBowling)
+                {
+                    Mascot& m=*owned;
+                    m.inBowling=false;
+                    DropGameWords(m);
+                    std::wstring situation,fallback;
+                    if(BowlingAfterword(situation,fallback))SpeakFirst(m,situation,fallback);
+                    m.model.SetActivity(Activity::Idle);
+                    m.model.TakeRootDelta();
+                    if(!app.paused)ShowWindow(m.hwnd,SW_SHOWNOACTIVATE);
+                }
+            Trace(L"%.1f bowling: end",app.clock);
+        });
+    }
+
     // docs/Golf.md: three holes of golf in its own window, she playing her own shots on the course.
     void OpenGolf(Mascot& m)
     {
         if(GolfWindowOpen()){ShowGolfWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f golf: start (%s)",app.clock,model.c_str());
         GolfOpponent her;
@@ -4372,7 +4429,7 @@ namespace
     void OpenRuins(Mascot& m)
     {
         if(RuinsWindowOpen()){ShowRuinsWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||FortsWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||FortsWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f ruins: start (%s)",app.clock,model.c_str());
         RuinsHero her;
@@ -4405,7 +4462,7 @@ namespace
     // the desktop meanwhile, as in the dungeon).
     void OpenMahjong(Mascot& m)
     {
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inForts||m.inRuins||m.inGolf){if(MahjongWindowOpen())ShowMahjongWindow(m.hwnd,{},{});return;}
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inForts||m.inRuins||m.inGolf){if(MahjongWindowOpen())ShowMahjongWindow(m.hwnd,{},{});return;}
         const std::wstring model=m.modelPath;
         Trace(L"%.1f mahjong: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4471,7 +4528,7 @@ namespace
     void OpenHanafuda(Mascot& m)
     {
         if(HanafudaWindowOpen()){ShowHanafudaWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f hanafuda: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4534,7 +4591,7 @@ namespace
     void OpenOthello(Mascot& m)
     {
         if(OthelloWindowOpen()){ShowOthelloWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f othello: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4597,7 +4654,7 @@ namespace
     void OpenGomoku(Mascot& m)
     {
         if(GomokuWindowOpen()){ShowGomokuWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inShogi||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inShogi||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f gomoku: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4660,7 +4717,7 @@ namespace
     void OpenSolitaire(Mascot& m)
     {
         if(SolitaireWindowOpen()){ShowSolitaireWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inShogi||m.inHexWar||m.inDungeon||m.inMahjong||m.inGomoku||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inShogi||m.inHexWar||m.inDungeon||m.inMahjong||m.inGomoku||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f solitaire: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4723,7 +4780,7 @@ namespace
     void OpenShogi(Mascot& m)
     {
         if(ShogiWindowOpen()){ShowShogiWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||GomokuWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inGomoku||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||GomokuWindowOpen()||HexWarWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inGomoku||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f shogi: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4786,7 +4843,7 @@ namespace
     void OpenHexWar(Mascot& m)
     {
         if(HexWarWindowOpen()){ShowHexWarWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inGomoku||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inGomoku||m.inHexWar||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f hexwar: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4850,7 +4907,7 @@ namespace
     void OpenBlackjack(Mascot& m)
     {
         if(BlackjackWindowOpen()){ShowBlackjackWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f blackjack: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4913,7 +4970,7 @@ namespace
     void OpenPoker(Mascot& m)
     {
         if(PokerWindowOpen()){ShowPokerWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||SolitaireWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||SolitaireWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f poker: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -4976,7 +5033,7 @@ namespace
     void OpenForts(Mascot& m)
     {
         if(FortsWindowOpen()){ShowFortsWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inChess||m.inSolitaire||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inChess||m.inSolitaire||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f forts: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -5046,7 +5103,7 @@ namespace
     void OpenGinRummy(Mascot& m)
     {
         if(GinRummyWindowOpen()){ShowGinRummyWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||PageOneWindowOpen()||BlockTowerWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inPageOne||m.inBlockTower||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||PageOneWindowOpen()||BlockTowerWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inPageOne||m.inBlockTower||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f ginrummy: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -5109,7 +5166,7 @@ namespace
     void OpenPageOne(Mascot& m)
     {
         if(PageOneWindowOpen()){ShowPageOneWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inGinRummy||m.inBlockTower||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inGinRummy||m.inBlockTower||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f pageone: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -5172,7 +5229,7 @@ namespace
     void OpenBlockTower(Mascot& m)
     {
         if(BlockTowerWindowOpen()){ShowBlockTowerWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inGinRummy||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inGinRummy||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f blocktower: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -5235,7 +5292,7 @@ namespace
     void OpenChess(Mascot& m)
     {
         if(ChessWindowOpen()){ShowChessWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||OldMaidWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inOldMaid||m.inBlackjack||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f chess: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -5298,7 +5355,7 @@ namespace
     void OpenOldMaid(Mascot& m)
     {
         if(OldMaidWindowOpen()){ShowOldMaidWindow(m.hwnd,{},{});return;}
-        if(TableTennisWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
+        if(TableTennisWindowOpen()||BowlingWindowOpen()||MahjongWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||DungeonWindowOpen()||AirHockeyWindowOpen()||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen()||m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)return;
         const std::wstring model=m.modelPath;
         Trace(L"%.1f oldmaid: start (%s)",app.clock,model.c_str());
         const DungeonHero face=DungeonHeroOf(m);
@@ -5358,7 +5415,7 @@ namespace
 
     void OpenDungeon(Mascot& m)
     {
-        if(m.inMahjong||MahjongWindowOpen()||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||AirHockeyWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||m.inForts||m.inRuins||m.inGolf||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen())return;
+        if(m.inMahjong||MahjongWindowOpen()||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||AirHockeyWindowOpen()||HanafudaWindowOpen()||OthelloWindowOpen()||GomokuWindowOpen()||ShogiWindowOpen()||HexWarWindowOpen()||BlackjackWindowOpen()||OldMaidWindowOpen()||PokerWindowOpen()||GinRummyWindowOpen()||BlockTowerWindowOpen()||PageOneWindowOpen()||ChessWindowOpen()||SolitaireWindowOpen()||m.inForts||m.inRuins||m.inGolf||FortsWindowOpen()||RuinsWindowOpen()||GolfWindowOpen())return;
         if(DungeonWindowOpen()||app.diagnostic){ShowDungeonWindow(m.hwnd,{},{});return;}
         const std::wstring model=m.modelPath;
         Trace(L"%.1f dungeon: start (%s)",app.clock,model.c_str());
@@ -5762,7 +5819,7 @@ namespace
             break;
         }
         case IdOpenModel:
-            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)break;   // her model is in use in the dungeon or at a table
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)break;   // her model is in use in the dungeon or at a table
         {
             auto path=OpenFileDialog(m.hwnd,T(L"PMX モデル (*.pmx)\0*.pmx\0",L"PMX model (*.pmx)\0*.pmx\0"),Own(m).modelPath);
             if(path.empty()||!ModelUsable(path))break;
@@ -5785,7 +5842,7 @@ namespace
             break;
         }
         case IdRemoveCharacter:
-            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)break;   // her model is in use in the dungeon or at a table
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)break;   // her model is in use in the dungeon or at a table
             if(app.mascots.size()>1)app.changes.push_back({Change::Remove,m.slot});
             break;
         case IdOpenMotion:
@@ -5995,6 +6052,9 @@ namespace
         case IdAirHockey:
             OpenAirHockey(m);
             break;
+        case IdBowling:
+            OpenBowling(m);
+            break;
         case IdTableTennis:
             OpenTableTennis(m);
             break;
@@ -6171,6 +6231,7 @@ namespace
                 Trace(L"%.1f table lines: %s",app.clock,error->empty()?L"ready":error->c_str());
                 if(m.inAirHockey)AirHockeyLines(error->empty()?m.linesReply:std::wstring());
                 else if(m.inTableTennis)TableTennisLines(error->empty()?m.linesReply:std::wstring());
+                else if(m.inBowling)BowlingLines(error->empty()?m.linesReply:std::wstring());
                 else if(m.inGolf)GolfLines(error->empty()?m.linesReply:std::wstring());
                 else if(m.inHanafuda)HanafudaLines(error->empty()?m.linesReply:std::wstring());
                 else if(m.inOthello)OthelloLines(error->empty()?m.linesReply:std::wstring());
@@ -6750,6 +6811,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
     bool snapshotTableTennis=false;   // --tabletennis: the snapshot is the table tennis window, your side played for you
     std::wstring snapshotTableTennisCamera;   // --tabletennis-camera pitch,distance,yaw
     float snapshotTableTennisAim=9;   // --tabletennis-aim x: your strokes all sent there across the table (metres)
+    bool snapshotBowling=false;      // --bowling [stage]: the snapshot is the bowling window, your balls thrown for you
+    int snapshotBowlingStage=0;      // (PlayBowlingForTest's: 1 her backswing's top, 2 her release, 3 her follow-through, 4 your ball drawn back)
+    std::wstring snapshotBowlingCamera;   // --bowling-camera pitch,distance,yaw
+    int snapshotBowlingLevel=0;      // --bowling-level 1-3
     int snapshotTableTennisLevel=0;   // --tabletennis-level 1-3: how strong she is (the ini's otherwise)
     bool snapshotHanafuda=false;  // --hanafuda [moves]: the snapshot is the hanafuda table's 3D view
     int snapshotHanafudaMoves=0;
@@ -6852,6 +6917,13 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             else if(arg==L"--mahjong-gesture"&&i+1<argc)snapshotMahjongGesture=argv[++i];
             else if(arg==L"--airhockey")snapshotAirHockey=true;
             else if(arg==L"--tabletennis")snapshotTableTennis=true;
+            else if(arg==L"--bowling")
+            {
+                snapshotBowling=true;
+                if(i+1<argc&&iswdigit(argv[i+1][0]))snapshotBowlingStage=_wtoi(argv[++i]);
+            }
+            else if(arg==L"--bowling-camera"&&i+1<argc)snapshotBowlingCamera=argv[++i];
+            else if(arg==L"--bowling-level"&&i+1<argc)snapshotBowlingLevel=_wtoi(argv[++i]);
             else if(arg==L"--tabletennis-camera"&&i+1<argc)snapshotTableTennisCamera=argv[++i];
             else if(arg==L"--tabletennis-level"&&i+1<argc)snapshotTableTennisLevel=_wtoi(argv[++i]);
             else if(arg==L"--tabletennis-aim"&&i+1<argc){snapshotTableTennis=true;snapshotTableTennisAim=static_cast<float>(_wtof(argv[++i]));}
@@ -7638,6 +7710,19 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             LocalFree(argv);
             return report.starts_with(L"0 wrong")?0:1;
         }
+        // --bowling-test <out.txt> [games] [seed]: the scoring, throws at the rack, her games at each
+        // strength (Bowling::Check).
+        if(argc>=3&&std::wstring(argv[1])==L"--bowling-test")
+        {
+            const std::wstring report=Bowling::Check(argc>=4?_wtoi(argv[3]):10,argc>=5?static_cast<std::uint32_t>(_wtoi(argv[4])):1);
+            if(FILE* out=nullptr;_wfopen_s(&out,argv[2],L"w, ccs=UTF-8")==0&&out)
+            {
+                fputws(report.c_str(),out);
+                fclose(out);
+            }
+            LocalFree(argv);
+            return report.find(L"\n0 wrong")!=std::wstring::npos?0:1;
+        }
         // --tabletennis-sim <out.txt> [games] [seed]: table tennis games between the opponent at each
         // strength and a player swinging as the mouse does (TableTennis::CheckPlaying).
         if(argc>=3&&std::wstring(argv[1])==L"--tabletennis-sim")
@@ -8014,7 +8099,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 wchar_t foreground[64]{};
                 if(HWND front=GetForegroundWindow())GetClassNameW(front,foreground,static_cast<int>(std::size(foreground)));
                 Log(L"full-screen app %s: characters %s (foreground window: %s)",fullscreen?L"reported":L"gone",fullscreen?L"hidden":L"shown",foreground);
-                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inTableTennis&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inBlockTower&&!m->inPageOne&&!m->inChess&&!m->inSolitaire&&!m->inForts&&!m->inRuins&&!m->inGolf)
+                for(const auto& m:app.mascots)if(!m->inDungeon&&!m->inMahjong&&!m->inAirHockey&&!m->inTableTennis&&!m->inBowling&&!m->inHanafuda&&!m->inOthello&&!m->inGomoku&&!m->inShogi&&!m->inHexWar&&!m->inBlackjack&&!m->inOldMaid&&!m->inPoker&&!m->inGinRummy&&!m->inBlockTower&&!m->inPageOne&&!m->inChess&&!m->inSolitaire&&!m->inForts&&!m->inRuins&&!m->inGolf)
                 {
                     ShowWindow(m->hwnd,fullscreen?SW_HIDE:SW_SHOWNOACTIVATE);
                     // Her bubble goes too (nothing ticks it while paused); the next draw after
@@ -8038,7 +8123,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
         for(const auto& owned:app.mascots)
         {
             Mascot& m=*owned;
-            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)
+            if(m.inDungeon||m.inMahjong||m.inAirHockey||m.inTableTennis||m.inBowling||m.inHanafuda||m.inOthello||m.inGomoku||m.inShogi||m.inHexWar||m.inBlackjack||m.inOldMaid||m.inPoker||m.inGinRummy||m.inBlockTower||m.inPageOne||m.inChess||m.inSolitaire||m.inForts||m.inRuins||m.inGolf)
             {
                 m.model.Update(dt);
                 m.model.TakeRootDelta();
@@ -8051,6 +8136,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(m.inDungeon)TickDungeonWindow(m.model,dt);
                 else if(m.inAirHockey)TickAirHockeyWindow(m.model,dt);
                 else if(m.inTableTennis)TickTableTennisWindow(m.model,dt);
+                else if(m.inBowling)TickBowlingWindow(m.model,dt);
                 else if(m.inGolf)TickGolfWindow(m.model,dt);
                 else if(m.inRuins)TickRuinsWindow(m.model,dt);
                 else if(m.inHanafuda)TickHanafudaWindow(m.model,dt);
@@ -8514,6 +8600,19 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 if(swscanf_s(snapshotTableTennisCamera.c_str(),L"%f,%f,%f",&c[0],&c[1],&c[2])==3)SetTableTennisCamera(c[0],c[1],c[2]);
             }
         }
+        if(app.diagnostic&&snapshotBowling)
+        {
+            static bool opened=false;
+            if(!opened)
+            {
+                opened=true;
+                if(snapshotBowlingLevel>=1&&snapshotBowlingLevel<=3)app.settings.bowlingLevel=snapshotBowlingLevel;
+                OpenBowling(*app.mascots.front());
+                PlayBowlingForTest(snapshotBowlingStage);
+                float c[3]={};
+                if(swscanf_s(snapshotBowlingCamera.c_str(),L"%f,%f,%f",&c[0],&c[1],&c[2])==3)SetBowlingCamera(c[0],c[1],c[2]);
+            }
+        }
         if(app.diagnostic&&snapshotRuins)
         {
             static bool opened=false;
@@ -8530,6 +8629,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
             if(snapshotGolf)SaveGolfView(snapshotPath);
             else if(snapshotAirHockey)SaveAirHockeyView(snapshotPath);
             else if(snapshotTableTennis)SaveTableTennisView(snapshotPath);
+            else if(snapshotBowling)SaveBowlingView(snapshotPath);
             else if(snapshotRuins)SaveRuinsView(snapshotPath);
             else if(snapshotMahjong)SaveMahjongView(snapshotPath);
             else if(snapshotHanafuda)SaveHanafudaView(snapshotPath);
@@ -8571,6 +8671,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                 fwprintf(info,L"%s",m.model.DescribeFace().c_str());
                 if(snapshotAirHockey)fwprintf(info,L"%s",DescribeAirHockey().c_str());
                 if(snapshotTableTennis)fwprintf(info,L"%s",DescribeTableTennis().c_str());
+                if(snapshotBowling)fwprintf(info,L"%s",DescribeBowling().c_str());
                 if(snapshotGolf)fwprintf(info,L"%s",DescribeGolf().c_str());
                 if(snapshotRuins)fwprintf(info,L"%s",DescribeRuins().c_str());
                 if(snapshotHanafuda)fwprintf(info,L"%s",DescribeHanafuda().c_str());

@@ -162,6 +162,7 @@ namespace MikuMikuDesktopPerch
         airHockeySize=std::clamp(ReadInt(path,L"AirHockeyPieceSize",airHockeySize),1,4);
         tableTennisLevel=std::clamp(ReadInt(path,L"TableTennisLevel",tableTennisLevel),1,3);
         tableTennisLeftHanded=ReadInt(path,L"TableTennisLeftHanded",tableTennisLeftHanded?1:0)!=0;
+        bowlingLevel=std::clamp(ReadInt(path,L"BowlingLevel",bowlingLevel),1,3);
         chatInitiative=ReadInt(path,L"ChatInitiative",chatInitiative?1:0)!=0;
         chatterMinutes=std::clamp(ReadInt(path,L"ChatterMinutes",chatterMinutes),5,600);
         banterMinutes=std::clamp(ReadInt(path,L"BanterMinutes",banterMinutes),0,600);
@@ -257,6 +258,7 @@ namespace MikuMikuDesktopPerch
         WriteString(path,L"AirHockeyPieceSize",std::to_wstring(airHockeySize));
         WriteString(path,L"TableTennisLevel",std::to_wstring(tableTennisLevel));
         WriteString(path,L"TableTennisLeftHanded",tableTennisLeftHanded?L"1":L"0");
+        WriteString(path,L"BowlingLevel",std::to_wstring(bowlingLevel));
         WriteString(path,L"ChatInitiative",chatInitiative?L"1":L"0");
         WriteString(path,L"ChatterMinutes",std::to_wstring(chatterMinutes));
         WriteString(path,L"BanterMinutes",std::to_wstring(banterMinutes));

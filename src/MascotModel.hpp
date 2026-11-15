@@ -267,7 +267,7 @@ namespace MikuMikuDesktopPerch
         // Hold something on a table (the hover hockey mallet): the wrist on side (0: the left) kept
         // at wrist (model space) every update, palm down round a grip; see GeneratedMotion::Hold.
         // style: 0 leaning over it, palm down (the mallet); 1 sitting up, palm down; 2 sitting up,
-        // holding something up before her (cards).
+        // holding something up before her (cards); 3 and 4: see GeneratedMotion::Hold.
         void Hold(int side,const std::array<float,3>& wrist,bool on,int style=0);
         // Her other hand and her feet with what side holds (style 3); see GeneratedMotion::HoldFree.
         // lead: the held-before hand moved from its place (arm lengths: toward the holding side, up, forward).

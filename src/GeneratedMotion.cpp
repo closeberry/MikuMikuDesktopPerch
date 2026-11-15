@@ -1866,7 +1866,7 @@ namespace MikuMikuDesktopPerch
     {
         if(side<0||side>1)return;
         holds[side].on=on;
-        if(on){holds[side].wrist=wrist;holds[side].upright=style==1||style==2;holds[side].raised=style==2;holds[side].wholeArm=style==3;}
+        if(on){holds[side].wrist=wrist;holds[side].upright=style==1||style==2;holds[side].raised=style==2;holds[side].wholeArm=style==3||style==4;holds[side].swinging=style==4;}
     }
 
     void GeneratedMotion::HoldPose(int side,const std::array<XMFLOAT4,5>* keys)
@@ -1994,7 +1994,7 @@ namespace MikuMikuDesktopPerch
                 // The elbow out to the side; or (style 3, a forehand) down and back by the body,
                 // so the forearm goes out from it to the hand.
                 const float in=h.wholeArm?h.elbowIn:0.0f;
-                ReachArm(g,s,target,XMVectorSet(out*(0.8f+0.2f*in),-1+0.35f*in,0.2f+0.1f*in,0),0.6f,true);   // (the forehand's elbow out to the side and a little up, no higher than the wrist: the forearm about level)
+                ReachArm(g,s,target,XMVectorSet(out*(0.8f+0.2f*in),-1+0.35f*in,0.2f+0.1f*in,0),0.6f,!h.swinging);   // (the forehand's elbow out to the side and a little up, no higher than the wrist: the forearm about level)
                 clearUpperArm=false;
                 if(const int o=1-s;h.wholeArm&&rig.arm[o]>=0&&!holds[o].on)
                 {
