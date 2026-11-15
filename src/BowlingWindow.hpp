@@ -66,7 +66,8 @@ namespace MikuMikuDesktopPerch
     // when away, no sounds), and the window as last drawn, to a PNG.
     // stage: 0 play on; 1 she stops at the top of her backswing on her first ball, 2 at her
     // release, 3 at her follow-through, 4 your ball held drawn back, 5 she holds her address
-    // (the ball before her chest) on her first ball.
+    // (the ball before her chest) on her first ball, 6 play on with her words kept up,
+    // 7 the first nine frames given (7 and 2 each), to see the game's end.
     void PlayBowlingForTest(int stage=0);
     bool SaveBowlingView(const std::wstring& path);
     std::wstring DescribeBowling();   // "bowling:" lines for the snapshot's report

@@ -44,6 +44,7 @@ namespace MikuMikuDesktopPerch
         constexpr float HeldHeight=0.40f;
         constexpr float StanceZ=-2.85f;       // where she stands to begin her approach
         constexpr float WaitX=-1.10f,WaitZ=-1.2f;   // where she waits while you bowl
+        constexpr float OverX=-0.30f,OverZ=-3.4f;   // where she stands once the game is over
         // Her approach (seconds from its start): four steps, the last a slide; the ball let go at ReleaseAt.
         constexpr float StepAt[4]={0.0f,0.40f,0.80f,1.20f},StepLength[4]={0.40f,0.40f,0.40f,0.62f};
         constexpr float ReleaseAt=1.78f,ApproachEnd=1.95f,Relaxed=3.8f;
@@ -119,6 +120,7 @@ namespace MikuMikuDesktopPerch
             // it (both GeneratedMotion's): her own lean and turn are given less these.
             float reach=1,twist=0;
             float handSide=0;      // how far to her right of her middle her ball hangs (world units)
+            float ballSide=0;      // her ball's side of her wrist at the address (model units), kept through the swing
             std::array<float,5> body{},bodySpeed{};
             std::array<float,3> lead{},leadSpeed{};
             std::array<float,3> wrist{},wristSpeed{};
@@ -127,7 +129,7 @@ namespace MikuMikuDesktopPerch
             XMFLOAT3 ballFrom{};
             int steps=0;
             float inBody=0;
-            float releaseOff=0;
+            float releaseOff=0,releaseSide=0;
             std::array<float,3> wristGot{};   // diagnostics: where her wrist really was (model units)    // diagnostics: how far her drawn ball was from where the roll began (m)
 
             struct TrailPoint {Vec3 p{};double at=0;};
@@ -162,6 +164,8 @@ namespace MikuMikuDesktopPerch
             double faceUntil=0,overAt=0;
             std::wstring afterword,afterwordLine;
             POINT headScreen{-1,-1},besideHead{-1,-1};
+            std::wstring swingTrace;   // diagnostics: her first approach, frame by frame
+            bool headSeen=false;       // her head is in the view (her words beside it; else at the lower left)
         } state;
 
         std::uint32_t Seed()
@@ -1544,12 +1548,21 @@ namespace MikuMikuDesktopPerch
                 const float most=std::max(160*s,W*0.34f);
                 const WordsBubble bubble(g,said,s,most);
                 const float bw=bubble.Width(),bh=bubble.Height();
-                const bool beside=state.besideHead.x>=0;
-                const float x=std::clamp(beside?static_cast<float>(state.besideHead.x):W*0.3f,14*s,W-14*s-bw);
-                const float headY=beside?static_cast<float>(state.headScreen.y):H*0.4f;
-                const float y=std::clamp(headY-bh*0.6f,140*s,std::max(140*s,H-60*s-bh));
-                const float ty=std::clamp(headY,y+12*s,y+bh-12*s);
-                bubble.Draw(g,x,y,ty,ShownWords());
+                if(state.headSeen)
+                {
+                    const float x=std::clamp(static_cast<float>(state.besideHead.x),14*s,W-14*s-bw);
+                    const float headY=static_cast<float>(state.headScreen.y);
+                    const float y=std::clamp(headY-bh*0.6f,140*s,std::max(140*s,H-60*s-bh));
+                    const float ty=std::clamp(headY,y+12*s,y+bh-12*s);
+                    bubble.Draw(g,x,y,ty,ShownWords());
+                }
+                else
+                {
+                    // She is out of sight (the camera down the lane with the ball): at the lower
+                    // left, the tail pointing down toward where she stands, behind the view.
+                    const float x=16*s,y=std::max(140*s,H-26*s-40*s-bh);
+                    bubble.DrawPointing(g,x,y,x+44*s,H-30*s,ShownWords(),true);
+                }
             }
             auto banner=[&](const std::wstring& big,const std::wstring& note,float at){
                 const float bw=std::min(W-40*s,460*s),bh=note.empty()?64*s:96*s;
@@ -1567,7 +1580,8 @@ namespace MikuMikuDesktopPerch
                 const int winner=state.game.Winner();
                 std::wstring note=std::to_wstring(state.game.Score(You))+L" - "+std::to_wstring(state.game.Score(Her));
                 note+=T(L"　Enterでもう一度・Escで閉じる",L"   Enter: again, Esc: close");
-                banner(winner==You?T(L"あなたの勝ち！",L"You win!"):winner==Her?HerName()+T(L"の勝ち",L" wins"):std::wstring(T(L"引き分け",L"A tie")),note,mid);
+                // (High, under the scores: she stands facing the camera below it.)
+                banner(winner==You?T(L"あなたの勝ち！",L"You win!"):winner==Her?HerName()+T(L"の勝ち",L" wins"):std::wstring(T(L"引き分け",L"A tie")),note,std::max(H*0.21f,198*s));
             }
             else if(state.asking)
             {
@@ -1609,7 +1623,7 @@ namespace MikuMikuDesktopPerch
                                      std::to_wstring(static_cast<int>(state.stage))+(YourBall()?L"y":L"")+(state.paused?L"p":L"")+(state.asking?L"a":L"")+
                                      (now<state.levelShownUntil?L"l":L"")+(now<state.bannerUntil?state.banner+state.bannerNote:L"")+(now<state.hintUntil?L"h":L"")+
                                      std::to_wstring(state.her.level)+L"|"+std::to_wstring(static_cast<int>(std::round(state.spin*10)))+L"|"+std::to_wstring(static_cast<int>(state.lastSpeed*36))+L"|"+
-                                     ShownWords()+L"|"+std::to_wstring(state.besideHead.x/12)+L","+std::to_wstring(state.headScreen.y/12);
+                                     ShownWords()+(state.headSeen?L"|s":L"|")+std::to_wstring(state.besideHead.x/12)+L","+std::to_wstring(state.headScreen.y/12);
             if(shown==state.hudShown)return;
             state.hudShown=shown;
             Bitmap canvas(w,h,PixelFormat32bppPARGB);
@@ -1706,7 +1720,7 @@ namespace MikuMikuDesktopPerch
             if(!front&&Playing()&&!state.autoplay)state.paused=true;
             HoldCursor(YourBall()&&!state.dragging&&front&&!IsIconic(state.window));
             auto& w=state.words;
-            if(!w.text.empty()&&GetTickCount64()>w.until)w.text.clear();
+            if(!w.text.empty()&&GetTickCount64()>w.until&&state.testStage!=6)w.text.clear();   // (6: diagnostics, kept up)
             if(state.faceUntil>0&&state.clock>state.faceUntil){state.faceUntil=0;if(state.her.model)state.her.model->SetExpression(Expression::Neutral,false);}
             if(!state.started&&(!state.prefetching||state.clock>4))
             {
@@ -1865,6 +1879,10 @@ namespace MikuMikuDesktopPerch
                         Release(state.herThrow,from);
                         const XMFLOAT3 start=World(state.roll.Ball());
                         state.releaseOff=std::hypot(from.x-start.x,from.z-start.z)/k;
+                        state.releaseSide=(from.x-start.x)/k;
+                        // Where her ball really hangs at the release, learned for the next: she
+                        // stands so that it comes to her aim.
+                        if(state.testStage==0)state.handSide+=0.8f*((from.x-state.herX)-state.handSide);
                     }
                     if(t>Relaxed)
                     {
@@ -1892,7 +1910,7 @@ namespace MikuMikuDesktopPerch
                 float gx=WaitX*k,gz=WaitZ*k;
                 if(state.thrower==Her&&!state.released&&state.stage==Stage::Ready){gx=state.herThrow.x*k-state.handSide;gz=StanceZ*k;}
                 else if(state.thrower==Her&&state.released&&state.stage!=Stage::Ready){gx=state.herX;gz=state.herZ;}
-                if(state.stage==Stage::Over){gx=-0.55f*k;gz=-3.6f*k;}
+                if(state.stage==Stage::Over){gx=OverX*k;gz=OverZ*k;}
                 constexpr float W=2.4f;
                 const int n=std::max(1,static_cast<int>(std::ceil(dt*240)));
                 const float h=step/n;
@@ -1926,8 +1944,11 @@ namespace MikuMikuDesktopPerch
                 const float a=XMConvertToRadians(ArmAngle(t)),R=state.reach*0.96f;
                 // (Wide of her side, the more as it goes back: the hold moves a hand whose forearm is in
                 // her body, coat and all, forward out of it, and behind her hip that left the ball at her chest.)
-                const float back=std::clamp(-std::sin(a),0.0f,1.0f);
-                std::array<float,3> pend{s[0]-(0.05f*std::max(0.0f,std::cos(a))+0.20f*back)*D,s[1]-R*std::cos(a),s[2]-R*std::sin(a)};
+                // Held wide the whole swing through, back and forward alike: wide only while it was
+                // behind her, the ball came in sideways as it swung forward to the release.
+                const float swing=Ease((t-0.30f)/0.50f)*(1-Ease((t-ReleaseAt-0.10f)/0.60f));
+                const float wide=std::max(0.20f*swing,0.05f*std::max(0.0f,std::cos(a)));
+                std::array<float,3> pend{s[0]-wide*D,s[1]-R*std::cos(a),s[2]-R*std::sin(a)};
                 if(t<0.40f)
                 {
                     // The push away: from the ball held before her to the arm out and down.
@@ -2019,8 +2040,25 @@ namespace MikuMikuDesktopPerch
                     std::array<float,3> f{palm[0]-wr[0],palm[1]-wr[1],palm[2]-wr[2]};
                     const float fl=std::max(1e-4f,std::sqrt(f[0]*f[0]+f[1]*f[1]+f[2]*f[2]));
                     for(float& v:f)v/=fl;
-                    const std::array<float,3> c{palm[0]+(f[0]*0.75f+facing[0]*0.55f)*r,palm[1]+(f[1]*0.75f+facing[1]*0.55f)*r,palm[2]+(f[2]*0.75f+facing[2]*0.55f)*r};
+                    std::array<float,3> out=facing;
+                    if(const float yz=std::hypot(facing[1],facing[2]);approaching&&yz>0.2f)out={0,facing[1]/yz,facing[2]/yz};
+                    std::array<float,3> c{palm[0]+(f[0]*0.75f+out[0]*0.55f)*r,palm[1]+(f[1]*0.75f+out[1]*0.55f)*r,palm[2]+(f[2]*0.75f+out[2]*0.55f)*r};
+                    // Through the approach it keeps the side of her wrist it had at the address and
+                    // swings in one plane: following her palm, it went 9 cm sideways in a tenth of a
+                    // second as the hand rolled over at the bottom of the downswing.
+                    // (From the address's side of the wrist to hanging just off its outside, over
+                    // the push away.)
+                    if(approaching)c[0]=wr[0]+state.ballSide+(0.026f*k-state.ballSide)*Ease(static_cast<float>(state.approachTime)/0.6f);
+                    else state.ballSide=c[0]-wr[0];
                     state.herBall=WorldPoint(model,c);
+                    if(state.autoplay&&approaching&&state.swingTrace.size()<20000)
+                    {
+                        wchar_t row[200];
+                        swprintf_s(row,L"  t %.3f ball x %.3f want %.3f wrist %.3f twist %.1f palm-wrist %.2f %.2f %.2f c-wrist x %.2f\n",
+                                   state.approachTime,(state.herBall.x-state.herX)/k,state.wrist[0],state.wristGot[0],state.twist*57.3f,
+                                   palm[0]-wr[0],palm[1]-wr[1],palm[2]-wr[2],c[0]-wr[0]);
+                        state.swingTrace+=row;
+                    }
                 }
                 else state.herBall=WorldPoint(model,AddressBall());
             }
@@ -2058,8 +2096,10 @@ namespace MikuMikuDesktopPerch
             }
             else if(state.stage==Stage::Over)
             {
-                eye={0.9f*k,1.55f*k,-6.8f*k};
-                look={-0.4f*k,1.0f*k,-3.4f*k};
+                // Before her, from the approach looking back up it, so she faces the camera; her
+                // head about 0.4 down the view, under the result's banner (which sits high).
+                eye={OverX*k+0.25f*k,1.45f*k,(OverZ+4.0f)*k};
+                look={OverX*k,1.22f*k,OverZ*k};
             }
             // (Diagnostics, her approach held at one moment: the camera on her, to be turned round her.)
             if((state.testStage>=1&&state.testStage<=3&&state.approachTime>=0)||(state.testStage==5&&state.plan==Plan::Address))
@@ -2410,14 +2450,21 @@ namespace MikuMikuDesktopPerch
             const XMVECTOR beside=XMVectorAdd(at,XMVectorScale(right,0.3f*state.upper));
             state.headScreen=r.Project({XMVectorGetX(at),XMVectorGetY(at),XMVectorGetZ(at)});
             state.besideHead=r.Project({XMVectorGetX(beside),XMVectorGetY(beside),XMVectorGetZ(beside)});
+            // In sight: before the camera and inside the window (behind it, Project mirrors).
+            RECT client{};
+            GetClientRect(state.view,&client);
+            const float ahead=XMVectorGetX(XMVector3Dot(XMVectorSubtract(at,XMLoadFloat3(&state.eye)),XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&state.look),XMLoadFloat3(&state.eye)))));
+            const POINT p=state.headScreen;
+            state.headSeen=ahead>0.5f*state.k&&p.x>=0&&p.x<client.right&&p.y>=0&&p.y<client.bottom;
         }
+        else state.headSeen=false;
         // Her eyes: on the ball while it rolls, down the lane as she bowls, otherwise on you.
         {
             XMFLOAT3 at=World({0,4.6f,0});
             if(state.stage==Stage::Rolling||state.stage==Stage::Result)at=World(state.roll.Ball());
             else if(state.stage==Stage::Sweep)at=World({0,Bowling::PinDeckY,0.2f});
             else if(state.thrower==You&&state.stage==Stage::Ready)at=World({state.standX,HeldZ,HeldHeight});
-            if(!state.words.text.empty()&&state.stage!=Stage::Rolling)at=state.eye;
+            if((!state.words.text.empty()&&state.stage!=Stage::Rolling)||state.stage==Stage::Over)at=state.eye;
             XMVECTOR det;
             const XMVECTOR there=XMVector3Transform(XMLoadFloat3(&at),XMMatrixInverse(&det,HerWorld(model)));
             model.LookToward({XMVectorGetX(there),XMVectorGetY(there),XMVectorGetZ(there)},true);
@@ -2452,6 +2499,9 @@ namespace MikuMikuDesktopPerch
     {
         state.autoplay=true;
         state.testStage=stage;
+        // 7: nine open frames each already bowled (7 and 2), so the game ends soon.
+        if(stage==7&&state.game.Frame()==0)
+            for(int i=0;i<36;++i)state.game.Record(i%2==0?7:2);
     }
 
     bool SaveBowlingView(const std::wstring& path)
@@ -2477,8 +2527,8 @@ namespace MikuMikuDesktopPerch
                    state.renderer?1:0,state.k,stages[static_cast<int>(state.stage)],state.stageTime,g.Frame()+1,g.BallNo()+1,g.Turn()==You?L"you":L"her",
                    g.Score(You),g.Score(Her),g.Over()?1:0,g.Winner(),state.her.level,state.frames);
         text+=line;
-        swprintf_s(line,L"bowling: she is at %.2f, %.2f m (%s, %.2f s; approach %.2f s), %d steps; her arm in her body %.3f at most; her ball left her hand %.2f m from where it rolled\n",
-                   state.herX/state.k,state.herZ/state.k,plans[static_cast<int>(state.plan)],state.planTime,state.approachTime,state.steps,state.inBody,state.releaseOff);
+        swprintf_s(line,L"bowling: she is at %.2f, %.2f m (%s, %.2f s; approach %.2f s), %d steps; her arm in her body %.3f at most; her ball left her hand %.2f m from where it rolled (%.2f across)\n",
+                   state.herX/state.k,state.herZ/state.k,plans[static_cast<int>(state.plan)],state.planTime,state.approachTime,state.steps,state.inBody,state.releaseOff,state.releaseSide);
         text+=line;
         swprintf_s(line,L"bowling: her shoulder %.2f %.2f %.2f, arm %.2f, ball held %.2f m to her right; strikes you %d her %d, spares you %d her %d\n",
                    state.shoulder[0],state.shoulder[1],state.shoulder[2],state.armLength,state.handSide/state.k,g.Strikes(You),g.Strikes(Her),g.Spares(You),g.Spares(Her));
@@ -2487,6 +2537,7 @@ namespace MikuMikuDesktopPerch
                    state.wrist[0],state.wrist[1],state.wrist[2],state.wristGot[0],state.wristGot[1],state.wristGot[2],state.body[0],state.body[1],
                    state.body[2]*57.3f,state.body[3]*57.3f,state.twist*57.3f);
         text+=line;
+        if(!state.swingTrace.empty())text+=L"bowling: her first approach (ball x from her, m; wrist model units)\n"+state.swingTrace;
         for(int side=0;side<2;++side)
         {
             std::wstring row=side==You?L"bowling: you  ":L"bowling: her  ";

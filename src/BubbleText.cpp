@@ -129,18 +129,19 @@ namespace MikuMikuDesktopPerch
         g.DrawString(shown.c_str(),static_cast<INT>(shown.size()),font.get(),RectF(x+pad,y+pad*0.8f,textWidth+4,textHeight+4),format.get(),&ink);
     }
 
-    void WordsBubble::DrawPointing(Gdiplus::Graphics& g,float x,float y,float tipX,float tipY,const std::wstring& shown) const
+    void WordsBubble::DrawPointing(Gdiplus::Graphics& g,float x,float y,float tipX,float tipY,const std::wstring& shown,bool fromBottom) const
     {
         using namespace Gdiplus;
         const PointF tip(tipX,tipY);
         const Color paper(240,255,252,246),line(255,214,170,120);
-        // The tail's foot on the top edge, under the tip as far as the corners allow; its point
-        // toward the tip, stopping short of it.
+        // The tail's foot on the top edge (or the bottom one), under the tip as far as the corners
+        // allow; its point toward the tip, stopping short of it.
+        const float edgeY=fromBottom?y+height:y,in=fromBottom?-2*s:2*s;
         const float foot=std::clamp(tip.X,x+24*s,x+width-24*s);
-        const float dx=tip.X-foot,dy=tip.Y-y,dist=std::sqrt(dx*dx+dy*dy);
+        const float dx=tip.X-foot,dy=tip.Y-edgeY,dist=std::sqrt(dx*dx+dy*dy);
         const float reach=std::clamp(dist-10*s,8*s,46*s);
-        const PointF point=dist>1?PointF(foot+dx/dist*reach,y+dy/dist*reach):PointF(foot,y-reach);
-        const PointF tail[3]={PointF(foot-10*s,y+2*s),point,PointF(foot+10*s,y+2*s)};
+        const PointF point=dist>1?PointF(foot+dx/dist*reach,edgeY+dy/dist*reach):PointF(foot,fromBottom?edgeY+reach:edgeY-reach);
+        const PointF tail[3]={PointF(foot-10*s,edgeY+in),point,PointF(foot+10*s,edgeY+in)};
         SolidBrush fill(paper);
         Pen edge(line,1.5f*s);
         GraphicsPath body;
@@ -156,7 +157,7 @@ namespace MikuMikuDesktopPerch
         g.FillPath(&fill,&body);
         g.DrawPath(&edge,&body);
         // (The edge under the tail's foot hidden, so the two read as one.)
-        g.FillRectangle(&fill,foot-8.5f*s,y-0.5f*s,17*s,3*s);
+        g.FillRectangle(&fill,foot-8.5f*s,fromBottom?edgeY-2.5f*s:edgeY-0.5f*s,17*s,3*s);
         SolidBrush ink(Color(255,60,44,36));
         g.DrawString(shown.c_str(),static_cast<INT>(shown.size()),font.get(),RectF(x+pad,y+pad*0.8f,textWidth+4,textHeight+4),format.get(),&ink);
     }
