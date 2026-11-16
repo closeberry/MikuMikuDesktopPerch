@@ -276,6 +276,9 @@ namespace MikuMikuDesktopPerch
         void HoldBody(int side,float down,float forward,float turn,float lean,float hips,float elbow=0);
         // Diagnostics: how far the arm held with style 3 was still in the body (leg lengths).
         float HoldInBody(int side) const;
+        // The legs at rest (model units, x): the left and right ankles, then the left and right
+        // hip joints. False when the model has no such bones.
+        bool RestLegs(std::array<float,4>& x) const;
         // A golf club in both hands, standing side-on to the target (+X, her left): see
         // GeneratedMotion::Swing (stage 0 address, 1 top, 2 impact, 3 finish; power 0.2-1).
         void Swing(bool on,float stage,float power,bool putter=false);

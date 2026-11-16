@@ -2937,6 +2937,18 @@ namespace MikuMikuDesktopPerch
     }
 
     float MascotModel::HoldInBody(int side) const {return impl->motion.HoldInBody(side);}
+    bool MascotModel::RestLegs(std::array<float,4>& x) const
+    {
+        const auto& m=*impl;
+        if(!m.pmx)return false;
+        const int bones[4]={m.FindBone({L"左足首"}),m.FindBone({L"右足首"}),m.FindBone({L"左足"}),m.FindBone({L"右足"})};
+        for(int i=0;i<4;++i)
+        {
+            if(bones[i]<0)return false;
+            x[static_cast<size_t>(i)]=m.pmx->bones[static_cast<size_t>(bones[i])].position.x;
+        }
+        return true;
+    }
     void MascotModel::HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet,const std::array<float,3>& lead)
     {
         impl->motion.HoldFree(side,at,{point[0],point[1],point[2]},{DirectX::XMFLOAT3{feet[0][0],feet[0][1],feet[0][2]},DirectX::XMFLOAT3{feet[1][0],feet[1][1],feet[1][2]}},{lead[0],lead[1],lead[2]});

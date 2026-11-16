@@ -1940,7 +1940,8 @@ namespace MikuMikuDesktopPerch
             // Where the point is as the bent body sees it, and no further than the arm goes.
             target=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(target,pivot),XMQuaternionConjugate(bend)));
             const XMVECTOR to=XMVectorSubtract(target,shoulder);
-            const float far=(h.wholeArm?0.99f:0.95f)*reach,dist=XMVectorGetX(XMVector3Length(to));
+            // (A ball swung on a straight arm: as far as the whole arm goes.)
+            const float far=h.swinging?0.995f*(rig.upperArm+rig.forearm):(h.wholeArm?0.99f:0.95f)*reach,dist=XMVectorGetX(XMVector3Length(to));
             if(dist>far)
             {
                 // Out of reach: short of it across and along, at its height (the hand stays over
@@ -2042,6 +2043,9 @@ namespace MikuMikuDesktopPerch
                         {
                             XMFLOAT3& at=KeyOf(g,rig.legIK[f]).position;
                             XMStoreFloat3(&at,XMVectorAdd(XMLoadFloat3(&at),XMLoadFloat3(&h.feet[f])));
+                            // (Swinging a ball, the feet go across from the rest pose alone: the idle
+                            // motion's stance set them half a hip's width further out each side.)
+                            if(h.swinging)at.x=h.feet[f].x;
                         }
             }
             // (As the bent body sees them, as the target is: so the fingers lie over the knob
@@ -2055,6 +2059,31 @@ namespace MikuMikuDesktopPerch
                 // other and toward her (the wrists turned to her), loosely closed round it.
                 AimHand(g,s,XMVector3Normalize(XMVectorSet(-out*0.12f,1,-0.15f,0)),XMVector3Normalize(XMVectorSet(-out*0.6f,0,1,0)));
                 CurlFingers(g,s,{0.2f,0.25f,0.3f,0.35f});
+            }
+            else if(h.swinging)
+            {
+                // A bowling ball swung on a straight arm: the wrist straight (the hand goes on
+                // along the forearm) and the palm facing the way the arm swings forward, so the
+                // ball rides in front of the hand, the hand behind it pushing, back and forward
+                // alike (the palm toward the pins at the bottom of the swing, turning with the arm).
+                auto turn=[&](int bone){return bone>=0&&slot[bone]>=0?XMLoadFloat4(&g[slot[bone]].rotation):XMQuaternionIdentity();};
+                const XMVECTOR forearm=XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(XMQuaternionMultiply(
+                    turn(rig.elbow[s]),turn(rig.armTwist[s])),turn(rig.arm[s])),turn(rig.shoulder[s])),turn(rig.upperBody));
+                const XMVECTOR fingers=XMVector3Normalize(XMVector3Rotate(XMLoadFloat3(&rig.handRestDir[s]),forearm));
+                // Forward as the swing goes: square to the hand in the plane of forward and down.
+                const XMVECTOR ahead=XMVector3Normalize(XMVector3Rotate(XMVectorSet(0,0,-1,0),unbend));
+                XMVECTOR palm=XMVectorSubtract(ahead,XMVectorScale(fingers,XMVectorGetX(XMVector3Dot(ahead,fingers))));
+                if(XMVectorGetX(XMVector3LengthSq(palm))<0.04f)
+                {
+                    // (The arm pointing forward, as at the top of the follow-through: the palm up.)
+                    const XMVECTOR up=XMVector3Rotate(XMVectorSet(0,1,0,0),unbend);
+                    palm=XMVectorSubtract(up,XMVectorScale(fingers,XMVectorGetX(XMVector3Dot(up,fingers))));
+                }
+                palm=XMVector3Normalize(palm);
+                XMVECTOR aimed=fingers,little=XMVectorZero();
+                HandWithinReach(g,s,aimed,palm,little);
+                AimHand(g,s,aimed,palm);
+                CurlFingers(g,s,{0.35f,0.45f,0.45f,0.4f});   // (two fingers and the thumb in the ball's holes)
             }
             else if(h.wholeArm)
             {

@@ -107,6 +107,8 @@ namespace MikuMikuDesktopPerch
             struct Foot {float x=0,z=0,fromX=0,fromZ=0,toX=0,toZ=0,t=1,lift=0;bool placed=false;};
             std::array<Foot,2> feet{};   // 0 her left foot, 1 her right (world; their places at rest less her middle)
             float stance=0;
+            std::array<float,2> restAnkle{},restHip{};   // her legs at rest (model x): the feet are set from these
+            float track=1;          // her ankles' spacing as a share of her hip joints' (eased: narrower on the approach)
             Plan plan=Plan::Walk;
             double planTime=0;
             Throw herThrow{};
@@ -963,6 +965,11 @@ namespace MikuMikuDesktopPerch
             state.armLength=std::clamp(state.armLength,0.75f*D,1.15f*D);
             state.reach=std::clamp(state.reach,0.65f*D,1.0f*D);
             state.handSide=-state.shoulder[0]+0.04f*D;
+            // Her legs at rest: many models stand with the ankles well outside the hip joints, and
+            // a walk or a bowler's approach puts the feet nearer the middle than that.
+            if(std::array<float,4> legs{};model.RestLegs(legs)){state.restAnkle={legs[0],legs[1]};state.restHip={legs[2],legs[3]};}
+            else{state.restAnkle={0.1f*D,-0.1f*D};state.restHip={0.1f*D,-0.1f*D};}
+            state.track=1;
             Log(L"bowling: hips %.1f, upper body %.1f, %.2f units a metre; shoulder %.2f %.2f %.2f, arm %.2f",
                 state.hips,state.upper,state.k,state.shoulder[0],state.shoulder[1],state.shoulder[2],state.armLength);
         }
@@ -1941,7 +1948,7 @@ namespace MikuMikuDesktopPerch
                 const float t=static_cast<float>(state.approachTime);
                 want=ApproachBody(t);
                 const auto s=Shoulder(want[0],want[3]);
-                const float a=XMConvertToRadians(ArmAngle(t)),R=state.reach*0.96f;
+                const float a=XMConvertToRadians(ArmAngle(t)),R=state.armLength*0.97f;   // (the arm straight, as a pendulum)
                 // (Wide of her side, the more as it goes back: the hold moves a hand whose forearm is in
                 // her body, coat and all, forward out of it, and behind her hip that left the ball at her chest.)
                 // Held wide the whole swing through, back and forward alike: wide only while it was
@@ -2013,13 +2020,18 @@ namespace MikuMikuDesktopPerch
                 if(live)state.twist+=(autoTwist-state.twist)*static_cast<float>(1.0-std::exp(-dt/0.22));
                 model.HoldBody(HerHand,state.body[0],state.body[1],state.body[2]-state.twist,state.body[3]-autoLean,state.body[4],1.0f);
             }
+            // Her feet near the line under her middle on the approach (as a walk's), under her hips
+            // as she stands.
+            if(live)state.track+=((approaching?0.55f:1.0f)-state.track)*static_cast<float>(1.0-std::exp(-dt/0.3));
             // Her feet, given in her model's terms (turned about: its x and z are the world's reversed).
             std::array<std::array<float,3>,2> feet{};
             for(int f=0;f<2;++f)
             {
                 const auto& foot=state.feet[f];
                 const float most=0.85f*D;
-                feet[f]={std::clamp(-(foot.x-state.herX),-most,most),foot.lift,std::clamp(-(foot.z-state.herZ),-most,most)};
+                // (The ankle moved in from where the model stands at rest to its share of the hips' spacing.)
+                const float in=state.track*state.restHip[f]-state.restAnkle[f];
+                feet[f]={std::clamp(-(foot.x-state.herX)+in,-most,most),foot.lift,std::clamp(-(foot.z-state.herZ),-most,most)};
             }
             model.HoldFree(HerHand,freeAt,freePoint,feet,state.lead);
             model.Hold(HerHand,{state.wrist[0]+model.RootOffset(),state.wrist[1],state.wrist[2]},true,4);
@@ -2031,8 +2043,8 @@ namespace MikuMikuDesktopPerch
             // Her ball as her hand holds it: against her palm, out from it.
             if(state.hasBall)
             {
-                std::array<float,3> palm{},middle{},along{},facing{},wr{};
-                if(model.PalmPosition(HerHand,palm)&&model.Fist(HerHand,middle,along,facing,&wr))
+                std::array<float,3> palm{},middle{},along{},facing{},wr{},el{};
+                if(model.PalmPosition(HerHand,palm)&&model.Fist(HerHand,middle,along,facing,&wr,&el))
                 {
                     // Hanging from her fingers (on in the hand's way), a little off her palm: by
                     // the palm alone it lay against her hip as her arm swung.
@@ -2043,6 +2055,25 @@ namespace MikuMikuDesktopPerch
                     std::array<float,3> out=facing;
                     if(const float yz=std::hypot(facing[1],facing[2]);approaching&&yz>0.2f)out={0,facing[1]/yz,facing[2]/yz};
                     std::array<float,3> c{palm[0]+(f[0]*0.75f+out[0]*0.55f)*r,palm[1]+(f[1]*0.75f+out[1]*0.55f)*r,palm[2]+(f[2]*0.75f+out[2]*0.55f)*r};
+                    // Swung, it rides on the forward side of her hand in the swing's plane: out
+                    // from her palm ahead of it (its middle by the palm), the hand behind it back and forward
+                    // alike (by the hand's own facing it hung behind the hand at the backswing's top).
+                    if(const float w=approaching?Ease((static_cast<float>(state.approachTime)-0.15f)/0.35f):0.0f;w>0)
+                    {
+                        float ry=wr[1]-el[1],rz=wr[2]-el[2];
+                        const float rl=std::hypot(ry,rz);
+                        if(rl>1e-4f)
+                        {
+                            ry/=rl;rz/=rl;
+                            // (Forward square to the forearm: model forward is -z.)
+                            float ty=rz*ry,tz=-1+rz*rz;
+                            if(const float tl=std::hypot(ty,tz);tl>0.2f){ty/=tl;tz/=tl;}else{ty=1;tz=0;}
+                            const float py=palm[1]-wr[1],pz=palm[2]-wr[2],reachOut=py*ry+pz*rz;   // (the palm's way out along the forearm)
+                            const float cy=wr[1]+ry*(reachOut+0.15f*r)+ty*0.95f*r,cz=wr[2]+rz*(reachOut+0.15f*r)+tz*0.95f*r;   // (its middle by the palm, the fingers round its side)
+                            c[1]+=(cy-c[1])*w;
+                            c[2]+=(cz-c[2])*w;
+                        }
+                    }
                     // Through the approach it keeps the side of her wrist it had at the address and
                     // swings in one plane: following her palm, it went 9 cm sideways in a tenth of a
                     // second as the hand rolled over at the bottom of the downswing.
@@ -2054,9 +2085,9 @@ namespace MikuMikuDesktopPerch
                     if(state.autoplay&&approaching&&state.swingTrace.size()<20000)
                     {
                         wchar_t row[200];
-                        swprintf_s(row,L"  t %.3f ball x %.3f want %.3f wrist %.3f twist %.1f palm-wrist %.2f %.2f %.2f c-wrist x %.2f\n",
+                        swprintf_s(row,L"  t %.3f ball x %.3f want %.3f wrist %.3f twist %.1f palm-wrist %.2f %.2f %.2f c-wrist %.2f %.2f %.2f elbow-wrist %.2f %.2f\n",
                                    state.approachTime,(state.herBall.x-state.herX)/k,state.wrist[0],state.wristGot[0],state.twist*57.3f,
-                                   palm[0]-wr[0],palm[1]-wr[1],palm[2]-wr[2],c[0]-wr[0]);
+                                   palm[0]-wr[0],palm[1]-wr[1],palm[2]-wr[2],c[0]-wr[0],c[1]-wr[1],c[2]-wr[2],wr[1]-el[1],wr[2]-el[2]);
                         state.swingTrace+=row;
                     }
                 }
