@@ -2,6 +2,18 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.5
+
+### New
+
+- **Bowling**: "Mini games" → "Go bowling" in the right-click menu lets you bowl against the character (ten frames, taking turns frame by frame; 3D view only). You see the lane from behind the approach
+  - Move the mouse sideways to choose where you stand; hold the left button, draw the mouse back, push it forward and let go to throw (how fast you push is the ball's speed, its sideways way the ball's direction). The wheel sets the spin (a hook either way)
+  - On her turn she takes her ball from the ball return, carries it to the approach and bowls with a four-step approach
+  - The pins fall by physics. She speaks of strikes, spares, turkeys and more
+  - Keys 1-3 choose how strong she is. P pauses; drag with the middle button to turn the camera
+  - The design (in Japanese): docs/Bowling.md
+- **Table tennis**: her forehand is now played one of three ways, a drive, a loop or a block, by the ball's height and the time she has. Her other hand moves in the stroke too
+
 ## 1.7.4
 
 ### New
