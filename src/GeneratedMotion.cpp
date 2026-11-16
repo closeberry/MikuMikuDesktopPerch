@@ -149,6 +149,7 @@ namespace MikuMikuDesktopPerch
         rig.upperBody=Find(pmx,{L"上半身"});
         rig.neck=Find(pmx,{L"首"});
         rig.groove=Find(pmx,{L"グルーブ"});
+        if(rig.upperBody>=0)XMStoreFloat3(&rig.upperBodyRest,restPos(rig.upperBody));
         float hipHeight=0,legLength=0;
         int legs=0;
         for(int side=0;side<2;++side)
@@ -1898,13 +1899,26 @@ namespace MikuMikuDesktopPerch
             }
             const XMVECTOR shoulder=XMLoadFloat3(&rig.shoulderPos[s]);
             const float hipY=(rig.hipRest[0].y+rig.hipRest[1].y)*0.5f,hipZ=(rig.hipRest[0].z+rig.hipRest[1].z)*0.5f;
-            const XMVECTOR pivot=XMVectorSet(0,hipY,hipZ,0);
+            // The point her upper body bends about: for a ball swung (style 4, bent far over for it), the
+            // 上半身 bone itself, where the lean is put on (about the hips' height, the hand missed the
+            // ball by several centimetres at a 60° bend).
+            const XMVECTOR pivot=h.swinging&&rig.upperBody>=0?XMVectorSet(0,rig.upperBodyRest.y,rig.upperBodyRest.z,0):XMVectorSet(0,hipY,hipZ,0);
             // The wrist is asked for where she is (model space, her walks' travel included); the
             // arm is worked out from where her body is before that travel goes on (AddRootOffset).
             XMVECTOR target=XMVectorSubtract(XMLoadFloat3(&h.wrist),XMVectorSet(rootOffset,0,0,0));
             // The body moved for the stroke (style 3): the arm is worked out from where that puts it.
             const XMVECTOR moved=h.wholeArm?XMVectorSet(0,-h.body[0],-h.body[1],0):XMVectorZero();
-            target=XMVectorSubtract(target,moved);
+            // Walking with it held (style 4): the walk's own bob and sway of the body (グルーブ,
+            // センター) move the shoulders too, so the hands are sent allowing for them (else both
+            // missed by several centimetres, and the other hand, sent to the ball in the first,
+            // twice as far).
+            XMVECTOR shift=moved;
+            if(h.gaitFeet)
+            {
+                if(rig.groove>=0&&slot[rig.groove]>=0)shift=XMVectorAdd(shift,XMLoadFloat3(&KeyOf(keys,rig.groove).position));
+                if(rig.center>=0&&slot[rig.center]>=0)shift=XMVectorAdd(shift,XMLoadFloat3(&KeyOf(keys,rig.center).position));
+            }
+            target=XMVectorSubtract(target,shift);
             // Held up while sitting: the body is lowered (グルーブ), and the arm is worked out
             // from where the shoulders are standing.
             if((h.upright||activity==Activity::Sit)&&rig.groove>=0)target=XMVectorSubtract(target,XMLoadFloat3(&KeyOf(keys,rig.groove).position));
@@ -1935,7 +1949,7 @@ namespace MikuMikuDesktopPerch
                     XMFLOAT3& at=KeyOf(g,rig.groove).position;
                     XMStoreFloat3(&at,XMVectorAdd(XMLoadFloat3(&at),moved));
                 }
-                if(rig.lowerBody>=0&&slot[rig.lowerBody]>=0)SetRotation(g,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,h.body[4],0));
+                if(rig.lowerBody>=0&&slot[rig.lowerBody]>=0&&!h.gaitFeet)SetRotation(g,rig.lowerBody,XMQuaternionRotationRollPitchYaw(0,h.body[4],0));
             }
             // Where the point is as the bent body sees it, and no further than the arm goes.
             target=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(target,pivot),XMQuaternionConjugate(bend)));
@@ -1995,7 +2009,18 @@ namespace MikuMikuDesktopPerch
                 // The elbow out to the side; or (style 3, a forehand) down and back by the body,
                 // so the forearm goes out from it to the hand.
                 const float in=h.wholeArm?h.elbowIn:0.0f;
-                ReachArm(g,s,target,XMVectorSet(out*(0.8f+0.2f*in),-1+0.35f*in,0.2f+0.1f*in,0),0.6f,!h.swinging);   // (the forehand's elbow out to the side and a little up, no higher than the wrist: the forearm about level)
+                // (A ball swung: the elbow's point back, so its inside faces the way the arm swings
+                // and stays by the hip, as bowlers are taught; out to the side it showed bent outward.)
+                // Only while the arm is near straight (swinging): bent, holding the ball before her
+                // chest, the elbows go down and out by her sides (pointed back, they went into her body).
+                XMVECTOR pole=XMVectorSet(out*(0.8f+0.2f*in),-1+0.35f*in,0.2f+0.1f*in,0);
+                if(h.swinging)
+                {
+                    const float straight=std::clamp((XMVectorGetX(XMVector3Length(XMVectorSubtract(target,shoulder)))/(rig.upperArm+rig.forearm)-0.80f)/0.15f,0.0f,1.0f);
+                    const float sw=straight*straight*(3-2*straight);
+                    pole=XMVectorLerp(XMVectorSet(out*0.7f,-1.0f,0.25f,0),XMVectorSet(-out*0.15f,-0.25f,1.0f,0),sw);
+                }
+                ReachArm(g,s,target,pole,0.6f,!h.swinging);   // (the forehand's elbow out to the side and a little up, no higher than the wrist: the forearm about level)
                 clearUpperArm=false;
                 if(const int o=1-s;h.wholeArm&&rig.arm[o]>=0&&!holds[o].on)
                 {
@@ -2013,7 +2038,7 @@ namespace MikuMikuDesktopPerch
                     XMVECTOR to=XMVectorZero();
                     if(mix>0)
                     {
-                        to=XMVectorSubtract(XMVectorSubtract(XMLoadFloat3(&h.freePoint),XMVectorSet(rootOffset,0,0,0)),moved);
+                        to=XMVectorSubtract(XMVectorSubtract(XMLoadFloat3(&h.freePoint),XMVectorSet(rootOffset,0,0,0)),shift);
                         to=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(to,pivot),XMQuaternionConjugate(bend)));
                     }
                     if(mix<1)
@@ -2054,15 +2079,15 @@ namespace MikuMikuDesktopPerch
                         CurlFingers(g,o,{0.3f,0.35f,0.4f,0.45f});
                     }
                 }
-                if(h.wholeArm)
+                if(h.wholeArm&&!h.gaitFeet)   // (walking with it held: the walk sets the feet)
                     for(int f=0;f<2;++f)
                         if(rig.legIK[f]>=0&&slot[rig.legIK[f]]>=0)
                         {
                             XMFLOAT3& at=KeyOf(g,rig.legIK[f]).position;
                             XMStoreFloat3(&at,XMVectorAdd(XMLoadFloat3(&at),XMLoadFloat3(&h.feet[f])));
-                            // (Swinging a ball, the feet go across from the rest pose alone: the idle
-                            // motion's stance set them half a hip's width further out each side.)
-                            if(h.swinging)at.x=h.feet[f].x;
+                            // (Swinging a ball, the feet go from the rest pose alone: the idle motion's
+                            // stance set them half a hip's width further out each side.)
+                            if(h.swinging)at=h.feet[f];   // (all three: the walk's own foot keys, still easing out after it stops, were added in twice)
                         }
             }
             // (As the bent body sees them, as the target is: so the fingers lie over the knob
@@ -2100,7 +2125,8 @@ namespace MikuMikuDesktopPerch
                 XMVECTOR aimed=fingers,little=XMVectorZero();
                 HandWithinReach(g,s,aimed,palm,little);
                 AimHand(g,s,aimed,palm);
-                CurlFingers(g,s,{0.35f,0.45f,0.45f,0.4f});   // (two fingers and the thumb in the ball's holes)
+                const float c=h.fingers;   // (two fingers and the thumb in the ball's holes: straight going in)
+                CurlFingers(g,s,{0.03f+0.32f*c,0.03f+0.42f*c,0.05f+0.40f*c,0.05f+0.35f*c});
             }
             else if(h.wholeArm)
             {

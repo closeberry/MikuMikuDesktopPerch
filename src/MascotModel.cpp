@@ -2937,6 +2937,28 @@ namespace MikuMikuDesktopPerch
     }
 
     float MascotModel::HoldInBody(int side) const {return impl->motion.HoldInBody(side);}
+    bool MascotModel::RestBonePosition(const std::wstring& name,std::array<float,3>& position) const
+    {
+        const auto& m=*impl;
+        if(!m.pmx)return false;
+        const int bone=m.FindBone({name.c_str()});
+        if(bone<0)return false;
+        const auto& p=m.pmx->bones[static_cast<size_t>(bone)].position;
+        position={p.x,p.y,p.z};
+        return true;
+    }
+    bool MascotModel::BonePosition(const std::wstring& name,std::array<float,3>& position) const
+    {
+        using namespace DirectX;
+        const auto& m=*impl;
+        if(!m.pmx||!m.solver||m.solver->boneMatrices.size()<m.pmx->bones.size())return false;
+        const int bone=m.FindBone({name.c_str()});
+        if(bone<0)return false;
+        XMFLOAT3 p;
+        XMStoreFloat3(&p,XMVector3Transform(XMLoadFloat3(&m.pmx->bones[static_cast<size_t>(bone)].position),XMMatrixTranspose(m.solver->boneMatrices[static_cast<size_t>(bone)])));
+        position={p.x,p.y,p.z};
+        return true;
+    }
     bool MascotModel::RestLegs(std::array<float,4>& x) const
     {
         const auto& m=*impl;
@@ -2949,6 +2971,8 @@ namespace MikuMikuDesktopPerch
         }
         return true;
     }
+    void MascotModel::HoldGaitFeet(int side,bool on){impl->motion.HoldGaitFeet(side,on);}
+    void MascotModel::HoldFingers(int side,float closed){impl->motion.HoldFingers(side,closed);}
     void MascotModel::HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet,const std::array<float,3>& lead)
     {
         impl->motion.HoldFree(side,at,{point[0],point[1],point[2]},{DirectX::XMFLOAT3{feet[0][0],feet[0][1],feet[0][2]},DirectX::XMFLOAT3{feet[1][0],feet[1][1],feet[1][2]}},{lead[0],lead[1],lead[2]});

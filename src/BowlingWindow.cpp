@@ -50,11 +50,15 @@ namespace MikuMikuDesktopPerch
         constexpr float ReleaseAt=1.78f,ApproachEnd=1.95f,Relaxed=3.8f;
         constexpr float ResultSeconds=1.9f,SweepSeconds=1.5f;
         constexpr float AddressSeconds=0.9f;
+        // Her ball waits on the ball return to the right of your lane between her balls; she
+        // fetches it from beside the return, facing it (FetchX metres to its left).
+        constexpr float RackX=0.5f*1.80f,RackZ=-2.30f,FetchX=RackX-0.46f,FetchZ=RackZ+0.16f;   // (clear of the return's base, so her knees stay off it; the ball before her right shoulder, so the arm hangs clear of her body)
+        constexpr float ReachSeconds=0.70f,GripSeconds=0.30f,LiftSeconds=1.05f;   // down to the ball, taking hold (its weight), up to her chest
 
         enum class Stage {Ready,Rolling,Result,Sweep,Over};
         // Her part: going to her place (with or without the ball), the ball held before her, the
         // approach (and what follows it until she stands easy).
-        enum class Plan {Walk,Address,Approach};
+        enum class Plan {Fetch,Lift,Walk,Address,Approach};
 
         float Ease(float t){t=std::clamp(t,0.0f,1.0f);return t*t*(3-2*t);}
 
@@ -103,13 +107,20 @@ namespace MikuMikuDesktopPerch
             std::unique_ptr<MascotRenderer> renderer;
             float upper=10,hips=10,k=10;
             float herX=0,herZ=0,velX=0,velZ=0;
+            std::array<float,3> shoulderGot{},elbowGot{};   // diagnostics: her ball arm as posed
+            float leftOff=0,leftOffStand=0,rightMiss=0,leftBend=180,liftLeftOff=0,leftBendSum=0;int leftBendN=0;   // diagnostics: her left hand's farthest from her ball, walking it and standing with it
+            float stoop=0;          // more bend for the ball while her straight arm is still short of it (0-1)
+            std::array<float,3> reachFix{};   // added to where her wrist is sent for the ball: what it fell short by, learned
+            bool picked=false;      // her ball taken up from the return (its jump to her hand eased out from then)
+            XMFLOAT3 pickOffset{};   // where the ball was against where her hand holds it, as she took it
             bool walking=false;     // on the generated walk (a long way to go): the hold let go
             float yaw=0;            // her turn from facing down the lane (radians; she faces the way she walks)
             float approachFrom=0;  // her z as her approach began
             struct Foot {float x=0,z=0,fromX=0,fromZ=0,toX=0,toZ=0,t=1,lift=0;bool placed=false;};
             std::array<Foot,2> feet{};   // 0 her left foot, 1 her right (world; their places at rest less her middle)
             float stance=0;
-            std::array<float,2> restAnkle{},restHip{};   // her legs at rest (model x): the feet are set from these
+            std::array<float,2> restAnkle{},restHip{};
+            std::array<float,2> waist{};   // 上半身 at rest (height, z): where her upper body bends   // her legs at rest (model x): the feet are set from these
             float track=1;          // her ankles' spacing as a share of her hip joints' (eased: narrower on the approach)
             Plan plan=Plan::Walk;
             double planTime=0;
@@ -541,7 +552,7 @@ namespace MikuMikuDesktopPerch
             // The floor behind the lanes: carpet with a pattern of squares, the approach's wood.
             for(int i=static_cast<int>(-sideX/0.6f);i<static_cast<int>(sideX/0.6f);++i)
                 for(int j=static_cast<int>(front/0.6f);j<static_cast<int>(-4.9f/0.6f);++j)
-                    m.Flat(i*0.6f*k,j*0.6f*k,(i+1)*0.6f*k,(j+1)*0.6f*k,0,((i+j)&1)?carpet:carpet2);
+                    m.Flat(i*0.6f*k,j*0.6f*k,(i+1)*0.6f*k,(j+1)*0.6f*k,0.008f*k,((i+j)&1)?carpet:carpet2);   // (8 mm up: level with the floor where they meet, the two flickered)
             // Boards of maple along the lane (plain, each its own shade a little apart: the
             // shader's wood blotched the lanes too much).
             auto boards=[&](float x0,float x1,float z0,float z1,const float (&c)[4],int seed){
@@ -733,6 +744,8 @@ namespace MikuMikuDesktopPerch
 
         // What moves: the pins (as the roll has them, or lifted and lowered by the sweep), the
         // ball (in her hand, held by you, rolling), the bar.
+        XMFLOAT3 RackBall();
+
         std::vector<MascotRenderer::GeometryVertex> BuildMoving()
         {
             using namespace Bowling;
@@ -803,6 +816,12 @@ namespace MikuMikuDesktopPerch
                 const XMFLOAT3& p=state.herBall;
                 m.Ball({p.x,p.y,p.z},BallRadius*k,hers,{0.38f,0,0,0.925f});
             }
+            else if(!(state.thrower==Her&&state.released&&state.stage==Stage::Ready))
+            {
+                // Waiting on the ball return for her next (not while her last is on its way).
+                const XMFLOAT3 p=RackBall();
+                m.Ball({p.x,p.y,p.z},BallRadius*k,hers,{0.38f,0,0,0.925f});
+            }
             return std::move(m.out);
         }
 
@@ -832,10 +851,76 @@ namespace MikuMikuDesktopPerch
 
         // Light: your line as you aim (where the ball would go, straight on, at a middling
         // speed), and the rolling ball's trail.
+        // The neon's bloom (as MMD's AutoLuminous gives it): soft light spilling round the stars,
+        // the swooshes under them and the upright strips on the side walls, a bright core over
+        // each and a wide faint halo, added in the glowing pass. The same places as BuildAlley's.
+        void NeonGlow(std::vector<MascotRenderer::GeometryVertex>& out)
+        {
+            const float k=state.k;
+            const int lanes=2;
+            const float sideX=(lanes+0.5f)*LanePitch+0.6f,front=-12.0f,ceilingY=3.4f*k;
+            const float z=(Bowling::PinDeckY-0.70f)*k-0.02f*k;   // (just before the panel)
+            static const float colours[5][3]={{1.0f,0.30f,0.70f},{0.30f,0.85f,1.0f},{1.0f,0.82f,0.25f},{0.55f,1.0f,0.45f},{0.75f,0.45f,1.0f}};
+            auto tint=[](const float* c,float f){return std::array<float,3>{c[0]*f,c[1]*f,c[2]*f};};
+            auto strip=[&](XMFLOAT3 a,XMFLOAT3 b,float w,const std::array<float,3>& ca,const std::array<float,3>& cb){
+                const float A[3]={ca[0],ca[1],ca[2]},B[3]={cb[0],cb[1],cb[2]};
+                LightStrip(out,a,b,w,A,B);
+            };
+            const std::array<float,3> none{0,0,0};
+            for(int lane=-lanes;lane<=lanes;++lane)
+            {
+                const float cx=lane*LanePitch;
+                const float* c=colours[(lane+lanes)%5];
+                // The star: a halo out from its middle every way, and light along its edges.
+                const float sy=1.95f*k,sx=cx*k,R=0.34f*k,r=0.14f*k;
+                for(int i=0;i<48;++i)
+                {
+                    const float a=DirectX::XM_2PI*(i+0.5f)/48;
+                    // (From the star's inner points out: from its middle, the spokes all met there in a white spot.)
+                    strip({sx+r*std::cos(a),sy+r*std::sin(a),z},{sx+0.80f*k*std::cos(a),sy+0.80f*k*std::sin(a),z},0.08f*k,tint(c,0.10f),none);
+                }
+                for(int i=0;i<5;++i)
+                {
+                    const float a0=DirectX::XM_2PI*i/5-DirectX::XM_PIDIV2,a1=a0+DirectX::XM_2PI/5,am=a0+DirectX::XM_PI/5;
+                    const XMFLOAT3 tip0{sx+R*std::cos(a0),sy-R*std::sin(a0),z},in{sx+r*std::cos(am),sy-r*std::sin(am),z},tip1{sx+R*std::cos(a1),sy-R*std::sin(a1),z};
+                    for(const auto& [p,q]:{std::pair{tip0,in},std::pair{in,tip1}})
+                    {
+                        strip(p,q,0.06f*k,tint(c,0.55f),tint(c,0.55f));
+                        strip(p,q,0.20f*k,tint(c,0.20f),tint(c,0.20f));
+                    }
+                }
+                // The swooshes under it.
+                for(int b=0;b<3;++b)
+                {
+                    const float yb=(1.18f+0.07f*b+0.0125f)*k,lift=0.18f*k*(b+1)/3,f=b==1?1.0f:0.5f;
+                    for(int s=0;s<12;++s)
+                    {
+                        const float u0=s/12.0f,u1=(s+1)/12.0f;
+                        const XMFLOAT3 p{(cx-0.8f+1.6f*u0)*k,yb+lift*std::sin(u0*DirectX::XM_PI),z},q{(cx-0.8f+1.6f*u1)*k,yb+lift*std::sin(u1*DirectX::XM_PI),z};
+                        strip(p,q,0.05f*k,tint(c,0.50f*f),tint(c,0.50f*f));
+                        strip(p,q,0.17f*k,tint(c,0.18f*f),tint(c,0.18f*f));
+                    }
+                }
+            }
+            // The upright strips on the side walls.
+            const float pink[3]={1.0f,0.35f,0.75f};
+            for(float s:{-1.0f,1.0f})
+            {
+                const float x=s*sideX*k-s*0.02f*k;
+                for(float zz=front+1.5f;zz<Bowling::PinDeckY;zz+=3.0f)
+                {
+                    const XMFLOAT3 p{x,0.3f*k,(zz+0.025f)*k},q{x,ceilingY-0.3f*k,(zz+0.025f)*k};
+                    strip(p,q,0.05f*k,tint(pink,0.55f),tint(pink,0.55f));
+                    strip(p,q,0.24f*k,tint(pink,0.20f),tint(pink,0.20f));
+                }
+            }
+        }
+
         std::vector<MascotRenderer::GeometryVertex> BuildGlow()
         {
             std::vector<MascotRenderer::GeometryVertex> out;
             const float k=state.k;
+            NeonGlow(out);
             if(state.stage==Stage::Ready&&state.thrower==You&&!state.game.Over()&&!state.autoplay)
             {
                 Throw t;
@@ -922,6 +1007,38 @@ namespace MikuMikuDesktopPerch
             DirectX::XMStoreFloat3(&w,DirectX::XMVector3Transform(DirectX::XMVectorSet(p[0],p[1],p[2],1),HerWorld(model)));
             return w;
         }
+        std::array<float,3> ModelPoint(MascotModel& model,const XMFLOAT3& p)
+        {
+            DirectX::XMVECTOR det;
+            XMFLOAT3 m;
+            DirectX::XMStoreFloat3(&m,DirectX::XMVector3Transform(DirectX::XMVectorSet(p.x,p.y,p.z,1),DirectX::XMMatrixInverse(&det,HerWorld(model))));
+            return {m.x,m.y,m.z};
+        }
+        // Her ball waiting on the ball return (world).
+        XMFLOAT3 RackBall()
+        {
+            return {RackX*state.k,(0.48f+Bowling::BallRadius)*state.k,RackZ*state.k};
+        }
+        // Her feet where her model's ankles are now (after the generated walk), in the terms the
+        // hold's feet are given in (Move's feet: the model's x from the hips' share, z from rest).
+        void FeetFromModel(MascotModel& model)
+        {
+            const wchar_t* names[2]={L"左足首",L"右足首"};
+            const float c=std::cos(HerTurn()),s=std::sin(HerTurn());
+            for(int f=0;f<2;++f)
+            {
+                auto& foot=state.feet[static_cast<size_t>(f)];
+                std::array<float,3> a{};
+                foot.t=1;foot.lift=0;foot.placed=true;
+                if(!model.BonePosition(names[f],a)){foot.placed=false;continue;}
+                // (z from where the foot's IK stands at rest: the hold's feet go from there.)
+                std::array<float,3> rest{};
+                const float restZ=model.RestBonePosition(f==0?L"左足ＩＫ":L"右足ＩＫ",rest)?rest[2]:0.0f;
+                const float mx=a[0]-state.track*state.restHip[static_cast<size_t>(f)],mz=a[2]-restZ;
+                foot.x=state.herX+mx*c+mz*s;
+                foot.z=state.herZ-mx*s+mz*c;
+            }
+        }
         // A world offset (x, z) from her as her model sees it, and her model's x across the world.
         std::array<float,2> ModelOffset(float dx,float dz)
         {
@@ -982,6 +1099,7 @@ namespace MikuMikuDesktopPerch
             // a walk or a bowler's approach puts the feet nearer the middle than that.
             if(std::array<float,4> legs{};model.RestLegs(legs)){state.restAnkle={legs[0],legs[1]};state.restHip={legs[2],legs[3]};}
             else{state.restAnkle={0.1f*D,-0.1f*D};state.restHip={0.1f*D,-0.1f*D};}
+            if(std::array<float,3> w{};model.RestBonePosition(L"上半身",w))state.waist={w[1],w[2]};else state.waist={state.hips,0};
             state.track=1;
             Log(L"bowling: hips %.1f, upper body %.1f, %.2f units a metre; shoulder %.2f %.2f %.2f, arm %.2f",
                 state.hips,state.upper,state.k,state.shoulder[0],state.shoulder[1],state.shoulder[2],state.armLength);
@@ -1025,9 +1143,10 @@ namespace MikuMikuDesktopPerch
         // Her shoulder (model space) with her body lowered by down and leant forward by lean (radians).
         std::array<float,3> Shoulder(float down,float lean)
         {
-            const float hy=state.hips;
-            const float ry=state.shoulder[1]-hy,rz=state.shoulder[2];
-            return {state.shoulder[0],hy+ry*std::cos(lean)+rz*std::sin(lean)-down,rz*std::cos(lean)-ry*std::sin(lean)};
+            // (Bent about 上半身, as the hold bends her.)
+            const float hy=state.waist[0],hz=state.waist[1];
+            const float ry=state.shoulder[1]-hy,rz=state.shoulder[2]-hz;
+            return {state.shoulder[0],hy+ry*std::cos(lean)+rz*std::sin(lean)-down,hz+rz*std::cos(lean)-ry*std::sin(lean)};
         }
 
         // The ball held before her chest (model space), for the address.
@@ -1035,7 +1154,18 @@ namespace MikuMikuDesktopPerch
         {
             const float D=state.upper;
             const auto s=Shoulder(0.03f*state.hips,DirectX::XMConvertToRadians(4.0f));
-            return {s[0]+0.12f*D,s[1]-0.30f*D,s[2]-0.62f*D};   // (well out before her: nearer, it was in her chest and showed through her back)
+            return {s[0]+0.26f*D,s[1]-0.27f*D,s[2]-0.60f*D};   // (a little to her right of her middle, both hands on it with the elbows bent; well out before her: nearer, it was in her chest and showed through her back)
+        }
+
+        // Her other hand on the ball held before her: under it on her side (from the left, inner
+        // half), not straight under it: reaching across to under the ball's middle (it is held to
+        // her right) took her left elbow into her chest.
+        std::array<float,3> UnderBall(const std::array<float,3>& ball)
+        {
+            const float r=Bowling::BallRadius*state.k;
+            // (On its lower side toward her and her left, not under its far side: there her left arm
+            // was out straight to it.)
+            return {ball[0]+0.60f*r,ball[1]-0.45f*r,ball[2]+0.65f*r};
         }
 
         // The body's shape through the approach: down, forward, turn, lean, hips (HoldBody's).
@@ -1246,7 +1376,7 @@ namespace MikuMikuDesktopPerch
                 std::array<bool,10> standing{};
                 for(int n=0;n<10;++n)standing[static_cast<size_t>(n)]=state.pins[static_cast<size_t>(n)].there;
                 state.herThrow=Bowling::Choose(standing,Bowling::LevelStyle(state.her.level),state.random);
-                state.plan=Plan::Walk;
+                state.plan=state.hasBall?Plan::Walk:Plan::Fetch;
                 state.planTime=0;
                 state.released=false;
                 if(state.game.BallNo()==0)
@@ -1876,7 +2006,32 @@ namespace MikuMikuDesktopPerch
                 state.planTime+=dt;
                 if(state.stage==Stage::Ready&&state.thrower==Her&&!state.released)
                 {
-                    if(state.plan==Plan::Walk)
+                    if(state.plan==Plan::Fetch)
+                    {
+                        // Beside the ball return, facing it: then down for the ball.
+                        // (Reaching already in her last steps, so the stop and the reach are one move:
+                        // the walk goes on to the spot under her while she bends for the ball.)
+                        const float there=std::hypot(state.herX-FetchX*k,state.herZ-FetchZ*k);
+                        if((state.walking&&there<0.45f*k)
+                           ||(!state.walking&&there<0.06f*k&&std::hypot(state.velX,state.velZ)<0.15f*k&&std::abs(std::remainder(state.yaw-XM_PIDIV2,XM_2PI))<0.30f))
+                        {
+                            state.plan=Plan::Lift;
+                            state.planTime=0;
+                            state.picked=false;
+                            state.reachFix={};
+                            state.stoop=0;
+                            if(state.autoplay&&state.swingTrace.size()<20000){wchar_t row[80];swprintf_s(row,L"  fetch at clock %.2f\n",state.clock);state.swingTrace+=row;}
+                        }
+                    }
+                    else if(state.plan==Plan::Lift)
+                    {
+                        if(state.testStage==8)state.planTime=std::min(state.planTime,static_cast<double>(ReachSeconds+GripSeconds-0.02f));   // (diagnostics: her hands on the ball)
+                        // (Where it is as she takes it: her ball's place was still where she last threw it
+                        // for that frame, and her left hand went for it.)
+                        if(!state.hasBall&&state.planTime>ReachSeconds+GripSeconds){state.hasBall=true;state.herBall=RackBall();}
+                        if(state.planTime>ReachSeconds+GripSeconds+LiftSeconds){state.plan=Plan::Walk;state.planTime=0;}
+                    }
+                    else if(state.plan==Plan::Walk)
                     {
                         const float gx=state.herThrow.x*k-state.handSide,gz=StanceZ*k;
                         if(std::hypot(state.herX-gx,state.herZ-gz)<0.03f*k&&std::hypot(state.velX,state.velZ)<0.08f*k&&state.planTime>0.4&&std::abs(state.yaw)<0.05f)
@@ -1946,7 +2101,13 @@ namespace MikuMikuDesktopPerch
                 // Her place: on the approach for her ball, by the lane on your left for yours;
                 // after her ball she stays where she is until the next one is hers or yours.
                 float gx=WaitX*k,gz=WaitZ*k;
-                if(state.thrower==Her&&!state.released&&state.stage==Stage::Ready){gx=state.herThrow.x*k-state.handSide;gz=StanceZ*k;}
+                const bool fetching=state.thrower==Her&&!state.released&&state.stage==Stage::Ready&&(state.plan==Plan::Fetch||state.plan==Plan::Lift);
+                if(fetching){gx=FetchX*k;gz=FetchZ*k;}
+                else if(state.thrower==Her&&!state.released&&state.stage==Stage::Ready)
+                {
+                    gx=state.herThrow.x*k-state.handSide;gz=StanceZ*k;
+                    if(state.testStage==9&&state.hasBall)gz-=6.0f*k;   // (diagnostics: she walks on with her ball, toward you)
+                }
                 else if(state.thrower==Her&&state.released&&state.stage!=Stage::Ready){gx=state.herX;gz=state.herZ;}
                 if(state.stage==Stage::Over){gx=OverX*k;gz=OverZ*k;}
                 // A long way (to her place, back to wait, to the end): the generated walk (her arms
@@ -1956,7 +2117,9 @@ namespace MikuMikuDesktopPerch
                 // walked backwards toward you.)
                 const float away=std::hypot(gx-state.herX,gz-state.herZ);
                 auto wrap=[](float a){while(a>XM_PI)a-=XM_2PI;while(a<-XM_PI)a+=XM_2PI;return a;};
-                if(!state.walking&&away>0.9f*k&&state.testStage!=5)
+                // (Carrying her ball to her place, a shorter way: she walks it too, the hold keeping
+                // the ball before her: the hold's own steps slid her backwards there.)
+                if(!state.walking&&state.testStage!=5&&state.plan!=Plan::Lift&&(state.hasBall?away>0.20f*k:away>0.9f*k))
                 {
                     state.walking=true;
                     model.SetFacingWalk(true);
@@ -1964,29 +2127,40 @@ namespace MikuMikuDesktopPerch
                 }
                 if(state.walking)
                 {
-                    const float wantYaw=std::atan2(gx-state.herX,gz-state.herZ);
+                    // The way she goes; coming to the ball return, turned toward it over the last
+                    // half metre, so she arrives facing it and reaches at once (no stop and step).
+                    float wantYaw=std::atan2(gx-state.herX,gz-state.herZ);
+                    if(fetching)wantYaw+=wrap(XM_PIDIV2-wantYaw)*(1-std::clamp(away/(0.5f*k),0.0f,1.0f));
                     state.yaw=wrap(state.yaw+wrap(wantYaw-state.yaw)*static_cast<float>(1.0-std::exp(-dt/0.15)));
-                    // (Turning on the spot first: square to the way, she hardly moves.)
+                    // (Turning on the spot first: square to the way, she hardly moves; slowing a
+                    // little over the last third of a metre.)
+                    // (She goes straight to her place; her turn only sets how fast, so the turn
+                    // toward the return at the end does not hold her short of it.)
                     const float aligned=std::clamp(std::cos(wrap(wantYaw-state.yaw)),0.0f,1.0f);
-                    const float go=std::min(away,std::max(model.GroundSpeed(),0.25f*D)*step*aligned*aligned);
-                    state.velX=std::sin(state.yaw)*go/std::max(step,1e-4f);
-                    state.velZ=std::cos(state.yaw)*go/std::max(step,1e-4f);
-                    state.herX+=std::sin(state.yaw)*go;
-                    state.herZ+=std::cos(state.yaw)*go;
-                    if(away-go<0.30f*k)
+                    const float slow=std::clamp(away/(0.35f*k),0.45f,1.0f);
+                    const float go=std::min(away,std::max(model.GroundSpeed(),0.25f*D)*step*aligned*aligned*slow);
+                    const float ux=(gx-state.herX)/std::max(away,1e-4f),uz=(gz-state.herZ)/std::max(away,1e-4f);
+                    state.velX=ux*go/std::max(step,1e-4f);
+                    state.velZ=uz*go/std::max(step,1e-4f);
+                    state.herX+=ux*go;
+                    state.herZ+=uz*go;
+                    if(away-go<0.03f*k)
                     {
+                        // There: standing again (the hold), her feet left where the walk set them
+                        // (set down under her, they slid there as the hold came in).
                         state.walking=false;
                         model.SetActivity(Activity::Idle);
                         model.SetFacingWalk(false);
                         model.EndGestures();
                         state.velX=state.velZ=0;
-                        // (Her feet set down again under her, as the hold takes her back.)
-                        for(auto& f:state.feet){f.placed=false;f.t=1;f.lift=0;}
+                        FeetFromModel(model);
                     }
                 }
                 else
                 {
-                    state.yaw=wrap(state.yaw+wrap(-state.yaw)*static_cast<float>(1.0-std::exp(-dt/0.22)));
+                    // (Facing the lane, or the ball return as she comes to it.)
+                    const float face=fetching&&(away<0.6f*k||state.plan==Plan::Lift)?XM_PIDIV2:0.0f;
+                    state.yaw=wrap(state.yaw+wrap(face-state.yaw)*static_cast<float>(1.0-std::exp(-dt/0.22)));
                     constexpr float W=2.4f;
                     const int n=std::max(1,static_cast<int>(std::ceil(dt*240)));
                     const float h=step/n;
@@ -2003,10 +2177,11 @@ namespace MikuMikuDesktopPerch
                 }
             }
             // Her body's shape, her ball arm, her other hand.
-            std::array<float,5> want{0.03f*Leg,0,0,XMConvertToRadians(2.0f),0};
+            std::array<float,5> want{state.walking?0.0f:0.03f*Leg,0,0,XMConvertToRadians(2.0f),0};   // (walking, the walk's own height)
             std::array<float,3> wristWant{};
             std::array<float,3> leadWant{};
             bool freeAt=false;
+            float fingers=1;   // her ball hand's fingers: 1 closed round the ball, 0 straight
             std::array<float,3> freePoint{};
             {
                 // (Within the hold's reach: further, it draws the hand in toward her.)
@@ -2024,7 +2199,7 @@ namespace MikuMikuDesktopPerch
                 // Held wide the whole swing through, back and forward alike: wide only while it was
                 // behind her, the ball came in sideways as it swung forward to the release.
                 const float swing=Ease((t-0.30f)/0.50f)*(1-Ease((t-ReleaseAt-0.10f)/0.60f));
-                const float wide=std::max(0.20f*swing,0.05f*std::max(0.0f,std::cos(a)));
+                const float wide=std::max(0.12f*swing,0.05f*std::max(0.0f,std::cos(a)));   // (close by her side, the elbow by the hip; nearer, the arm went into her body)
                 std::array<float,3> pend{s[0]-wide*D,s[1]-R*std::cos(a),s[2]-R*std::sin(a)};
                 if(t<0.40f)
                 {
@@ -2033,12 +2208,78 @@ namespace MikuMikuDesktopPerch
                     const std::array<float,3> held{ball[0]-0.10f*D,ball[1]-0.10f*D,ball[2]+0.04f*D};
                     const float u=Ease(t/0.40f);
                     for(int i=0;i<3;++i)pend[i]=held[i]+(pend[i]-held[i])*u;
-                    if(t<0.22f){freeAt=true;freePoint={ball[0]+0.04f*D,ball[1]-Bowling::BallRadius*k-0.02f*D,ball[2]};}
+                    if(t<0.22f){freeAt=true;freePoint=UnderBall(ModelPoint(model,state.herBall));}
                 }
                 wristWant=pend;
                 // Her other arm out to her left for balance through the swing.
                 const float out=Ease((t-0.30f)/0.6f)*(1-Ease((t-2.8f)/(Relaxed-2.8f)));
                 leadWant={-0.95f*out,0.30f*out,0.10f*out};
+            }
+            else if(state.plan==Plan::Lift&&state.thrower==Her)
+            {
+                // Down to her ball on the return (her hand over it, the other at its far side),
+                // bending at the knees and the waist; taking hold, she sinks a little more under its
+                // weight; then up with it to her chest, the arms slow to start, her legs and back
+                // rising after them, leaning back a little as she brings it in.
+                const float t=static_cast<float>(state.planTime);
+                const auto rack=ModelPoint(model,RackBall());
+                const float r=Bowling::BallRadius*k;
+                // (The wrist level with the ball's middle, against its side toward her shoulder:
+                // her straight fingers then go over it into its holes. Sent above it, her hand
+                // stopped short.)
+                const auto sh=Shoulder(Leg*0.16f,XMConvertToRadians(50.0f));
+                float dx=sh[0]-rack[0],dz=sh[2]-rack[2];
+                const float dl=std::max(1e-4f,std::hypot(dx,dz));dx/=dl;dz/=dl;
+                const float out=r+0.03f*k;
+                const std::array<float,3> over{rack[0]+dx*out,rack[1],rack[2]+dz*out};
+                const auto ball=AddressBall();
+                const std::array<float,3> held{ball[0]-0.10f*D,ball[1]-0.10f*D,ball[2]+0.04f*D};
+                const float down=Ease(t/ReachSeconds);
+                const float g=std::clamp((t-ReachSeconds)/GripSeconds,0.0f,1.0f);
+                const float u=std::clamp((t-ReachSeconds-GripSeconds)/LiftSeconds,0.0f,1.0f);
+                const float up=std::pow(Ease(u),1.6f);   // (slow off the rack: it is heavy)
+                for(int i=0;i<3;++i)wristWant[static_cast<size_t>(i)]=t<ReachSeconds?wristWant[static_cast<size_t>(i)]+(over[static_cast<size_t>(i)]-wristWant[static_cast<size_t>(i)])*down:over[static_cast<size_t>(i)]+(held[static_cast<size_t>(i)]-over[static_cast<size_t>(i)])*up;
+                const float bend=down*(1-Ease((u-0.12f)/0.88f));
+                // (Bent mostly at the hips, the hips going back, the knees a little: squatting, her
+                // knees went into the return's base.)
+                // Her arm straight and still short of the ball (her shoulder too high for it): she
+                // bends lower, at the knees and the hips, a little at a time.
+                if(live&&t<ReachSeconds+GripSeconds&&down>0.6f)
+                {
+                    auto d=[](const std::array<float,3>& a,const std::array<float,3>& b){return std::sqrt((a[0]-b[0])*(a[0]-b[0])+(a[1]-b[1])*(a[1]-b[1])+(a[2]-b[2])*(a[2]-b[2]));};
+                    const float arm=d(state.shoulderGot,state.elbowGot)+d(state.elbowGot,state.wristGot);
+                    std::array<float,3> aim{};
+                    for(int i=0;i<3;++i)aim[static_cast<size_t>(i)]=state.wrist[static_cast<size_t>(i)]-state.reachFix[static_cast<size_t>(i)];
+                    if(d(state.shoulderGot,state.wristGot)>0.96f*arm&&d(state.shoulderGot,aim)>0.98f*arm)
+                        state.stoop=std::min(1.0f,state.stoop+static_cast<float>(dt)/0.5f);
+                }
+                const float more=state.stoop*bend;
+                want[0]=Leg*(0.03f+0.13f*bend+0.12f*more+0.03f*std::sin(XM_PI*g)*(1-u));
+                want[1]=-Leg*(0.03f*bend+0.05f*more);
+                want[3]=XMConvertToRadians(2.0f+52.0f*bend+10.0f*more-6.0f*std::sin(XM_PI*u));
+                // Bent this far, the hold's own idea of where her body is is off by a few
+                // centimetres, and her hand stopped short of the ball: what her wrist falls short
+                // by is learned as she reaches (the closer, the more) and added to where it is sent.
+                if(live&&t<ReachSeconds+GripSeconds)
+                {
+                    const float f=std::min(1.0f,static_cast<float>(dt)/0.12f)*down*down;
+                    for(int i=0;i<3;++i)state.reachFix[static_cast<size_t>(i)]+=(state.wrist[static_cast<size_t>(i)]-state.reachFix[static_cast<size_t>(i)]-state.wristGot[static_cast<size_t>(i)])*f*0.5f;
+                    float n=std::sqrt(state.reachFix[0]*state.reachFix[0]+state.reachFix[1]*state.reachFix[1]+state.reachFix[2]*state.reachFix[2]);
+                    if(n>0.30f*D)for(float& v:state.reachFix)v*=0.30f*D/n;
+                }
+                const float fix=1-u;   // (let go of as she lifts it to her chest)
+                for(int i=0;i<3;++i)wristWant[static_cast<size_t>(i)]+=state.reachFix[static_cast<size_t>(i)]*fix;
+                // Her fingers straight as they go into the ball's holes, closing a little on it as
+                // she takes hold.
+                fingers=0.15f+0.85f*std::max(1-down,g*0.8f+0.2f*u);
+                freeAt=t>0.15f;
+                // (Both from where the ball really is, on the return and then in her hands: from where
+                // it lay and from where it should be held, her left hand left it as it came up and
+                // went back to it fast once the lift was done.)
+                const auto real=state.hasBall?ModelPoint(model,state.herBall):rack;
+                const std::array<float,3> side{real[0]+0.75f*r,real[1]+0.35f*r,real[2]+0.75f*r};   // (on its side toward her left: round the far side was out of her reach)
+                const std::array<float,3> under=UnderBall(real);
+                for(int i=0;i<3;++i)freePoint[static_cast<size_t>(i)]=side[static_cast<size_t>(i)]+(under[static_cast<size_t>(i)]-side[static_cast<size_t>(i)])*up;
             }
             else if(state.hasBall)
             {
@@ -2046,7 +2287,9 @@ namespace MikuMikuDesktopPerch
                 const auto ball=AddressBall();
                 wristWant={ball[0]-0.10f*D,ball[1]-0.10f*D,ball[2]+0.04f*D};
                 freeAt=true;
-                freePoint={ball[0]+0.04f*D,ball[1]-Bowling::BallRadius*k-0.02f*D,ball[2]};
+                // (Under the ball where it really is, in her right hand: where it should be, her left
+                // hand came off it as she walked with it.)
+                freePoint=UnderBall(ModelPoint(model,state.herBall));
             }
             if(live)
             {
@@ -2104,12 +2347,40 @@ namespace MikuMikuDesktopPerch
                 const auto off=ModelOffset(foot.x-state.herX,foot.z-state.herZ);
                 feet[f]={std::clamp(off[0]+in,-most,most),foot.lift,std::clamp(off[1],-most,most)};
             }
+            // (On the generated walk the hold lets go, or, carrying the ball, keeps her arms and
+            // leaves her legs and hips to the walk.)
+            model.HoldFingers(HerHand,fingers);
+            model.HoldGaitFeet(HerHand,state.walking);
             model.HoldFree(HerHand,freeAt,freePoint,feet,state.lead);
-            model.Hold(HerHand,{state.wrist[0]+model.RootOffset(),state.wrist[1],state.wrist[2]},!state.walking,4);   // (let go on the generated walk)
+            model.Hold(HerHand,{state.wrist[0]+model.RootOffset(),state.wrist[1],state.wrist[2]},!state.walking||state.hasBall||state.plan==Plan::Lift,4);
             if(approaching)state.inBody=std::max(state.inBody,model.HoldInBody(HerHand));
             {
                 std::array<float,3> mid{},al{},pa{},wr{};
-                if(model.Fist(HerHand,mid,al,pa,&wr))state.wristGot={wr[0]-model.RootOffset(),wr[1],wr[2]};
+                if(model.Fist(HerHand,mid,al,pa,&wr,&state.elbowGot))state.wristGot={wr[0]-model.RootOffset(),wr[1],wr[2]};
+                model.BonePosition(L"右腕",state.shoulderGot);
+                // (Diagnostics: how far her other hand is from the ball she carries.)
+                if(state.hasBall&&state.plan==Plan::Lift)
+                    if(std::array<float,3> lh{};model.BonePosition(L"左手首",lh))
+                    {
+                        const auto b=ModelPoint(model,state.herBall);
+                        state.liftLeftOff=std::max(state.liftLeftOff,std::sqrt((lh[0]-b[0])*(lh[0]-b[0])+(lh[1]-b[1])*(lh[1]-b[1])+(lh[2]-b[2])*(lh[2]-b[2]))/k);
+                    }
+                if(state.hasBall&&!approaching&&state.plan!=Plan::Lift)
+                    if(std::array<float,3> lh{};model.BonePosition(L"左手首",lh))
+                    {
+                        const auto b=ModelPoint(model,state.herBall);
+                        const float off=std::sqrt((lh[0]-b[0])*(lh[0]-b[0])+(lh[1]-b[1])*(lh[1]-b[1])+(lh[2]-b[2])*(lh[2]-b[2]))/k;
+                        (state.walking?state.leftOff:state.leftOffStand)=std::max(state.walking?state.leftOff:state.leftOffStand,off);
+                        if(std::array<float,3> la{},le{};state.walking&&model.BonePosition(L"左腕",la)&&model.BonePosition(L"左ひじ",le))
+                        {
+                            const float ax=la[0]-le[0],ay=la[1]-le[1],az=la[2]-le[2],bx=lh[0]-le[0],by=lh[1]-le[1],bz=lh[2]-le[2];
+                            const float c=(ax*bx+ay*by+az*bz)/std::max(1e-6f,std::sqrt((ax*ax+ay*ay+az*az)*(bx*bx+by*by+bz*bz)));
+                            const float bendNow=180-std::acos(std::clamp(c,-1.0f,1.0f))*57.2958f;
+                            state.leftBend=std::min(state.leftBend,bendNow);
+                            state.leftBendSum+=bendNow;++state.leftBendN;
+                        }
+                        if(state.walking)state.rightMiss=std::max(state.rightMiss,std::sqrt((state.wristGot[0]-state.wrist[0])*(state.wristGot[0]-state.wrist[0])+(state.wristGot[1]-state.wrist[1])*(state.wristGot[1]-state.wrist[1])+(state.wristGot[2]-state.wrist[2])*(state.wristGot[2]-state.wrist[2]))/k);
+                    }
             }
             // Her ball as her hand holds it: against her palm, out from it.
             if(state.hasBall)
@@ -2150,9 +2421,17 @@ namespace MikuMikuDesktopPerch
                     // second as the hand rolled over at the bottom of the downswing.
                     // (From the address's side of the wrist to hanging just off its outside, over
                     // the push away.)
-                    if(approaching)c[0]=wr[0]+state.ballSide+(0.026f*k-state.ballSide)*Ease(static_cast<float>(state.approachTime)/0.6f);
+                    if(approaching)c[0]=wr[0]+state.ballSide+(-0.005f*k-state.ballSide)*Ease(static_cast<float>(state.approachTime)/0.6f);
                     else state.ballSide=c[0]-wr[0];
                     state.herBall=WorldPoint(model,c);
+                    // Taken up from the return: from where it lay, into her hands over most of the lift
+                    // (at once, it jumped from the rack to her palm).
+                    if(state.plan==Plan::Lift&&state.thrower==Her)
+                    {
+                        if(!state.picked){state.picked=true;const XMFLOAT3 r=RackBall();state.pickOffset={r.x-state.herBall.x,r.y-state.herBall.y,r.z-state.herBall.z};}
+                        const float keep=1-Ease(static_cast<float>(state.planTime-ReachSeconds-GripSeconds)/(0.8f*LiftSeconds));
+                        state.herBall.x+=state.pickOffset.x*keep;state.herBall.y+=state.pickOffset.y*keep;state.herBall.z+=state.pickOffset.z*keep;
+                    }
                     if(state.autoplay&&approaching&&state.swingTrace.size()<20000)
                     {
                         wchar_t row[200];
@@ -2204,11 +2483,14 @@ namespace MikuMikuDesktopPerch
                 look={OverX*k,1.22f*k,OverZ*k};
             }
             // (Diagnostics, her approach held at one moment: the camera on her, to be turned round her.)
-            if((state.testStage>=1&&state.testStage<=3&&state.approachTime>=0)||(state.testStage==5&&state.plan==Plan::Address))
+            if((state.testStage>=1&&state.testStage<=3&&state.approachTime>=0)||(state.testStage==5&&state.plan==Plan::Address)||(state.testStage==8&&state.plan==Plan::Lift)||(state.testStage==9&&state.hasBall&&state.walking))
             {
                 look={state.herX,0.85f*k,state.herZ};
                 eye={state.herX,1.25f*k,state.herZ-3.0f*k};
                 quick=0.05f;
+                // (Her fetch: from behind her left, the ball return before her.)
+                if(state.testStage==8){look={state.herX+0.35f*k,0.65f*k,state.herZ};eye={state.herX-1.6f*k,1.35f*k,state.herZ-1.9f*k};}
+                if(state.testStage==9){look={state.herX,1.0f*k,state.herZ};eye={state.herX+1.2f*k,1.3f*k,state.herZ-2.4f*k};}
             }
             if(!state.cameraPlaced){state.eyeAt=eye;state.lookAt=look;state.cameraPlaced=true;}
             const float f=static_cast<float>(1-std::exp(-dt/quick));
@@ -2639,6 +2921,15 @@ namespace MikuMikuDesktopPerch
                    state.wrist[0],state.wrist[1],state.wrist[2],state.wristGot[0],state.wristGot[1],state.wristGot[2],state.body[0],state.body[1],
                    state.body[2]*57.3f,state.body[3]*57.3f,state.twist*57.3f);
         text+=line;
+        {
+            const auto& s=state.shoulderGot;const auto& e=state.elbowGot;const auto& w=state.wristGot;
+            auto dist=[](const std::array<float,3>& a,const std::array<float,3>& b){return std::sqrt((a[0]-b[0])*(a[0]-b[0])+(a[1]-b[1])*(a[1]-b[1])+(a[2]-b[2])*(a[2]-b[2]));};
+            swprintf_s(line,L"bowling: her left wrist from the ball she carries, at most %.2f m walking, %.2f m standing; her right wrist off where it is sent, walking, %.2f m; her left elbow bent at least %.0f deg walking (%.0f on average); left wrist from the ball as she lifts it, at most %.2f m\n",state.leftOff,state.leftOffStand,state.rightMiss,state.leftBend,state.leftBendN?state.leftBendSum/state.leftBendN:0.0f,state.liftLeftOff);
+            text+=line;
+            swprintf_s(line,L"bowling: her ball arm as posed: shoulder %.2f %.2f %.2f, elbow %.2f %.2f %.2f; shoulder to wrist %.2f (upper arm %.2f, forearm %.2f), to where the wrist is sent %.2f\n",
+                       s[0],s[1],s[2],e[0],e[1],e[2],dist(s,w),dist(s,e),dist(e,w),dist(s,state.wrist));
+            text+=line;
+        }
         if(!state.swingTrace.empty())text+=L"bowling: her first approach (ball x from her, m; wrist model units)\n"+state.swingTrace;
         for(int side=0;side<2;++side)
         {

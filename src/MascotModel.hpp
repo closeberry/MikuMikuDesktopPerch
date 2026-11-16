@@ -271,6 +271,10 @@ namespace MikuMikuDesktopPerch
         void Hold(int side,const std::array<float,3>& wrist,bool on,int style=0);
         // Her other hand and her feet with what side holds (style 3); see GeneratedMotion::HoldFree.
         // lead: the held-before hand moved from its place (arm lengths: toward the holding side, up, forward).
+        // Walking (the generated walk) with what side holds (style 4): the walk keeps the feet.
+        void HoldGaitFeet(int side,bool on);
+        // Style 4: the fingers closed round the ball (1) or straight (0, going into its holes).
+        void HoldFingers(int side,float closed);
         void HoldFree(int side,bool at,const std::array<float,3>& point,const std::array<std::array<float,3>,2>& feet,const std::array<float,3>& lead={});
         // The body moved with the stroke of what side holds (style 3); see GeneratedMotion::HoldBody.
         void HoldBody(int side,float down,float forward,float turn,float lean,float hips,float elbow=0);
@@ -279,6 +283,10 @@ namespace MikuMikuDesktopPerch
         // The legs at rest (model units, x): the left and right ankles, then the left and right
         // hip joints. False when the model has no such bones.
         bool RestLegs(std::array<float,4>& x) const;
+        // Where a bone is as posed last (model space); false when the model has no such bone.
+        bool BonePosition(const std::wstring& name,std::array<float,3>& position) const;
+        // Where a bone is in the rest pose (model space); false when the model has no such bone.
+        bool RestBonePosition(const std::wstring& name,std::array<float,3>& position) const;
         // A golf club in both hands, standing side-on to the target (+X, her left): see
         // GeneratedMotion::Swing (stage 0 address, 1 top, 2 impact, 3 finish; power 0.2-1).
         void Swing(bool on,float stage,float power,bool putter=false);

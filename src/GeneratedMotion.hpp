@@ -154,6 +154,9 @@ namespace MikuMikuDesktopPerch
         // play, and lifted and set down again as she steps.
         // lead: where the held-before hand is moved from its place, in arm lengths: toward the
         // holding side, up, forward (it plays its part in a stroke).
+        void HoldGaitFeet(int side,bool on){if(side>=0&&side<2)holds[side].gaitFeet=on;}
+        // Style 4: how far the fingers close round the ball (1), or go straight (0, into its holes).
+        void HoldFingers(int side,float closed){if(side>=0&&side<2)holds[side].fingers=closed<0?0.0f:closed>1?1.0f:closed;}
         void HoldFree(int side,bool at,const DirectX::XMFLOAT3& point,const std::array<DirectX::XMFLOAT3,2>& feet,const DirectX::XMFLOAT3& lead={})
         {
             if(side<0||side>1)return;
@@ -275,6 +278,7 @@ namespace MikuMikuDesktopPerch
             std::array<int,2> shoulder{-1,-1};
             std::array<DirectX::XMFLOAT3,2> claviclePos{},hangElbow{};
             std::array<DirectX::XMFLOAT3,2> ankleRest{},hipRest{};
+            DirectX::XMFLOAT3 upperBodyRest{};               // 上半身 at rest (the lean's pivot)
             DirectX::XMFLOAT3 lowerBodyRest{};   // 下半身's pivot: the hips (and legs) turn about it
             float headLean=0;                    // radians the head stands ahead of the hip joints at rest
             std::array<DirectX::XMFLOAT3,2> kneeRest{},footRest{};   // ひざ, and the bone the leg IK brings to 足ＩＫ (足首)
@@ -465,6 +469,8 @@ namespace MikuMikuDesktopPerch
             // Style 3: the other hand (HoldFree): at a point palm up (a ball held to be served),
             // else held before her for balance; and each foot set this far out to its side.
             bool freeAt=false;
+            float fingers=1;              // style 4: the fingers closed round the ball (1) or straight (0)
+            bool gaitFeet=false;          // the feet left to the walk (carrying what is held while walking)
             float freeMix=0;              // style 4: the other hand's way from held before her (0) to at freePoint (1)
             DirectX::XMFLOAT3 freePoint{};
             DirectX::XMFLOAT3 freeLead{};   // the held-before hand moved by this (arm lengths: toward the holding side, up, forward)
