@@ -2001,20 +2001,30 @@ namespace MikuMikuDesktopPerch
                 {
                     // Her other hand: under a ball to be served (palm up), or held before her
                     // with the elbow bent, going with her body as it turns.
-                    XMVECTOR to;
-                    if(h.freeAt)
+                    // (Swinging a ball: from one to the other over a third of a second, not at once:
+                    // the hand jumped off the ball as the swing began.)
+                    float mix=h.freeAt?1.0f:0.0f;
+                    if(h.swinging)
+                    {
+                        h.freeMix=std::clamp(h.freeMix+static_cast<float>(dt/0.35)*(h.freeAt?1.0f:-1.0f),0.0f,1.0f);
+                        mix=Smooth(h.freeMix);
+                    }
+                    else h.freeMix=mix;
+                    XMVECTOR to=XMVectorZero();
+                    if(mix>0)
                     {
                         to=XMVectorSubtract(XMVectorSubtract(XMLoadFloat3(&h.freePoint),XMVectorSet(rootOffset,0,0,0)),moved);
                         to=XMVectorAdd(pivot,XMVector3Rotate(XMVectorSubtract(to,pivot),XMQuaternionConjugate(bend)));
                     }
-                    else
+                    if(mix<1)
                     {
                         const float A=rig.upperArm+rig.forearm;
-                        to=XMVectorAdd(XMLoadFloat3(&rig.shoulderPos[o]),XMVectorSet(out*(0.25f*rig.upperArm+h.freeLead.x*A),-0.80f*rig.upperArm+h.freeLead.y*A,-0.85f*rig.forearm-h.freeLead.z*A,0));
+                        const XMVECTOR held=XMVectorAdd(XMLoadFloat3(&rig.shoulderPos[o]),XMVectorSet(out*(0.25f*rig.upperArm+h.freeLead.x*A),-0.80f*rig.upperArm+h.freeLead.y*A,-0.85f*rig.forearm-h.freeLead.z*A,0));
+                        to=mix>0?XMVectorLerp(held,to,mix):held;
                     }
                     ReachArm(g,o,to,XMVectorSet(-out*0.8f,-1,0.2f,0),0.6f,true);
                     const XMVECTOR undo=XMQuaternionConjugate(bend);
-                    if(h.freeAt)
+                    if(mix>0)
                     {
                         // The wrist straight (the hand goes on along the forearm) and the palm turned
                         // up as far as the forearm's twist goes: no sharp bend at the wrist.
@@ -2028,7 +2038,14 @@ namespace MikuMikuDesktopPerch
                         XMVECTOR small=XMVectorZero();
                         HandWithinReach(g,o,pointing,open,small);
                         AimHand(g,o,pointing,open);
-                        CurlFingers(g,o,{0.1f,0.12f,0.14f,0.16f});
+                        if(mix<1)
+                        {
+                            // (Partway: the palm-up hand eased from the wrist held straight.)
+                            for(const int bone:{rig.wrist[o],rig.handTwist[o]})
+                                if(bone>=0&&slot[bone]>=0)SetRotation(g,bone,XMQuaternionSlerp(XMQuaternionIdentity(),XMLoadFloat4(&g[slot[bone]].rotation),mix));
+                        }
+                        const float b=1-mix;
+                        CurlFingers(g,o,{0.1f*mix+0.3f*b,0.12f*mix+0.35f*b,0.14f*mix+0.4f*b,0.16f*mix+0.45f*b});
                     }
                     else
                     {

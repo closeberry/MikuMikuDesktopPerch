@@ -103,6 +103,8 @@ namespace MikuMikuDesktopPerch
             std::unique_ptr<MascotRenderer> renderer;
             float upper=10,hips=10,k=10;
             float herX=0,herZ=0,velX=0,velZ=0;
+            bool walking=false;     // on the generated walk (a long way to go): the hold let go
+            float yaw=0;            // her turn from facing down the lane (radians; she faces the way she walks)
             float approachFrom=0;  // her z as her approach began
             struct Foot {float x=0,z=0,fromX=0,fromZ=0,toX=0,toZ=0,t=1,lift=0;bool placed=false;};
             std::array<Foot,2> feet{};   // 0 her left foot, 1 her right (world; their places at rest less her middle)
@@ -905,19 +907,30 @@ namespace MikuMikuDesktopPerch
 
         // ---- Her on the approach -----------------------------------------------------------
 
-        // Her model's transform: turned to face down the lane (+z), at (herX, herZ), her walks'
-        // sideways shift taken out.
+        // Her model's transform: turned to face down the lane (+z) and then by yaw (the way she
+        // walks), at (herX, herZ), her walks' sideways shift taken out.
+        float HerTurn(){return DirectX::XM_PI+state.yaw;}
         DirectX::XMMATRIX HerWorld(MascotModel& model)
         {
-            return DirectX::XMMatrixMultiply(DirectX::XMMatrixRotationY(DirectX::XM_PI),DirectX::XMMatrixTranslation(state.herX+model.RootOffset(),0,state.herZ));
-        }
-        std::array<float,3> ModelPoint(MascotModel& model,const XMFLOAT3& p)
-        {
-            return {-(p.x-state.herX-model.RootOffset()),p.y,-(p.z-state.herZ)};
+            // (Her walks' shift across her model taken out, turned as she is.)
+            const float r=model.RootOffset();
+            return DirectX::XMMatrixMultiply(DirectX::XMMatrixRotationY(HerTurn()),DirectX::XMMatrixTranslation(state.herX-r*std::cos(HerTurn()),0,state.herZ+r*std::sin(HerTurn())));
         }
         XMFLOAT3 WorldPoint(MascotModel& model,const std::array<float,3>& p)
         {
-            return {-p[0]+state.herX+model.RootOffset(),p[1],-p[2]+state.herZ};
+            XMFLOAT3 w;
+            DirectX::XMStoreFloat3(&w,DirectX::XMVector3Transform(DirectX::XMVectorSet(p[0],p[1],p[2],1),HerWorld(model)));
+            return w;
+        }
+        // A world offset (x, z) from her as her model sees it, and her model's x across the world.
+        std::array<float,2> ModelOffset(float dx,float dz)
+        {
+            const float c=std::cos(HerTurn()),s=std::sin(HerTurn());
+            return {dx*c-dz*s,dx*s+dz*c};
+        }
+        std::array<float,2> WorldSide(float x)
+        {
+            return {x*std::cos(HerTurn()),-x*std::sin(HerTurn())};
         }
 
         // Her measures, once, as the alley opens: the alley made to her size, her arm.
@@ -984,8 +997,10 @@ namespace MikuMikuDesktopPerch
                 for(int i=1;i<7;++i)
                     if(s<=pts[i][0])
                     {
+                        // (Eased between the points, so her speed changes without a kink: straight
+                        // lines between them gave a jolt at each.)
                         const float u=(s-pts[i-1][0])/(pts[i][0]-pts[i-1][0]);
-                        return pts[i-1][1]+(pts[i][1]-pts[i-1][1])*u;
+                        return pts[i-1][1]+(pts[i][1]-pts[i-1][1])*u*u*(3-2*u);
                     }
                 return 0.0f;
             };
@@ -1061,12 +1076,18 @@ namespace MikuMikuDesktopPerch
                     foot.lift=std::sin(DirectX::XM_PI*u)*0.09f*Leg;
                 }
             }
+            // A step done is set down where it was going, until that foot's next step begins (the
+            // same foot's next step, the slide, or the right foot drawn back). Without that end,
+            // the right foot was put at its second step's end the moment that step began: a jolt.
             for(int i=0;i<3;++i)
-                if(t>=StepAt[i]+StepLength[i])
+            {
+                const float next=i+2<4?StepAt[i+2]:1.40f;
+                if(t>=StepAt[i]+StepLength[i]&&t<next)
                 {
                     auto& foot=state.feet[i%2==0?1:0];
-                    if(foot.t<1&&i<3&&t<StepAt[3]+StepLength[3]){foot.x=foot.toX;foot.z=foot.toZ;}
+                    if(foot.t<1){foot.x=foot.toX;foot.z=foot.toZ;}
                 }
+            }
             // The slide: the left foot set down early in the last step and carried on with her.
             if(t>=StepAt[3])
             {
@@ -1112,18 +1133,20 @@ namespace MikuMikuDesktopPerch
             for(int f=0;f<2;++f)
             {
                 auto& foot=state.feet[f];
-                const float homeX=state.herX+(f==0?-1.0f:1.0f)*state.stance;
-                if(!foot.placed){foot.x=homeX;foot.z=state.herZ;foot.placed=true;foot.t=1;}
+                const auto side=WorldSide(f==0?state.stance:-state.stance);   // (her left is her model's +x)
+                if(!foot.placed){foot.x=state.herX+side[0];foot.z=state.herZ+side[1];foot.placed=true;foot.t=1;}
             }
             for(int n=0;n<2;++n)
             {
                 // (The foot further from where it belongs goes first.)
-                const float d0=std::hypot(state.feet[0].x-(state.herX-state.stance),state.feet[0].z-state.herZ);
-                const float d1=std::hypot(state.feet[1].x-(state.herX+state.stance),state.feet[1].z-state.herZ);
+                const auto sl=WorldSide(state.stance),sr=WorldSide(-state.stance);
+                const float d0=std::hypot(state.feet[0].x-(state.herX+sl[0]),state.feet[0].z-(state.herZ+sl[1]));
+                const float d1=std::hypot(state.feet[1].x-(state.herX+sr[0]),state.feet[1].z-(state.herZ+sr[1]));
                 const int f=(d0>=d1)==(n==0)?0:1;
                 auto& foot=state.feet[f];
                 const auto& other=state.feet[1-f];
-                const float homeX=state.herX+(f==0?-1.0f:1.0f)*state.stance,homeZ=state.herZ;
+                const auto side=WorldSide(f==0?state.stance:-state.stance);
+                const float homeX=state.herX+side[0],homeZ=state.herZ+side[1];
                 if(foot.t<1)
                 {
                     foot.t=std::min(1.0f,foot.t+static_cast<float>(dt)/0.30f);
@@ -1696,6 +1719,7 @@ namespace MikuMikuDesktopPerch
             if(MascotModel* model=state.her.model)
             {
                 model->Hold(HerHand,{},false);
+                if(state.walking){model->SetActivity(Activity::Idle);model->SetFacingWalk(false);}
                 model->HoldBody(HerHand,0,0,0,0,0);
                 model->HoldFree(HerHand,false,{},{});
                 model->SetExpression(Expression::Neutral,false);
@@ -1855,7 +1879,7 @@ namespace MikuMikuDesktopPerch
                     if(state.plan==Plan::Walk)
                     {
                         const float gx=state.herThrow.x*k-state.handSide,gz=StanceZ*k;
-                        if(std::hypot(state.herX-gx,state.herZ-gz)<0.03f*k&&std::hypot(state.velX,state.velZ)<0.08f*k&&state.planTime>0.4)
+                        if(std::hypot(state.herX-gx,state.herZ-gz)<0.03f*k&&std::hypot(state.velX,state.velZ)<0.08f*k&&state.planTime>0.4&&std::abs(state.yaw)<0.05f)
                         {
                             state.plan=Plan::Address;
                             state.planTime=0;
@@ -1909,6 +1933,13 @@ namespace MikuMikuDesktopPerch
                 state.velX=0;
                 state.herZ=z;
                 ApproachFeet(t);
+                if(state.autoplay&&state.swingTrace.size()<20000&&t>1.6f&&t<2.3f)
+                {
+                    wchar_t row[220];
+                    const auto& r=state.feet[1];const auto& l=state.feet[0];const auto ro=ModelOffset(r.x-state.herX,r.z-state.herZ);
+                    swprintf_s(row,L"  feet t %.3f body z %.2f right %.2f %.2f lift %.2f model %.2f %.2f left %.2f %.2f lift %.2f most %.2f\n",t,state.herZ,r.x,r.z,r.lift,ro[0],ro[1],l.x,l.z,l.lift,0.85f*D);
+                    state.swingTrace+=row;
+                }
             }
             else if(live)
             {
@@ -1918,19 +1949,58 @@ namespace MikuMikuDesktopPerch
                 if(state.thrower==Her&&!state.released&&state.stage==Stage::Ready){gx=state.herThrow.x*k-state.handSide;gz=StanceZ*k;}
                 else if(state.thrower==Her&&state.released&&state.stage!=Stage::Ready){gx=state.herX;gz=state.herZ;}
                 if(state.stage==Stage::Over){gx=OverX*k;gz=OverZ*k;}
-                constexpr float W=2.4f;
-                const int n=std::max(1,static_cast<int>(std::ceil(dt*240)));
-                const float h=step/n;
-                for(int i=0;i<n;++i)
+                // A long way (to her place, back to wait, to the end): the generated walk (her arms
+                // swinging, her steps as on the desktop), facing the way she goes and turning as she
+                // sets off; near her place she stands again (the hold) and steps the last of it
+                // facing the lane. (Stepped by the hold all the way, her arms hung still and she
+                // walked backwards toward you.)
+                const float away=std::hypot(gx-state.herX,gz-state.herZ);
+                auto wrap=[](float a){while(a>XM_PI)a-=XM_2PI;while(a<-XM_PI)a+=XM_2PI;return a;};
+                if(!state.walking&&away>0.9f*k&&state.testStage!=5)
                 {
-                    state.velX+=(W*W*(gx-state.herX)-2*W*state.velX)*h;
-                    state.velZ+=(W*W*(gz-state.herZ)-2*W*state.velZ)*h;
-                    const float speed=std::hypot(state.velX,state.velZ),most=1.3f*k;
-                    if(speed>most){state.velX*=most/speed;state.velZ*=most/speed;}
-                    state.herX+=state.velX*h;
-                    state.herZ+=state.velZ*h;
+                    state.walking=true;
+                    model.SetFacingWalk(true);
+                    model.SetActivity(Activity::Walk,1);
                 }
-                WalkFeet(dt);
+                if(state.walking)
+                {
+                    const float wantYaw=std::atan2(gx-state.herX,gz-state.herZ);
+                    state.yaw=wrap(state.yaw+wrap(wantYaw-state.yaw)*static_cast<float>(1.0-std::exp(-dt/0.15)));
+                    // (Turning on the spot first: square to the way, she hardly moves.)
+                    const float aligned=std::clamp(std::cos(wrap(wantYaw-state.yaw)),0.0f,1.0f);
+                    const float go=std::min(away,std::max(model.GroundSpeed(),0.25f*D)*step*aligned*aligned);
+                    state.velX=std::sin(state.yaw)*go/std::max(step,1e-4f);
+                    state.velZ=std::cos(state.yaw)*go/std::max(step,1e-4f);
+                    state.herX+=std::sin(state.yaw)*go;
+                    state.herZ+=std::cos(state.yaw)*go;
+                    if(away-go<0.30f*k)
+                    {
+                        state.walking=false;
+                        model.SetActivity(Activity::Idle);
+                        model.SetFacingWalk(false);
+                        model.EndGestures();
+                        state.velX=state.velZ=0;
+                        // (Her feet set down again under her, as the hold takes her back.)
+                        for(auto& f:state.feet){f.placed=false;f.t=1;f.lift=0;}
+                    }
+                }
+                else
+                {
+                    state.yaw=wrap(state.yaw+wrap(-state.yaw)*static_cast<float>(1.0-std::exp(-dt/0.22)));
+                    constexpr float W=2.4f;
+                    const int n=std::max(1,static_cast<int>(std::ceil(dt*240)));
+                    const float h=step/n;
+                    for(int i=0;i<n;++i)
+                    {
+                        state.velX+=(W*W*(gx-state.herX)-2*W*state.velX)*h;
+                        state.velZ+=(W*W*(gz-state.herZ)-2*W*state.velZ)*h;
+                        const float speed=std::hypot(state.velX,state.velZ),most=1.3f*k;
+                        if(speed>most){state.velX*=most/speed;state.velZ*=most/speed;}
+                        state.herX+=state.velX*h;
+                        state.herZ+=state.velZ*h;
+                    }
+                    WalkFeet(dt);
+                }
             }
             // Her body's shape, her ball arm, her other hand.
             std::array<float,5> want{0.03f*Leg,0,0,XMConvertToRadians(2.0f),0};
@@ -2031,10 +2101,11 @@ namespace MikuMikuDesktopPerch
                 const float most=0.85f*D;
                 // (The ankle moved in from where the model stands at rest to its share of the hips' spacing.)
                 const float in=state.track*state.restHip[f]-state.restAnkle[f];
-                feet[f]={std::clamp(-(foot.x-state.herX)+in,-most,most),foot.lift,std::clamp(-(foot.z-state.herZ),-most,most)};
+                const auto off=ModelOffset(foot.x-state.herX,foot.z-state.herZ);
+                feet[f]={std::clamp(off[0]+in,-most,most),foot.lift,std::clamp(off[1],-most,most)};
             }
             model.HoldFree(HerHand,freeAt,freePoint,feet,state.lead);
-            model.Hold(HerHand,{state.wrist[0]+model.RootOffset(),state.wrist[1],state.wrist[2]},true,4);
+            model.Hold(HerHand,{state.wrist[0]+model.RootOffset(),state.wrist[1],state.wrist[2]},!state.walking,4);   // (let go on the generated walk)
             if(approaching)state.inBody=std::max(state.inBody,model.HoldInBody(HerHand));
             {
                 std::array<float,3> mid{},al{},pa{},wr{};
@@ -2289,7 +2360,7 @@ namespace MikuMikuDesktopPerch
             state.dragging=0;
             state.herX=WaitX*state.k;
             state.herZ=WaitZ*state.k;
-            state.velX=state.velZ=0;
+            state.velX=state.velZ=0;state.yaw=0;state.walking=false;
             state.feet={};
             state.body={};state.bodySpeed={};
             state.lead={};state.leadSpeed={};
