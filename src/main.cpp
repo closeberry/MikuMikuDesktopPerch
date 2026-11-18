@@ -3125,9 +3125,9 @@ namespace
 
     // A reminder's time to go after a verb: "15時" (に added by the sentence) / "at 3:00 PM",
     // "tomorrow at 9:00 AM", "on Fri, Oct 30 at 6:00 PM".
-    std::wstring AtTime(std::int64_t at,std::int64_t now,bool daily)
+    std::wstring AtTime(std::int64_t at,std::int64_t now,int days)
     {
-        const std::wstring when=TimeText(at,now,daily);
+        const std::wstring when=TimeText(at,now,days);
         if(!English())return when;
         if(!when.empty()&&std::iswdigit(when[0]))return L"at "+when;
         if(when.find(L", ")!=std::wstring::npos)return L"on "+when;
@@ -3258,7 +3258,7 @@ namespace
             Alarm a;
             a.due=r.due;
             a.timerSeconds=r.kind==Kind::Timer?r.seconds:0;
-            a.daily=r.daily;
+            a.days=r.days;
             a.text=r.text;
             if(!app.planner.AddAlarm(a)){line=T(L"ごめんね、もうこれ以上は覚えきれないよ。",L"Sorry, I can't keep track of any more.");own=false;break;}
             const std::wstring what=r.text.empty()?std::wstring():Quoted(r.text);
@@ -3271,7 +3271,7 @@ namespace
             }
             else
             {
-                const std::wstring when=AtTime(r.due,now,r.daily);
+                const std::wstring when=AtTime(r.due,now,r.days);
                 line=what.empty()?Fmt(T(L"{0}になったら知らせるね。",L"Okay, I'll let you know {0}."),{when})
                                  :Fmt(T(L"{0}に、{1}って知らせるね。",L"Okay, I'll remind you {0}: {1}."),{when,what});
                 news=Fmt(T(L"頼まれて、{0}に知らせるリマインダーをセットしました",L"You were asked to, and set a reminder for {0}"),{when});
@@ -3344,7 +3344,7 @@ namespace
                     const int shown=static_cast<int>(left>=60?(left+59)/60*60:left);
                     items.push_back(Fmt(T(L"{0}のタイマー{1}（あと{2}）",L"a {0} timer{1} ({2} left)"),{DurationText(a.timerSeconds),what,DurationText(shown)}));
                 }
-                else items.push_back(Fmt(T(L"{0}{1}",L"{0}{1}"),{TimeText(a.due,now,a.daily),what}));
+                else items.push_back(Fmt(T(L"{0}{1}",L"{0}{1}"),{TimeText(a.due,now,a.days),what}));
             }
             if(alarms.size()>6)items.push_back(Fmt(T(L"ほか{0}件",L"and {0} more"),{std::to_wstring(alarms.size()-6)}));
             line=Fmt(T(L"セットしているのは、{0}だよ。",L"Set: {0}."),{Listing(items,L"、")});
@@ -3472,7 +3472,7 @@ namespace
         for(Alarm a:told)
         {
             a.due=Now()+5*60;
-            a.daily=false;
+            a.days=0;
             a.timerSeconds=0;
             app.planner.AddAlarm(a);
         }
@@ -7334,8 +7334,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int)
                     const PlanRequest r=ReadPlanRequest(loose?line.substr(1):line,now,loose);
                     SetLanguage(std::any_of(line.begin(),line.end(),[](wchar_t c){return c>=0x3040;})?L"ja":L"en");
                     fwprintf(out,L"%s\t%s\t%s\t%s\t%s%s\t[%s]%s\n",line.c_str(),Kinds[static_cast<int>(r.kind)],
-                             r.due?TimeText(r.due,now,r.daily).c_str():L"",r.seconds?DurationText(r.seconds).c_str():L"",
-                             r.daily?L"daily":L"",r.sure?L"":L"unsure",r.text.c_str(),r.deadline.empty()?L"":(L" due "+r.deadline).c_str());
+                             r.due?TimeText(r.due,now,r.days).c_str():L"",r.seconds?DurationText(r.seconds).c_str():L"",
+                             r.days==RepeatDays::Every?L"daily":r.days?(L"days"+std::to_wstring(r.days)).c_str():L"",r.sure?L"":L"unsure",r.text.c_str(),r.deadline.empty()?L"":(L" due "+r.deadline).c_str());
                 }
                 fclose(out);
             }

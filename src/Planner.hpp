@@ -16,8 +16,14 @@ namespace MikuMikuDesktopPerch
         std::int64_t due=0;
         std::wstring text;       // what to remind of (may be empty for a plain timer)
         int timerSeconds=0;      // a timer: how long it was set for (0: a reminder at a time)
-        bool daily=false;        // comes again the next day at the same time
+        int days=0;              // repeats on these weekdays (bit n: tm_wday n) at the same time; 0: once
     };
+
+    // Repeat days of an alarm: bit n is tm_wday n (0 Sunday).
+    namespace RepeatDays
+    {
+        constexpr int Every=0x7F,Weekdays=0x3E,Weekends=0x41;
+    }
 
     struct TodoItem
     {
@@ -65,7 +71,7 @@ namespace MikuMikuDesktopPerch
         enum class Kind {None,Timer,Remind,TodoAdd,TodoDone,TodoList,AlarmList,CancelTimers,Today,FocusStart,FocusStop} kind=Kind::None;
         std::int64_t due=0;     // Timer, Remind
         int seconds=0;          // Timer: its length
-        bool daily=false;       // Remind every day
+        int days=0;             // Remind again on these weekdays (as Alarm::days)
         std::wstring text;      // what to remind of, the to-do item's words
         // TodoDone said in passing ("宿題終わった"): only a request when it names an item on
         // the list (otherwise it is just talk).
@@ -91,9 +97,13 @@ namespace MikuMikuDesktopPerch
     PlanRequest ReadPlanCommand(const std::wstring& answer,std::int64_t now);
 
     // Words for times, in the language in use: "25分" / "25 minutes", "明日の9時" /
-    // "tomorrow at 9:00 AM".
+    // "tomorrow at 9:00 AM"; a repeating one "毎日8時", "平日の8時", "毎週月・木曜の8時" /
+    // "every day at 8:00 AM", "weekdays at 8:00 AM", "every Mon, Thu at 8:00 AM".
     std::wstring DurationText(int seconds);
-    std::wstring TimeText(std::int64_t at,std::int64_t now,bool daily=false);
+    std::wstring TimeText(std::int64_t at,std::int64_t now,int days=0);
+    // The first time from t on (t itself, or the same clock time a day or more later) that is
+    // after now and falls on one of the days.
+    std::int64_t NextOnDays(std::int64_t t,std::int64_t now,int days);
     std::int64_t Now();
     std::int64_t DayEnd(std::int64_t at);   // the next local midnight after at
     std::wstring DateOf(std::int64_t at);   // YYYY-MM-DD, local

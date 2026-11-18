@@ -6,7 +6,7 @@
 namespace MikuMikuDesktopPerch
 {
     // The timers, reminders and to-dos in two lists, with adding (typed as it would be said:
-    // "15時に会議", "25分", "毎日8時に薬") and deleting. Changes are saved at once. Not modal;
+    // "15時に会議", "25分", "毎日8時に薬", "平日7時に起きる") and deleting. Changes are saved at once. Not modal;
     // opening it again brings it forward. todosDone: told how many to-dos were marked done.
     void ShowPlannerWindow(HWND owner,Planner& planner,std::function<void(int)> todosDone={});
 

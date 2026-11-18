@@ -56,7 +56,7 @@ namespace MikuMikuDesktopPerch
             std::vector<std::pair<std::wstring,int>> rows;
             for(const auto& a:state.planner->Alarms())
             {
-                std::wstring line=TimeText(a.due,now,a.daily);
+                std::wstring line=TimeText(a.due,now,a.days);
                 if(a.timerSeconds>0)line+=Fmt(T(L"（{0}のタイマー）",L" ({0} timer)"),{DurationText(a.timerSeconds)});
                 if(!a.text.empty())line+=L"　"+a.text;
                 rows.push_back({line,a.id});
@@ -106,8 +106,8 @@ namespace MikuMikuDesktopPerch
             const PlanRequest r=ReadPlanRequest(typed,now,true);
             if(r.kind!=PlanRequest::Kind::Timer&&r.kind!=PlanRequest::Kind::Remind)
             {
-                MessageBoxW(state.window,T(L"時刻か時間を読み取れませんでした。\n\n例：15時に会議　／　25分　／　毎日8時に薬　／　明日9時に電話",
-                                           L"Could not read a time or a length of time.\n\nFor example: 3pm meeting / 25 minutes / every day at 8am medicine / tomorrow at 9 call"),
+                MessageBoxW(state.window,T(L"時刻か時間を読み取れませんでした。\n\n例：15時に会議　／　25分　／　毎日8時に薬　／　平日7時に起きる　／　毎週月曜8時にゴミ出し　／　明日9時に電話",
+                                           L"Could not read a time or a length of time.\n\nFor example: 3pm meeting / 25 minutes / every day at 8am medicine / weekdays at 7am get up / every monday at 8am trash / tomorrow at 9 call"),
                             L"MikuMikuDesktopPerch",MB_ICONINFORMATION);
                 SetFocus(GetDlgItem(state.window,IdAlarmNew));
                 return;
@@ -115,7 +115,7 @@ namespace MikuMikuDesktopPerch
             Alarm a;
             a.due=r.due;
             a.timerSeconds=r.kind==PlanRequest::Kind::Timer?r.seconds:0;
-            a.daily=r.daily;
+            a.days=r.days;
             a.text=r.text;
             if(state.planner->AddAlarm(a))
             {

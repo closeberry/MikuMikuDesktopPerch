@@ -158,6 +158,22 @@ namespace MikuMikuDesktopPerch
             return -1;
         }
 
+        // The weekdays named in a list ("月・木", "月曜と木曜", "mon, wed and fri"), as
+        // Alarm::days bits.
+        int DaysIn(const std::wstring& said)
+        {
+            // 曜日's 日 is no Sunday.
+            const std::wstring list=std::regex_replace(said,std::wregex(LR"(曜日?)"),L" ");
+            int days=0;
+            const std::wregex word(LR"([日月火水木金土]|\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*)",std::regex_constants::ECMAScript|std::regex_constants::icase);
+            for(auto it=std::wsregex_iterator(list.begin(),list.end(),word);it!=std::wsregex_iterator();++it)
+            {
+                const std::wstring w=(*it)[1].matched?(*it)[1].str():(*it)[0].str();
+                if(const int wd=Weekday(w);wd>=0)days|=1<<wd;
+            }
+            return days;
+        }
+
         int Month(const std::wstring& m)
         {
             static constexpr const wchar_t* Names[]={L"jan",L"feb",L"mar",L"apr",L"may",L"jun",L"jul",L"aug",L"sep",L"oct",L"nov",L"dec"};
@@ -243,7 +259,9 @@ namespace MikuMikuDesktopPerch
                 a.id=nextId++;
                 a.due=_wtoi64(f[1].c_str());
                 a.timerSeconds=std::max(0,_wtoi(f[2].c_str()));
-                a.daily=f[3]==L"1";
+                // "0" once, "1" every day, "w<bits>" on some weekdays.
+                if(f[3]==L"1")a.days=RepeatDays::Every;
+                else if(!f[3].empty()&&f[3][0]==L'w')a.days=_wtoi(f[3].c_str()+1)&RepeatDays::Every;
                 a.text=Tidy(f[4]);
                 if(a.due>0)alarms.push_back(a);
             }
@@ -263,7 +281,10 @@ namespace MikuMikuDesktopPerch
         if(path.empty())return false;
         std::wstring all;
         for(const auto& a:alarms)
-            all+=L"alarm\t"+std::to_wstring(a.due)+L"\t"+std::to_wstring(a.timerSeconds)+L"\t"+(a.daily?L"1":L"0")+L"\t"+a.text+L"\n";
+        {
+            const std::wstring repeat=a.days==0?L"0":a.days==RepeatDays::Every?L"1":L"w"+std::to_wstring(a.days);
+            all+=L"alarm\t"+std::to_wstring(a.due)+L"\t"+std::to_wstring(a.timerSeconds)+L"\t"+repeat+L"\t"+a.text+L"\n";
+        }
         for(const auto& t:todos)all+=L"todo\t"+t.added+L"\t"+t.text+L"\t"+t.due+L"\t"+t.told+L"\n";
         const auto temp=path.wstring()+L".tmp";
         {
@@ -329,6 +350,16 @@ namespace MikuMikuDesktopPerch
         return best;
     }
 
+    std::int64_t NextOnDays(std::int64_t t,std::int64_t now,int days)
+    {
+        days&=RepeatDays::Every;
+        if(!days)return t;
+        // Far behind (a file from long ago): skip ahead by whole weeks first.
+        if(now-t>8*Day)t=AddDays(t,static_cast<int>((now-t)/Day/7*7));
+        for(int i=0;i<400&&(t<=now||!(days>>Local(t).tm_wday&1));++i)t=AddDays(t,1);
+        return t;
+    }
+
     std::vector<Alarm> Planner::TakeDue(std::int64_t now)
     {
         std::vector<Alarm> due;
@@ -338,9 +369,9 @@ namespace MikuMikuDesktopPerch
             if(it->due>now){++it;continue;}
             changed=true;
             if(now-it->due<=Day)due.push_back(*it);
-            if(it->daily)
+            if(it->days)
             {
-                while(it->due<=now)it->due=AddDays(it->due,1);
+                it->due=NextOnDays(it->due,now,it->days);
                 ++it;
             }
             else it=alarms.erase(it);
@@ -476,10 +507,31 @@ namespace MikuMikuDesktopPerch
             return std::any_of(spans.begin(),spans.end(),[&](const auto& sp){return a<sp.second&&sp.first<b;});
         };
         int afternoon=0;   // 1: afternoon/evening said, -1: morning said
-        bool daily=false;
-        if(find(LR"(毎日|毎朝|毎晩|毎夜|\bevery\s*day\b|\bdaily\b|\bevery\s+(morning|evening|night)\b)"))
+        int days=0;
+        // Some days of the week: "平日", "週末", "土日", "毎週月曜と木曜", "毎月曜", "月曜日ごとに",
+        // "weekdays", "on weekends", "every monday and thursday", "on mondays".
+        // After 毎週 a bare 月 is Monday; elsewhere 曜 must be said (毎月, 毎日 are no weekdays).
+        auto jaList=[](bool bare){
+            const std::wstring day=bare?LR"([月火水木金土日](?:曜日?)?)":LR"([月火水木金土日]曜日?)";
+            return L"("+day+L"(?:\\s*(?:と|、|,|・|/|及び|および)\\s*"+day+L")*)";
+        };
+        constexpr const wchar_t* EnDay=LR"((?:sun|mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?)(?:day)?)";
+        const std::wstring enList=std::wstring(L"(")+EnDay+L"(?:\\s*(?:,|/|&|\\band\\b|\\bor\\b)\\s*"+EnDay+L")*)";
+        auto findList=[&](const std::wstring& pattern){return std::regex_search(s,m,std::wregex(pattern,flags));};
+        if(find(LR"(毎?平日|ウィークデー|\b(?:every\s+|on\s+)?week\s*-?days?\b)"))
+        {days=RepeatDays::Weekdays;take(m);}
+        else if(find(LR"(毎?週末|毎?週?土日|\b(?:every\s+|on\s+)?week\s*-?ends?\b)"))
+        {days=RepeatDays::Weekends;take(m);}
+        else if(findList(L"毎週の?\\s*"+jaList(true))||findList(L"毎"+jaList(false))||findList(jaList(false)+L"\\s*(?:ごと|毎)に?")||
+                findList(L"\\bevery\\s+"+enList+L"\\b")||
+                findList(L"\\b(?:on\\s+)?((?:sun|mon|tues|wednes|thurs|fri|satur)days(?:\\s*(?:,|/|&|\\band\\b|\\bor\\b)\\s*(?:sun|mon|tues|wednes|thurs|fri|satur)days?)*)\\b"))
         {
-            daily=true;
+            days=DaysIn(m[1].str());
+            if(days)take(m);
+        }
+        if(!days&&find(LR"(毎日|毎朝|毎晩|毎夜|\bevery\s*day\b|\bdaily\b|\bevery\s+(morning|evening|night)\b)"))
+        {
+            days=RepeatDays::Every;
             const std::wstring w=m[0].str();
             if(w.find(L"晩")!=std::wstring::npos||w.find(L"夜")!=std::wstring::npos||_wcsicmp(m[1].str().c_str(),L"evening")==0||_wcsicmp(m[1].str().c_str(),L"night")==0)afternoon=1;
             if(w.find(L"朝")!=std::wstring::npos||_wcsicmp(m[1].str().c_str(),L"morning")==0)afternoon=-1;
@@ -526,7 +578,8 @@ namespace MikuMikuDesktopPerch
         // The day: today unless said.
         const std::tm today=Local(now);
         int dayOffset=-1,month=0,dayOfMonth=0;
-        if(find(LR"(明後日|あさって|\bday after tomorrow\b)")){dayOffset=2;take(m);}
+        if(days&&days!=RepeatDays::Every){}   // the weekdays said are the days
+        else if(find(LR"(明後日|あさって|\bday after tomorrow\b)")){dayOffset=2;take(m);}
         else if(find(LR"(明日|あした|あす|\btomorrow\b)")){dayOffset=1;take(m);}
         else if(find(LR"(今日|きょう|今夜|今晩|こんや|\btoday\b)")){dayOffset=0;if(m[0].str().find(L"夜")!=std::wstring::npos||m[0].str().find(L"晩")!=std::wstring::npos||m[0].str()==L"こんや")afternoon=1;take(m);}
         else if(find(LR"((\d{1,2})\s*月\s*(\d{1,2})\s*日)")||find(LR"(\b(\d{1,2})/(\d{1,2})\b)")){month=Number(m[1]);dayOfMonth=Number(m[2]);take(m);}
@@ -614,13 +667,14 @@ namespace MikuMikuDesktopPerch
                 std::int64_t t=Make(at);
                 // A bare "3時" at one o'clock in the afternoon is three o'clock this afternoon;
                 // a time already gone (with no day said) is tomorrow's.
-                if(t<=now&&afternoon==0&&hour<12&&dayOffset<=0&&!daily){std::tm pm=at;pm.tm_hour+=12;if(Make(pm)>now){t=Make(pm);}}
-                if(t<=now&&dayOffset<=0)t=AddDays(t,1);
+                if(t<=now&&afternoon==0&&hour<12&&dayOffset<=0&&!days){std::tm pm=at;pm.tm_hour+=12;if(Make(pm)>now){t=Make(pm);}}
+                if(days)t=NextOnDays(t,now,days);
+                else if(t<=now&&dayOffset<=0)t=AddDays(t,1);
                 r.due=t;
             }
             if(r.due<=now)return {};
             r.kind=Kind::Remind;
-            r.daily=daily;
+            r.days=days;
             r.text=rest();
             return r;
         }
@@ -666,7 +720,7 @@ namespace MikuMikuDesktopPerch
         const auto flags=std::regex_constants::ECMAScript|std::regex_constants::icase;
         auto has=[&](const wchar_t* pattern){return std::regex_search(s,std::wregex(pattern,flags));};
         if(has(LR"(タイマー|リマインド|リマインダー|アラーム|ToDo|To-Do|やること|やる事|タスク|集中モード|ポモドーロ|\bfocus mode|\bpomodoro|\btimer|\bremind|\balarm|\bto-?do|\btasks?\b)"))return true;
-        const bool time=has(LR"(\d|分|時|秒|明日|あした|毎日|毎朝|毎晩|朝|夜|夕方|午前|午後|曜|\bminutes?\b|\bhours?\b|\btomorrow\b|\btonight\b|\bo'?clock\b|\bnoon\b|\b(am|pm)\b)");
+        const bool time=has(LR"(\d|分|時|秒|明日|あした|毎日|毎朝|毎晩|毎週|平日|週末|土日|朝|夜|夕方|午前|午後|曜|\bweekdays?\b|\bweekends?\b|\bminutes?\b|\bhours?\b|\btomorrow\b|\btonight\b|\bo'?clock\b|\bnoon\b|\b(am|pm)\b)");
         const bool ask=has(LR"(教え|おしえ|知らせ|しらせ|声かけ|声を?かけ|起こ|おこして|呼んで|言って|忘れ|\blet me know\b|\btell me\b|\bwake me\b|\bremember\b|\bdon'?t let me forget\b)");
         return time&&ask;
     }
@@ -685,6 +739,7 @@ namespace MikuMikuDesktopPerch
             L"timer <seconds> | <what to remind of, or nothing>\n"
             L"remind <YYYY-MM-DD HH:MM> | <what to remind of>\n"
             L"daily <HH:MM> | <what to remind of>\n"
+            L"weekly <days: weekdays, weekends, or some of mon,tue,wed,thu,fri,sat,sun> <HH:MM> | <what to remind of>\n"
             L"todo-add | <the task> | <its deadline as YYYY-MM-DD, or nothing>\n"
             L"todo-done | <the task that is done>\n"
             L"todo-list\n"
@@ -702,6 +757,7 @@ namespace MikuMikuDesktopPerch
             L"timer <秒数> | <知らせる内容（なければ空）>\n"
             L"remind <YYYY-MM-DD HH:MM> | <知らせる内容>\n"
             L"daily <HH:MM> | <知らせる内容>\n"
+            L"weekly <曜日: weekdays（平日）, weekends（土日）, または mon,tue,wed,thu,fri,sat,sun から> <HH:MM> | <知らせる内容>\n"
             L"todo-add | <やること> | <期限の日 YYYY-MM-DD（なければ空）>\n"
             L"todo-done | <済んだやること>\n"
             L"todo-list\n"
@@ -739,12 +795,23 @@ namespace MikuMikuDesktopPerch
                 r.kind=Kind::Timer;r.seconds=seconds;r.due=now+seconds;
                 return r;
             }
-            if(head.rfind(L"remind",0)==0||head.rfind(L"daily",0)==0)
+            if(head.rfind(L"remind",0)==0||head.rfind(L"daily",0)==0||head.rfind(L"weekly",0)==0)
             {
-                const bool daily=head.rfind(L"daily",0)==0;
+                int days=head.rfind(L"daily",0)==0?RepeatDays::Every:0;
                 int y=0,mo=0,d=0,h=-1,mi=-1;
                 std::tm at=Local(now);
-                if(daily){if(swscanf_s(head.c_str()+5,L" %d:%d",&h,&mi)!=2)return {};}
+                if(head.rfind(L"weekly",0)==0)
+                {
+                    // weekly <days> <HH:MM>: the clock time is the last word.
+                    const size_t space=head.find_last_of(L' ');
+                    if(space==std::wstring::npos||space<6)return {};
+                    const std::wstring which=head.substr(6,space-6);
+                    if(which.find(L"weekday")!=std::wstring::npos)days=RepeatDays::Weekdays;
+                    else if(which.find(L"weekend")!=std::wstring::npos)days=RepeatDays::Weekends;
+                    else days=DaysIn(which);
+                    if(!days||swscanf_s(head.c_str()+space,L" %d:%d",&h,&mi)!=2)return {};
+                }
+                else if(days){if(swscanf_s(head.c_str()+5,L" %d:%d",&h,&mi)!=2)return {};}
                 else
                 {
                     if(swscanf_s(head.c_str()+6,L" %d-%d-%d %d:%d",&y,&mo,&d,&h,&mi)!=5)return {};
@@ -753,9 +820,9 @@ namespace MikuMikuDesktopPerch
                 if(h<0||h>23||mi<0||mi>59)return {};
                 at.tm_hour=h;at.tm_min=mi;at.tm_sec=0;
                 std::int64_t t=Make(at);
-                if(daily)while(t<=now)t=AddDays(t,1);
+                if(days)t=NextOnDays(t,now,days);
                 if(t<=now)return {};
-                r.kind=Kind::Remind;r.due=t;r.daily=daily;
+                r.kind=Kind::Remind;r.due=t;r.days=days;
                 return r;
             }
             if(head.rfind(L"todo-add",0)==0)
@@ -805,17 +872,29 @@ namespace MikuMikuDesktopPerch
         return out;
     }
 
-    std::wstring TimeText(std::int64_t at,std::int64_t now,bool daily)
+    std::wstring TimeText(std::int64_t at,std::int64_t now,int repeat)
     {
         const std::tm t=Local(at),n=Local(now);
         std::tm a0=t,n0=n;
         a0.tm_hour=n0.tm_hour=12;a0.tm_min=n0.tm_min=a0.tm_sec=n0.tm_sec=0;
         const int days=static_cast<int>((Make(a0)-Make(n0)+Day/2)/Day);
+        repeat&=RepeatDays::Every;
+        // The repeat days named, Monday first: "月・木" / "Mon/Thu".
+        auto named=[&](const wchar_t* const names[7],const wchar_t* between){
+            std::wstring out;
+            for(int i=1;i<=7;++i)
+                if(repeat>>(i%7)&1){if(!out.empty())out+=between;out+=names[i%7];}
+            return out;
+        };
         wchar_t clock[32]{};
         if(English())
         {
             swprintf_s(clock,L"%d:%02d %s",(t.tm_hour+11)%12+1,t.tm_min,t.tm_hour<12?L"AM":L"PM");
-            if(daily)return std::wstring(L"every day at ")+clock;
+            static constexpr const wchar_t* Names[]={L"Sun",L"Mon",L"Tue",L"Wed",L"Thu",L"Fri",L"Sat"};
+            if(repeat==RepeatDays::Every)return std::wstring(L"every day at ")+clock;
+            if(repeat==RepeatDays::Weekdays)return std::wstring(L"weekdays at ")+clock;
+            if(repeat==RepeatDays::Weekends)return std::wstring(L"weekends at ")+clock;
+            if(repeat)return L"every "+named(Names,L"/")+L" at "+clock;
             if(days==0)return clock;
             if(days==1)return std::wstring(L"tomorrow at ")+clock;
             static constexpr const wchar_t* Days[]={L"Sun",L"Mon",L"Tue",L"Wed",L"Thu",L"Fri",L"Sat"};
@@ -826,7 +905,11 @@ namespace MikuMikuDesktopPerch
         }
         if(t.tm_min)swprintf_s(clock,L"%d時%d分",t.tm_hour,t.tm_min);
         else swprintf_s(clock,L"%d時",t.tm_hour);
-        if(daily)return std::wstring(L"毎日")+clock;
+        static constexpr const wchar_t* Names[]={L"日",L"月",L"火",L"水",L"木",L"金",L"土"};
+        if(repeat==RepeatDays::Every)return std::wstring(L"毎日")+clock;
+        if(repeat==RepeatDays::Weekdays)return std::wstring(L"平日の")+clock;
+        if(repeat==RepeatDays::Weekends)return std::wstring(L"土日の")+clock;
+        if(repeat)return L"毎週"+named(Names,L"・")+L"曜の"+clock;
         if(days==0)return clock;
         if(days==1)return std::wstring(L"明日の")+clock;
         if(days==2)return std::wstring(L"あさっての")+clock;
