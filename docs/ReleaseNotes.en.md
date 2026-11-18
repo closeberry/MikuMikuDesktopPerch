@@ -2,6 +2,12 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.6
+
+### New
+
+- **Repeating reminders**: besides every day, a reminder can now repeat on weekdays (Monday to Friday), on weekends (Saturday and Sunday), or on the days of the week you name. Ask like "remind me on weekdays at 7am to get up", "remind me every monday and thursday at 8am to take out the trash", or write "weekdays at 7am get up" in the list window
+
 ## 1.7.5
 
 ### New
