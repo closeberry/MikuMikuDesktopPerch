@@ -2,6 +2,13 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.7
+
+### New
+
+- **Calendar reminders again**: the notice before a calendar event now has two buttons, "Got it" and "Again in 5 min". The second tells you again in 5 minutes (until the event has been going for 30 minutes)
+- **Never doze off**: turn on "Never doze off" under Motion and display in the settings, and she no longer dozes when you are away
+
 ## 1.7.6
 
 ### New
