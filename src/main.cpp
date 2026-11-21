@@ -1895,6 +1895,7 @@ namespace
         current.blink=s.blink;
         current.breath=s.breath;
         current.lookAtMouse=s.lookAtMouse;
+        current.noDoze=s.noDoze;
         current.selfShadow=s.selfShadow;
         current.lightAzimuth=s.lightAzimuth;
         current.lightElevation=s.lightElevation;
