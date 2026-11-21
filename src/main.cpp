@@ -368,8 +368,12 @@ namespace
         // told like one, without the answer box.
         // model: only the character with that model tells it (dropped if she is gone);
         // album: a picture is taken of her telling it, under this name (docs/Album.md).
-        struct Notice {std::wstring line,facts,model,album;};
+        // eventTitle/eventStart: a calendar event's notice, told with わかった／5分後に.
+        struct Notice {std::wstring line,facts,model,album,eventTitle;std::int64_t eventStart=0;};
         std::vector<Notice> notices;
+        Notice askedEvent;                 // the event notice being answered (eventTitle empty: none)
+        struct Snoozed {double at;std::wstring title;std::int64_t start;};
+        std::vector<Snoozed> snoozedEvents;   // events to tell again (at: app clock)
         double noticesSince=-1;
         // Using the computer without a break (five minutes away counts as one).
         double activeSince=-1,nextRestAt=-1;
@@ -2296,6 +2300,11 @@ namespace
     void UpdateDozing(Mascot& m)
     {
         if(m.forcedDoze)return;
+        if(app.settings.noDoze)
+        {
+            if(m.dozing){m.dozing=false;m.model.SetDozing(false);Emit("doze",m,"\"dozing\":false");}
+            return;
+        }
         const Activity a=m.model.CurrentActivity();
         const bool still=(a==Activity::Idle||a==Activity::Sit||a==Activity::Hang||a==Activity::Lie)&&m.travel==Travel::None&&
                          !m.model.MotionPlaying()&&!(m.chat&&m.chat->Busy())&&!m.bubble.Visible()&&!m.chatInput.IsOpen();
@@ -3467,7 +3476,14 @@ namespace
     {
         Mascot* m=std::exchange(app.alarmTeller,nullptr);
         const std::vector<Alarm> told=std::exchange(app.told,{});
+        const App::Notice event=std::exchange(app.askedEvent,{});
         if(gotIt||!m)return;
+        if(!event.eventTitle.empty())
+        {
+            app.snoozedEvents.push_back({app.clock+5*60,event.eventTitle,event.eventStart});
+            SayFixed(*m,T(L"じゃあ、5分後にもう一度言うね。",L"Okay, I'll tell you again in 5 minutes."));
+            return;
+        }
         // Again in five minutes: each comes back as a reminder at that time.
         for(Alarm a:told)
         {
@@ -3539,6 +3555,7 @@ namespace
         else SayFixed(m,line);
         PlaySoundW(L"SystemNotification",nullptr,SND_ALIAS|SND_ASYNC|SND_NODEFAULT);
         app.alarmChoice.Close();
+        app.askedEvent={};
         app.told=std::move(alarms);
         app.alarmTeller=&m;
         const RECT r=FrameRect(m);
@@ -3597,6 +3614,17 @@ namespace
                 if(ChatReady(*m,false))SpeakFirst(*m,notice.facts+T(L"。そのことを、あなたの言葉で伝えて",L". Tell them so, in your own words"),notice.line);
                 else SayFixed(*m,notice.line);
                 PlaySoundW(L"SystemNotification",nullptr,SND_ALIAS|SND_ASYNC|SND_NODEFAULT);
+                // A calendar event: わかった／5分後に under her, as for an alarm.
+                if(!notice.eventTitle.empty()&&!app.alarmChoice.IsOpen())
+                {
+                    app.told.clear();
+                    app.askedEvent=notice;
+                    app.alarmTeller=m;
+                    const RECT r=FrameRect(*m);
+                    const POINT ground=GroundPointOnScreen(*m);
+                    app.alarmChoice.Open(m->hwnd,{(r.left+r.right)/2,ground.y-static_cast<LONG>(ModelHeightPixels(*m)*0.12)},
+                                         T(L"わかった",L"Got it"),T(L"5分後にもう一度",L"Again in 5 min"),OnAlarmAnswer);
+                }
             }
         }
     }
@@ -5562,6 +5590,27 @@ namespace
             Fmt(T(L"やることリストの期限が近づいています：{0}。忘れないよう知らせて",L"Deadlines on the to-do list are close: {0}. Remind them so they don't forget"),{Listing(labels)})});
     }
 
+    // What she says of an event: it starts in some minutes, or has started.
+    App::Notice EventNotice(const std::wstring& title,std::int64_t start,std::int64_t now)
+    {
+        App::Notice n;
+        const std::wstring clock=TimeText(start,now);
+        if(start>now)
+        {
+            const std::wstring minutes=std::to_wstring(std::max<std::int64_t>(1,(start-now+30)/60));
+            n.line=Fmt(T(L"あと{0}分で{1}だよ（{2}から）。",L"{1} starts in {0} minutes ({2})."),{minutes,Quoted(title),clock});
+            n.facts=Fmt(T(L"カレンダーの予定{0}が、あと{1}分（{2}）で始まります。そのことを知らせて",L"The calendar event {0} starts in {1} minutes ({2}). Let them know"),{Quoted(title),minutes,clock});
+        }
+        else
+        {
+            n.line=Fmt(T(L"{0}は、{1}から始まってるよ。",L"{0} started at {1}."),{Quoted(title),clock});
+            n.facts=Fmt(T(L"カレンダーの予定{0}は、{1}にもう始まっています。そのことを知らせて",L"The calendar event {0} already started at {1}. Let them know"),{Quoted(title),clock});
+        }
+        n.eventTitle=title;
+        n.eventStart=start;
+        return n;
+    }
+
     // Every half hour (with its address set), the calendar is read again; a few minutes before
     // an event (not all-day ones), she says so.
     void UpdateCalendar()
@@ -5580,10 +5629,15 @@ namespace
         {
             if(e.allDay||e.start<=now||e.start-now>lead*60||app.eventsTold.count(e.key))continue;
             app.eventsTold.insert(e.key);
-            const std::wstring minutes=std::to_wstring(std::max<std::int64_t>(1,(e.start-now+30)/60));
-            app.notices.push_back({
-                Fmt(T(L"あと{0}分で{1}だよ（{2}から）。",L"{1} starts in {0} minutes ({2})."),{minutes,Quoted(e.title),TimeText(e.start,now)}),
-                Fmt(T(L"カレンダーの予定{0}が、あと{1}分（{2}）で始まります。そのことを知らせて",L"The calendar event {0} starts in {1} minutes ({2}). Let them know"),{Quoted(e.title),minutes,TimeText(e.start,now)})});
+            app.notices.push_back(EventNotice(e.title,e.start,now));
+        }
+        // Those answered 5分後に: told again, as long as the event is not long past.
+        for(size_t i=0;i<app.snoozedEvents.size();)
+        {
+            if(app.clock<app.snoozedEvents[i].at){++i;continue;}
+            const App::Snoozed s=app.snoozedEvents[i];
+            app.snoozedEvents.erase(app.snoozedEvents.begin()+i);
+            if(s.start>now-30*60)app.notices.push_back(EventNotice(s.title,s.start,now));
         }
     }
 

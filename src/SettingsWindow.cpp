@@ -31,7 +31,7 @@ namespace MikuMikuDesktopPerch
 
         enum ControlId:int
         {
-            IdAuto=1001,IdWindowMode,IdPhysics,IdBlink,IdBreath,IdLookAt,
+            IdAuto=1001,IdWindowMode,IdPhysics,IdBlink,IdBreath,IdLookAt,IdNoDoze,
             IdScale,IdEdge,IdTopmost,IdStartup,
             IdFps,IdMotionBlur,IdMsaa,IdTexture,IdPhysicsFps,IdPhysicsIterations,IdPhysicsFilter,IdToonDir,IdToonBrowse,IdGpu,
             IdChatEndpoint,IdChatModel,IdChatList,IdPersona,IdPersonaName,IdUserName,
@@ -227,7 +227,7 @@ namespace MikuMikuDesktopPerch
             constexpr int top=48;
             int y=top;
             Page(T(L"動きと表示",L"Motion and display"));
-            Group(T(L"動き",L"Motion"),y,128);
+            Group(T(L"動き",L"Motion"),y,152);
             CheckBox(IdAuto,T(L"おまかせ行動（ひとりで歩き回る）",L"Auto behavior (walks around on her own)"),28,y+22,270,s.autoBehavior);
             Add(L"BUTTON",T(L"しぐさを選ぶ...",L"Gestures..."),BS_PUSHBUTTON|WS_TABSTOP,316,y+18,120,26,IdGestures);
             CheckBox(IdWindowMode,T(L"アクティブウィンドウに乗る",L"Ride on the active window"),28,y+46,200,s.windowMode);
@@ -238,7 +238,8 @@ namespace MikuMikuDesktopPerch
             CheckBox(IdBlink,T(L"まばたき",L"Blink"),28,y+94,120,s.blink);
             CheckBox(IdBreath,T(L"呼吸",L"Breathe"),156,y+94,120,s.breath);
             CheckBox(IdLookAt,T(L"マウスの方を見る",L"Look at the mouse"),284,y+94,150,s.lookAtMouse);
-            y+=138;
+            CheckBox(IdNoDoze,T(L"寝ないモード（席を外しても居眠りしない）",L"Never doze off (even when you are away)"),28,y+118,400,s.noDoze);
+            y+=162;
             Group(T(L"表示",L"Display"),y,156);
             Label(T(L"大きさ",L"Size"),28,y+22,130);
             Combo(IdScale,170,y+22,120);
@@ -1244,6 +1245,7 @@ namespace MikuMikuDesktopPerch
             s.blink=Checked(IdBlink);
             s.breath=Checked(IdBreath);
             s.lookAtMouse=Checked(IdLookAt);
+            s.noDoze=Checked(IdNoDoze);
             s.scale=ComboValue(IdScale,s.scale);
             s.edgeScale=ComboValue(IdEdge,static_cast<int>(std::lround(s.edgeScale*100)))/100.0f;
             s.topmost=Checked(IdTopmost);
