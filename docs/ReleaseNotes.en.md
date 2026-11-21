@@ -2,6 +2,12 @@
 
 [日本語](ReleaseNotes.md)
 
+## 1.7.8
+
+### Fixed
+
+- "Never doze off" was not kept: the check was gone when the settings were opened again
+
 ## 1.7.7
 
 ### New
